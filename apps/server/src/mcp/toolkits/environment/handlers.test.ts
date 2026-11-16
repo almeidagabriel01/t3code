@@ -9,6 +9,7 @@ import {
   type ServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -139,20 +140,7 @@ it.effect(
           getSettings: Ref.get(stored),
           updateSettings: (patch) => {
             patches.push(patch);
-            return Ref.updateAndGet(stored, (current) => {
-              const overrides = { ...current.projectSettingsOverrides };
-              for (const [id, next] of Object.entries(patch.projectSettingsOverrides ?? {})) {
-                if (next === null) delete overrides[id as ProjectId];
-                else overrides[id as ProjectId] = next;
-              }
-              return {
-                ...current,
-                ...(patch.detectProblems === undefined
-                  ? {}
-                  : { detectProblems: patch.detectProblems }),
-                projectSettingsOverrides: overrides,
-              };
-            });
+            return Ref.updateAndGet(stored, (current) => applyServerSettingsPatch(current, patch));
           },
         }),
       );

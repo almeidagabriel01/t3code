@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   assistantErrorMessage,
+  assistantGroupPostFailure,
   assistantForTaskThread,
   assistantForThread,
+  ASSISTANT_GROUP_CHAT_IDLE,
   createAssistantsEnvironmentAtoms,
   selectAssistantTasks,
   selectActiveAssistants,
@@ -13,6 +15,8 @@ import {
 import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
+  type AssistantGroupReplyRef,
+  type AssistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
@@ -23,6 +27,7 @@ import {
   type Assistant,
   type AssistantTask,
   type AssistantGroupConversationAction,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
@@ -412,16 +417,42 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
   };
 }
 
-/** One group's chat, live: null before its first snapshot. */
+/**
+ * One group's chat, live: null before its first snapshot. A scope narrows it to one tab, none
+ * reads every request, and null reads nothing while the tab is not known yet.
+ */
 export function useAssistantGroupChat(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
+  scope?: AssistantGroupScope | null,
 ): AssistantGroupChatState | null {
   return Option.getOrNull(
     AsyncResult.value(
-      useAtomValue(assistantsEnvironment.groupChat({ environmentId, input: { teamId } })),
+      useAtomValue(
+        scope === null
+          ? ASSISTANT_GROUP_CHAT_IDLE
+          : assistantsEnvironment.groupChat({
+              environmentId,
+              input: { teamId, ...(scope === undefined ? {} : { scope }) },
+            }),
+      ),
     ),
   );
+}
+
+/** The chat a group composer reads what routes its draft from: `useAssistantGroupChat`'s. */
+export interface AssistantGroupChatRef {
+  readonly teamId: AssistantTeamId;
+  readonly scope: AssistantGroupScope | null | undefined;
+  readonly reply: AssistantGroupReplyRef | null;
+}
+
+/** What routes a draft besides its text, from the group's chat; changes only when that does. */
+export function useAssistantGroupSendContext(
+  environmentId: EnvironmentId,
+  chat: AssistantGroupChatRef,
+): AssistantGroupSendContext {
+  return useAtomValue(assistantsEnvironment.groupSendContext({ environmentId, ...chat }));
 }
 
 export type AssistantGroupPostReply =
@@ -461,10 +492,15 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
         ? { ok: true, value: undefined }
         : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
     },
-    /** Moves the read position; `readSeq` is a message number, `unread` marks the newest unread. */
+    /**
+     * Moves the read position; `readSeq` is a message number, `unread` marks the newest unread.
+     * With a scope, only that tab's position moves.
+     */
     markRead: async (
       teamId: AssistantTeamId,
-      position: { readonly readSeq: number } | { readonly unread: true },
+      position: ({ readonly readSeq: number } | { readonly unread: true }) & {
+        readonly scope?: AssistantGroupScope;
+      },
     ): Promise<AssistantReply> => {
       const result = await markRead({ environmentId, input: { teamId, ...position } });
       return result._tag === "Success"
@@ -474,12 +510,7 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     post: async (input: AssistantGroupsPostInput): Promise<AssistantGroupPostReply> => {
       const result = await post({ environmentId, input });
       if (result._tag === "Success") return { ok: true, value: result.value };
-      const error = squashAtomCommandFailure(result);
-      const reason =
-        typeof error === "object" && error !== null && "reason" in error
-          ? String(error.reason)
-          : null;
-      return { ok: false, message: assistantErrorMessage(error), reason };
+      return { ok: false, ...assistantGroupPostFailure(result.cause) };
     },
     taskAction: async (
       input: AssistantGroupsTaskActionInput,
@@ -493,11 +524,16 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     olderThan: async (
       teamId: AssistantTeamId,
       state: AssistantGroupChatState,
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply<AssistantGroupsHistoryResult>> => {
       const beforeSeq = oldestAssistantGroupSeq(state) ?? undefined;
       const result = await history({
         environmentId,
-        input: { teamId, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+        input: {
+          teamId,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(scope === undefined ? {} : { scope }),
+        },
       });
       return result._tag === "Success"
         ? { ok: true, value: result.value }

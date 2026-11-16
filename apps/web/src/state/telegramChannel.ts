@@ -3,7 +3,11 @@ import {
   applyTelegramStatusEvent,
   createTelegramChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/telegramChannel";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, TelegramChannelConfigureInput } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -37,8 +41,10 @@ export function useTelegramSettings(environmentId: EnvironmentId) {
   const event = Option.getOrNull(
     AsyncResult.value(useAtomValue(telegramEnvironment.status({ environmentId, input: null }))),
   );
+  const resent = useAtomValue(telegramEnvironment.undeliveredResend(environmentId));
+  const live = query.data && event ? applyTelegramStatusEvent(query.data, event) : query.data;
   return {
-    settings: query.data && event ? applyTelegramStatusEvent(query.data, event) : query.data,
+    settings: live && applyUndeliveredResend(live, resent, event, query.dataUpdatedAt),
     error: query.error,
     refresh: query.refresh,
   };
@@ -51,20 +57,27 @@ export type TelegramReply =
 /** Each change settles into a reply, so the form can show the server's refusal where it happened. */
 export function useTelegramActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(telegramEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    telegramEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(telegramEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(telegramEnvironment.resendUndelivered, { reportFailure: false });
+  const reply = (result: AtomCommandResult<unknown, unknown>): TelegramReply => {
+    if (result._tag === "Success") return { ok: true };
+    const error = squashAtomCommandFailure(result);
+    return {
+      ok: false,
+      message:
+        error instanceof Error && error.message.trim() !== ""
+          ? error.message
+          : "Something went wrong. Try again.",
+    };
+  };
   return {
     canAct,
-    configure: async (input: TelegramChannelConfigureInput): Promise<TelegramReply> => {
-      const result = await configure({ environmentId, input });
-      if (result._tag === "Success") return { ok: true };
-      const error = squashAtomCommandFailure(result);
-      return {
-        ok: false,
-        message:
-          error instanceof Error && error.message.trim() !== ""
-            ? error.message
-            : "Something went wrong. Try again.",
-      };
-    },
+    canResend,
+    configure: async (input: TelegramChannelConfigureInput) =>
+      reply(await configure({ environmentId, input })),
+    resendUndelivered: async () => reply(await resend({ environmentId, input: {} })),
   };
 }

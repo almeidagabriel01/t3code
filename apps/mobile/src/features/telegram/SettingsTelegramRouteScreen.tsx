@@ -4,6 +4,7 @@ import {
   telegramSenderLabel,
   telegramStatusLabel,
   telegramSwitchHint,
+  telegramUndeliveredLabel,
 } from "@t3tools/client-runtime/state/telegramChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ComponentProps } from "react";
@@ -22,6 +23,7 @@ import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ChannelLanguageSection } from "../settings/components/ChannelLanguageSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
+import { UndeliveredRepliesRow } from "../settings/components/UndeliveredRepliesRow";
 
 function Hint(props: { readonly children: string; readonly tone?: "danger" }) {
   return (
@@ -190,6 +192,12 @@ function TelegramEnvironment(props: {
               ? `A reply was not delivered: ${telegramDeliveryErrorReason(failure)}.`
               : undefined
           }
+        />
+        <UndeliveredRepliesRow
+          label={telegramUndeliveredLabel(settings)}
+          disabled={!telegram.canResend}
+          onResend={telegram.resendUndelivered}
+          onError={setError}
         />
         <SettingsSwitchRow
           icon="paperplane"

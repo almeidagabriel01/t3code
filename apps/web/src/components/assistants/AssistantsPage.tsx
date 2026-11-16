@@ -45,6 +45,7 @@ import { AssistantIntegrationChips } from "./AssistantIntegrationsField";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantStatus } from "../sidebar/useSidebarZones";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 import { useAssistantAttention, useGroupAttention } from "./useAssistantAttention";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -59,7 +60,7 @@ function AssistantCard(props: {
   const archived = assistant.archivedAt !== null;
   const taskSections = useAssistantTaskSections(props.entry);
   const { attention } = useAssistantAttention(props.entry);
-  const presence = useAssistantStatus().of(environmentId, assistant);
+  const presence = useAssistantStatus().of(environmentId, assistant, useUsageLimitLabel());
   return (
     <article
       data-testid="assistant-card"

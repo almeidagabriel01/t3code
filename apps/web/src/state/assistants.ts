@@ -1,8 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { AssistantGroupTabKey } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantErrorMessage,
+  assistantGroupPostFailure,
   assistantForTaskThread,
   assistantForThread,
+  ASSISTANT_GROUP_CHAT_IDLE,
   createAssistantsEnvironmentAtoms,
   selectAssistantTasks,
   selectActiveAssistants,
@@ -13,6 +16,8 @@ import {
 import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
+  type AssistantGroupReplyRef,
+  type AssistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
@@ -21,6 +26,7 @@ import {
   type Assistant,
   type AssistantTask,
   type AssistantGroupConversationAction,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
@@ -42,11 +48,13 @@ import {
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useEffect, useId } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "./query";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import { showGroupTab } from "./openGroupTabs";
 import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentsWithScope } from "./session";
 import { environmentThreadShells } from "./threads";
@@ -155,6 +163,13 @@ const assistantEntriesAtom = Atom.family((key: string) =>
       : next;
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
+
+/** One read, for code that is not a component. */
+export function readAssistantEntries() {
+  return appAtomRegistry.get(
+    assistantEntriesAtom(environmentIdsKey(appAtomRegistry.get(assistantsEnvironmentIdsAtom))),
+  );
+}
 
 const threadAssistantAtom = Atom.family((key: string) =>
   Atom.make((get) => {
@@ -430,16 +445,42 @@ export function useAssistantTeamActions(environmentId: EnvironmentId) {
   };
 }
 
-/** The chat's live state, or null before the first snapshot. */
+/**
+ * One group's chat, live: null before its first snapshot. A scope narrows it to one tab, none
+ * reads every request, and null reads nothing while the tab is not known yet.
+ */
 export function useAssistantGroupChat(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
+  scope?: AssistantGroupScope | null,
 ): AssistantGroupChatState | null {
   return Option.getOrNull(
     AsyncResult.value(
-      useAtomValue(assistantsEnvironment.groupChat({ environmentId, input: { teamId } })),
+      useAtomValue(
+        scope === null
+          ? ASSISTANT_GROUP_CHAT_IDLE
+          : assistantsEnvironment.groupChat({
+              environmentId,
+              input: { teamId, ...(scope === undefined ? {} : { scope }) },
+            }),
+      ),
     ),
   );
+}
+
+/** The chat a group composer reads what routes its draft from: `useAssistantGroupChat`'s. */
+export interface AssistantGroupChatRef {
+  readonly teamId: AssistantTeamId;
+  readonly scope: AssistantGroupScope | null | undefined;
+  readonly reply: AssistantGroupReplyRef | null;
+}
+
+/** What routes a draft besides its text, from the group's chat; changes only when that does. */
+export function useAssistantGroupSendContext(
+  environmentId: EnvironmentId,
+  chat: AssistantGroupChatRef,
+): AssistantGroupSendContext {
+  return useAtomValue(assistantsEnvironment.groupSendContext({ environmentId, ...chat }));
 }
 
 /** The groups of every connected environment, for what must watch them outside a component. */
@@ -447,6 +488,19 @@ export const assistantTeamEntriesAtom = Atom.make(
   (get): ReadonlyArray<AssistantTeamEntry> =>
     get(assistantEntriesAtom(environmentIdsKey(get(assistantsEnvironmentIdsAtom)))).teams,
 ).pipe(Atom.withLabel("web-assistant-team-entries"));
+
+export function useShowGroupTab(
+  environmentId: EnvironmentId,
+  teamId: AssistantTeamId,
+  tab: AssistantGroupTabKey | null | undefined,
+) {
+  const mount = useId();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the notice coordinator runs outside React
+  useEffect(
+    () => showGroupTab(appAtomRegistry, mount, { environmentId, teamId, tab }),
+    [mount, environmentId, teamId, tab],
+  );
+}
 
 export type AssistantGroupPostReply =
   | { readonly ok: true; readonly value: AssistantGroupsPostResult }
@@ -489,8 +543,12 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     markRead: async (
       teamId: AssistantTeamId,
       position: { readonly readSeq: number } | { readonly unread: true },
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply> => {
-      const result = await markRead({ environmentId, input: { teamId, ...position } });
+      const result = await markRead({
+        environmentId,
+        input: { teamId, ...position, ...(scope === undefined ? {} : { scope }) },
+      });
       return result._tag === "Success"
         ? { ok: true, value: undefined }
         : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
@@ -498,12 +556,7 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     post: async (input: AssistantGroupsPostInput): Promise<AssistantGroupPostReply> => {
       const result = await post({ environmentId, input });
       if (result._tag === "Success") return { ok: true, value: result.value };
-      const error = squashAtomCommandFailure(result);
-      const reason =
-        typeof error === "object" && error !== null && "reason" in error
-          ? String(error.reason)
-          : null;
-      return { ok: false, message: assistantErrorMessage(error), reason };
+      return { ok: false, ...assistantGroupPostFailure(result.cause) };
     },
     taskAction: async (
       input: AssistantGroupsTaskActionInput,
@@ -517,11 +570,16 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     olderThan: async (
       teamId: AssistantTeamId,
       state: AssistantGroupChatState,
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply<AssistantGroupsHistoryResult>> => {
       const beforeSeq = oldestAssistantGroupSeq(state) ?? undefined;
       const result = await history({
         environmentId,
-        input: { teamId, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+        input: {
+          teamId,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(scope === undefined ? {} : { scope }),
+        },
       });
       return result._tag === "Success"
         ? { ok: true, value: result.value }

@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import {
   PACKET_CHAT_CHARS,
   PACKET_QUOTED_CHARS,
-  PACKET_SUMMARY_CHARS,
   chatNews,
   childResultsText,
   groupTaskPacket,
@@ -20,7 +19,7 @@ const base: PacketInput = {
   self: ada,
   members: [ada, beto],
   news: [],
-  summary: null,
+  request: "Close the books",
   quoted: [],
   from: "the user",
   instruction: "Close the books",
@@ -35,12 +34,16 @@ it("names the group, the members and the task, and escapes the group in the tag"
     'You are Ada (@ada) in the group "Money "Team"". Members: Ada (@ada, CFO), Beto (@beto, lead).',
   );
   assert.include(packet, "Your task, from the user: Close the books");
+  assert.include(
+    packet,
+    `This task belongs to the request "Close the books". You see only this request's messages`,
+  );
   assert.include(packet, "t3_group: history");
   // Members do the work themselves; handing off is for a clear mismatch or when asked.
   assert.include(packet, "Do the work yourself, in your role.");
   assert.include(packet, "Transfer or assign only when the request asks for it");
   assert.notInclude(packet, "instead of doing it");
-  assert.notInclude(packet, "New in the group chat");
+  assert.notInclude(packet, "New in this request");
   assert.isTrue(packet.endsWith("</t3_group_task>"));
 });
 
@@ -88,10 +91,9 @@ it("keeps the newest chat lines when they do not all fit and says what was left 
   assert.include(childResultsText([{ owner: "Cy", status: "failed", text: "" }]), "(no answer)");
 });
 
-it("puts the summary first, cut to its budget, and older quoted messages before the news", () => {
+it("puts older quoted messages before the request's news, never twice", () => {
   const packet = groupTaskPacket({
     ...base,
-    summary: `  ${"s".repeat(PACKET_SUMMARY_CHARS + 500)}  `,
     news: [{ seq: 9, from: "user", text: "latest" }],
     quoted: [
       { seq: 2, from: "Beto", text: "the budget is 5k" },
@@ -99,13 +101,10 @@ it("puts the summary first, cut to its budget, and older quoted messages before 
     ],
   });
   const at = (text: string) => packet.indexOf(text);
-  assert.isBelow(at("Summary of earlier chat:"), at("Earlier messages this task refers to:"));
-  assert.isBelow(at("Earlier messages this task refers to:"), at("New in the group chat"));
+  assert.isBelow(at("Earlier messages this task refers to:"), at("New in this request"));
   assert.include(packet, "[#2 Beto] the budget is 5k");
   // A quoted message already in the news is not shown twice.
   assert.strictEqual(packet.split("[#9 user] latest").length, 2);
-  assert.isBelow(packet.length, PACKET_SUMMARY_CHARS + 1_500);
-  assert.notInclude(groupTaskPacket({ ...base, summary: "   " }), "Summary of earlier chat");
   assert.notInclude(groupTaskPacket(base), "Earlier messages this task");
 });
 

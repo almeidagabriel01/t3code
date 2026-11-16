@@ -46,6 +46,7 @@ vi.mock("../../components/ui/Menu", () => ({
           <button
             key={action.id}
             aria-label={`menu:${action.id}`}
+            data-subtitle={action.subtitle}
             disabled={action.attributes?.disabled}
             onClick={() => props.onPressAction({ nativeEvent: { event: action.id ?? "" } })}
           />
@@ -55,6 +56,10 @@ vi.mock("../../components/ui/Menu", () => ({
   },
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({
     active: mocks.assistants.map((assistant) => ({ environmentId: "hub", assistant })),
@@ -344,8 +349,17 @@ describe("ThreadAssistantStack", () => {
     mocks.working = new Set();
     view.rerender(stack());
     expect(cluster()).toBe("jarvis:idle,ada:idle");
+    expect(button("task:dismiss")?.dataset.subtitle).toBeUndefined();
     await act(async () => button("task:dismiss")?.click());
     expect(mocks.dismissTask).toHaveBeenCalledWith("t1");
+
+    mocks.taskShell = {
+      ...failedShell,
+      runtime: { status: "failed", lastErrorClass: "usage_limit", usageLimitResetAt: "2099-01-01" },
+    };
+    view.rerender(stack());
+    expect(button("task:dismiss")?.dataset.subtitle).toBe("Limit until <2099-01-01>");
+    expect(button("task:dismiss")?.disabled).toBe(false);
 
     mocks.task = { dismissedAt: "2026-11-06T00:00:00.000Z" };
     view.rerender(stack());

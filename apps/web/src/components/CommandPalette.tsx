@@ -109,6 +109,7 @@ import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { projectPanelPaletteItems } from "./projectPanels/projectPanelPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
+import { offerProjectAssistantAccess } from "./assistants/ProjectAssistantAccessDialog";
 import { openAssistantWork } from "./assistants/assistantWorkState";
 import { openAssistantInfo } from "./assistants/assistantInfoState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
@@ -2415,6 +2416,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    offerProjectAssistantAccess(input.environmentId, projectId);
     setOpen(false);
   };
 
@@ -2657,7 +2659,10 @@ function OpenCommandPaletteDialog(props: {
       addProjectCloneFlow.environmentId,
       startResult.value.projectId,
     );
-    await waitForProject(projectRef, 3_000).catch(() => null);
+    const cloned = await waitForProject(projectRef, 3_000).catch(() => null);
+    if (cloned !== null) {
+      offerProjectAssistantAccess(addProjectCloneFlow.environmentId, projectRef.projectId);
+    }
     const navigationResult = await settlePromise(() => handleNewThread(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);

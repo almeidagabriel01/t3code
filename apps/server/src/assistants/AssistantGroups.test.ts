@@ -9,16 +9,26 @@ import {
   AssistantId,
   type AssistantsEvent,
   AssistantTeamId,
+  type AssistantGroupMessageId,
+  AssistantGroupsHistoryInput,
+  type AssistantGroupsPostInput,
+  type AssistantGroupsEvent,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
+  ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
+import type { DeepPartial } from "@t3tools/shared/Struct";
 import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -29,19 +39,30 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../attachmentStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as Gate from "./AssistantGroupGate.ts";
+import * as Directory from "./AssistantDirectory.ts";
 import * as Groups from "./AssistantGroups.ts";
-import { groupThreadId, HANDOFF_PAUSES, taskMessageId } from "./AssistantGroups.ts";
+import {
+  groupThreadId,
+  HANDOFF_PAUSES,
+  requestThreadId,
+  taskMessageId,
+} from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
+import { countsAsUnreadSql } from "./groupChatSql.ts";
+import { toAssistantTeam, type AssistantTeamRow } from "./AssistantTeams.ts";
 
 class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
 
@@ -51,25 +72,28 @@ const TEAM = AssistantTeamId.make("team:1");
 const OTHER_TEAM = AssistantTeamId.make("team:2");
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
+const p1 = ProjectId.make("p1");
+const p2 = ProjectId.make("p2");
 const selection = (instanceId: ProviderInstanceId, model = "m"): ModelSelection => ({
   instanceId,
   model,
 });
-const adaThread = groupThreadId("ada", TEAM);
-const betoThread = groupThreadId("beto", TEAM);
-const cyThread = groupThreadId("cy", TEAM);
 
 interface FakeThread {
   projectId: string;
   title: string;
   archivedAt: string | null;
   deletedAt: string | null;
+  settledOverride: "settled" | null;
   modelSelection: ModelSelection;
 }
 interface FakeRun {
   id: string;
   userMessageId: string;
   status: string;
+  ordinal?: number;
+  completedAt?: DateTime.Utc;
+  usageLimitContinuationOfRunId?: string;
 }
 
 interface Options {
@@ -84,15 +108,41 @@ interface Options {
   readonly summarize?: (call: number) => string | "fail" | "unsupported";
   /** Holds every summary call until it completes. */
   readonly summaryGate?: Deferred.Deferred<void>;
+  /** The server's auto-resume setting for usage-limited threads; on unless set. */
+  readonly autoResume?: boolean;
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
-  }) => ReadonlyArray<string> | "fail" | "none";
+    readonly projects?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+    readonly request: string;
+  }) =>
+    | ReadonlyArray<string>
+    | "fail"
+    | "none"
+    | {
+        readonly assistantIds: ReadonlyArray<string>;
+        readonly projectId?: string;
+        readonly question?: string;
+        readonly title?: string;
+      };
+  /** Projects each member may work in (by assistant id); the rest work anywhere from p1. */
+  readonly projects?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Server settings beside auto-resume, such as each project's default model. */
+  readonly settings?: DeepPartial<ServerSettingsValue>;
 }
+
+/** Titles of the projects tests use; each exists in the projection. */
+const PROJECT_TITLES: Readonly<Record<string, string>> = {
+  p1: "Core",
+  p2: "Mobile App",
+  p3: "Site",
+};
 
 const harness = (options: Options = {}) => {
   const fakeThreads = new Map<string, FakeThread>();
   const runs = new Map<string, FakeRun[]>();
   const answers = new Map<string, string>();
+  /** Runs that failed on a usage limit, with the limit's reset time. */
+  const limits = new Map<string, string>();
   const sent: Array<{
     projectId: string;
     commandId: string;
@@ -118,7 +168,11 @@ const harness = (options: Options = {}) => {
     createdBy: string;
   }> = [];
   const deletedTeams: string[] = [];
+  /** What the projection answers for a runtime request, by id. */
+  const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
+  /** The last chat counters (`scopes_json`) refreshTeamChat published, by team. */
+  const published = new Map<string, string | null>();
   const routeCalls: unknown[] = [];
   const summaryCalls: Array<{
     previousSummary: string | null;
@@ -129,6 +183,8 @@ const harness = (options: Options = {}) => {
   const live = {} as {
     changes: PubSub.PubSub<AssistantsEvent>;
     deleted: Deferred.Deferred<void>;
+    /** The first request thread moved to another model, by id. */
+    modelSet: Deferred.Deferred<string>;
   };
 
   const addThread = (id: string, projectId: string, model: ModelSelection, title = id) =>
@@ -137,6 +193,7 @@ const harness = (options: Options = {}) => {
       title,
       archivedAt: null,
       deletedAt: null,
+      settledOverride: null,
       modelSelection: model,
     });
   addThread("assistant:ada:1", "p1", selection(codex, "ada-model"));
@@ -151,7 +208,20 @@ const harness = (options: Options = {}) => {
       getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const statuses = filter?.runStatuses as ReadonlyArray<string> | undefined;
         const runIds = filter?.messageRunIds as ReadonlyArray<string> | undefined;
+        const errorRunIds = filter?.turnItemRunIds as ReadonlyArray<string> | undefined;
         return Effect.succeed({
+          turnItems: (errorRunIds ?? []).flatMap((runId) =>
+            limits.has(runId)
+              ? [
+                  {
+                    type: "error",
+                    status: "failed",
+                    runId,
+                    failure: { class: "usage_limit", resetAt: limits.get(runId) },
+                  },
+                ]
+              : [],
+          ),
           runs: (runs.get(threadId) ?? []).filter(
             (run) => statuses === undefined || statuses.includes(run.status),
           ),
@@ -160,18 +230,52 @@ const harness = (options: Options = {}) => {
           ),
         });
       }) as never,
-      dispatch: ((command: { type: string; threadId: string; commandId: string; runId?: string }) =>
-        Effect.sync(() => {
+      dispatch: ((command: {
+        type: string;
+        threadId: string;
+        commandId: string;
+        runId?: string;
+        modelSelection?: ModelSelection;
+      }) => {
+        // Like the Orchestrator: another provider waits until the thread's turn has ended.
+        if (command.type === "thread.model-selection.set") {
+          const thread = fakeThreads.get(command.threadId)!;
+          const busy = (runs.get(command.threadId) ?? []).some((run) =>
+            ["running", "waiting"].includes(run.status),
+          );
+          if (busy && thread.modelSelection.instanceId !== command.modelSelection!.instanceId) {
+            return Effect.fail(
+              new Orchestrator.OrchestratorProviderSelectionBusyError({
+                commandId: command.commandId as never,
+                threadId: command.threadId as never,
+              }),
+            );
+          }
+          thread.modelSelection = command.modelSelection!;
+          Deferred.doneUnsafe(live.modelSet, Effect.succeed(command.threadId));
+        }
+        return Effect.sync(() => {
           dispatched.push(command);
           const thread = fakeThreads.get(command.threadId);
           if (thread !== undefined) {
             if (command.type === "thread.archive") thread.archivedAt = "now";
             if (command.type === "thread.unarchive") thread.archivedAt = null;
             if (command.type === "thread.delete") thread.deletedAt = "now";
+            if (command.type === "thread.unsettle") thread.settledOverride = null;
             if (command.type === "thread.metadata.update")
               thread.title = (command as { title?: string }).title ?? thread.title;
           }
           return {} as never;
+        });
+      }) as never,
+    }),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getRuntimeResponseContext: ((_threadId: string, requestId: string) =>
+        Effect.succeed({
+          request: runtimeRequests.get(requestId)?.request,
+          item: runtimeRequests.get(requestId)?.item,
+          node: undefined,
+          session: undefined,
         })) as never,
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -179,9 +283,23 @@ const harness = (options: Options = {}) => {
         const thread = fakeThreads.get(threadId);
         return thread === undefined ? Effect.fail(new Boom()) : Effect.succeed({ thread });
       }) as never,
+      // Like the Orchestrator: a thread with a live run refuses to settle.
+      settleThread: ((input: { threadId: string; commandId: string }) => {
+        const thread = fakeThreads.get(input.threadId);
+        const live = (runs.get(input.threadId) ?? []).some((run) =>
+          ["queued", "running"].includes(run.status),
+        );
+        if (thread === undefined || live) return Effect.fail(new Boom());
+        thread.settledOverride = "settled";
+        dispatched.push({ type: "thread.settle", ...input });
+        return Effect.succeed({ sequence: 1 });
+      }) as never,
       sendToThread: ((input: (typeof sent)[number]) => {
         if (state.failSend) return Effect.fail(new Boom());
         sent.push(input);
+        // A message to a settled thread makes it active again.
+        const target = fakeThreads.get(input.threadId);
+        if (target !== undefined) target.settledOverride = null;
         runs.set(input.threadId, [
           ...(runs.get(input.threadId) ?? []),
           { id: `run:${input.messageId}`, userMessageId: input.messageId, status: "running" },
@@ -203,9 +321,19 @@ const harness = (options: Options = {}) => {
       AssistantService,
       Effect.gen(function* () {
         live.changes = yield* PubSub.unbounded<AssistantsEvent>();
+        const sql = yield* SqlClient.SqlClient;
         return AssistantService.of({
           subscribeChanges: PubSub.subscribe(live.changes),
-          refreshTeamChat: (teamId: string) => Effect.sync(() => void refreshed.push(teamId)),
+          // Like the real one: publishes the team's chat counters as they are at this moment.
+          refreshTeamChat: (teamId: string) =>
+            sql<{ readonly scopes_json: string }>`
+              SELECT scopes_json FROM assistant_team_state WHERE team_id = ${teamId}`.pipe(
+              Effect.map((rows) => {
+                refreshed.push(teamId);
+                published.set(teamId, rows[0]?.scopes_json ?? null);
+              }),
+              Effect.orDie,
+            ),
           defaultModel: () => Effect.succeed(selection(codex, "default-model")),
         } as never);
       }),
@@ -232,14 +360,14 @@ const harness = (options: Options = {}) => {
         } as never),
     }),
     Layer.mock(TextGeneration)({
-      routeAssistantGroup: ((input: { members: ReadonlyArray<{ id: string }> }) => {
+      routeAssistantGroup: ((input: Parameters<NonNullable<Options["route"]>>[0]) => {
         routeCalls.push(input);
         const picked = options.route?.(input) ?? [];
         return picked === "fail"
           ? Effect.fail(new Boom())
           : picked === "none"
             ? Effect.succeed({ assistantIds: [], noReply: true })
-            : Effect.succeed({ assistantIds: picked });
+            : Effect.succeed("assistantIds" in picked ? picked : { assistantIds: picked });
       }) as never,
       ...(options.summarize?.(0) === "unsupported"
         ? {}
@@ -256,13 +384,43 @@ const harness = (options: Options = {}) => {
           }),
     }),
     Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
+    Directory.layer,
     Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
       cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
     }),
-    ServerSettings.layerTest(),
+    ProjectModelSelection.layer.pipe(
+      Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone })),
+    ),
+  ).pipe(
+    // The test settings never stream their changes; the group's settings reaction needs them.
+    Layer.provideMerge(
+      Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+          live.modelSet = yield* Deferred.make<string>();
+          return ServerSettings.ServerSettingsService.of({
+            ...settings,
+            subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+            updateSettings: (patch) =>
+              settings
+                .updateSettings(patch)
+                .pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(
+          ServerSettings.layerTest({
+            ...options.settings,
+            autoResumeLimitedThreads: options.autoResume ?? true,
+          }),
+        ),
+      ),
+    ),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -276,11 +434,20 @@ const harness = (options: Options = {}) => {
 
   const setup = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const assistant = (id: string, name: string, role: string, access = "workspace-write") =>
-      sql`INSERT INTO assistants
-        (assistant_id, handle, name, project_id, instructions, tool_access, thread_id, role, created_at, updated_at)
-        VALUES (${id}, ${id}, ${name}, 'p1', ${`${name} does ${role}.`}, ${access},
-          ${`assistant:${id}:1`}, ${role}, '2026-01-01', '2026-01-01')`;
+    for (const [id, title] of Object.entries(PROJECT_TITLES)) {
+      yield* sql`INSERT INTO projection_projects
+        (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${id}, ${title}, ${`/work/${id}`}, '[]', '2026-01-01', '2026-01-01')`;
+    }
+    const assistant = (id: string, name: string, role: string, access = "workspace-write") => {
+      const listed = options.projects?.[id] ?? [];
+      return sql`INSERT INTO assistants
+        (assistant_id, handle, name, project_id, instructions, tool_access, thread_id, role,
+          scope, project_ids_json, created_at, updated_at)
+        VALUES (${id}, ${id}, ${name}, ${listed[0] ?? "p1"}, ${`${name} does ${role}.`}, ${access},
+          ${`assistant:${id}:1`}, ${role}, ${listed.length === 0 ? "all" : "project"},
+          ${listed.length === 0 ? null : JSON.stringify(listed)}, '2026-01-01', '2026-01-01')`;
+    };
     yield* assistant("ada", "Ada", "CFO", "read-only");
     yield* assistant("beto", "Beto", "Engineering");
     yield* assistant("cy", "Cy", "Design");
@@ -295,8 +462,11 @@ const harness = (options: Options = {}) => {
 
   const user = { kind: "user" } as const;
 
-  /** Ends the run the n-th queued task started, as the provider would, and feeds the event. */
-  const finish = (index: number, status: string, answer?: string) =>
+  /**
+   * Ends the run the n-th queued task started, as the provider would, and feeds the event. With
+   * `workedMs`, the run reports when its work started and ended that far apart.
+   */
+  const finish = (index: number, status: string, answer?: string, workedMs?: number) =>
     Effect.gen(function* () {
       const groups = yield* Groups.AssistantGroups;
       const message = sent[index]!;
@@ -310,6 +480,13 @@ const harness = (options: Options = {}) => {
           threadId: message.threadId,
           userMessageId: message.messageId,
           status,
+          ...(workedMs === undefined
+            ? {}
+            : {
+                requestedAt: DateTime.makeUnsafe(0),
+                workStartedAt: DateTime.makeUnsafe(5_000),
+                completedAt: DateTime.makeUnsafe(5_000 + workedMs),
+              }),
         },
       } as never as OrchestrationV2DomainEvent);
     });
@@ -344,6 +521,9 @@ const harness = (options: Options = {}) => {
     text: string;
     reply_to: string | null;
     task_id: string | null;
+    worked_ms: number | null;
+    request_id: string | null;
+    request_project_id: string | null;
   }>("SELECT * FROM assistant_group_messages ORDER BY seq");
 
   /** Ends the live run of a task's current revision. */
@@ -358,18 +538,30 @@ const harness = (options: Options = {}) => {
       );
     });
 
+  /** The thread a member's newest task was sent to: the member tools' caller. */
+  const threadOf = (member: string) =>
+    ThreadId.make(
+      sent.findLast((row) => row.threadId.startsWith(`assistant:${member}:g-`))?.threadId ??
+        groupThreadId(member, TEAM),
+    );
+
   return {
     layer,
     setup,
+    threadOf,
     user,
     sent,
     dispatched,
     launched,
     fakeThreads,
     runs,
+    limits,
+    answers,
+    runtimeRequests,
     live,
     deletedTeams,
     refreshed,
+    published,
     cleaned,
     routeCalls,
     summaryCalls,
@@ -400,16 +592,28 @@ it.effect("an @mention opens one task per member, and the third waits for a free
     );
     assert.equal(posted.message.author, "user");
     assert.equal(posted.message.seq, 1);
-    assert.equal(posted.tasks[0]!.threadId, adaThread);
+    assert.equal(posted.tasks[0]!.threadId, h.threadOf("ada"));
     assert.deepEqual(
       h.sent.map((message) => message.threadId),
-      [adaThread, betoThread],
+      [h.threadOf("ada"), h.threadOf("beto")],
     );
     // The first free slot goes to the oldest queued task.
-    yield* h.finish(0, "completed", "Books closed.");
+    yield* h.finish(0, "completed", "Books closed.", 42_000);
     assert.equal(h.sent.length, 3);
-    assert.equal(h.sent[2]!.threadId, cyThread);
+    assert.equal(h.sent[2]!.threadId, h.threadOf("cy"));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed", "beto:running", "cy:running"]);
+    // An answer carries how long the run worked; a run that reports no ending time carries none.
+    yield* h.finish(1, "completed", "Ledger done.");
+    const answers = (yield* groups.history({ teamId: TEAM })).messages.filter(
+      (message) => message.author === "assistant",
+    );
+    assert.deepEqual(
+      answers.map((message) => [message.text, message.workedMs]),
+      [
+        ["Books closed.", 42_000],
+        ["Ledger done.", undefined],
+      ],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -478,9 +682,456 @@ it.effect(
         groups.markRead({ teamId: AssistantTeamId.make("nope"), readSeq: 1 }),
       );
       assert.equal(missing.reason, "not_found");
+      // A tab is one of the group's projects, empty or not, or a scope that holds its lines.
+      const outside = yield* refusalError(
+        groups.markRead({ teamId: TEAM, scope: { projectId: ProjectId.make("p9") } }),
+      );
+      assert.equal(outside.reason, "invalid");
+      assert.equal(
+        (yield* groups.markRead({ teamId: OTHER_TEAM, scope: { projectId: ProjectId.make("p1") } }))
+          .readSeq,
+        0,
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+type ReadStep =
+  | { readonly read: { projectId?: string | null; readSeq?: number; unread?: true } }
+  | { readonly conversation: "undo" | "clear" }
+  | { readonly removeGroup: true }
+  | { readonly sql: string };
+
+/** A second root task, for the request whose first message is `request`. */
+const rootTask = (request: string, status: string) =>
+  `INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+    owner_id, instruction, status, request_id, created_at, updated_at)
+  VALUES ('gt:2', '${TEAM}', 'gt:2', 'root', '${request}', 'ada', 'do', '${status}', '${request}', 't', 't')`;
+
+/** Unread, waiting and read position per tab after each step, and the stored tab positions. */
+it.effect.each<{
+  name: string;
+  steps: ReadonlyArray<ReadStep>;
+  readSeq?: number;
+  scopes: Record<string, [unread: number, waiting: boolean, readSeq: number]>;
+  cursors: Record<string, number>;
+  /** Each tab's project title, when the case checks it; null for none. */
+  titles?: Record<string, string | null>;
+  /** The chat's request projects that no longer exist, when the case checks them. */
+  removed?: ReadonlyArray<string>;
+}>([
+  {
+    // p1's task has stopped, so p1 stays listed even once read.
+    name: "a chat lists every tab with unread or waiting, and General with its request",
+    steps: [],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+    removed: [],
+  },
+  {
+    name: "reading every tab moves the group's position past them, and the tabs' go",
+    steps: [
+      { read: { projectId: "p1" } },
+      { read: { projectId: "p2" } },
+      { read: { projectId: null } },
+    ],
+    readSeq: 7,
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
+    name: "reading one tab leaves the others unread",
+    steps: [{ read: { projectId: "p1" } }],
+    readSeq: 7,
+    // The group's position rises to just before the oldest unread line (p2's, at 4).
+    scopes: { p1: [0, false, 7], p2: [1, true, 3], "": [1, true, 3] },
+    cursors: { p1: 7 },
+  },
+  {
+    name: "reading the whole group drops every tab's own position",
+    steps: [{ read: { projectId: "p1", readSeq: 2 } }, { read: {} }],
+    readSeq: 7,
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
+    name: "marking one tab unread moves only that tab",
+    steps: [{ read: {} }, { read: { projectId: "p2", unread: true } }],
+    readSeq: 3,
+    scopes: { p1: [0, false, 7], p2: [1, true, 3], "": [0, true, 7] },
+    cursors: { p2: 3 },
+  },
+  {
+    name: "marking the group unread drops every tab's own position",
+    steps: [{ read: { projectId: "p1" } }, { read: { unread: true } }],
+    readSeq: 5,
+    scopes: { p1: [0, false, 5], p2: [0, true, 5], "": [1, true, 5] },
+    cursors: {},
+  },
+  {
+    name: "undoing the last boundary lowers every tab's position below it",
+    steps: [{ read: { projectId: "p1" } }, { conversation: "undo" }],
+    scopes: { p1: [0, false, 6], p2: [1, true, 3], "": [1, true, 3] },
+    cursors: { p1: 6 },
+  },
+  {
+    name: "clearing the chat deletes every tab's position",
+    steps: [{ read: { projectId: "p1" } }, { conversation: "clear" }],
+    scopes: {},
+    cursors: {},
+  },
+  {
+    name: "removing the group deletes its tabs' positions",
+    steps: [{ read: { projectId: "p1" } }, { removeGroup: true }],
+    scopes: {},
+    cursors: {},
+  },
+  {
+    name: "General is listed only while it has a request, and an answered wait goes dark",
+    steps: [
+      { sql: "DELETE FROM assistant_group_messages WHERE request_id = 'gm:5'" },
+      { sql: "UPDATE assistant_group_messages SET wait_resolved_at = 't' WHERE seq = 4" },
+      { read: {} },
+    ],
+    readSeq: 7,
+    scopes: { p1: [0, false, 7] },
+    cursors: {},
+  },
+  {
+    name: "a stopped task waits on the user in its tab, read or not",
+    steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'paused'" }, { read: {} }],
+    readSeq: 7,
+    scopes: { p1: [0, true, 7], p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
+    name: "a failed task waits on the user too",
+    steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'failed'" }],
+    scopes: { p1: [1, true, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+  },
+  {
+    name: "a stopped task beside one still working does not wait",
+    steps: [
+      { sql: "UPDATE assistant_group_tasks SET status = 'paused'" },
+      { sql: rootTask("gm:1", "running") },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+  },
+  {
+    name: "a request asking its project waits only until work starts on it",
+    steps: [{ sql: rootTask("gm:5", "running") }],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, false, 0] },
+    cursors: {},
+  },
+  {
+    name: "a deleted project's tab keeps its last title, and a never-seen project has none",
+    steps: [
+      { sql: "UPDATE projection_projects SET deleted_at = 't' WHERE project_id = 'p2'" },
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, created_at)
+          VALUES ('gm:8', '${TEAM}', 8, 'assistant', 'message', 'x', 'gm:8', 'p9', 'p9', 't')`,
+      },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], p9: [1, false, 0], "": [1, true, 0] },
+    cursors: {},
+    titles: { p1: PROJECT_TITLES.p1!, p2: PROJECT_TITLES.p2!, p9: null, "": null },
+    removed: ["p2", "p9"],
+  },
+])("$name", ({ steps, readSeq, scopes, cursors, titles, removed }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // p1: a request and its answer; p2: a request waiting on the user; General: a request the
+    // lead asked the project of; then a chat-wide boundary. p1's task is done.
+    const line = (
+      seq: number,
+      author: string,
+      kind: string,
+      request: string | null,
+      project: string | null,
+      extra: { waitKey?: string; asksProject?: boolean } = {},
+    ) => sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+        wait_key, asks_project, created_at)
+      VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, ${author}, ${kind}, 'x', ${request},
+        ${request === `gm:${seq}` ? project : null}, ${project}, ${extra.waitKey ?? null},
+        ${extra.asksProject === true ? 1 : 0}, '2026-01-01')`;
+    yield* line(1, "user", "message", "gm:1", "p1");
+    yield* line(2, "assistant", "message", "gm:1", "p1");
+    yield* line(3, "user", "message", "gm:3", "p2");
+    yield* line(4, "assistant", "notice", "gm:3", "p2", { waitKey: "w1" });
+    yield* line(5, "user", "message", "gm:5", null);
+    yield* line(6, "assistant", "notice", "gm:5", null, { asksProject: true });
+    yield* line(7, "user", "boundary", null, null);
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        request_id, created_at, updated_at)
+      VALUES ('gt:1', ${TEAM}, 'gt:1', 'root', 'gm:1', 'ada', 'do', 'completed', 'gm:1', 't', 't')`;
+    let lastRead: number | undefined;
+    for (const step of steps) {
+      if ("read" in step) {
+        const { projectId, ...rest } = step.read;
+        lastRead = (yield* groups.markRead({
+          teamId: TEAM,
+          ...rest,
+          ...(projectId === undefined
+            ? {}
+            : { scope: { projectId: projectId === null ? null : ProjectId.make(projectId) } }),
+        })).readSeq;
+      } else if ("conversation" in step) {
+        yield* groups.conversation({ teamId: TEAM, action: step.conversation });
+      } else if ("removeGroup" in step) {
+        yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM });
+      } else {
+        yield* sql.unsafe(step.sql);
+      }
+    }
+    if (readSeq !== undefined) assert.equal(lastRead, readSeq);
+    const [row] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const chat = toAssistantTeam(row!).chat!;
+    assert.deepEqual(
+      Object.fromEntries(
+        (chat.scopes ?? []).map((scope) => [
+          scope.projectId ?? "",
+          [scope.unreadCount, scope.waiting, scope.readSeq],
+        ]),
+      ),
+      scopes,
+    );
+    if (titles !== undefined) {
+      assert.deepEqual(
+        Object.fromEntries(
+          (chat.scopes ?? []).map((scope) => [scope.projectId ?? "", scope.title ?? null]),
+        ),
+        titles,
+      );
+    }
+    assert.equal(
+      chat.unreadCount,
+      Object.values(scopes).reduce((sum, [unread]) => sum + unread, 0),
+    );
+    if (removed !== undefined) assert.deepEqual(chat.removedProjectIds, removed);
+    const stored = yield* sql<{ readonly scope: string; readonly read_seq: number }>`
+      SELECT scope, read_seq FROM assistant_group_read_cursors`;
+    assert.deepEqual(Object.fromEntries(stored.map((c) => [c.scope, c.read_seq])), cursors);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the team chat names the preview's project and counts every tab's running tasks", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: ProjectId.make("p1") }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: ProjectId.make("p2") }, h.user);
+    yield* h.finish(0, "completed", "one done");
+    const [row] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const chat = toAssistantTeam(row!).chat!;
+    assert.deepEqual([chat.preview, chat.previewProjectId], ["one done", "p1"]);
+    const running = (yield* h.tasks).filter((task) => task.status === "running").length;
+    assert.isAbove(running, 0);
+    assert.equal(chat.runningCount, running);
+    // Each tab counts its own open work: p1's is done, p2's still runs, and a task with no
+    // request is General's, so the tabs always add up to the group's.
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        created_at, updated_at)
+      VALUES ('gt:old', ${TEAM}, 'gt:old', 'root', 'gm:old', 'ada', 'do', 'queued', 't', 't')`;
+    const [after] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const open = (toAssistantTeam(after!).chat?.scopes ?? []).flatMap((scope) =>
+      scope.openTasks === undefined ? [] : [[String(scope.projectId ?? ""), scope.openTasks]],
+    );
+    assert.deepEqual(open, [
+      ["", 1],
+      ["p2", after!.open_tasks! - 1],
+    ]);
+    assert.isAbove(after!.open_tasks!, 1);
+    // A stopped task stays counted in its tab, so a client tells its end from a move.
+    const done = (toAssistantTeam(after!).chat?.scopes ?? []).flatMap((scope) =>
+      scope.doneTasks === undefined ? [] : [[String(scope.projectId ?? ""), scope.doneTasks]],
+    );
+    assert.deepEqual(done, [["p1", 1]]);
+    // General's work with no request (from before requests, or one deleted) tells its end too.
+    yield* sql`UPDATE assistant_group_tasks SET status = 'completed' WHERE task_id = 'gt:old'`;
+    const [ended] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const general = toAssistantTeam(ended!).chat?.scopes?.find((scope) => scope.projectId === null);
+    assert.deepEqual([general?.doneTasks, general?.hasRequests], [1, false]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("raising the group's position after a tab read never changes a tab's count", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    let seq = 0;
+    // Requests in p1, p2 and General, each with chatter, a member's lines, and sometimes the
+    // user's answer; then a chat-wide boundary.
+    const request = (scope: string | null, lines: ReadonlyArray<[string, string]>) =>
+      Effect.gen(function* () {
+        const head = `gm:${seq + 1}`;
+        for (const [author, kind] of [["user", "message"], ...lines] as const) {
+          seq += 1;
+          yield* sql`INSERT INTO assistant_group_messages
+            (message_id, team_id, seq, author, kind, text, request_id, project_id,
+              request_project_id, created_at)
+            VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, ${author}, ${kind}, 'x', ${head},
+              ${`gm:${seq}` === head ? scope : null}, ${scope}, 't')`;
+        }
+      });
+    const fill = Effect.gen(function* () {
+      yield* request("p1", [
+        ["assistant", "routing"],
+        ["assistant", "message"],
+      ]);
+      yield* request("p2", [
+        ["assistant", "message"],
+        ["user", "message"],
+        ["agent", "notice"],
+      ]);
+      yield* request(null, [
+        ["assistant", "notice"],
+        ["assistant", "message"],
+      ]);
+      yield* request("p1", [
+        ["assistant", "message"],
+        ["assistant", "change"],
+      ]);
+    });
+    yield* fill;
+    const group = { position: 0 };
+    const tabs = new Map<string, number>();
+    const check = Effect.gen(function* () {
+      const [row] = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+      const shown = toAssistantTeam(row!).chat?.scopes ?? [];
+      for (const scope of ["p1", "p2", ""]) {
+        const position = tabs.get(scope) ?? group.position;
+        const [expected] = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM assistant_group_messages m
+          WHERE m.team_id = ${TEAM} AND m.request_project_id IS NULLIF(${scope}, '')
+            AND m.seq > ${position} AND ${sql.literal(countsAsUnreadSql("m"))}`;
+        const actual = shown.find((tab) => (tab.projectId ?? "") === scope)?.unreadCount ?? 0;
+        assert.equal(actual, expected!.n, `${scope} after ${JSON.stringify([...tabs])}`);
+      }
+    });
+    const steps: ReadonlyArray<{ projectId?: string; readSeq?: number; unread?: true } | "more"> = [
+      { projectId: "p1" },
+      { projectId: "p2", unread: true },
+      { projectId: "", readSeq: 3 },
+      { projectId: "p1", readSeq: 1 },
+      { projectId: "p2" },
+      "more",
+      { projectId: "", unread: true },
+      { readSeq: 4 },
+      { projectId: "p1", unread: true },
+      { projectId: "p2", readSeq: 2 },
+      { projectId: "" },
+      "more",
+      {},
+      // Below the group's position, with other tabs' lines above it: the group's must not drop.
+      { projectId: "p2", unread: true },
+      { projectId: "p1" },
+      { projectId: "p2" },
+      { projectId: "" },
+    ];
+    for (const step of steps) {
+      if (step === "more") {
+        yield* fill;
+      } else {
+        const { projectId, ...rest } = step;
+        const { readSeq } = yield* groups.markRead({
+          teamId: TEAM,
+          ...rest,
+          ...(projectId === undefined
+            ? {}
+            : { scope: { projectId: projectId === "" ? null : ProjectId.make(projectId) } }),
+        });
+        if (projectId === undefined) {
+          group.position = readSeq;
+          tabs.clear();
+        } else {
+          tabs.set(projectId, readSeq);
+        }
+      }
+      yield* check;
+    }
+    // Every tab read: the group's position reaches the newest line and no tab keeps its own.
+    assert.deepEqual(yield* sql`SELECT scope FROM assistant_group_read_cursors`, []);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("two tabs read at once both end read", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    for (const [seq, project] of [
+      [1, "p1"],
+      [2, "p2"],
+    ] as const) {
+      yield* sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+          created_at)
+        VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, 'assistant', 'message', 'x', ${`gm:${seq}`},
+          ${project}, ${project}, 't')`;
+    }
+    yield* Effect.forEach(
+      ["p1", "p2"],
+      (projectId) =>
+        groups.markRead({ teamId: TEAM, scope: { projectId: ProjectId.make(projectId) } }),
+      { concurrency: "unbounded" },
+    );
+    // With both read, nothing is unread anywhere: the group's position covers both tabs.
+    assert.deepEqual(yield* sql`SELECT scope FROM assistant_group_read_cursors`, []);
+    assert.deepEqual(yield* sql`SELECT read_seq FROM assistant_teams WHERE team_id = ${TEAM}`, [
+      { read_seq: 2 },
+    ]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a request that already has a project keeps it when another is picked", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: [], question: "Who should take it?" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "fix the login", projectId: ProjectId.make("p2") },
+      h.user,
+    );
+    yield* groups.idle;
+    const pull = yield* Stream.toPull(groups.subscribe(TEAM, { projectId: ProjectId.make("p1") }));
+    assert.equal((yield* pull)[0]!.type, "snapshot");
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Core",
+        replyToMessageId: posted.message.id,
+        projectId: ProjectId.make("p1"),
+      },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    assert.deepEqual([...new Set(lines.map((m) => m.request_project_id))], ["p2"]);
+    // Nothing reached the other project's tab before the clear's empty page.
+    yield* groups.conversation({ teamId: TEAM, action: "clear" });
+    const [next] = yield* pull;
+    assert.deepEqual(next, { type: "snapshot", messages: [], tasks: [], hasMore: false });
+  }).pipe(Effect.provide(h.layer), Effect.scoped);
+});
 
 const recipientTable = [
   ["a leading @handle", "@beto please look", ["beto"]],
@@ -514,8 +1165,8 @@ it.effect("a reply to a member's message goes to that member's task owner", () =
       followUp.tasks.map((task) => task.ownerId),
       ["cy"],
     );
-    // A reply to something that is not a member's answer falls through to the next rule: with one
-    // task open, its owner takes it.
+    // A reply to something that is not a member's answer still continues the request: the one
+    // member working it takes it.
     const again = yield* groups.post(
       { teamId: TEAM, text: "again", replyToMessageId: followUp.message.id },
       h.user,
@@ -542,12 +1193,26 @@ it.effect("a group of one takes any message", () => {
 it.effect(
   "a message that names no one is refused before it is stored when the lead cannot route",
   () => {
-    const h = harness({ lead: "beto", routable: [codex] });
+    const h = harness({
+      lead: "beto",
+      routable: [codex],
+      projects: { ada: ["p1"], beto: ["p2"] },
+    });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      const error = yield* groups.post({ teamId: TEAM, text: "hello?" }, h.user).pipe(Effect.flip);
-      assert.equal(error.reason, "mention_required");
-      assert.equal(error.message, Groups.MENTION_REQUIRED_MESSAGE);
+      const post = (projectId?: ProjectId) =>
+        groups
+          .post({ teamId: TEAM, text: "hello?", ...(projectId ? { projectId } : {}) }, h.user)
+          .pipe(Effect.flip);
+      // The group has a lead, so the user is told why it cannot route, never to set one.
+      const unplaced = yield* post();
+      const error = yield* post(ProjectId.make("p1"));
+      assert.deepEqual([unplaced.reason, error.reason], ["invalid", "mention_required"]);
+      for (const refusal of [unplaced, error]) {
+        assert.include(refusal.message, "Beto");
+        assert.include(refusal.message, "can't route");
+        assert.notInclude(refusal.message, "no lead");
+      }
       assert.lengthOf(yield* h.messages, 0);
     }).pipe(Effect.provide(h.layer));
   },
@@ -631,31 +1296,36 @@ it.effect("a bare continue resumes the newest stopped task, before anything asks
       ["routing", "Resumed Ada's task", posted.message.id],
     );
     assert.lengthOf(h.routeCalls, 0);
-    // Nothing is stopped now, so the next one goes the normal way (one task open: its owner).
+    assert.equal(posted.message.requestId, (yield* h.messages)[0]!.message_id);
+    // Nothing is stopped now: it is a new request, and with no lead it waits.
     const next = yield* groups.post({ teamId: TEAM, text: "continue" }, h.user);
-    assert.deepEqual(
-      next.tasks.map((task) => task.ownerId),
-      ["ada"],
-    );
+    assert.deepEqual(next.tasks, []);
+    assert.equal(next.message.requestId, next.message.id);
   }).pipe(Effect.provide(h.layer));
 });
 
 it.effect(
-  "a follow-up goes to the owner of the one open task; with several open the lead routes",
+  "a message replying to nothing starts a request the lead routes; a reply continues its request",
   () => {
     const h = harness({ lead: "beto", routable: [claude], route: () => ["cy"] });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      yield* groups.post({ teamId: TEAM, text: "@ada the budget" }, h.user);
-      const followUp = yield* groups.post({ teamId: TEAM, text: "include Q3 too" }, h.user);
-      assert.deepEqual(
-        followUp.tasks.map((task) => task.ownerId),
-        ["ada"],
-      );
-      assert.lengthOf(h.routeCalls, 0);
-      yield* groups.post({ teamId: TEAM, text: "@cy the logo" }, h.user);
-      yield* groups.post({ teamId: TEAM, text: "and what about the date?" }, h.user);
+      const budget = yield* groups.post({ teamId: TEAM, text: "@ada the budget" }, h.user);
+      // While Ada works, an unrelated message is its own request, not a follow-up of hers.
+      const other = yield* groups.post({ teamId: TEAM, text: "include Q3 too" }, h.user);
       yield* groups.idle;
+      assert.lengthOf(h.routeCalls, 1);
+      assert.equal(other.message.requestId, other.message.id);
+      // Replying to the budget request keeps it there, with the member working it.
+      const reply = yield* groups.post(
+        { teamId: TEAM, text: "include Q3 too", replyToMessageId: budget.message.id },
+        h.user,
+      );
+      assert.equal(reply.message.requestId, budget.message.id);
+      assert.deepEqual(
+        reply.tasks.map((task) => [task.ownerId as string, task.requestId as string]),
+        [["ada", budget.message.id]],
+      );
       assert.lengthOf(h.routeCalls, 1);
     }).pipe(Effect.provide(h.layer));
   },
@@ -710,6 +1380,11 @@ it.effect(
       );
       assert.lengthOf(yield* h.messages, 1);
       assert.lengthOf(h.sent, 1);
+      assert.lengthOf(h.launched, 1);
+      assert.notInclude(
+        h.dispatched.map((command) => command.type),
+        "thread.model-selection.set",
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -740,36 +1415,745 @@ it.effect("agents and schedules open tasks whose instruction names their sender"
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a member's exec thread is launched once, lazily, like its own conversation", () => {
+it.effect(
+  "a member gets one thread per request, launched lazily in its project on that project's model",
+  () => {
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+      // Ada's own conversation is not the group's model: each request follows its project.
+      h.fakeThreads.get("assistant:ada:1")!.modelSelection = selection(claude, "ada-new");
+      const two = yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+      assert.deepEqual(
+        h.launched.map((input) => [input.projectId, input.modelSelection]),
+        [
+          ["p1", selection(codex, "p1-model")],
+          ["p2", selection(claude, "p2-model")],
+        ],
+      );
+      // Later tasks run on what the thread has, so a change made in it stays.
+      assert.deepEqual(
+        h.sent.map((input) => input.modelSelection),
+        [undefined, undefined],
+      );
+      const first = requestThreadId("ada", TEAM, one.message.id);
+      const second = requestThreadId("ada", TEAM, two.message.id);
+      assert.notEqual(first, second);
+      assert.deepEqual(
+        h.launched.map((input) => input.threadId),
+        [first, second],
+      );
+      assert.deepInclude(h.launched[0], {
+        commandId: `assistant-group-launch:${first}`,
+        threadId: first,
+        projectId: "p1",
+        title: "Ada · Team team:1 · one",
+        // Ada is read-only, so the thread asks before acting.
+        runtimeMode: "approval-required",
+        generateTitle: false,
+        createdBy: "system",
+      });
+      assert.match(first, /^assistant:ada:g-[0-9a-f]{16}$/);
+      // More work for Ada in the first request continues her conversation for it.
+      yield* h.finish(0, "completed", "Done one.");
+      yield* groups.post(
+        { teamId: TEAM, text: "and the totals", replyToMessageId: one.message.id },
+        h.user,
+      );
+      assert.equal(h.sent.at(-1)!.threadId, first);
+      assert.lengthOf(h.launched, 2);
+      assert.deepEqual(
+        (yield* h.sqlRows<{ request_id: string; thread_id: string }>(
+          "SELECT request_id, thread_id FROM assistant_group_request_threads ORDER BY rowid",
+        )).map((row) => [row.request_id, row.thread_id]),
+        [
+          [one.message.id, first],
+          [two.message.id, second],
+        ],
+      );
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_threads"), 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a request thread follows the model of the project it works in, not the request's later one",
+  () => {
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const one = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto one", projectId: p1 },
+        h.user,
+      );
+      // As a request from before requests had projects: started with none, so its threads were
+      // launched in each member's own project (p1) and keep working in that checkout.
+      yield* sql`UPDATE assistant_group_messages SET project_id = NULL WHERE message_id = ${one.message.id}`;
+      const ada = requestThreadId("ada", TEAM, one.message.id);
+      const beto = requestThreadId("beto", TEAM, one.message.id);
+      // Beto picked another model in his thread: that choice stays.
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      const switches = () =>
+        h.dispatched.filter((command) => command.type === "thread.model-selection.set");
+
+      yield* groups.post(
+        { teamId: TEAM, text: "this is for p2", replyToMessageId: one.message.id, projectId: p2 },
+        h.user,
+      );
+      yield* groups.followProjectModels([p2]);
+      assert.lengthOf(switches(), 0);
+
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(claude, "p1-new") },
+        },
+      });
+      yield* groups.followProjectModels([p1]);
+      // Ada's turn is still running, so her provider changes when it ends.
+      assert.lengthOf(switches(), 0);
+      yield* h.finish(0, "completed", "done");
+      assert.deepEqual(
+        switches().map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.lengthOf(h.launched, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a project's new model reaches its open requests' threads that still follow the old one",
+  () => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const open = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+      const done = yield* groups.post({ teamId: TEAM, text: "@cy two" }, h.user);
+      const ada = requestThreadId("ada", TEAM, open.message.id);
+      const beto = requestThreadId("beto", TEAM, open.message.id);
+      const cy = requestThreadId("cy", TEAM, done.message.id);
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      // Ada's turn ended; Beto's still runs, so the request is open. Cy's request is done.
+      yield* h.finish(0, "completed", "done");
+      yield* h.finish(2, "completed", "done");
+
+      const before = yield* settings.getSettings;
+      const after = yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: {
+            defaultModelSelection: selection(claude, "p1-new"),
+            assistantModelSelections: { [AssistantId.make("cy")]: selection(claude, "cy-new") },
+          },
+          // Another setting of another project is no model change.
+          [p2]: { defaultThreadEnvMode: "worktree" },
+        },
+      });
+      const candidates = [
+        { id: p1, workspaceRoot: "/work/p1" },
+        { id: p2, workspaceRoot: "/work/p2" },
+      ];
+      assert.deepEqual(Groups.projectModelChanges(before, after, candidates), [p1]);
+      // A folder rule or a provider switched off changes the effective default too.
+      const folder = {
+        ...after,
+        folderModelDefaults: [{ folder: "/work/p2", modelSelection: selection(claude, "folder") }],
+      };
+      assert.deepEqual(Groups.projectModelChanges(after, folder, candidates), [p2]);
+      const claudeOff = {
+        ...folder,
+        providerInstances: {
+          ...folder.providerInstances,
+          [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
+        },
+      };
+      assert.deepEqual(Groups.projectModelChanges(folder, claudeOff, candidates), [p1, p2]);
+      assert.deepEqual(Groups.projectModelChanges(claudeOff, claudeOff, candidates), []);
+      yield* groups.followProjectModels([p1]);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.model-selection.set")
+          .map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.deepEqual(h.fakeThreads.get(cy)!.modelSelection, selection(codex, "p1-model"));
+      assert.lengthOf(h.launched, 3);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a project's model changed in settings moves its open requests' threads", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    yield* groups.start;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    assert.equal(yield* Deferred.await(h.live.modelSet), ada);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a request that ended takes its project's new model only when work comes back", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    // Ada's request ends while a move waits for her turn; Beto's ended before the change.
+    const deferred = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    const closed = yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
+    const ada = requestThreadId("ada", TEAM, deferred.message.id);
+    const beto = requestThreadId("beto", TEAM, closed.message.id);
+    yield* h.finish(1, "completed", "done");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    yield* h.finish(0, "completed", "done");
+    // An ended request's threads are not touched.
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "p1-model"));
+
+    for (const [request, thread] of [
+      [deferred, ada],
+      [closed, beto],
+    ] as const) {
+      yield* groups.post(
+        { teamId: TEAM, text: "one more thing", replyToMessageId: request.message.id },
+        h.user,
+      );
+      // The send makes the thread busy, so the move has to land before it.
+      assert.equal(h.sent.at(-1)!.threadId, thread);
+      assert.deepEqual(h.fakeThreads.get(thread)!.modelSelection, selection(claude, "p1-new"));
+    }
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "a model change, then a task", changeFirst: true },
+  { name: "a task, then a model change", changeFirst: false },
+])(
+  "$name, while the user's own turn runs: the task waits and starts on the new model",
+  ({ changeFirst }) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      yield* h.finish(0, "completed", "done");
+      // The user writes in Ada's thread: a turn that is no task, still running.
+      const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+      h.runs.get(ada)!.push(manual);
+      const change = Effect.gen(function* () {
+        yield* settings.updateSettings({
+          projectSettingsOverrides: {
+            [p1]: { defaultModelSelection: selection(claude, "p1-new") },
+          },
+        });
+        yield* groups.followProjectModels([p1]);
+      });
+      const ask = groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+        h.user,
+      );
+      if (changeFirst) yield* change;
+      yield* ask;
+      if (!changeFirst) yield* change;
+      // Queued in the thread, it would start on the thread's model the moment the turn ends.
+      assert.notEqual(h.sent.at(-1)!.threadId, ada);
+      assert.equal(
+        (yield* h.tasks).at(-1)!.reason,
+        "waiting for the conversation's current turn to end",
+      );
+
+      manual.status = "completed";
+      yield* groups.handleRunEvent({
+        type: "run.updated",
+        payload: {
+          id: manual.id,
+          threadId: ada,
+          userMessageId: manual.userMessageId,
+          status: "completed",
+        },
+      } as never as OrchestrationV2DomainEvent);
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a task held by the user's own turn starts on start if that turn ended while down",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      yield* h.finish(0, "completed", "done");
+      const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+      h.runs.get(ada)!.push(manual);
+      yield* groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+        h.user,
+      );
+      assert.lengthOf(h.sent, 1);
+      // The turn ended while the server was down, so no event says so.
+      manual.status = "completed";
+      yield* groups.reconcile;
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.lengthOf(h.sent, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    // The user writes in Ada's thread: a turn that is no task, still running.
+    const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+    h.runs.get(ada)!.push(manual);
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    manual.status = "completed";
+    yield* groups.handleRunEvent({
+      type: "run.updated",
+      payload: {
+        id: manual.id,
+        threadId: ada,
+        userMessageId: manual.userMessageId,
+        status: "completed",
+      },
+    } as never as OrchestrationV2DomainEvent);
+
+    // The send makes the thread busy, so the move has to land before it.
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+      h.user,
+    );
+    assert.equal(h.sent.at(-1)!.threadId, ada);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { via: "a mention", text: "@ada one", lead: undefined },
+  { via: "the lead", text: "one", lead: "beto" },
+])(
+  "a message's model, routed by $via, starts its work only and saves no default",
+  ({ text, lead }) => {
+    const h = harness({
+      ...(lead === undefined ? {} : { lead, routable: [claude], route: () => ["ada"] }),
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const before = yield* settings.getSettings;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post({ teamId: TEAM, text, modelSelection: opus }, h.user);
+      yield* groups.idle;
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // A subtask the member hands off is that message's work too.
+      const child = yield* groups.member.assign({
+        callerThreadId: ada,
+        member: "cy",
+        instruction: "Check the build",
+      });
+      const cy = requestThreadId("cy", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(cy)!.modelSelection, opus);
+      yield* h.finishTask(child.taskId, "completed", "Build is green.");
+      yield* h.finish(0, "completed", "done");
+
+      // The next message in the same request is that request's work too; its own model wins.
+      const ask = (more: Partial<AssistantGroupsPostInput>) =>
+        groups.post(
+          { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+          h.user,
+        );
+      yield* ask({});
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      const sonnet = selection(claude, "sonnet");
+      yield* ask({ modelSelection: sonnet });
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, sonnet);
+      assert.deepEqual(yield* settings.getSettings, before);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  ["a provider nobody has", selection(ProviderInstanceId.make("gone"), "x"), {}],
+  [
+    "a provider that is off everywhere",
+    selection(claude, "opus"),
+    { [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false } },
+  ],
+] as const)(
+  "a message's model from %s posts on the project's model and saves nothing",
+  ([, pick, providerInstances]) => {
+    const h = harness({
+      settings: {
+        providerInstances,
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const before = yield* settings.getSettings;
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada one", modelSelection: pick },
+        h.user,
+      );
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+      assert.deepEqual(yield* settings.getSettings, before);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a message's model the request's project turns off falls back to the project's", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: {
+        [p1]: {
+          defaultModelSelection: selection(codex, "p1-model"),
+          providerInstances: { [claude]: { enabled: false } },
+        },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const request = yield* groups.post(
+      { teamId: TEAM, text: "@ada one", modelSelection: selection(claude, "opus") },
+      h.user,
+    );
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+const opusModel = selection(claude, "opus");
+const sonnetModel = selection(claude, "sonnet");
+const mineModel = selection(claude, "mine");
+type SwitchStep =
+  | { readonly ask: ModelSelection | undefined; readonly expect: ModelSelection }
+  | { readonly handOff: ModelSelection; readonly answerBack: ModelSelection };
+
+it.effect.each<readonly [string, ModelSelection | undefined, ReadonlyArray<SwitchStep>]>([
+  ["a message without a model", undefined, [{ ask: undefined, expect: mineModel }]],
+  [
+    "another message's model, then one without",
+    undefined,
+    [
+      { ask: sonnetModel, expect: sonnetModel },
+      { ask: undefined, expect: mineModel },
+    ],
+  ],
+  [
+    "the same message model, again and again",
+    undefined,
+    [
+      { ask: opusModel, expect: mineModel },
+      { ask: opusModel, expect: mineModel },
+    ],
+  ],
+  [
+    "follow-ups without a model on the request's",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { ask: undefined, expect: mineModel },
+      { ask: undefined, expect: mineModel },
+    ],
+  ],
+  [
+    "follow-ups that pick the request's model again",
+    opusModel,
+    [
+      { ask: opusModel, expect: mineModel },
+      { ask: opusModel, expect: mineModel },
+    ],
+  ],
+  [
+    "a hand-off and a question back in the same work",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { handOff: opusModel, answerBack: mineModel },
+    ],
+  ],
+  [
+    "a pick of another model still moves it",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { ask: sonnetModel, expect: sonnetModel },
+    ],
+  ],
+])(
+  "a model the user picks in the thread during a message's work outlives it: %s",
+  ([, requestModel, steps]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "@ada one",
+          ...(requestModel ? { modelSelection: requestModel } : {}),
+        },
+        h.user,
+      );
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      const model = () => h.fakeThreads.get(ada)!.modelSelection;
+      const ask = (more: Partial<AssistantGroupsPostInput>) =>
+        groups.post(
+          { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+          h.user,
+        );
+      if (requestModel === undefined) {
+        yield* h.finish(0, "completed", "done");
+        h.fakeThreads.get(ada)!.modelSelection = selection(codex, "ada-pick");
+        yield* ask({ modelSelection: opusModel });
+      }
+      // The user switches the thread while the message's work runs.
+      h.fakeThreads.get(ada)!.modelSelection = mineModel;
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      const seen: Array<string> = [];
+      const wanted: Array<string> = [];
+      for (const step of steps) {
+        if ("ask" in step) {
+          yield* ask(step.ask === undefined ? {} : { modelSelection: step.ask });
+          seen.push(model().model);
+          wanted.push(step.expect.model);
+          yield* h.finish(h.sent.length - 1, "completed", "done");
+          continue;
+        }
+        yield* ask({});
+        const turn = h.sent.length - 1;
+        const child = yield* groups.member.assign({
+          callerThreadId: ada,
+          member: "cy",
+          instruction: "Check the build",
+        });
+        const cy = requestThreadId("cy", TEAM, request.message.id);
+        seen.push(h.fakeThreads.get(cy)!.modelSelection.model);
+        wanted.push(step.handOff.model);
+        yield* h.finish(turn, "completed", "Ada's notes");
+        const answer = (yield* h.messages).findLast((row) => row.assistant_id === "ada")!;
+        yield* groups.member.reply({
+          callerThreadId: cy,
+          messageId: answer.message_id,
+          text: "Which build?",
+        });
+        assert.equal(h.sent.at(-1)!.threadId, ada);
+        seen.push(model().model);
+        wanted.push(step.answerBack.model);
+        yield* h.finishTask(child.taskId, "completed", "Build is green.");
+      }
+      assert.deepEqual(seen, wanted);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a message's model leaves a model picked in the thread for the next task", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    const handPicked = selection(codex, "ada-pick");
+    h.fakeThreads.get(ada)!.modelSelection = handPicked;
+    const ask = (more: Partial<AssistantGroupsPostInput>) =>
+      groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+        h.user,
+      );
+    yield* ask({ modelSelection: selection(claude, "opus") });
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "opus"));
+    yield* h.finish(h.sent.length - 1, "completed", "done");
+    yield* ask({});
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, handPicked);
+    // It is still the thread's own pick: a new project model leaves it.
+    yield* h.finish(h.sent.length - 1, "completed", "done");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    yield* ask({});
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, handPicked);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  ["the request", true],
+  ["a reply in it", false],
+] as const)(
+  "a model picked on %s holds there when the project's model changes",
+  ([, onRequest]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(claude, "p1-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada one", ...(onRequest ? { modelSelection: opus } : {}) },
+        h.user,
+      );
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      if (!onRequest) {
+        yield* h.finish(0, "completed", "done");
+        yield* groups.post(
+          {
+            teamId: TEAM,
+            text: "@ada more",
+            replyToMessageId: request.message.id,
+            modelSelection: opus,
+          },
+          h.user,
+        );
+      }
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // The same provider switches at once, even mid-turn: the pick must still hold.
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+      });
+      yield* groups.followProjectModels([p1]);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // A request with no pick takes the new model.
+      const other = yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+      assert.deepEqual(
+        h.fakeThreads.get(requestThreadId("ada", TEAM, other.message.id))!.modelSelection,
+        selection(claude, "p1-new"),
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a continue with a model resumes the stopped work on it", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
-    // Ada switched models in her own conversation: the next task in the group follows.
-    h.fakeThreads.get("assistant:ada:1")!.modelSelection = selection(claude, "ada-new");
-    yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
-    assert.deepEqual(
-      h.sent.map((input) => input.modelSelection),
-      [selection(codex, "ada-model"), selection(claude, "ada-new")],
+    const first = yield* groups.post({ teamId: TEAM, text: "@ada draft the plan" }, h.user);
+    yield* groups.taskAction({ taskId: first.tasks[0]!.id, action: "stop" });
+    const opus = selection(claude, "opus");
+    yield* groups.post({ teamId: TEAM, text: "continue", modelSelection: opus }, h.user);
+    // Another provider waits for the stopped turn to end, so the resumed turn starts on it.
+    assert.lengthOf(h.sent, 1);
+    yield* h.finish(0, "interrupted");
+    assert.lengthOf(h.sent, 2);
+    const ada = requestThreadId("ada", TEAM, first.message.id);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the answer to the lead's project question gives the request its model", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+    route: () => ({ assistantIds: ["ada"], projectId: "p1" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const request = yield* groups.post({ teamId: TEAM, text: "fix #core and #mobile-app" }, h.user);
+    yield* groups.idle;
+    assert.lengthOf(h.launched, 0);
+    const opus = selection(claude, "opus");
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Core",
+        replyToMessageId: request.message.id,
+        projectId: p1,
+        modelSelection: opus,
+      },
+      h.user,
     );
-    assert.lengthOf(h.launched, 1);
-    assert.deepInclude(h.launched[0], {
-      commandId: "assistant-group-launch:team:1:ada",
-      threadId: adaThread,
-      projectId: "p1",
-      title: "Ada · Team team:1",
-      // Ada is read-only, so the thread asks before acting.
-      runtimeMode: "approval-required",
-      modelSelection: selection(codex, "ada-model"),
-      generateTitle: false,
-      createdBy: "system",
-    });
-    assert.match(adaThread, /^assistant:ada:g-[0-9a-f]{16}$/);
+    yield* groups.idle;
     assert.deepEqual(
-      (yield* h.sqlRows<{ thread_id: string }>(
-        "SELECT thread_id FROM assistant_group_threads",
-      )).map((row) => row.thread_id),
-      [adaThread],
+      h.launched.map((launch) => launch.modelSelection),
+      [opus],
     );
   }).pipe(Effect.provide(h.layer));
 });
@@ -793,24 +2177,28 @@ it.effect("a task that cannot start fails with a reason the user can see", () =>
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a member whose group thread is gone gets a new one and its tasks run", () => {
+it.effect("a member whose request thread is gone gets a new one and its tasks run", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada one @beto one" }, h.user);
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada one @beto one" }, h.user);
     yield* h.finish(0, "completed", "ok");
     yield* h.finish(1, "completed", "ok");
     const threadOf = (assistantId: string) =>
       h
         .sqlRows<{ thread_id: string; seen_seq: number }>(
-          `SELECT thread_id, seen_seq FROM assistant_group_threads WHERE assistant_id = '${assistantId}'`,
+          `SELECT thread_id, seen_seq FROM assistant_group_request_threads WHERE assistant_id = '${assistantId}'`,
         )
         .pipe(Effect.map((rows) => rows[0]!));
+    const adaFirst = h.threadOf("ada");
+    const betoFirst = h.threadOf("beto");
+    const more = (text: string) =>
+      groups.post({ teamId: TEAM, text, replyToMessageId: request.message.id }, h.user);
 
     // Deleted (its project was deleted): the id stays reserved, so the member moves to a new one.
-    h.fakeThreads.get(betoThread)!.deletedAt = "now";
+    h.fakeThreads.get(betoFirst)!.deletedAt = "now";
     h.state.failLaunch = true;
-    const stuck = yield* groups.post({ teamId: TEAM, text: "@beto two @ada two" }, h.user);
+    const stuck = yield* more("@beto two @ada two");
     assert.deepEqual(
       (yield* h.tasks).slice(2).map((task) => [task.owner_id, task.status, task.reason]),
       [
@@ -822,24 +2210,24 @@ it.effect("a member whose group thread is gone gets a new one and its tasks run"
     const failedId = stuck.tasks.find((task) => task.ownerId === "beto")!.id;
     const resumed = yield* groups.taskAction({ taskId: failedId, action: "resume" });
     const moved = (yield* threadOf("beto")).thread_id;
-    assert.notEqual(moved, betoThread);
+    assert.notEqual(moved, betoFirst);
     assert.match(moved, /^assistant:beto:g-[0-9a-f]{16}$/);
     assert.deepEqual([resumed.status, resumed.threadId], ["running", moved]);
     assert.equal(h.sent.at(-1)!.threadId, moved);
-    // The new thread has seen nothing, so its first packet carries the chat again.
+    // The new thread has seen nothing, so its first packet carries the request again.
     assert.include(h.sent.at(-1)!.text, "@ada one @beto one");
-    yield* groups.post({ teamId: TEAM, text: "@beto three" }, h.user);
     assert.deepEqual(
       h.launched.map((input) => input.threadId),
-      [adaThread, betoThread, moved],
+      [adaFirst, betoFirst, moved],
     );
 
-    // Absent (rows copied without their threads): no tombstone, so the same id launches.
-    h.fakeThreads.delete(adaThread);
-    for (const index of [2, 3, 4]) yield* h.finish(index, "completed", "ok");
-    yield* groups.post({ teamId: TEAM, text: "@ada three" }, h.user);
-    assert.equal((yield* threadOf("ada")).thread_id, adaThread);
-    assert.equal(h.launched.at(-1)!.threadId, adaThread);
+    // Absent (rows copied without their threads): no tombstone, so the same id launches again,
+    // under another command id since the first one's receipt may still be stored.
+    h.fakeThreads.delete(adaFirst);
+    for (const index of [2, 3]) yield* h.finish(index, "completed", "ok");
+    yield* more("@ada three");
+    assert.equal((yield* threadOf("ada")).thread_id, adaFirst);
+    assert.equal(h.launched.at(-1)!.threadId, adaFirst);
     assert.notEqual(h.launched.at(-1)!.commandId, h.launched[0]!.commandId);
     assert.deepEqual(
       (yield* h.tasks).filter((task) => task.owner_id === "ada").map((task) => task.status),
@@ -848,11 +2236,11 @@ it.effect("a member whose group thread is gone gets a new one and its tasks run"
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("the packet carries what the member has not seen, once", () => {
+it.effect("the packet carries what the member has not seen of its request, once", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada first" }, h.user);
+    const first = yield* groups.post({ teamId: TEAM, text: "@ada @beto first" }, h.user);
     const packet = h.sent[0]!.text;
     assert.include(packet, `<t3_group_task group="Team team:1" task="`);
     assert.include(packet, 'kind="root">');
@@ -861,111 +2249,70 @@ it.effect("the packet carries what the member has not seen, once", () => {
       packet,
       "Members: Ada (@ada, CFO), Beto (@beto, Engineering), Cy (@cy, Design).",
     );
-    assert.include(packet, "Your task, from the user: @ada first");
+    assert.include(packet, 'This task belongs to the request "first".');
+    assert.include(packet, "Your task, from the user: @ada @beto first");
     // The request is the task, so it is not repeated as news.
-    assert.notInclude(packet, "New in the group chat");
+    assert.notInclude(packet, "New in this request");
     yield* h.finish(0, "completed", "ok one");
-    yield* groups.post({ teamId: TEAM, text: "@beto second" }, h.user);
-    yield* groups.post({ teamId: TEAM, text: "@ada third" }, h.user);
-    const next = h.sent[2]!.text;
-    // Ada's own answer is already in her thread; Beto's request is news to her.
-    assert.include(next, "[#3 user] @beto second");
+    yield* h.finish(1, "completed", "beto says hi");
+    yield* groups.post({ teamId: TEAM, text: "@cy second" }, h.user);
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada third", replyToMessageId: first.message.id },
+      h.user,
+    );
+    const next = h.sent.at(-1)!.text;
+    // Ada's own answer is already in her thread; Beto's answer in the request is news to her, and
+    // another request never reaches her.
+    assert.include(next, "New in this request since your last task:");
+    assert.include(next, "beto says hi");
     assert.notInclude(next, "ok one");
-    assert.notInclude(next, "[#2");
-    yield* h.finish(2, "completed", "ok three");
-    yield* groups.post({ teamId: TEAM, text: "@ada fourth" }, h.user);
-    assert.notInclude(h.sent[3]!.text, "second");
+    assert.notInclude(next, "second");
+    yield* h.finishTask((yield* h.tasks).at(-1)!.task_id, "completed", "ok three");
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada fourth", replyToMessageId: first.message.id },
+      h.user,
+    );
+    assert.notInclude(h.sent.at(-1)!.text, "beto says hi");
   }).pipe(Effect.provide(h.layer));
 });
 
-const bulk = (letter: string) => `@ada ${letter.repeat(Groups.SUMMARY_TRIGGER_CHARS / 2 + 100)}`;
-
-it.effect("a long chat is summarized incrementally and the next packet carries the summary", () => {
-  const h = harness({ summarize: (call) => `Summary ${call}.` });
-  return Effect.gen(function* () {
-    const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada short" }, h.user);
-    yield* groups.idle;
-    assert.lengthOf(h.summaryCalls, 0);
-    yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
-    yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
-    yield* groups.idle;
-    assert.lengthOf(h.summaryCalls, 1);
-    assert.isNull(h.summaryCalls[0]!.previousSummary);
-    assert.lengthOf(h.summaryCalls[0]!.messages, 3);
-    yield* h.finish(0, "completed", "ok");
-    yield* h.finish(1, "completed", "ok");
-    yield* groups.post({ teamId: TEAM, text: "@beto hello" }, h.user);
-    const packet = h.sent.find((message) => message.threadId === betoThread)!.text;
-    assert.include(packet, "Summary of earlier chat:\nSummary 1.");
-    yield* groups.post({ teamId: TEAM, text: bulk("c") }, h.user);
-    yield* groups.post({ teamId: TEAM, text: bulk("d") }, h.user);
-    yield* groups.idle;
-    // The second pass folds in only what came after the first.
-    assert.lengthOf(h.summaryCalls, 2);
-    assert.equal(h.summaryCalls[1]!.previousSummary, "Summary 1.");
-    assert.deepEqual(
-      h.summaryCalls[1]!.messages.map((message) => message.text.slice(0, 7)),
-      ["ok", "ok", "@beto h", "@ada cc", "@ada dd"],
-    );
-    const rows = yield* h.sqlRows<{ summary: string; through_seq: number }>(
-      "SELECT * FROM assistant_group_summaries",
-    );
-    assert.deepEqual(
-      rows.map((row) => row.summary),
-      ["Summary 2."],
-    );
-  }).pipe(Effect.provide(h.layer));
-});
-
-it.effect("a summary that fails, is empty or is unsupported never touches the tasks", () => {
-  const failing = harness({ summarize: () => "fail" });
-  const empty = harness({ summarize: () => "  " });
-  const unsupported = harness({ summarize: () => "unsupported" });
-  const run = (h: ReturnType<typeof harness>) =>
-    Effect.gen(function* () {
-      const groups = yield* h.setup;
-      yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
-      yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
-      yield* groups.idle;
-      assert.isAtLeast(h.sent.length, 1);
-      assert.notInclude(h.sent.at(-1)!.text, "Summary of earlier chat");
-      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
-    }).pipe(Effect.provide(h.layer));
-  return Effect.gen(function* () {
-    yield* run(failing);
-    // A failed attempt waits for the chat to move on before it asks again.
-    assert.lengthOf(failing.summaryCalls, 1);
-    yield* run(empty);
-    yield* run(unsupported);
-  });
-});
-
-it.effect("a task also carries the older messages it names by #seq or replies to", () => {
+it.effect("a task also carries its request's older messages it names by #seq or replies to", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada the budget is 5k" }, h.user);
+    const budget = yield* groups.post({ teamId: TEAM, text: "@ada the budget is 5k" }, h.user);
     yield* h.finish(0, "completed", "noted");
-    yield* groups.post({ teamId: TEAM, text: "@ada what about #1 and #99?" }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@beto unrelated" }, h.user);
+    const more = (text: string, replyTo: string) =>
+      groups.post({ teamId: TEAM, text, replyToMessageId: replyTo as never }, h.user);
+    yield* more("@ada what about #1, #3 and #99?", budget.message.id);
+    const packet = h.sent.at(-1)!.text;
     assert.include(
-      h.sent[1]!.text,
+      packet,
       "Earlier messages this task refers to:\n[#1 user] @ada the budget is 5k",
     );
-    assert.notInclude(h.sent[1]!.text, "#99 ");
-    yield* h.finish(1, "completed", "yes");
-    const second = (yield* h.messages)[2]!;
-    yield* groups.post(
-      { teamId: TEAM, text: "@ada and this?", replyToMessageId: second.message_id as never },
-      h.user,
-    );
-    assert.include(h.sent[2]!.text, "[#3 user] @ada what about #1");
+    // #3 is another request's message: naming it does not bring it in.
+    assert.notInclude(packet, "unrelated");
+    assert.notInclude(packet, "#99 ");
+    yield* h.finishTask((yield* h.tasks).at(-1)!.task_id, "completed", "yes");
+    const question = (yield* h.messages).find((row) => row.text.startsWith("@ada what about"))!;
+    yield* more("@ada and this?", question.message_id);
+    assert.include(h.sent.at(-1)!.text, "[#4 user] @ada what about #1");
   }).pipe(Effect.provide(h.layer));
 });
 
 const outcomeTable = [
   ["completed with an answer", "completed", "All done.", null, "completed", "All done."],
   ["completed with no words", "completed", undefined, null, "completed", "(no answer)"],
+  ["completed quiet", "completed", "`NO_REPLY`", null, "completed", "Nothing new"],
+  [
+    "completed with words before the quiet token",
+    "completed",
+    "CI failed.\n\nNO_REPLY",
+    null,
+    "completed",
+    "CI failed.",
+  ],
   [
     "completed after result was called",
     "completed",
@@ -984,7 +2331,7 @@ it.effect.each(outcomeTable)("run outcome: %s", ([, runStatus, answer, result, s
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
     if (result !== null) {
-      yield* groups.member.result({ callerThreadId: adaThread, text: result });
+      yield* groups.member.result({ callerThreadId: h.threadOf("ada"), text: result });
     }
     yield* h.finish(0, runStatus, answer);
     const [task] = yield* h.tasks;
@@ -996,13 +2343,155 @@ it.effect.each(outcomeTable)("run outcome: %s", ([, runStatus, answer, result, s
     );
     if (posted !== null) {
       const [row] = rows;
+      // A quiet end is a muted line: never unread, and the request still reads as answered.
       assert.deepEqual(
         [row!.assistant_id, row!.task_id, row!.kind],
-        ["ada", task!.task_id, "message"],
+        ["ada", task!.task_id, posted === "Nothing new" ? "change" : "message"],
       );
       assert.equal(row!.reply_to, (yield* h.messages)[0]!.message_id);
     }
     if (runStatus === "interrupted") assert.equal(task!.reason, "stopped");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a usage limit holds the task until its thread continues it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const adaThread = h.threadOf("ada");
+    const resetAt = "2026-01-01T12:00:00.000Z";
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, resetAt);
+    yield* h.finish(0, "failed");
+    const page = () =>
+      groups
+        .history({ teamId: TEAM })
+        .pipe(
+          Effect.map(({ tasks }) => tasks.map((task) => [task.status, task.resetAt, task.reason])),
+        );
+    assert.deepEqual(yield* page(), [["usage_limited", resetAt, null]]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.author === "assistant"),
+      0,
+    );
+
+    // The thread continues the limited run at the reset, on its own message.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "running",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    assert.deepEqual(yield* page(), [["running", undefined, null]]);
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a member at a usage limit starts no other task until the limited one continues", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const [one] = [
+      yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user),
+      yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user),
+      yield* groups.post({ teamId: TEAM, text: "@ada three" }, h.user),
+    ];
+    const adaThread = requestThreadId("ada", TEAM, one.message.id);
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // The limited task frees its slot, but its thread is not free for Ada's next task.
+    yield* h.finish(1, "completed", "two done");
+    assert.lengthOf(h.sent, 2);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "beto:completed:null",
+        "ada:queued:waiting for a usage limit",
+      ],
+    );
+
+    // The continuation still ends the limited task, and then the next one starts.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "completed",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    yield* groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    assert.deepEqual(statusesOf(yield* h.tasks), [
+      "ada:completed",
+      "beto:completed",
+      "ada:running",
+    ]);
+    assert.include(h.sent[2]!.text, "three");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a usage limit holds only the tasks that would run on the limited provider", () => {
+  const h = harness({
+    projects: { ada: ["p1", "p2"] },
+    settings: {
+      projectSettingsOverrides: {
+        [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+        [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+    const [limitedRun] = h.runs.get(requestThreadId("ada", TEAM, one.message.id))!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // Ada's request in p2 runs on another provider; Beto's in p1 would hit the same limit.
+    yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@beto three", projectId: p1 }, h.user);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "ada:running:null",
+        "beto:queued:waiting for a usage limit",
+      ],
+    );
+    assert.deepEqual(
+      h.launched.map((input) => input.modelSelection.instanceId),
+      [codex, claude],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("Stop on a usage-limited task stops its thread so the reset does not resume it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const adaThread = h.threadOf("ada");
+    h.limits.set(h.runs.get(adaThread)![0]!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    const stopped = yield* groups.taskAction({ taskId: posted.tasks[0]!.id, action: "stop" });
+    assert.equal(stopped.status, "paused");
+    assert.deepEqual(
+      h.dispatched.filter((command) => command.type === "thread.stop").map((c) => c.threadId),
+      [adaThread],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1029,7 +2518,12 @@ it.effect("an old revision's run ending, or one for a stopped task, changes noth
     } as never);
     yield* groups.handleRunEvent({
       type: "run.updated",
-      payload: { id: "r", threadId: adaThread, userMessageId: "plain", status: "completed" },
+      payload: {
+        id: "r",
+        threadId: h.threadOf("ada"),
+        userMessageId: "plain",
+        status: "completed",
+      },
     } as never);
     yield* groups.handleRunEvent({ type: "thread.created", payload: {} } as never);
     assert.equal((yield* h.tasks)[0]!.status, "running");
@@ -1043,15 +2537,22 @@ it.effect(
     return Effect.gen(function* () {
       const groups = yield* h.setup;
       yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-      yield* groups.member.result({ callerThreadId: adaThread, text: "Ada's stale result" });
+      yield* groups.member.result({
+        callerThreadId: h.threadOf("ada"),
+        text: "Ada's stale result",
+      });
       const handed = yield* groups.member.transfer({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         member: "@beto",
         note: "numbers are in the sheet",
       });
       assert.equal(handed.status, "running");
       // A repeat is the same hand-over.
-      yield* groups.member.transfer({ callerThreadId: adaThread, member: "beto", note: "again" });
+      yield* groups.member.transfer({
+        callerThreadId: h.threadOf("ada"),
+        member: "beto",
+        note: "again",
+      });
       yield* h.finish(0, "completed", "I handed it off.");
       assert.lengthOf(yield* h.messages, 1);
       // Ada's explicit result belonged to her run: Beto's answer is what gets posted.
@@ -1064,7 +2565,7 @@ it.effect(
         [task!.owner_id, task!.status, task!.revision, task!.hops],
         ["beto", "completed", 2, 1],
       );
-      assert.equal(h.sent[1]!.threadId, betoThread);
+      assert.equal(h.sent[1]!.threadId, h.threadOf("beto"));
       assert.include(
         h.sent[1]!.text,
         "Ada (a teammate, not the user) handed this task to you: numbers are in the sheet",
@@ -1079,14 +2580,14 @@ it.effect("a task waits for what it assigned, then runs again with the results",
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
     const child = yield* groups.member.assign({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       member: "beto",
       instruction: "Check the build",
     });
     assert.equal(child.status, "running");
     // A repeat of the same assignment is the same task.
     const repeat = yield* groups.member.assign({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       member: "@beto",
       instruction: "Check the build",
     });
@@ -1106,7 +2607,7 @@ it.effect("a task waits for what it assigned, then runs again with the results",
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:completed"]);
     const [root] = yield* h.tasks;
     assert.equal(root!.revision, 2);
-    assert.equal(h.sent[2]!.threadId, adaThread);
+    assert.equal(h.sent[2]!.threadId, h.threadOf("ada"));
     assert.include(h.sent[2]!.text, "The tasks you gave are finished:");
     assert.include(h.sent[2]!.text, "- Beto (completed): Build is green.");
     // Beto's answer is in the chat; Ada's follows when she is done.
@@ -1122,15 +2623,58 @@ it.effect("a task waits for what it assigned, then runs again with the results",
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a failed child still lets the parent continue, and says it failed", () => {
-  const h = harness();
+// A usage limit nothing will continue on its own (auto-resume off) fails the task as before.
+it.effect.each([
+  { failure: "a plain failure", limit: false },
+  { failure: "a usage limit without auto-resume", limit: true },
+])("a failed child still lets the parent continue, and says it failed: $failure", ({ limit }) => {
+  const h = harness({ autoResume: false });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    yield* groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "Try" });
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Try",
+    });
     yield* h.finish(0, "completed", "waiting");
+    const betoThread = h.threadOf("beto");
+    const [childRun] = h.runs.get(betoThread)!;
+    if (limit) {
+      Object.assign(childRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(childRun!.id, "2026-01-01T12:00:00.000Z");
+    }
     yield* h.finish(1, "failed");
     assert.include(h.sent[2]!.text, "- Beto (failed):");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
+    if (!limit) return;
+    // Beto's next task starts, its run held behind the limited one on his thread.
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Again",
+    });
+    Object.assign(h.runs.get(betoThread)![1]!, { ordinal: 2, status: "queued" });
+    // A later provider switch still continues the limited run; no task takes its answer.
+    const continuation = {
+      id: "run:continuation",
+      threadId: betoThread,
+      userMessageId: "limit-continuation:x",
+      ordinal: 3,
+      status: "running",
+    };
+    h.runs.get(betoThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed", "beto:running"]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.assistant_id === "beto"),
+      0,
+    );
+    assert.lengthOf(h.sent, 4);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1189,7 +2733,10 @@ const play = (
     ) {
       if (turn > PLAY_TURN_LIMIT) return { ...played, refused: "never stopped" };
       const next = members[task.owner_id]!(task);
-      const callerThreadId = groupThreadId(task.owner_id, TEAM);
+      const callerThreadId = ThreadId.make(
+        h.sent.find((row) => row.messageId === taskMessageId(task!.task_id, task!.revision))!
+          .threadId,
+      );
       const handOffs = [
         ...(next.handOffs ?? []).map((member) =>
           groups.member.assign({
@@ -1349,7 +2896,8 @@ it.effect.each([
     team: DEV_TEAM,
     flow: "bugs",
     rounds: 3,
-    measured: [16, 3, 4],
+    // Each bug message is a request of its own, so it no longer resets the first one's counts.
+    measured: [16, 6, 11],
   },
   {
     name: "content, 1 review round",
@@ -1528,12 +3076,12 @@ it.effect(
       yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
       const undelivered = h.tasks.pipe(Effect.map((rows) => rows[0]!.undelivered_hops));
       const build = yield* groups.member.assign({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         member: "beto",
         instruction: "Check the build",
       });
       const design = yield* groups.member.assign({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         member: "cy",
         instruction: "Draw the logo",
       });
@@ -1546,7 +3094,7 @@ it.effect(
       yield* h.finishTask(design.taskId, "failed");
       const answer = (yield* h.messages).find((row) => row.assistant_id === "beto")!;
       yield* groups.member.reply({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         messageId: answer.message_id,
         text: "Which branch?",
       });
@@ -1606,10 +3154,17 @@ it.effect.each([
     };
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada settle it with Beto" }, h.user);
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada settle it with Beto" }, h.user);
     const played = yield* play(h, { ada: turn("beto"), beto: turn("ada") }, (at) =>
       at % 3 === 0
-        ? groups.post({ teamId: TEAM, text: `@beto a question ${at}` }, author)
+        ? groups.post(
+            {
+              teamId: TEAM,
+              text: `@beto a question ${at}`,
+              replyToMessageId: request.message.id,
+            },
+            author,
+          )
         : Effect.void,
     );
     assert.deepEqual(
@@ -1620,34 +3175,44 @@ it.effect.each([
 });
 
 it.effect.each([
-  { name: "a follow-up from the user", author: "user", via: "follow-up", restarts: true },
-  { name: "a reply from the user", author: "user", via: "reply", restarts: true },
-  { name: "a user message the lead routes", author: "user", via: "lead", restarts: true },
-  { name: "an agent message the lead routes", author: "agent", via: "lead", restarts: false },
-  { name: "a routine message the lead routes", author: "routine", via: "lead", restarts: false },
+  { name: "a reply to a member's answer", author: "user", via: "answer", restarts: true },
+  { name: "a user reply the lead routes", author: "user", via: "request", restarts: true },
+  { name: "a new user message", author: "user", via: "new", restarts: false },
+  { name: "an agent reply the lead routes", author: "agent", via: "request", restarts: false },
+  { name: "a routine reply the lead routes", author: "routine", via: "request", restarts: false },
 ] as const)(
-  "a message to a member of a live request clears both counts only from the user: $name",
+  "a message in a live request clears both counts only from the user: $name",
   ({ author, via, restarts }) => {
     const h = harness({ lead: "cy", routable: [codex], route: () => ["beto"] });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada @cy plan the launch" },
+        h.user,
+      );
+      yield* h.finish(1, "completed", "Cy is done.");
       const child = yield* groups.member.assign({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         member: "beto",
         instruction: "Check the build",
       });
       yield* h.finishTask(child.taskId, "completed", "Build is green.");
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE assistant_group_tasks SET hops = 5, undelivered_hops = 4 WHERE parent_id IS NULL`;
-      // With a second request open, a plain message goes to the lead.
-      if (via === "lead") yield* groups.post({ teamId: TEAM, text: "@cy the logo" }, h.user);
       const betoAnswer = (yield* h.messages).find((row) => row.assistant_id === "beto")!;
+      // A new message is another request; a reply to the request itself has two members working
+      // it, so the lead routes it.
+      const replyTo =
+        via === "answer"
+          ? betoAnswer.message_id
+          : via === "request"
+            ? request.message.id
+            : undefined;
       yield* groups.post(
         {
           teamId: TEAM,
           text: "the build is red again",
-          ...(via === "reply" ? { replyToMessageId: betoAnswer.message_id as never } : {}),
+          ...(replyTo === undefined ? {} : { replyToMessageId: replyTo as never }),
         },
         author === "user"
           ? h.user
@@ -1656,7 +3221,7 @@ it.effect.each([
             : { kind: "routine", label: "Monday report" },
       );
       yield* groups.idle;
-      assert.lengthOf(h.routeCalls, via === "lead" ? 1 : 0);
+      assert.lengthOf(h.routeCalls, via === "answer" ? 0 : 1);
       const [root] = yield* h.tasks;
       assert.deepEqual([root!.hops, root!.undelivered_hops], restarts ? [0, 0] : [5, 4]);
     }).pipe(Effect.provide(h.layer));
@@ -1675,7 +3240,7 @@ it.effect.each(["no_delivery", "handoff_limit"] as const)(
         ? sql`UPDATE assistant_group_tasks SET undelivered_hops = ${W}`
         : sql`UPDATE assistant_group_tasks SET hops = ${C}`;
       const refused = yield* refusalError(
-        groups.member.transfer({ callerThreadId: adaThread, member: "cy", note: "" }),
+        groups.member.transfer({ callerThreadId: h.threadOf("ada"), member: "cy", note: "" }),
       );
       assert.equal(refused.message, HANDOFF_PAUSES[cap].refusal);
       assert.deepEqual(
@@ -1697,7 +3262,7 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
         Effect.map((error) => `${error.reason}: ${error.message}`),
       );
     const call = groups.member;
-    const ada = adaThread;
+    const ada = h.threadOf("ada");
     assert.equal(
       yield* refusal(call.assign({ callerThreadId: ada, member: "nobody", instruction: "x" })),
       "invalid: There is no member @nobody in this group.",
@@ -1711,14 +3276,14 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
       "invalid: This tool only works inside a group task.",
     );
     assert.equal(
-      yield* refusal(call.result({ callerThreadId: betoThread, text: "x" })),
+      yield* refusal(call.result({ callerThreadId: h.threadOf("beto"), text: "x" })),
       "invalid: This tool only works inside a group task.",
     );
     // Beto has no task yet, even though its thread exists.
     yield* groups.post({ teamId: TEAM, text: "@cy hi" }, h.user);
     yield* h.finish(1, "completed", "done");
     assert.equal(
-      yield* refusal(call.result({ callerThreadId: cyThread, text: "x" })),
+      yield* refusal(call.result({ callerThreadId: h.threadOf("cy"), text: "x" })),
       "invalid: No task of yours is running in this group.",
     );
     const long = "q".repeat(ASSISTANT_GROUP_REPLY_MAX_CHARS + 1);
@@ -1727,9 +3292,11 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
       `under ${ASSISTANT_GROUP_REPLY_MAX_CHARS} characters`,
     );
     const answer = (yield* h.messages).find((row) => row.author === "assistant")!;
+    // Cy's answer belongs to another request: Ada cannot ask about it from hers.
     for (const [messageId, expected] of [
-      ["gm:none", "Reply to a message a member wrote in this group."],
-      [(yield* h.messages)[0]!.message_id, "Reply to a message a member wrote in this group."],
+      ["gm:none", "Reply to a message a member wrote in this request."],
+      [(yield* h.messages)[0]!.message_id, "Reply to a message a member wrote in this request."],
+      [answer.message_id, "Reply to a message a member wrote in this request."],
     ] as const) {
       assert.equal(
         yield* refusal(call.reply({ callerThreadId: ada, messageId, text: "q?" })),
@@ -1738,33 +3305,77 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
     }
     assert.equal(
       yield* refusal(
-        call.reply({ callerThreadId: cyThread, messageId: answer.message_id, text: "q?" }),
+        call.reply({ callerThreadId: h.threadOf("cy"), messageId: answer.message_id, text: "q?" }),
       ),
       "invalid: No task of yours is running in this group.",
     );
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect.each([
+  ["the request's", true],
+  ["the asker's message", false],
+] as const)(
+  "a question between members runs on %s model, like the work it is part of",
+  ([, onRequest]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@beto prepare", ...(onRequest ? { modelSelection: opus } : {}) },
+        h.user,
+      );
+      yield* h.finish(0, "completed", "Beto's draft");
+      const [, betoAnswer] = yield* h.messages;
+      yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "@ada review it",
+          replyToMessageId: request.message.id,
+          ...(onRequest ? {} : { modelSelection: opus }),
+        },
+        h.user,
+      );
+      assert.deepEqual(h.fakeThreads.get(h.threadOf("ada"))!.modelSelection, opus);
+      yield* groups.member.reply({
+        callerThreadId: h.threadOf("ada"),
+        messageId: betoAnswer!.message_id,
+        text: "Which build?",
+      });
+      assert.equal(h.sent.at(-1)!.threadId, h.threadOf("beto"));
+      assert.deepEqual(h.fakeThreads.get(h.threadOf("beto"))!.modelSelection, opus);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("questions between members: two per request, a reply task only answers", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    // Beto and Cy each have an answer in the chat to ask about.
-    yield* groups.post({ teamId: TEAM, text: "@beto @cy prepare" }, h.user);
+    // Beto and Cy each have an answer in the request to ask about.
+    const request = yield* groups.post({ teamId: TEAM, text: "@beto @cy prepare" }, h.user);
     yield* h.finish(0, "completed", "Beto's draft");
     yield* h.finish(1, "completed", "Cy's draft");
     const [, betoAnswer, cyAnswer] = yield* h.messages;
-    yield* groups.post({ teamId: TEAM, text: "@ada review them" }, h.user);
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada review them", replyToMessageId: request.message.id },
+      h.user,
+    );
 
     const first = yield* groups.member.reply({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       messageId: betoAnswer!.message_id,
       text: "Which build?",
     });
     assert.isTrue(first.accepted);
     // A repeat of the same question is the same reply.
     const repeat = yield* groups.member.reply({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       messageId: betoAnswer!.message_id,
       text: "Which build?",
     });
@@ -1775,7 +3386,7 @@ it.effect("questions between members: two per request, a reply task only answers
     );
 
     const question = h.sent.at(-1)!;
-    assert.equal(question.threadId, betoThread);
+    assert.equal(question.threadId, h.threadOf("beto"));
     assert.include(question.text, 'kind="reply"');
     assert.include(
       question.text,
@@ -1784,15 +3395,18 @@ it.effect("questions between members: two per request, a reply task only answers
     assert.include(question.text, "only answers the question");
 
     // Ada cannot post her result while the question is open.
-    const blocked = yield* groups.member.result({ callerThreadId: adaThread, text: "Done" });
+    const blocked = yield* groups.member.result({
+      callerThreadId: h.threadOf("ada"),
+      text: "Done",
+    });
     assert.isFalse(blocked.accepted);
 
     // The asked member may only answer: nothing else works from a reply task.
     for (const attempt of [
-      groups.member.assign({ callerThreadId: betoThread, member: "cy", instruction: "x" }),
-      groups.member.transfer({ callerThreadId: betoThread, member: "cy", note: "" }),
+      groups.member.assign({ callerThreadId: h.threadOf("beto"), member: "cy", instruction: "x" }),
+      groups.member.transfer({ callerThreadId: h.threadOf("beto"), member: "cy", note: "" }),
       groups.member.reply({
-        callerThreadId: betoThread,
+        callerThreadId: h.threadOf("beto"),
         messageId: cyAnswer!.message_id,
         text: "?",
       }),
@@ -1803,14 +3417,14 @@ it.effect("questions between members: two per request, a reply task only answers
 
     // The member message by its number in the chat, as the packet shows it.
     const second = yield* groups.member.reply({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       seq: cyAnswer!.seq,
       text: "Which font?",
     });
     assert.isTrue(second.accepted);
     // The third question of the same request is refused, whoever writes it.
     const third = yield* groups.member.reply({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       messageId: betoAnswer!.message_id,
       text: "And the date?",
     });
@@ -1822,7 +3436,10 @@ it.effect("questions between members: two per request, a reply task only answers
     yield* h.finish(3, "failed");
     assert.lengthOf(h.sent, 5);
     yield* h.finish(4, "completed", "Cy answers: Inter");
-    const ok = yield* groups.member.result({ callerThreadId: adaThread, text: "Review done" });
+    const ok = yield* groups.member.result({
+      callerThreadId: h.threadOf("ada"),
+      text: "Review done",
+    });
     assert.isTrue(ok.accepted);
   }).pipe(Effect.provide(h.layer));
 });
@@ -1870,8 +3487,10 @@ it.effect.each(actionTable)(
         "completed",
         "cancelled",
       ]) {
-        // Seeded tasks that are queued or running would hold the group's two slots.
+        // Seeded tasks that are queued or running would hold the group's two slots, and their
+        // runs the member's thread.
         yield* sql`DELETE FROM assistant_group_tasks`;
+        h.runs.clear();
         const id = yield* seedTask(status);
         const result = yield* groups
           .taskAction({
@@ -1939,7 +3558,11 @@ it.effect("stop pauses a task and what it assigned, ends their runs, and frees t
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    yield* groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "Part" });
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Part",
+    });
     yield* groups.post({ teamId: TEAM, text: "@cy other" }, h.user);
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:running", "cy:queued"]);
     const [root] = yield* h.tasks;
@@ -1947,7 +3570,7 @@ it.effect("stop pauses a task and what it assigned, ends their runs, and frees t
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:paused", "beto:paused", "cy:running"]);
     assert.deepEqual(
       h.dispatched.filter((command) => command.type === "run.interrupt").map((c) => c.threadId),
-      [adaThread, betoThread],
+      [h.threadOf("ada"), h.threadOf("beto")],
     );
     // The interruption that follows changes nothing: the tasks were already paused.
     yield* h.finish(0, "interrupted");
@@ -1967,9 +3590,9 @@ it.effect.each([
     const h = harness();
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
       yield* groups.member.assign({
-        callerThreadId: adaThread,
+        callerThreadId: h.threadOf("ada"),
         member: "beto",
         instruction: "Part",
       });
@@ -1989,7 +3612,8 @@ it.effect.each([
       assert.deepEqual(statusesOf(yield* h.tasks), [`${owner}:waiting`, "beto:running"]);
       yield* h.finishTask(child!.task_id, "completed", "Part done.");
       assert.deepEqual(statusesOf(yield* h.tasks), [`${owner}:running`, "beto:completed"]);
-      assert.equal(h.sent.at(-1)!.threadId, groupThreadId(owner, TEAM));
+      // The parent goes on in the request's thread of whoever owns it now.
+      assert.equal(h.sent.at(-1)!.threadId, requestThreadId(owner, TEAM, request.message.id));
       assert.include(h.sent.at(-1)!.text, "- Beto (completed): Part done.");
     }).pipe(Effect.provide(h.layer));
   },
@@ -2005,7 +3629,11 @@ it.effect.each([
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    yield* groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "Part" });
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Part",
+    });
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE assistant_group_tasks SET status = ${root} WHERE parent_id IS NULL`;
     yield* sql`UPDATE assistant_group_tasks SET status = 'queued' WHERE parent_id IS NOT NULL`;
@@ -2019,7 +3647,7 @@ it.effect.each([
     ]);
     assert.deepEqual(
       h.sent.slice(before).map((row) => row.threadId),
-      starts ? [betoThread, cyThread] : [cyThread],
+      starts ? [h.threadOf("beto"), h.threadOf("cy")] : [h.threadOf("cy")],
     );
   }).pipe(Effect.provide(h.layer));
 });
@@ -2029,7 +3657,7 @@ it.effect("a queued run that has not started is cancelled instead of interrupted
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const posted = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    h.runs.get(adaThread)![0]!.status = "queued";
+    h.runs.get(h.threadOf("ada"))![0]!.status = "queued";
     yield* groups.taskAction({ taskId: posted.tasks[0]!.id, action: "stop" });
     assert.deepEqual(
       h.dispatched.map((command) => command.type),
@@ -2105,8 +3733,8 @@ it.effect(
       assert.deepEqual(
         h.dispatched.map((command) => [command.type, command.threadId]),
         [
-          ["run.interrupt", adaThread],
-          ["thread.archive", adaThread],
+          ["run.interrupt", h.threadOf("ada")],
+          ["thread.archive", h.threadOf("ada")],
         ],
       );
       // Repeating the event does nothing more.
@@ -2144,8 +3772,8 @@ it.effect(
           .filter((command) => command.type === "thread.metadata.update")
           .map((command) => [command.threadId, (command as { title?: string }).title]),
         [
-          [adaThread, "Ada · Board"],
-          [betoThread, "Beto · Board"],
+          [h.threadOf("ada"), "Ada · Board · one"],
+          [h.threadOf("beto"), "Beto · Board · two"],
         ],
       );
     }).pipe(Effect.provide(h.layer));
@@ -2193,19 +3821,30 @@ it.effect("a deleted group takes its runs, threads, chat and schedules with it",
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const go = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const waits = yield* groups.post({ teamId: TEAM, text: "@beto waits" }, h.user);
     yield* groups.post({ teamId: OTHER_TEAM, text: "@ada elsewhere" }, h.user);
+    // Beto's task waits on a usage limit: its thread must not continue it after the group is gone.
+    const limited = waits.tasks[0]!.threadId;
+    const [limitedRun] = h.runs.get(limited)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(1, "failed");
+    const before = h.dispatched.length;
     yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM });
     assert.deepEqual(h.deletedTeams, [TEAM]);
+    const thread = go.tasks[0]!.threadId;
     assert.deepEqual(
-      h.dispatched.map((command) => [command.type, command.threadId]),
+      h.dispatched.slice(before).map((command) => [command.type, command.threadId]),
       [
-        ["run.interrupt", adaThread],
-        ["thread.delete", adaThread],
+        ["run.interrupt", thread],
+        ["thread.stop", limited],
+        ["thread.delete", thread],
+        ["thread.delete", limited],
       ],
     );
     const left = yield* h.sqlRows<{ team_id: string }>(
-      "SELECT team_id FROM assistant_group_tasks UNION ALL SELECT team_id FROM assistant_group_messages UNION ALL SELECT team_id FROM assistant_group_threads",
+      "SELECT team_id FROM assistant_group_tasks UNION ALL SELECT team_id FROM assistant_group_messages UNION ALL SELECT team_id FROM assistant_group_request_threads",
     );
     assert.isTrue(left.every((row) => row.team_id === OTHER_TEAM));
     assert.isAbove(left.length, 0);
@@ -2402,7 +4041,7 @@ it.effect.each(routingMisses)(
         action: "reassign",
         ownerId: "cy" as never,
       });
-      assert.equal(h.sent[0]!.threadId, cyThread);
+      assert.equal(h.sent[0]!.threadId, h.threadOf("cy"));
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -2472,7 +4111,7 @@ it.effect("agents post from outside, by id or name, with files, and a repeat pos
     const refuse = (input: Parameters<typeof groups.agentPost>[0]) =>
       groups.agentPost(input).pipe(Effect.flip);
     assert.equal(
-      (yield* refuse({ callerThreadId: adaThread, group: TEAM, text: "x" })).message,
+      (yield* refuse({ callerThreadId: h.threadOf("ada"), group: TEAM, text: "x" })).message,
       "You are inside a group task: use assign or transfer.",
     );
     assert.equal(
@@ -2501,6 +4140,232 @@ it.effect("agents post from outside, by id or name, with files, and a repeat pos
     );
   }).pipe(Effect.provide(h.layer), Effect.scoped);
 });
+
+const decodeHistoryInput = Schema.decodeSync(AssistantGroupsHistoryInput);
+
+it.effect("a project tab pages only its requests, General only requests without one", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // Every line is its own request: 60 in p1, 30 in p2, 30 in General, then a chat-wide boundary.
+    const projectOf = (n: number) => (n % 4 === 0 ? null : n % 4 === 1 ? "p2" : "p1");
+    for (let n = 1; n <= 120; n++) {
+      yield* sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+          created_at)
+        VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', 'x', ${`gm:${n}`},
+          ${projectOf(n)}, ${projectOf(n)}, '2026-01-01')`;
+    }
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, created_at)
+      VALUES ('gm:wide', ${TEAM}, 121, 'user', 'boundary', 'new', '2026-01-01')`;
+    // An open task in an old p2 request rides along with p2's page only.
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        request_id, created_at, updated_at)
+      VALUES ('gt:p2', ${TEAM}, 'gt:p2', 'root', 'gm:1', 'ada', 'do', 'paused', 'gm:1', 't', 't')`;
+    const read = (projectId: string | null | undefined, beforeSeq?: number) =>
+      groups.history(
+        decodeHistoryInput({
+          teamId: TEAM,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(projectId === undefined ? {} : { scope: { projectId } }),
+        }),
+      );
+    const seqs = (page: { messages: ReadonlyArray<{ seq: number }> }) =>
+      page.messages.map((message) => message.seq);
+
+    const p1 = yield* read("p1");
+    assert.deepEqual([p1.messages.length, p1.hasMore, p1.tasks.length], [50, true, 0]);
+    assert.isTrue(seqs(p1).every((seq) => projectOf(seq) === "p1"));
+    const p1Older = yield* read("p1", p1.messages[0]!.seq);
+    assert.deepEqual([p1Older.messages.length, p1Older.hasMore], [10, false]);
+    assert.isTrue(seqs(p1Older).every((seq) => projectOf(seq) === "p1"));
+
+    const p2 = yield* read("p2");
+    assert.deepEqual(
+      [p2.messages.length, p2.hasMore, p2.tasks.map((task) => task.id)],
+      [30, false, ["gt:p2"]],
+    );
+
+    const general = yield* read(null);
+    assert.deepEqual([general.messages.length, general.hasMore], [30, false]);
+    assert.isTrue(seqs(general).every((seq) => projectOf(seq) === null));
+
+    // All, and an old input without a scope, read every line as before.
+    const all = yield* read(undefined);
+    assert.deepEqual(
+      [all.messages.at(-1)!.id, all.messages.length, all.tasks.length],
+      ["gm:wide", 50, 1],
+    );
+    // A project the group never had reads empty, never the whole chat.
+    const outside = yield* read("p9");
+    assert.deepEqual([outside.messages, outside.tasks, outside.hasMore], [[], [], false]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a tab's stream carries only its lines, and a request that gets a project moves", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: [], question: "Core or the Mobile App?" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const open = (projectId: string | null | undefined) =>
+      Stream.toPull(
+        groups.subscribe(
+          TEAM,
+          projectId === undefined ? undefined : { projectId: projectId as ProjectId | null },
+        ),
+      );
+    const tabs = {
+      all: yield* open(undefined),
+      p1: yield* open("p1"),
+      p2: yield* open("p2"),
+      general: yield* open(null),
+      outside: yield* open("p9"),
+    };
+    for (const pull of Object.values(tabs)) assert.equal((yield* pull)[0]!.type, "snapshot");
+    const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Mobile App",
+        replyToMessageId: posted.message.id,
+        projectId: ProjectId.make("p2"),
+      },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    // A chat-wide boundary and its undo reach All only.
+    yield* groups.conversation({ teamId: TEAM, action: "new" });
+    yield* groups.conversation({ teamId: TEAM, action: "undo" });
+    // Clearing empties every tab, so each one ends on an empty snapshot.
+    yield* groups.conversation({ teamId: TEAM, action: "clear" });
+    const untilCleared = Effect.fnUntraced(function* (pull: (typeof tabs)["all"]) {
+      const seen: AssistantGroupsEvent[] = [];
+      while (true) {
+        for (const event of yield* pull) {
+          if (event.type === "snapshot" && event.messages.length === 0) return seen;
+          seen.push(event);
+        }
+      }
+    });
+    const messages = (events: ReadonlyArray<AssistantGroupsEvent>) =>
+      events.flatMap((event) => (event.type === "message" ? [event.message] : []));
+
+    assert.deepEqual(yield* untilCleared(tabs.p1), []);
+    assert.deepEqual(yield* untilCleared(tabs.outside), []);
+    // General saw the request until it moved, and last its head with the new project.
+    const general = messages(yield* untilCleared(tabs.general));
+    const lastHead = general.findLast((message) => message.id === posted.message.id);
+    assert.equal(lastHead?.projectId, "p2");
+    assert.isTrue(general.every((message) => message.requestId === posted.message.id));
+    // p2 got every line of the request, those from before the move included.
+    const p2 = messages(yield* untilCleared(tabs.p2));
+    assert.deepEqual(
+      [...new Set(p2.map((message) => message.id))].toSorted(),
+      lines.map((line) => line.message_id).toSorted(),
+    );
+    const all = yield* untilCleared(tabs.all);
+    assert.deepEqual([messages(all).at(-1)?.kind, all.at(-1)?.type], ["boundary", "snapshot"]);
+  }).pipe(Effect.provide(h.layer), Effect.scoped);
+});
+
+it.effect(
+  "a request that gets a project with nothing written after it republishes the tabs",
+  () => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p1", "p2"], beto: ["p1"] },
+      route: () => ({ assistantIds: [], question: "Core or the Mobile App?" }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+      yield* groups.idle;
+      // With no lead the answer only moves the request: no route, task or notice refreshes after it.
+      yield* sql`UPDATE assistant_teams SET lead_id = NULL WHERE team_id = ${TEAM}`;
+      yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "Mobile App",
+          replyToMessageId: posted.message.id,
+          projectId: ProjectId.make("p2"),
+        },
+        h.user,
+      );
+      yield* groups.idle;
+      const [current] = yield* sql<{ readonly scopes_json: string }>`
+      SELECT scopes_json FROM assistant_team_state WHERE team_id = ${TEAM}`;
+      const scopes = JSON.parse(current!.scopes_json);
+      // General no longer holds the request, and the answered question is new nowhere.
+      assert.isFalse(
+        scopes.some((scope: { projectId: string | null }) => scope.projectId === null),
+      );
+      assert.deepEqual(JSON.parse(h.published.get(TEAM)!), scopes);
+    }).pipe(Effect.provide(h.layer), Effect.scoped);
+  },
+);
+
+/** A request moving into tab p2 brings no line in as read that is new, nor as new that was answered. */
+it.effect.each([
+  { path: "post", cursor: false },
+  { path: "post", cursor: true },
+  { path: "route", cursor: false },
+  { path: "route", cursor: true },
+] as const)(
+  "a request moving tabs by $path, p2 read ahead: $cursor, keeps what is unread",
+  ({ path, cursor }) => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p1", "p2"], beto: ["p1"] },
+      route:
+        path === "post"
+          ? () => ({ assistantIds: [], question: "Core or the Mobile App?" })
+          : () => ({ assistantIds: ["ada"], projectId: "p2" }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const p2 = { projectId: ProjectId.make("p2") };
+      const unreadIn = Effect.gen(function* () {
+        const [row] = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+        const scopes = toAssistantTeam(row!).chat?.scopes ?? [];
+        return scopes.find((scope) => scope.projectId === "p2")?.unreadCount ?? 0;
+      });
+      if (path === "post") {
+        const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+        yield* groups.idle;
+        if (cursor) yield* groups.markRead({ teamId: TEAM, scope: p2 });
+        // The lead's question in General is answered by the user's pick: nothing new arrives in p2.
+        yield* sql`UPDATE assistant_teams SET lead_id = NULL WHERE team_id = ${TEAM}`;
+        yield* groups.post(
+          { teamId: TEAM, text: "Mobile App", replyToMessageId: posted.message.id, ...p2 },
+          h.user,
+        );
+        yield* groups.idle;
+        assert.equal(yield* unreadIn, 0);
+      } else {
+        if (cursor) yield* groups.markRead({ teamId: TEAM, scope: p2 });
+        yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+        yield* groups.idle;
+        // The member's answer after the move is new in p2.
+        yield* h.finish(0, "completed", "Fixed.");
+        assert.equal(yield* unreadIn, 1);
+      }
+    }).pipe(Effect.provide(h.layer), Effect.scoped);
+  },
+);
 
 it.effect(
   "the chat reads as snapshot then live changes for that group only, and pages back",
@@ -2544,19 +4409,23 @@ it.effect(
   },
 );
 
-it.effect("a member reads older chat in pages, with a very long message cut", () => {
+it.effect("a member reads its request's older messages in pages, a very long one cut", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const sql = yield* SqlClient.SqlClient;
-    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const go = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
     const long = "z".repeat(17_000);
     for (let n = 2; n <= 5; n++) {
       yield* sql`INSERT INTO assistant_group_messages
-        (message_id, team_id, seq, author, kind, text, created_at)
-        VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', ${long}, '2026-01-01')`;
+        (message_id, team_id, seq, author, kind, text, request_id, created_at)
+        VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', ${long}, ${go.message.id}, '2026-01-01')`;
     }
-    const page = yield* groups.member.history({ callerThreadId: adaThread });
+    // Another request's message never shows up in Ada's history.
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, created_at)
+      VALUES ('gm:other', ${TEAM}, 6, 'user', 'message', 'not hers', 'gm:other', '2026-01-01')`;
+    const page = yield* groups.member.history({ callerThreadId: h.threadOf("ada") });
     // 24k characters: one cut message (16k) fits, the next does not.
     assert.deepEqual(
       page.messages.map((message) => message.seq),
@@ -2564,12 +4433,15 @@ it.effect("a member reads older chat in pages, with a very long message cut", ()
     );
     assert.isTrue(page.hasMore);
     assert.isAtMost(page.messages[0]!.text.length, 16_001);
-    const earlier = yield* groups.member.history({ callerThreadId: adaThread, beforeSeq: 5 });
+    const earlier = yield* groups.member.history({
+      callerThreadId: h.threadOf("ada"),
+      beforeSeq: 5,
+    });
     assert.deepEqual(
       earlier.messages.map((message) => message.seq),
       [4],
     );
-    const small = yield* groups.member.history({ callerThreadId: adaThread, beforeSeq: 2 });
+    const small = yield* groups.member.history({ callerThreadId: h.threadOf("ada"), beforeSeq: 2 });
     assert.deepEqual([small.messages.length, small.hasMore], [1, false]);
   }).pipe(Effect.provide(h.layer));
 });
@@ -2629,18 +4501,18 @@ it.effect(
       assert.equal(
         yield* failure(
           groups.member.reply({
-            callerThreadId: adaThread,
+            callerThreadId: h.threadOf("ada"),
             messageId: (yield* h.messages).find((row) => row.assistant_id === null)!.message_id,
             text: "?",
           }),
         ),
-        "Reply to a message a member wrote in this group.",
+        "Reply to a message a member wrote in this request.",
       );
       yield* sql`UPDATE assistant_teams SET member_ids_json = '["ada","cy"]' WHERE team_id = ${TEAM}`;
       assert.equal(
         yield* failure(
           groups.member.reply({
-            callerThreadId: adaThread,
+            callerThreadId: h.threadOf("ada"),
             messageId: betoAnswer.message_id,
             text: "?",
           }),
@@ -2649,7 +4521,7 @@ it.effect(
       );
       yield* sql`UPDATE assistant_teams SET archived_at = 'now' WHERE team_id = ${TEAM}`;
       assert.equal(
-        yield* failure(groups.member.result({ callerThreadId: adaThread, text: "done" })),
+        yield* failure(groups.member.result({ callerThreadId: h.threadOf("ada"), text: "done" })),
         "This group is archived.",
       );
     }).pipe(Effect.provide(h.layer));
@@ -2660,12 +4532,15 @@ it.effect("a member cannot ask itself", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada first" }, h.user);
+    const first = yield* groups.post({ teamId: TEAM, text: "@ada first" }, h.user);
     yield* h.finish(0, "completed", "Ada's answer");
     const own = (yield* h.messages).find((row) => row.assistant_id === "ada")!;
-    yield* groups.post({ teamId: TEAM, text: "@ada again" }, h.user);
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada again", replyToMessageId: first.message.id },
+      h.user,
+    );
     const error = yield* groups.member
-      .reply({ callerThreadId: adaThread, messageId: own.message_id, text: "me?" })
+      .reply({ callerThreadId: h.threadOf("ada"), messageId: own.message_id, text: "me?" })
       .pipe(Effect.flip);
     assert.equal(error.message, "You cannot ask yourself.");
   }).pipe(Effect.provide(h.layer));
@@ -2756,9 +4631,13 @@ it.effect(
       }
 
       // A hand-over starts the same message as Beto's task with copies of its own.
-      yield* groups.member.transfer({ callerThreadId: adaThread, member: "beto", note: "yours" });
+      yield* groups.member.transfer({
+        callerThreadId: h.threadOf("ada"),
+        member: "beto",
+        note: "yours",
+      });
       yield* h.finish(0, "completed", "handed off");
-      const betoTurn = h.sent.find((message) => message.threadId === betoThread)!;
+      const betoTurn = h.sent.find((message) => message.threadId === h.threadOf("beto"))!;
       assert.lengthOf(betoTurn.attachments, 2);
       assert.isTrue(
         betoTurn.attachments.every((attachment) => attachment.id.startsWith("assistant-beto-")),
@@ -2869,92 +4748,77 @@ it.effect("every task packet carries the group's instructions and memories", () 
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect(
-  "a new conversation keeps the old chat visible but out of news, summary and history",
-  () => {
-    const h = harness({ summarize: () => "Old summary." });
-    return Effect.gen(function* () {
-      const groups = yield* h.setup;
-      yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
-      yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
-      yield* groups.idle;
-      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 1);
-      yield* h.finish(0, "completed", "ok");
-      yield* h.finish(1, "completed", "ok");
-      yield* groups.conversation({ teamId: TEAM, action: "new" });
-      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
-      const boundary = (yield* h.messages).filter((row) => row.kind === "boundary");
-      assert.deepEqual(
-        boundary.map((row) => [row.author, row.text]),
-        [["user", "new"]],
-      );
-      const boundarySeq = boundary[0]!.seq;
-      yield* groups.post({ teamId: TEAM, text: "@beto after" }, h.user);
-      const packet = h.sent.at(-1)!.text;
-      assert.notInclude(packet, "Summary of earlier chat");
-      assert.notInclude(packet, "aaaa");
-      assert.notInclude(packet, "New in the group chat");
-      // The old messages stay in the chat, and a member can still ask for them.
-      assert.isAbove((yield* groups.history({ teamId: TEAM })).messages.length, 3);
-      const fresh = yield* groups.member.history({ callerThreadId: betoThread });
-      assert.deepEqual(
-        fresh.messages.map((message) => message.seq),
-        [boundarySeq + 1],
-      );
-      const older = yield* groups.member.history({
-        callerThreadId: betoThread,
-        beforeSeq: boundarySeq + 1,
-      });
-      assert.isAbove(older.messages.length, 1);
-      // The next summary reads only what follows the boundary.
-      yield* groups.post({ teamId: TEAM, text: bulk("c") }, h.user);
-      yield* groups.post({ teamId: TEAM, text: bulk("d") }, h.user);
-      yield* groups.idle;
-      const last = h.summaryCalls.at(-1)!;
-      assert.isNull(last.previousSummary);
-      assert.isTrue(last.messages.every((message) => !message.text.startsWith("@ada aa")));
-    }).pipe(Effect.provide(h.layer));
-  },
-);
-
-it.effect("a summary still running when a new conversation starts is dropped", () => {
-  const gate = Deferred.makeUnsafe<void>();
-  const h = harness({ summarize: () => "Stale summary.", summaryGate: gate });
+it.effect("compact gives the lead a summary; a new conversation drops it and the old chat", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    route: () => ["ada"],
+    summarize: () => "Compact summary.",
+  });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
-    yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
-    yield* h.finish(0, "completed", "ok");
-    yield* h.finish(1, "completed", "ok");
-    yield* groups.conversation({ teamId: TEAM, action: "new" });
-    yield* Deferred.succeed(gate, undefined);
-    yield* groups.idle;
-    assert.lengthOf(h.summaryCalls, 1);
-    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
-  }).pipe(Effect.provide(h.layer));
-});
-
-it.effect("compact writes a summary now, then draws the boundary", () => {
-  const h = harness({ summarize: () => "Compact summary." });
-  return Effect.gen(function* () {
-    const groups = yield* h.setup;
+    const route = () =>
+      h.routeCalls.at(-1) as { summary: string | null; recentMessages: Array<{ text: string }> };
     yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
     yield* h.finish(0, "completed", "done one");
     yield* groups.conversation({ teamId: TEAM, action: "compact" });
     assert.lengthOf(h.summaryCalls, 1);
-    assert.deepEqual(
-      (yield* h.messages).filter((row) => row.kind === "boundary").map((row) => row.text),
-      ["compact"],
-    );
-    yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
-    const packet = h.sent.at(-1)!.text;
-    assert.include(packet, "Summary of earlier chat:\nCompact summary.");
-    assert.notInclude(packet, "done one");
-    yield* h.finish(1, "completed", "ok two");
-    yield* groups.conversation({ teamId: TEAM, action: "compact" });
     // Nothing new since: nothing to compact.
     const none = yield* groups.conversation({ teamId: TEAM, action: "compact" }).pipe(Effect.flip);
     assert.equal(none.reason, "invalid");
+    // Only the lead reads the summary; a member's packet carries its own request alone.
+    yield* groups.post({ teamId: TEAM, text: "who can help" }, h.user);
+    yield* groups.idle;
+    assert.equal(route().summary, "Compact summary.");
+    assert.notInclude(
+      route()
+        .recentMessages.map((m) => m.text)
+        .join("\n"),
+      "done one",
+    );
+    assert.notInclude(h.sent.at(-1)!.text, "Compact summary.");
+    assert.notInclude(h.sent.at(-1)!.text, "done one");
+    yield* h.finish(1, "completed", "ok");
+    yield* groups.conversation({ teamId: TEAM, action: "new" });
+    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+    assert.deepEqual(
+      (yield* h.messages).filter((row) => row.kind === "boundary").map((row) => row.text),
+      ["compact", "new"],
+    );
+    yield* groups.post({ teamId: TEAM, text: "anyone free" }, h.user);
+    assert.isNull(route().summary);
+    assert.deepEqual(
+      route().recentMessages.map((m) => m.text),
+      [],
+    );
+    // The old messages stay in the chat.
+    assert.isAbove((yield* groups.history({ teamId: TEAM })).messages.length, 4);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a summary still running when a new conversation starts is dropped", () => {
+  const gate = Deferred.makeUnsafe<void>();
+  const started = Deferred.makeUnsafe<void>();
+  const h = harness({
+    summarize: (call) => {
+      if (call > 0) Deferred.doneUnsafe(started, Effect.void);
+      return "Stale summary.";
+    },
+    summaryGate: gate,
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    yield* h.finish(0, "completed", "ok");
+    const compact = yield* groups
+      .conversation({ teamId: TEAM, action: "compact" })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* groups.conversation({ teamId: TEAM, action: "new" });
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(compact);
+    assert.lengthOf(h.summaryCalls, 1);
+    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -3024,37 +4888,56 @@ it.effect(
   },
 );
 
-it.effect("clear deletes the chat, its tasks, summary and files, and the group starts over", () => {
-  const h = harness({ summarize: () => "S." });
-  return Effect.gen(function* () {
-    const groups = yield* h.setup;
-    yield* storeUploads;
-    const posted = yield* groups.post(
-      { teamId: TEAM, text: "@ada look", attachments: [imageUpload] },
-      h.user,
-    );
-    yield* h.finish(0, "completed", "seen");
-    yield* groups.conversation({ teamId: TEAM, action: "compact" });
-    yield* groups.markRead({ teamId: TEAM });
-    yield* groups.conversation({ teamId: TEAM, action: "clear" });
-    assert.deepEqual(h.cleaned, [posted.message.attachments![0]!.id]);
-    assert.lengthOf(yield* h.messages, 0);
-    assert.lengthOf(yield* h.tasks, 0);
-    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
-    const [team] = yield* h.sqlRows<{ read_seq: number }>(
-      "SELECT read_seq FROM assistant_teams WHERE team_id = 'team:1'",
-    );
-    assert.equal(team!.read_seq, 0);
-    // The member's hidden thread stays, and it takes the next message as new.
-    assert.isAbove((yield* h.sqlRows("SELECT * FROM assistant_group_threads")).length, 0);
-    yield* groups.post({ teamId: TEAM, text: "@ada again" }, h.user);
-    assert.include(h.sent.at(-1)!.text, "again");
-    assert.deepEqual(
-      (yield* h.messages).map((row) => row.seq),
-      [1],
-    );
-  }).pipe(Effect.provide(h.layer));
-});
+it.effect(
+  "clear deletes the chat, its tasks, summary and files; members keep their conversations",
+  () => {
+    const h = harness({ summarize: () => "S." });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* storeUploads;
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada look", attachments: [imageUpload] },
+        h.user,
+      );
+      yield* h.finish(0, "completed", "seen");
+      yield* groups.conversation({ teamId: TEAM, action: "compact" });
+      yield* groups.markRead({ teamId: TEAM });
+      yield* groups.conversation({ teamId: TEAM, action: "clear" });
+      assert.deepEqual(h.cleaned, [posted.message.attachments![0]!.id]);
+      assert.lengthOf(yield* h.messages, 0);
+      assert.lengthOf(yield* h.tasks, 0);
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+      const [team] = yield* h.sqlRows<{ read_seq: number }>(
+        "SELECT read_seq FROM assistant_teams WHERE team_id = 'team:1'",
+      );
+      assert.equal(team!.read_seq, 0);
+      // The requests' conversations stay, settled and unlinked; the next request gets a fresh one.
+      const first = posted.tasks[0]!.threadId;
+      assert.notDeepInclude(
+        h.dispatched.map((command) => [command.type, command.threadId]),
+        ["thread.delete", first],
+      );
+      assert.deepInclude(h.fakeThreads.get(first)!, {
+        deletedAt: null,
+        settledOverride: "settled",
+      });
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_request_threads"), 0);
+      yield* groups.post({ teamId: TEAM, text: "@ada again" }, h.user);
+      assert.include(h.sent.at(-1)!.text, "again");
+      assert.notEqual(h.sent.at(-1)!.threadId, first);
+      assert.deepEqual(
+        (yield* h.messages).map((row) => row.seq),
+        [1],
+      );
+      // The kept conversation is still the member's: it goes when the member is deleted.
+      yield* groups.handleAssistantEvent({ type: "removed", assistantId: "ada" as never });
+      assert.deepInclude(
+        h.dispatched.map((command) => [command.type, command.threadId]),
+        ["thread.delete", first],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("an agent's change leaves one chat line, never unread and never sent to members", () => {
   const h = harness();
@@ -3100,15 +4983,20 @@ it.effect("an assignment keeps its contract and quotes its source messages in th
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@beto earlier thing" }, h.user);
+    const earlier = yield* groups.post({ teamId: TEAM, text: "@beto earlier thing" }, h.user);
     yield* h.finish(0, "completed", "ok");
-    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@cy unrelated" }, h.user);
+    yield* h.finish(1, "completed", "cy ok");
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada go", replyToMessageId: earlier.message.id },
+      h.user,
+    );
     const child = yield* groups.member.assign({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       member: "beto",
       instruction: "Build it",
       expectedResult: "  the build is green  ",
-      sourceSeqs: [1, 1, -3, 99],
+      sourceSeqs: [1, 1, -3, 99, 3],
       resources: ["Folder: /w/app/", "Browser", "browser", " "],
     });
     const [row] = yield* h.sqlRows<{
@@ -3118,15 +5006,17 @@ it.effect("an assignment keeps its contract and quotes its source messages in th
     }>(`SELECT * FROM assistant_group_tasks WHERE task_id = '${child.taskId}'`);
     assert.deepEqual(
       [row!.expected_result, row!.source_seqs_json, row!.resources_json],
-      ["the build is green", "[1,99]", '["folder:/w/app","browser"]'],
+      ["the build is green", "[1,99,3]", '["folder:/w/app","browser"]'],
     );
     const packet = h.sent.at(-1)!.text;
     assert.include(packet, "Earlier messages this task refers to:\n[#1 user] @beto earlier thing");
+    // Another request's message is never quoted, even by number.
+    assert.notInclude(packet, "unrelated");
     assert.include(packet, "Expected result: the build is green");
     assert.include(packet, "folder:/w/app, browser");
     // A repeat lands on the same task.
     const repeat = yield* groups.member.assign({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       member: "beto",
       instruction: "Build it",
       resources: ["browser"],
@@ -3140,10 +5030,10 @@ it.effect("tasks sharing a resource run one after another, oldest first", () => 
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    yield* assignWith(groups, adaThread, "beto", "A", ["folder:/w/app"]);
-    yield* assignWith(groups, adaThread, "cy", "B", ["folder:/w/app/src"]);
-    yield* assignWith(groups, adaThread, "beto", "C", ["folder:/w/app"]);
-    yield* assignWith(groups, adaThread, "cy", "D", ["folder:/w/other"]);
+    yield* assignWith(groups, h.threadOf("ada"), "beto", "A", ["folder:/w/app"]);
+    yield* assignWith(groups, h.threadOf("ada"), "cy", "B", ["folder:/w/app/src"]);
+    yield* assignWith(groups, h.threadOf("ada"), "beto", "C", ["folder:/w/app"]);
+    yield* assignWith(groups, h.threadOf("ada"), "cy", "D", ["folder:/w/other"]);
     const view = () =>
       h.tasks.pipe(
         Effect.map((rows) =>
@@ -3164,11 +5054,12 @@ it.effect("tasks sharing a resource run one after another, oldest first", () => 
       "beto:queued:waiting for folder:/w/app (used by Beto)",
       "cy:running:null",
     ]);
-    // A finishes: B (older) takes the folder and C now waits on it.
+    // A finishes: B (older) takes the folder and C now waits on it. B also waits for D, which
+    // still runs in Cy's thread.
     yield* h.finish(1, "completed", "a done");
     assert.deepEqual(yield* view(), [
       "beto:completed:null",
-      "cy:running:null",
+      "cy:queued:waiting for the conversation's current turn to end",
       "beto:queued:waiting for folder:/w/app (used by Cy)",
       "cy:running:null",
     ]);
@@ -3192,8 +5083,8 @@ it.effect(
     return Effect.gen(function* () {
       const groups = yield* h.setup;
       yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-      yield* assignWith(groups, adaThread, "beto", "Part", ["browser"]);
-      const grandchild = yield* assignWith(groups, betoThread, "cy", "Sub", ["browser"]);
+      yield* assignWith(groups, h.threadOf("ada"), "beto", "Part", ["browser"]);
+      const grandchild = yield* assignWith(groups, h.threadOf("beto"), "cy", "Sub", ["browser"]);
       assert.equal(grandchild.status, "queued");
       yield* h.finish(0, "completed", "waiting");
       assert.equal((yield* h.tasks)[2]!.status, "queued");
@@ -3209,17 +5100,17 @@ it.effect("a member cancels only what it assigned, and a repeat changes nothing 
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    const held = yield* assignWith(groups, adaThread, "beto", "A", ["browser"]);
-    const waiter = yield* assignWith(groups, adaThread, "cy", "B", ["browser"]);
+    const held = yield* assignWith(groups, h.threadOf("ada"), "beto", "A", ["browser"]);
+    const waiter = yield* assignWith(groups, h.threadOf("ada"), "cy", "B", ["browser"]);
     const [root] = yield* h.tasks;
     for (const taskId of [held.taskId, root!.task_id, "gt:none"]) {
       const refused = yield* refusalError(
-        groups.member.cancel({ callerThreadId: betoThread, taskId, reason: "no" }),
+        groups.member.cancel({ callerThreadId: h.threadOf("beto"), taskId, reason: "no" }),
       );
       assert.equal(refused.message, "You can only cancel a task you assigned.");
     }
     const asked = yield* groups.member.cancel({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       taskId: held.taskId,
       reason: "the user said stop",
     });
@@ -3231,14 +5122,14 @@ it.effect("a member cancels only what it assigned, and a repeat changes nothing 
     );
     const interrupts = () =>
       h.dispatched.filter((command) => command.type === "run.interrupt").map((c) => c.threadId);
-    assert.deepEqual(interrupts(), [betoThread]);
+    assert.deepEqual(interrupts(), [h.threadOf("beto")]);
     const again = yield* groups.member.cancel({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       taskId: held.taskId,
       reason: "again",
     });
     assert.deepEqual(again, { accepted: true, message: "Already cancelled." });
-    assert.deepEqual(interrupts(), [betoThread]);
+    assert.deepEqual(interrupts(), [h.threadOf("beto")]);
     assert.equal(waiter.status, "queued");
     // The interruption that follows changes nothing: the task was already cancelled.
     yield* h.finish(1, "interrupted");
@@ -3246,7 +5137,7 @@ it.effect("a member cancels only what it assigned, and a repeat changes nothing 
     // A completed task cannot be cancelled.
     yield* h.finish(2, "completed", "B done");
     const late = yield* groups.member.cancel({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       taskId: waiter.taskId,
       reason: "",
     });
@@ -3254,62 +5145,75 @@ it.effect("a member cancels only what it assigned, and a repeat changes nothing 
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a packet lists the member's stopped and failed tasks, newest first and capped", () => {
-  const h = harness();
-  return Effect.gen(function* () {
-    const groups = yield* h.setup;
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO assistant_group_messages
-      (message_id, team_id, seq, author, kind, text, created_at)
-      VALUES ('gm:old', ${TEAM}, 1, 'user', 'message', 'old', '2026-01-01')`;
-    for (let index = 0; index < 7; index += 1) {
-      yield* sql`INSERT INTO assistant_group_tasks
+it.effect(
+  "a packet lists the member's stopped and failed tasks in its request, newest first and capped",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, created_at)
+      VALUES ('gm:old', ${TEAM}, 1, 'user', 'message', 'old', 'gm:old', '2026-01-01'),
+        ('gm:else', ${TEAM}, 2, 'user', 'message', 'else', 'gm:else', '2026-01-01')`;
+      for (let index = 0; index < 7; index += 1) {
+        yield* sql`INSERT INTO assistant_group_tasks
         (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status, reason,
-         revision, hops, created_at, updated_at)
+         request_id, revision, hops, created_at, updated_at)
         VALUES (${`gt:s${index}`}, ${TEAM}, ${`gt:s${index}`}, 'root', 'gm:old', 'ada',
           ${`stopped job ${index} ${"x".repeat(200)}`}, ${index === 6 ? "failed" : "paused"},
-          ${index === 6 ? "failed" : "stopped"}, 1, 0, '2026-01-01', ${`2026-01-0${index + 1}`})`;
-    }
-    yield* sql`INSERT INTO assistant_group_tasks
+          ${index === 6 ? "failed" : "stopped"}, 'gm:old', 1, 0, '2026-01-01', ${`2026-01-0${index + 1}`})`;
+      }
+      yield* sql`INSERT INTO assistant_group_tasks
       (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
-       revision, hops, created_at, updated_at)
-      VALUES ('gt:other', ${TEAM}, 'gt:other', 'root', 'gm:old', 'beto', 'not hers', 'paused', 1, 0,
+       request_id, revision, hops, created_at, updated_at)
+      VALUES ('gt:other', ${TEAM}, 'gt:other', 'root', 'gm:old', 'beto', 'not hers', 'paused', 'gm:old', 1, 0,
         '2026-01-01', '2026-01-09')`;
-    yield* sql`INSERT INTO assistant_group_tasks
+      yield* sql`INSERT INTO assistant_group_tasks
       (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction, status,
-       revision, hops, created_at, updated_at)
+       request_id, revision, hops, created_at, updated_at)
       VALUES ('gt:kid', ${TEAM}, 'gt:s0', 'gt:s0', 'child', 'gm:old', 'beto', 'price the plan',
-        'running', 1, 0, '2026-01-01', '2026-01-01')`;
-    yield* groups.post({ teamId: TEAM, text: "@ada next" }, h.user);
-    const packet = h.sent[0]!.text;
-    assert.include(
-      packet,
-      "Subtasks you gave that are still open (t3_group cancel stops one):\n- gt:kid (running, Beto): price the plan",
-    );
-    const listed = packet.split("\n").filter((line) => line.startsWith("- gt:s"));
-    assert.lengthOf(listed, 5);
-    assert.include(packet, "Your stopped tasks in this group");
-    assert.match(listed[0]!, /^- gt:s6 \(failed, failed\): stopped job 6 x+…$/);
-    assert.match(listed[4]!, /^- gt:s2 \(paused, stopped\)/);
-    assert.notInclude(packet, "not hers");
-  }).pipe(Effect.provide(h.layer));
-});
+        'running', 'gm:old', 1, 0, '2026-01-01', '2026-01-01')`;
+      yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+       request_id, revision, hops, created_at, updated_at)
+      VALUES ('gt:else', ${TEAM}, 'gt:else', 'root', 'gm:else', 'ada', 'another request', 'paused',
+        'gm:else', 1, 0, '2026-01-01', '2026-01-09')`;
+      yield* groups.post(
+        { teamId: TEAM, text: "@ada next", replyToMessageId: "gm:old" as AssistantGroupMessageId },
+        h.user,
+      );
+      const packet = h.sent[0]!.text;
+      assert.include(
+        packet,
+        "Subtasks you gave that are still open (t3_group cancel stops one):\n- gt:kid (running, Beto): price the plan",
+      );
+      const listed = packet.split("\n").filter((line) => line.startsWith("- gt:s"));
+      assert.lengthOf(listed, 5);
+      assert.include(packet, "Your other stopped tasks in this request");
+      assert.match(listed[0]!, /^- gt:s6 \(failed, failed\): stopped job 6 x+…$/);
+      assert.match(listed[4]!, /^- gt:s2 \(paused, stopped\)/);
+      assert.notInclude(packet, "not hers");
+      assert.notInclude(packet, "another request");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("routineScope says who wrote the request a member's task came from", () => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
-    const user = yield* groups.member.routineScope({ callerThreadId: adaThread });
+    const user = yield* groups.member.routineScope({ callerThreadId: h.threadOf("ada") });
     assert.deepEqual(user, { teamId: TEAM, askedByUser: true });
     // A task handed on from the user's request still counts as the user's ask.
     yield* groups.member.assign({
-      callerThreadId: adaThread,
+      callerThreadId: h.threadOf("ada"),
       member: "beto",
       instruction: "Build",
     });
     assert.equal(
-      (yield* groups.member.routineScope({ callerThreadId: betoThread })).askedByUser,
+      (yield* groups.member.routineScope({ callerThreadId: h.threadOf("beto") })).askedByUser,
       true,
     );
   }).pipe(Effect.provide(h.layer));
@@ -3323,7 +5227,7 @@ it.effect("a task that a schedule's post opened is not the user's ask", () => {
       { teamId: TEAM, text: "@ada weekly report" },
       { kind: "routine", label: "Monday report" },
     );
-    const scope = yield* groups.member.routineScope({ callerThreadId: adaThread });
+    const scope = yield* groups.member.routineScope({ callerThreadId: h.threadOf("ada") });
     assert.deepEqual(scope, { teamId: TEAM, askedByUser: false });
   }).pipe(Effect.provide(h.layer));
 });
@@ -3352,3 +5256,856 @@ it.effect("a routine change line is muted, authored by the schedule, and added o
     assert.equal(missing.reason, "not_found");
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect("two requests in different projects run together, each seeing only its own", () => {
+  const h = harness({ projects: { ada: ["p1"], beto: ["p2"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const core = yield* groups.post(
+      { teamId: TEAM, text: "@ada fix the core cache", projectId: ProjectId.make("p1") },
+      h.user,
+    );
+    const app = yield* groups.post(
+      { teamId: TEAM, text: "@beto fix the app login", projectId: ProjectId.make("p2") },
+      h.user,
+    );
+    assert.deepEqual([core.message.projectId, app.message.projectId], ["p1", "p2"]);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => [task.owner_id, task.status]),
+      [
+        ["ada", "running"],
+        ["beto", "running"],
+      ],
+    );
+    assert.deepEqual(
+      h.launched.map((input) => [input.threadId, input.projectId]),
+      [
+        [requestThreadId("ada", TEAM, core.message.id), "p1"],
+        [requestThreadId("beto", TEAM, app.message.id), "p2"],
+      ],
+    );
+    const [ada, beto] = h.sent;
+    assert.include(ada!.text, "core cache");
+    assert.notInclude(ada!.text, "app login");
+    assert.include(beto!.text, "app login");
+    assert.notInclude(beto!.text, "core cache");
+    // A project outside the group is refused before anything is stored.
+    const refused = yield* groups
+      .post({ teamId: TEAM, text: "@ada x", projectId: ProjectId.make("p9") }, h.user)
+      .pipe(Effect.flip);
+    assert.equal(refused.reason, "invalid");
+    // With no lead, a request that names a member but no project cannot be placed.
+    const unplaced = yield* groups.post({ teamId: TEAM, text: "@ada x" }, h.user).pipe(Effect.flip);
+    assert.include(unplaced.message, "Pick the project for this request");
+    assert.lengthOf(yield* h.messages, 2);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("an outside assistant's post without a project takes none the group lacks", () => {
+  const h = harness({
+    members: ["ada", "cy"],
+    lead: "ada",
+    routable: [codex],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.agentPost({
+      callerThreadId: ThreadId.make("assistant:beto:1"),
+      group: TEAM,
+      text: "check the site",
+    });
+    assert.isUndefined(posted.message.projectId);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("another group's projects do not let a member work in this group's requests", () => {
+  const h = harness({ projects: { ada: ["p1"], beto: ["p3"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // Ada is in OTHER_TEAM, which lists Site; that reach stays in OTHER_TEAM's requests.
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["p3"]' WHERE team_id = ${OTHER_TEAM}`;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "@ada @beto fix the site", projectId: ProjectId.make("p3") },
+      h.user,
+    );
+    assert.deepEqual(
+      posted.tasks.map((task) => task.ownerId),
+      ["beto"],
+    );
+    assert.include(
+      (yield* h.messages).map((row) => row.text),
+      "Ada cannot work in Site, so only Beto got this.",
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("only a member that may work in the request's project gets its work", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"], beto: ["p1"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    const notices = () =>
+      h.messages.pipe(
+        Effect.map((rows) => rows.filter((row) => row.kind === "notice").map((row) => row.text)),
+      );
+    const app = ProjectId.make("p2");
+    // Mentions: the members outside the project are left out, and the chat says why.
+    const both = yield* groups.post(
+      { teamId: TEAM, text: "@ada @beto fix the app", projectId: app },
+      h.user,
+    );
+    assert.deepEqual(
+      both.tasks.map((task) => task.ownerId),
+      ["ada"],
+    );
+    yield* groups.post({ teamId: TEAM, text: "@beto fix the app", projectId: app }, h.user);
+    assert.deepEqual(yield* notices(), [
+      "Beto cannot work in Mobile App, so only Ada got this.",
+      "Beto cannot work in Mobile App, so nobody got this. Send it again mentioning a member who works there.",
+    ]);
+    assert.deepEqual(
+      h.launched.map((launch) => [launch.threadId.split(":")[1], launch.projectId]),
+      [["ada", "p2"]],
+    );
+    // Hand-offs and reassigning refuse a member outside the project.
+    const adaThread = requestThreadId("ada", TEAM, both.message.id);
+    for (const refused of [
+      groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "test" }),
+      groups.member.transfer({ callerThreadId: adaThread, member: "beto", note: "yours" }),
+    ]) {
+      assert.include((yield* Effect.flip(refused)).message, "Beto cannot work in");
+    }
+    yield* h.finishTask(both.tasks[0]!.id, "failed");
+    const reassigned = yield* groups
+      .taskAction({ taskId: both.tasks[0]!.id, action: "reassign", ownerId: "beto" as never })
+      .pipe(Effect.flip);
+    assert.include(reassigned.message, "Beto cannot work in");
+    // A member whose list changed after it started is refused at launch too.
+    const core = yield* groups.post(
+      { teamId: TEAM, text: "@beto fix the core", projectId: ProjectId.make("p1") },
+      h.user,
+    );
+    yield* h.finishTask(core.tasks[0]!.id, "failed");
+    yield* sql`UPDATE assistants SET project_ids_json = '["p3"]' WHERE assistant_id = 'beto'`;
+    yield* groups.post(
+      { teamId: TEAM, text: "continue", replyToMessageId: core.message.id },
+      h.user,
+    );
+    assert.deepEqual(
+      (yield* h.tasks).find((task) => task.task_id === core.tasks[0]!.id)!.reason,
+      "outside_project",
+    );
+    // An assistant held to its projects cannot post work into another one.
+    const outside = yield* groups
+      .agentPost({
+        callerThreadId: ThreadId.make("assistant:beto:1"),
+        group: TEAM,
+        text: "@ada fix the app",
+        project: "Mobile App",
+      })
+      .pipe(Effect.flip);
+    assert.include(outside.message, "You are a project assistant");
+    // With several projects and none named it must say which one.
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1","p3"]' WHERE assistant_id = 'beto'`;
+    const unnamed = yield* groups
+      .agentPost({
+        callerThreadId: ThreadId.make("assistant:beto:1"),
+        group: TEAM,
+        text: "@ada check the core",
+      })
+      .pipe(Effect.flip);
+    assert.include(unnamed.message, "You work in several projects");
+    // With one, its work stays in that home project instead of going to the lead.
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1"]' WHERE assistant_id = 'beto'`;
+    const home = yield* groups.agentPost({
+      callerThreadId: ThreadId.make("assistant:beto:1"),
+      group: TEAM,
+      text: "@ada check the core",
+    });
+    assert.equal(home.message.projectId, "p1");
+    // A project the group lists is one its members may work in, in this group's requests only.
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["p3"]' WHERE team_id = ${TEAM}`;
+    const site = yield* groups.post(
+      { teamId: TEAM, text: "@beto fix the site", projectId: ProjectId.make("p3") },
+      h.user,
+    );
+    assert.deepEqual(
+      site.tasks.map((task) => task.ownerId),
+      ["beto"],
+    );
+    assert.deepEqual(h.launched.at(-1)!.projectId, "p3");
+    const elsewhere = yield* groups
+      .post(
+        { teamId: OTHER_TEAM, text: "@ada fix the site", projectId: ProjectId.make("p3") },
+        h.user,
+      )
+      .pipe(Effect.flip);
+    assert.include(elsewhere.message, "not one of the group's projects");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "the lead picks a member outside the project", pick: ["beto"], left: ["beto"] },
+  { name: "the lead takes it outside its project", pick: ["beto", "ada"], left: ["beto"] },
+] as const)("$name: the chat says who was left out", ({ pick, left }) => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: pick, projectId: "p2" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "fix the login on the phone" }, h.user);
+    yield* groups.idle;
+    const reached = pick.filter((id) => !left.includes(id as never));
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.owner_id),
+      reached,
+    );
+    assert.deepInclude(
+      (yield* h.messages).map((row) => [row.kind, row.assistant_id, row.text]),
+      [
+        "notice",
+        "beto",
+        reached.length === 0
+          ? "Beto cannot work in Mobile App, so nobody got this. Send it again mentioning a member who works there."
+          : "Beto cannot work in Mobile App, so only Ada got this.",
+      ],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the lead does not route a request nobody may work in any more", () => {
+  const h = harness({
+    members: ["ada", "beto"],
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: ["ada"] }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    const app = yield* groups.post(
+      { teamId: TEAM, text: "@ada fix the app", projectId: ProjectId.make("p2") },
+      h.user,
+    );
+    yield* h.finishTask(app.tasks[0]!.id, "completed", "Fixed.");
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1"]' WHERE assistant_id = 'ada'`;
+    // An agent's follow-up goes through the lead, which has nobody left to pick.
+    yield* groups.post(
+      { teamId: TEAM, text: "one more fix", replyToMessageId: app.message.id },
+      { kind: "agent", assistantId: null, label: "Planner" },
+    );
+    yield* groups.idle;
+    assert.lengthOf(h.routeCalls, 0);
+    assert.lengthOf(yield* h.tasks, 1);
+    assert.equal(
+      (yield* h.messages).at(-1)!.text,
+      "Nobody in the group can work in Mobile App, so nobody got this.",
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a deleted project is never offered, picked nor inferred", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: ["ada"] }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE projection_projects SET deleted_at = '2026-02-01' WHERE project_id = 'p2'`;
+    const refused = yield* groups
+      .post({ teamId: TEAM, text: "@ada x", projectId: ProjectId.make("p2") }, h.user)
+      .pipe(Effect.flip);
+    assert.equal(refused.reason, "invalid");
+    // The one live project is the request's without asking.
+    const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    assert.equal(
+      (yield* groups.history({ teamId: TEAM })).messages.find((m) => m.id === posted.message.id)!
+        .projectId,
+      "p1",
+    );
+    assert.deepEqual(
+      h.launched.map((launch) => launch.projectId),
+      ["p1"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the dev keeps working in the request's conversation when QA hands work back", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const build = yield* groups.post({ teamId: TEAM, text: "@ada build the export" }, h.user);
+    const other = yield* groups.post({ teamId: TEAM, text: "@ada price the plan" }, h.user);
+    const devThread = requestThreadId("ada", TEAM, build.message.id);
+    yield* h.finishTask(other.tasks[0]!.id, "completed", "Priced.");
+    const review = yield* groups.member.assign({
+      callerThreadId: devThread,
+      member: "beto",
+      instruction: "Test the export",
+    });
+    yield* h.finishTask(build.tasks[0]!.id, "completed", "Waiting on QA.");
+    yield* h.finishTask(review.taskId, "completed", "Crashes on an empty file.");
+    const back = h.sent.at(-1)!;
+    assert.include(back.text, "- Beto (completed): Crashes on an empty file.");
+    assert.equal(back.threadId, devThread);
+    assert.notEqual(back.threadId, requestThreadId("ada", TEAM, other.message.id));
+    assert.lengthOf(
+      h.launched.filter((input) => input.threadId === devThread),
+      1,
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("hand-off limits count per request: a loop pauses its own request only", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const loop = yield* groups.post({ teamId: TEAM, text: "@ada settle it" }, h.user);
+    const logo = yield* groups.post({ teamId: TEAM, text: "@cy draw the logo" }, h.user);
+    yield* play(h, { ...endlessLoop("assign"), cy: () => ({ answer: "Logo done" }) });
+    const rows = yield* h.sqlRows<{
+      task_id: string;
+      owner_id: string;
+      status: string;
+      reason: string | null;
+      request_id: string;
+      hops: number;
+      undelivered_hops: number;
+    }>("SELECT * FROM assistant_group_tasks ORDER BY rowid");
+    assert.deepEqual(
+      rows.filter((row) => row.request_id === logo.message.id).map((row) => row.status),
+      ["completed"],
+    );
+    assert.deepEqual(
+      [
+        ...new Set(
+          rows
+            .filter((row) => row.request_id === loop.message.id && row.status !== "completed")
+            .map((row) => `${row.status}:${row.reason}`),
+        ),
+      ],
+      ["paused:no_delivery"],
+    );
+    const root = () =>
+      h
+        .sqlRows<{ hops: number; undelivered_hops: number }>(
+          `SELECT hops, undelivered_hops FROM assistant_group_tasks WHERE task_id = '${loop.tasks[0]!.id}'`,
+        )
+        .pipe(Effect.map((found) => found[0]!));
+    const stuck = yield* root();
+    assert.isAbove(stuck.undelivered_hops, 0);
+    // The user acting in another request leaves this one's counts alone; acting in it clears them.
+    yield* groups.post(
+      { teamId: TEAM, text: "@cy and a favicon", replyToMessageId: logo.message.id },
+      h.user,
+    );
+    assert.deepEqual(yield* root(), stuck);
+    yield* groups.post(
+      { teamId: TEAM, text: "continue", replyToMessageId: loop.message.id },
+      h.user,
+    );
+    assert.deepEqual(yield* root(), { hops: 0, undelivered_hops: 0 });
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a request from before projects offers the lead every member, whatever its project",
+  () => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p2"], beto: ["p1"] },
+      route: () => ({ assistantIds: ["beto"] }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada @cy fix the app", projectId: ProjectId.make("p2") },
+        h.user,
+      );
+      // Two members work it, so a follow-up goes through the lead.
+      yield* sql`UPDATE assistant_group_messages SET project_id = NULL`;
+      yield* groups.post(
+        { teamId: TEAM, text: "now the docs", replyToMessageId: posted.message.id },
+        h.user,
+      );
+      yield* groups.idle;
+      const call = h.routeCalls.at(-1) as { members: ReadonlyArray<{ id: string }> };
+      assert.deepEqual(
+        call.members.map((member) => member.id),
+        ["ada", "beto", "cy"],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "the lead picks the project of a new request, titles it, and its members work there",
+  () => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p1", "p2"], beto: ["p1"] },
+      route: () => ({ assistantIds: ["ada"], projectId: "p2", title: "Fix the mobile login" }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "the login breaks on my phone" },
+        h.user,
+      );
+      yield* groups.idle;
+      const call = h.routeCalls[0] as {
+        projects: ReadonlyArray<{ id: string; name: string }>;
+        newRequest: boolean;
+      };
+      assert.deepEqual(
+        call.projects.map((project) => project.name),
+        ["Core", "Mobile App"],
+      );
+      assert.isTrue(call.newRequest);
+      const root = (yield* groups.history({ teamId: TEAM })).messages.find(
+        (message) => message.id === posted.message.id,
+      )!;
+      assert.deepEqual([root.projectId, root.title], ["p2", "Fix the mobile login"]);
+      assert.equal(h.launched[0]!.projectId, "p2");
+      assert.include(h.sent[0]!.text, 'This task belongs to the request "Fix the mobile login".');
+      assert.equal(
+        (yield* h.messages).at(-1)!.text,
+        "Beto (lead) picked Mobile App and routed it to Ada",
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { name: "a text reply", via: "text" },
+  { name: "a picked project", via: "project" },
+] as const)("an unclear project makes the lead ask, and $name routes the request", ({ via }) => {
+  let call = 0;
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => {
+      call += 1;
+      if (call === 1) return { assistantIds: [], question: "Core or the Mobile App?" };
+      return via === "text"
+        ? { assistantIds: ["ada"], projectId: "p1" }
+        : { assistantIds: ["ada"] };
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    assert.lengthOf(yield* h.tasks, 0);
+    const question = (yield* h.messages).at(-1)!;
+    // The client reads this shape as a request waiting for its project.
+    assert.deepInclude(question, {
+      kind: "notice",
+      author: "assistant",
+      assistant_id: "beto",
+      text: "Core or the Mobile App?",
+      reply_to: posted.message.id,
+    });
+    // Reconciling later does not ask again.
+    yield* groups.reconcile;
+    yield* groups.idle;
+    assert.lengthOf(h.routeCalls, 1);
+    yield* groups.post(
+      via === "text"
+        ? { teamId: TEAM, text: "the core one", replyToMessageId: question.message_id as never }
+        : {
+            teamId: TEAM,
+            text: "Mobile App",
+            replyToMessageId: posted.message.id,
+            projectId: ProjectId.make("p2"),
+          },
+      h.user,
+    );
+    yield* groups.idle;
+    assert.lengthOf(h.routeCalls, 2);
+    assert.include(
+      (h.routeCalls[1] as { followUps: Array<{ text: string }> }).followUps.map((m) => m.text),
+      via === "text" ? "the core one" : "Mobile App",
+    );
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.owner_id),
+      ["ada"],
+    );
+    assert.equal(h.launched[0]!.projectId, via === "text" ? "p1" : "p2");
+    // The task runs the request, not the answer.
+    assert.include(h.sent[0]!.text, "Your task, from the user: fix the login");
+    // Every line of the request, and one said after, carries the project the request moved to.
+    yield* groups.post(
+      { teamId: TEAM, text: "thanks", replyToMessageId: posted.message.id },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    assert.isAbove(lines.length, 3);
+    assert.deepEqual(
+      [...new Set(lines.map((m) => m.request_project_id))],
+      [via === "text" ? "p1" : "p2"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("without a lead's answer the lead asks with the group's projects named", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+    route: () => "fail",
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    assert.equal(
+      (yield* h.messages).at(-1)!.text,
+      "Which project is this for: Core, Mobile App or Site?",
+    );
+    assert.lengthOf(yield* h.tasks, 0);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "one #project picks it", text: "fix the login in #mobile-app", pick: null, runs: "p2" },
+  { name: "an unknown #word leaves it to the lead", text: "fix #nope", pick: null, runs: "p1" },
+  {
+    name: "the picker wins over the text, and the lead says so",
+    text: "fix the login in #core",
+    pick: "p2",
+    runs: "p2",
+    notice: "Running this in Mobile App, the project you picked. The text also names Core.",
+  },
+  {
+    name: "two #projects make the lead ask between them",
+    text: "fix #core and #mobile-app",
+    pick: null,
+    runs: null,
+    notice: "Which project is this for: Core or Mobile App?",
+  },
+] as const)("$name", ({ text, pick, runs, ...rest }) => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+    route: () => ({ assistantIds: ["ada"], projectId: "p1" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post(
+      { teamId: TEAM, text, ...(pick === null ? {} : { projectId: ProjectId.make(pick) }) },
+      h.user,
+    );
+    yield* groups.idle;
+    const notices = (yield* groups.history({ teamId: TEAM })).messages.filter(
+      (message) => message.kind === "notice",
+    );
+    // Only the lead's question for the project carries the mark clients read as "Needs project".
+    assert.deepEqual(
+      notices.map((message) => [message.assistantId, message.text, message.asksProject ?? false]),
+      "notice" in rest ? [["beto", rest.notice, runs === null]] : [],
+    );
+    assert.deepEqual(
+      h.launched.map((launch) => launch.projectId),
+      runs === null ? [] : [runs],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a delivered request settles its conversations; a reply or a continue un-settles them first",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto plan it" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      const beto = requestThreadId("beto", TEAM, request.message.id);
+      const commands = (type: string) =>
+        h.dispatched.filter((command) => command.type === type).map((command) => command.threadId);
+      yield* h.finish(0, "completed", "Ada's part");
+      // Beto still works on it: nothing settles yet.
+      assert.deepEqual(commands("thread.settle"), []);
+      yield* h.finish(1, "completed", "Beto's part");
+      assert.deepEqual(commands("thread.settle"), [ada, beto]);
+      assert.equal(h.fakeThreads.get(beto)!.settledOverride, "settled");
+      // Settling again is a no-op: settled threads are skipped.
+      const before = commands("thread.settle").length;
+      yield* groups.reconcile;
+      assert.lengthOf(commands("thread.settle"), before);
+
+      yield* groups.post(
+        { teamId: TEAM, text: "@ada one more thing", replyToMessageId: request.message.id },
+        h.user,
+      );
+      // Both conversations of the request are active again before Ada's task is sent.
+      assert.deepEqual(commands("thread.unsettle"), [ada, beto]);
+      assert.isNull(h.fakeThreads.get(beto)!.settledOverride);
+      yield* h.finish(2, "completed", "Done too");
+      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto]);
+      const answer = (yield* h.messages).findLast((row) => row.assistant_id === "ada")!;
+      yield* groups.post(
+        { teamId: TEAM, text: "continue", replyToMessageId: answer.message_id as never },
+        h.user,
+      );
+      assert.deepEqual(commands("thread.unsettle"), [ada, beto, ada, beto]);
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a paused or failed request never settles; a cancelled one settles once its run ends",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settled = () =>
+        h.dispatched.filter((command) => command.type === "thread.settle").map((c) => c.threadId);
+      const failed = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      yield* h.finish(0, "failed");
+      const paused = yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
+      yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "stop" });
+      yield* h.finishTask(paused.tasks[0]!.id, "interrupted");
+      assert.deepEqual(
+        (yield* h.tasks).map((task) => task.status),
+        ["failed", "paused"],
+      );
+      assert.deepEqual(settled(), []);
+      // Cancelled counts as delivered, but a turn still stopping settles only when its run ends.
+      yield* groups.taskAction({ taskId: failed.tasks[0]!.id, action: "cancel" });
+      const cancelled = yield* groups.post({ teamId: TEAM, text: "@cy three" }, h.user);
+      yield* groups.taskAction({ taskId: cancelled.tasks[0]!.id, action: "stop" });
+      yield* groups.taskAction({ taskId: cancelled.tasks[0]!.id, action: "cancel" });
+      const cyThread = requestThreadId("cy", TEAM, cancelled.message.id);
+      assert.notInclude(settled(), cyThread);
+      yield* h.finishTask(cancelled.tasks[0]!.id, "interrupted");
+      assert.include(settled(), cyThread);
+      assert.include(settled(), requestThreadId("ada", TEAM, failed.message.id));
+      assert.notInclude(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      // A task from before requests had ids is found by its request message.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
+        WHERE task_id = ${paused.tasks[0]!.id}`;
+      yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
+      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "after the upgrade a run on a member's old group conversation still finishes its task",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const legacy = groupThreadId("ada", TEAM);
+      h.fakeThreads.set(legacy, {
+        projectId: "p1",
+        title: "Ada · Team team:1",
+        archivedAt: null,
+        deletedAt: null,
+        settledOverride: null,
+        modelSelection: selection(codex, "ada-model"),
+      });
+      // As the migration leaves them: requests backfilled, the long conversation kept.
+      yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, created_at)
+      VALUES ('gm:live', ${TEAM}, 1, 'user', 'message', '@ada live one', 'gm:live', '2026-01-01'),
+        ('gm:stuck', ${TEAM}, 2, 'user', 'message', '@ada stuck one', 'gm:stuck', '2026-01-01')`;
+      yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status, reason,
+       request_id, created_at, updated_at)
+      VALUES ('gt:live', ${TEAM}, 'gt:live', 'root', 'gm:live', 'ada', 'live one', 'running', NULL,
+          'gm:live', '2026-01-01', '2026-01-01'),
+        ('gt:stuck', ${TEAM}, 'gt:stuck', 'root', 'gm:stuck', 'ada', 'stuck one', 'paused',
+          'stopped', 'gm:stuck', '2026-01-01', '2026-01-01')`;
+      yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id, seen_seq)
+      VALUES (${TEAM}, 'ada', ${legacy}, 2)`;
+      const runMessage = taskMessageId("gt:live", 1);
+      h.runs.set(legacy, [{ id: "run:legacy", userMessageId: runMessage, status: "completed" }]);
+      h.answers.set("run:legacy", "Finished on the old thread.");
+      yield* groups.handleRunEvent({
+        type: "run.updated",
+        payload: {
+          id: "run:legacy",
+          threadId: legacy,
+          userMessageId: runMessage,
+          status: "completed",
+        },
+      } as never as OrchestrationV2DomainEvent);
+      const answer = (yield* h.messages).at(-1)!;
+      assert.deepInclude(answer, { assistant_id: "ada", text: "Finished on the old thread." });
+      assert.equal(
+        (yield* h.sqlRows<{ request_id: string }>(
+          `SELECT request_id FROM assistant_group_messages WHERE message_id = '${answer.message_id}'`,
+        ))[0]!.request_id,
+        "gm:live",
+      );
+      // A stopped task picked up again starts in its request's own conversation.
+      const resumed = yield* groups.taskAction({ taskId: "gt:stuck" as never, action: "resume" });
+      assert.equal(resumed.threadId, requestThreadId("ada", TEAM, "gm:stuck"));
+      assert.equal(h.sent.at(-1)!.threadId, requestThreadId("ada", TEAM, "gm:stuck"));
+      assert.include(h.sent.at(-1)!.text, "stuck one");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a member waiting on the user shows once in its request and is marked resolved when answered",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const deploy = yield* groups.post({ teamId: TEAM, text: "@ada deploy it" }, h.user);
+      const thread = deploy.tasks[0]!.threadId;
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+        (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+        VALUES ('rr-1', ${thread}, 'n', 'command', 'pending', '2026-01-01', '{}'),
+          ('rr-machine', ${thread}, 'n', 'auth_refresh', 'pending', '2026-01-01', '{}')`;
+      h.runtimeRequests.set("rr-1", {
+        request: { kind: "command", status: "pending", responseCapability: { type: "live" } },
+        item: { type: "approval_request", prompt: "rm -rf build", reason: null },
+      });
+      const decision = (id: string, client: string, approval: string | null) => sql`
+        INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id,
+          thread_title, title, context, options_json, status, approval_request_id, created_at)
+        VALUES (${id}, ${thread}, 'p1', ${client}, 't', 'Which region?', 'Pick one.',
+          '[{"id":"a","label":"EU"},{"id":"b","label":"US"}]', 'open', ${approval}, '2026-01-02')`;
+      // The mirror of the approval and autonomy's own notice are the same wait, not new ones.
+      yield* decision("d-mirror", "approval:rr-1", "rr-1");
+      yield* decision("d-notice", "autonomy:needs-you:rr-1", null);
+      const event = {
+        type: "runtime-request.updated",
+        threadId: thread,
+        payload: {},
+      } as never as OrchestrationV2DomainEvent;
+      yield* groups.handleRunEvent(event);
+      yield* groups.handleRunEvent(event);
+      yield* decision("d-asked", "region", null);
+      yield* groups.syncWaitingThread(thread);
+      // A restart reconciles the same waits without posting them again.
+      yield* groups.reconcile;
+      const notices = () =>
+        groups
+          .history({ teamId: TEAM })
+          .pipe(Effect.map((page) => page.messages.filter((m) => m.waiting !== undefined)));
+      const posted = yield* notices();
+      assert.deepEqual(
+        posted.map((m): unknown[] => [m.kind, m.author, m.assistantId, m.requestId, m.waiting]),
+        [
+          ["notice", "assistant", "ada", deploy.message.id, { threadId: thread, resolved: false }],
+          [
+            "notice",
+            "assistant",
+            "ada",
+            deploy.message.id,
+            { threadId: thread, decisionId: "d-asked", resolved: false },
+          ],
+        ],
+      );
+      assert.include(posted[0]!.text, "rm -rf build");
+      assert.include(posted[0]!.text, "Options:");
+      assert.equal(posted[1]!.text, "Which region?\n\nPick one.\n\nOptions: EU · US");
+
+      // Answered anywhere (here, straight in the store): the notices stay, marked resolved, and
+      // the group's waiting dot is refreshed.
+      yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved'
+        WHERE runtime_request_id = 'rr-1'`;
+      const refreshedBefore = h.refreshed.length;
+      yield* groups.handleRunEvent(event);
+      assert.isAbove(h.refreshed.length, refreshedBefore);
+      yield* sql`UPDATE decisions SET status = 'answered' WHERE decision_id = 'd-asked'`;
+      yield* groups.reconcile;
+      assert.deepEqual(
+        (yield* notices()).map((m) => m.waiting?.resolved),
+        [true, true],
+      );
+      // A thread that is no request's is left alone.
+      yield* groups.syncWaitingThread(ThreadId.make("thread:outside"));
+      assert.lengthOf(yield* notices(), 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { way: "taken from the group", deleted: false },
+  // Members open to every project: only the deletion itself keeps work out of it.
+  { way: "deleted", deleted: true },
+])(
+  "a project $way lets running turns end and cancels the work still to start there",
+  ({ deleted }) => {
+    const h = deleted
+      ? harness()
+      : harness({ projects: { ada: ["p1"], beto: ["p1"], cy: ["p1"] } });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      if (!deleted) {
+        yield* sql`UPDATE assistant_teams SET project_ids_json = '["p2"]' WHERE team_id = ${TEAM}`;
+      }
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto @cy fix the app", projectId: deleted ? p1 : p2 },
+        h.user,
+      );
+      const beto = requestThreadId("beto", TEAM, request.message.id);
+      const [limitedRun] = h.runs.get(beto)!;
+      Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(1, "failed");
+      const statuses = () =>
+        h.tasks.pipe(Effect.map((rows) => rows.map((row) => `${row.owner_id}:${row.status}`)));
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:usage_limited", "cy:queued"]);
+
+      yield* deleted
+        ? sql`UPDATE projection_projects SET deleted_at = '2026-02-01' WHERE project_id = 'p1'`
+        : sql`UPDATE assistant_teams SET project_ids_json = '[]' WHERE team_id = ${TEAM}`;
+      const team = {
+        id: TEAM,
+        name: `Team ${TEAM}`,
+        memberIds: ["ada", "beto", "cy"],
+        leadId: null,
+        archivedAt: null,
+        projectIds: [],
+      } as never;
+      yield* groups.handleAssistantEvent({ type: "teamUpserted", team });
+      // Ada's turn goes on; Beto's continuation is disarmed; Cy's never starts.
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:cancelled", "cy:cancelled"]);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.stop" || command.type === "run.stop")
+          .map((command) => command.threadId),
+        [beto],
+      );
+      assert.isFalse(
+        h.dispatched.some((command) => command.threadId === ada && command.type.endsWith("stop")),
+      );
+      // Her turn then runs into a usage limit: it would continue there, so it is cancelled too.
+      const [adaRun] = h.runs.get(ada)!;
+      Object.assign(adaRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(adaRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(0, "failed");
+      assert.deepEqual(yield* statuses(), ["ada:cancelled", "beto:cancelled", "cy:cancelled"]);
+      assert.lengthOf(h.sent, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);

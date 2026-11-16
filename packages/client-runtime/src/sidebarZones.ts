@@ -1,10 +1,12 @@
-import { assistantIdFromThreadId } from "@t3tools/contracts";
+import { assistantIdFromThreadId, type AssistantTeamChat } from "@t3tools/contracts";
 import { decisionWaitsOnUser, requestWaitsOnUser } from "@t3tools/shared/needsUser";
 
+import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
   assistantPresence,
   assistantPresenceOf,
+  type AssistantMood,
   type AssistantPresence,
 } from "./assistantRobot.ts";
 
@@ -208,11 +210,10 @@ export function teamsLayout<
 export type ZoneIndicator =
   | { readonly kind: "needs"; readonly count: number }
   | { readonly kind: "failed" }
+  | { readonly kind: "limited" }
   | { readonly kind: "paused"; readonly count: number }
   | { readonly kind: "running"; readonly count: number }
   | { readonly kind: "unread"; readonly count: number };
-
-type Mood = "idle" | "working" | "needs" | "failed";
 
 /**
  * How many listed waits belong to these assistants or to this group's own threads. Rows and
@@ -231,37 +232,43 @@ export function countWaits(
   ).length;
 }
 
-/** An assistant row's one indicator from its `assistantStatus` mood: waits on you, failed, or working. */
+/** An assistant row's one indicator from its `assistantStatus` mood: waits on you, failed, held by a usage limit, or working. */
 export function assistantIndicator(input: {
   readonly needsYou: number;
-  readonly mood: Mood;
+  readonly mood: AssistantMood;
 }): ZoneIndicator | null {
   if (input.mood === "needs") return { kind: "needs", count: Math.max(1, input.needsYou) };
   if (input.mood === "failed") return { kind: "failed" };
+  if (input.mood === "limited") return { kind: "limited" };
   if (input.mood === "working") return { kind: "running", count: 1 };
   return null;
 }
 
 /**
  * A group folder's one indicator, from the members drawn inside it and the group's own threads:
- * needs you, then failed, paused, running N, then unread messages.
+ * needs you (a counted wait, or a tab the server flags as waiting), then failed, a member held by
+ * a usage limit, paused, running N, then unread messages.
  */
 export function folderIndicator(input: {
   /** From `countWaits` over the drawn members and the group's key. */
   readonly needsYou: number;
-  readonly members: ReadonlyArray<{ readonly mood: Mood }>;
-  readonly chat: {
-    readonly pausedTasks: number;
-    readonly failedTasks: number;
-    readonly unreadCount: number;
-  } | null;
+  readonly members: ReadonlyArray<{ readonly mood: AssistantMood }>;
+  readonly chat:
+    | (Pick<AssistantTeamChat, "scopes"> & {
+        readonly pausedTasks: number;
+        readonly failedTasks: number;
+        readonly unreadCount: number;
+      })
+    | null;
 }): ZoneIndicator | null {
   if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
+  if (assistantGroupChatWaiting(input.chat ?? undefined)) return { kind: "needs", count: 1 };
   if (
     (input.chat?.failedTasks ?? 0) > 0 ||
     input.members.some((member) => member.mood === "failed")
   )
     return { kind: "failed" };
+  if (input.members.some((member) => member.mood === "limited")) return { kind: "limited" };
   if ((input.chat?.pausedTasks ?? 0) > 0) return { kind: "paused", count: input.chat!.pausedTasks };
   const running = input.members.filter((member) => member.mood === "working").length;
   if (running > 0) return { kind: "running", count: running };
@@ -333,9 +340,15 @@ export function assistantStatusOf<
   const of = (
     environmentId: string,
     assistant: { readonly id: string; readonly threadId: string | null } | null,
+    /** The platform's `useUsageLimitLabel`, so a limit says until when. */
+    limitLabel?: (resetAt: string | null | undefined) => string | null,
   ) =>
     assistant === null
       ? assistantPresence(null)
-      : read(environmentId, assistant.id, assistantPresenceOf(assistant, environmentId, shells));
+      : read(
+          environmentId,
+          assistant.id,
+          assistantPresenceOf(assistant, environmentId, shells, limitLabel),
+        );
   return { items, read, of };
 }

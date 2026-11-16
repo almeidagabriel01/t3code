@@ -109,13 +109,13 @@ export const OrchestratorMcpTarget = Schema.Struct({
   options: Schema.optional(
     OrchestratorMcpTargetOptions.annotate({
       description:
-        "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears.",
+        "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override the default's. [] or {} clears.",
     }),
   ),
   environmentId: Schema.optional(
     EnvironmentId.annotate({
       description:
-        "Linked environment to run in. Provider and model default to yours; others come from `orchestrator_capabilities` with this `environmentId`.",
+        "Linked environment to run in. No `model`: that project's default there, not yours. Models there come from `orchestrator_capabilities` with this `environmentId`.",
     }),
   ),
   projectId: Schema.optional(
@@ -150,6 +150,7 @@ export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "running",
   "waiting",
+  "usage_limited",
   "completed",
   "failed",
   "cancelled",
@@ -220,6 +221,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
+  resetAt: Schema.optional(IsoDateTime).annotate({
+    description: "When a `usage_limited` task's provider limit resets, if known.",
+  }),
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),

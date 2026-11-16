@@ -8,6 +8,8 @@ import {
   type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentRef } from "react";
 import { View } from "react-native";
@@ -17,20 +19,29 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
+import { ListRow } from "../../components/ui/ListRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { buildModelOptions } from "../../lib/modelOptions";
 import {
   useAssistantEntries,
   useAssistantGroupActions,
   useAssistantGroupChat,
   useAssistantTeamActions,
 } from "../../state/assistants";
+import { useEnvironmentServerConfig } from "../../state/entities";
+import { modelDisplayName, SettingsModelPicker } from "../settings/components/SettingsModelPicker";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { TextField } from "./AssistantFormFields";
+import { FieldHeader, TextField } from "./AssistantFormFields";
+import { GroupProjectsSection } from "./GroupProjectsSection";
 import { GroupRoutinesSection } from "./GroupRoutinesSection";
-import { assistantTeamTargetAtom, type AssistantTeamTarget } from "./assistantTeamTarget";
+import {
+  assistantTeamTargetAtom,
+  setGroupDefaultModelDraft,
+  type AssistantTeamTarget,
+} from "./assistantTeamTarget";
 
-export function AssistantGroupSettingsRouteScreen() {
+function useTargetTeam() {
   const target = useAtomValue(assistantTeamTargetAtom);
   const { teams } = useAssistantEntries();
   const team =
@@ -40,6 +51,17 @@ export function AssistantGroupSettingsRouteScreen() {
           (entry) =>
             entry.environmentId === target.environmentId && entry.team.id === target.teamId,
         )?.team;
+  return { target, team };
+}
+
+/** The group's default model as the open settings form has it, saved or not. */
+const draftDefaultModel = (
+  draft: AssistantTeamTarget["defaultModelDraft"],
+  team: AssistantTeam,
+): ModelSelection | null => (draft === undefined ? (team.defaultModelSelection ?? null) : draft);
+
+export function AssistantGroupSettingsRouteScreen() {
+  const { target, team } = useTargetTeam();
   if (target === null || team === undefined) {
     return (
       <SettingsScreen title="Group settings">
@@ -53,6 +75,30 @@ export function AssistantGroupSettingsRouteScreen() {
       environmentId={target.environmentId}
       team={team}
       section={target.section}
+      defaultModelDraft={target.defaultModelDraft}
+    />
+  );
+}
+
+/** Picks the group's default model into the open settings form; nothing saves until it does. */
+export function GroupDefaultModelPickerRouteScreen() {
+  const navigation = useNavigation();
+  const { target, team } = useTargetTeam();
+  if (target === null || team === undefined) {
+    return (
+      <SettingsScreen title="Default model">
+        <Text className="p-5 text-base text-foreground-muted">Open a group first.</Text>
+      </SettingsScreen>
+    );
+  }
+  return (
+    <SettingsModelPicker
+      title="Default model"
+      environmentId={target.environmentId}
+      projectId={null}
+      selected={draftDefaultModel(target.defaultModelDraft, team)}
+      onPick={setGroupDefaultModelDraft}
+      onClose={() => navigation.goBack()}
     />
   );
 }
@@ -68,16 +114,19 @@ function SettingsForm(props: {
   readonly environmentId: EnvironmentId;
   readonly team: AssistantTeam;
   readonly section: AssistantTeamTarget["section"];
+  readonly defaultModelDraft: AssistantTeamTarget["defaultModelDraft"];
 }) {
-  const { environmentId, team, section } = props;
+  const { environmentId, team, section, defaultModelDraft } = props;
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const teamActions = useAssistantTeamActions(environmentId);
   const groupActions = useAssistantGroupActions(environmentId);
   const chat = useAssistantGroupChat(environmentId, team.id);
+  const config = useEnvironmentServerConfig(environmentId);
   const [instructions, setInstructions] = useState(team.instructions ?? "");
   const [memories, setMemories] = useState((team.memories ?? []).join("\n"));
+  const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>(team.projectIds);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,9 +138,15 @@ function SettingsForm(props: {
       (message) => message.seq === latest && message.kind === "boundary",
     );
   const kept = memoriesOf(memories);
+  const projectsChanged =
+    projectIds.length !== team.projectIds.length ||
+    projectIds.some((id) => !team.projectIds.includes(id));
+  const defaultModel = draftDefaultModel(defaultModelDraft, team);
   const changed =
     instructions.trim() !== (team.instructions ?? "") ||
-    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []);
+    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
+    projectsChanged ||
+    defaultModelDraft !== undefined;
   const converseDisabled = busy || working || !groupActions.canConverse;
 
   const save = async () => {
@@ -101,6 +156,8 @@ function SettingsForm(props: {
       teamId: team.id,
       instructions: instructions.trim(),
       memories: kept.slice(0, ASSISTANT_TEAM_MEMORIES_MAX),
+      ...(projectsChanged ? { projectIds } : {}),
+      ...(defaultModelDraft === undefined ? {} : { defaultModelSelection: defaultModelDraft }),
     });
     setBusy(false);
     if (reply.ok) navigation.goBack();
@@ -161,6 +218,43 @@ function SettingsForm(props: {
           autoCapitalize="sentences"
           onChange={setMemories}
         />
+        <GroupProjectsSection
+          environmentId={environmentId}
+          team={team}
+          value={projectIds}
+          onChange={setProjectIds}
+        />
+        {team.defaultModelSelection === undefined ? null : (
+          <View className="gap-2">
+            <FieldHeader
+              label="Default model"
+              description="Group requests start on this model in the group's projects when the project sets none."
+            />
+            <ListSection>
+              <ListRow
+                icon="cube"
+                label={
+                  defaultModel === null
+                    ? "Members' models"
+                    : modelDisplayName(
+                        buildModelOptions(config, defaultModel, undefined, null),
+                        defaultModel,
+                      )
+                }
+                disabled={busy || !teamActions.canAct}
+                onPress={() => navigation.navigate("SettingsGroupDefaultModel")}
+              />
+              {defaultModel === null ? null : (
+                <ListActionRow
+                  icon="arrow.uturn.backward"
+                  label="Use members' defaults"
+                  disabled={busy || !teamActions.canAct}
+                  onPress={() => setGroupDefaultModelDraft(null)}
+                />
+              )}
+            </ListSection>
+          </View>
+        )}
         {error === null ? null : (
           <Text
             accessibilityRole="alert"

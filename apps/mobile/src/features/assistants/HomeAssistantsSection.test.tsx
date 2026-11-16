@@ -3,8 +3,14 @@ import { act, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-type Mood = "idle" | "working" | "needs" | "failed";
-type Presence = { mood: Mood; detail: string; since: string | null; queued?: number };
+type Mood = "idle" | "working" | "needs" | "limited" | "failed";
+type Presence = {
+  mood: Mood;
+  detail: string;
+  since: string | null;
+  queued?: number;
+  resetAt?: string;
+};
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -146,7 +152,13 @@ const { helpers } = vi.hoisted(() => {
               ? { status: "running" }
               : mood === "failed"
                 ? { status: "failed" }
-                : null,
+                : mood === "limited"
+                  ? {
+                      status: "failed",
+                      lastErrorClass: "usage_limit",
+                      usageLimitResetAt: mocks.presence[task.threadId]?.resetAt,
+                    }
+                  : null,
         };
       }),
     ];
@@ -223,10 +235,19 @@ vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
     presence.mood === "needs" ? "waiting" : presence.mood,
   assistantQueuedLabel: (queued: number | undefined) =>
     queued !== undefined && queued > 0 ? `${queued} queued` : null,
-  assistantPresence: (thread: { id: string } | null): Presence =>
-    thread === null
-      ? { mood: "idle", detail: "Idle", since: null }
-      : (mocks.presence[thread.id] ?? { mood: "idle", detail: "Idle", since: null }),
+  assistantPresence: (
+    thread: { id: string } | null,
+    _groups: unknown,
+    limitLabel?: (resetAt: string | undefined) => string | null,
+  ): Presence => {
+    const presence =
+      thread === null
+        ? { mood: "idle" as const, detail: "Idle", since: null }
+        : (mocks.presence[thread.id] ?? { mood: "idle" as const, detail: "Idle", since: null });
+    return presence.mood === "limited"
+      ? { ...presence, detail: limitLabel?.(presence.resetAt) ?? "Usage limit" }
+      : presence;
+  },
 }));
 vi.mock("@t3tools/client-runtime/state/thread-attention", () => ({
   resolveSidebarThreadStatus: (thread: { id: string }) =>
@@ -397,6 +418,10 @@ vi.mock("./useAssistantFlows", () => ({
 vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
 }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
 vi.mock("./openAssistantInfo", () => ({ useOpenAssistantInfo: () => mocks.info }));
 vi.mock("./assistantWorkTarget", () => ({
@@ -440,7 +465,13 @@ const team = (
   name: string,
   memberIds: string[],
   environmentId = "hub",
-  chat?: { unreadCount: number; latestSeq: number; pausedTasks?: number; failedTasks?: number },
+  chat?: {
+    unreadCount: number;
+    latestSeq: number;
+    pausedTasks?: number;
+    failedTasks?: number;
+    scopes?: unknown;
+  },
 ) => ({
   environmentId,
   team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
@@ -800,6 +831,12 @@ describe("HomeAssistantsSection", () => {
     expect(dismiss).toHaveLength(2);
     await act(async () => dismiss[0]?.click());
     expect(mocks.dismissTask).toHaveBeenCalledWith("w2");
+    // A usage-limited task says until when, and can be dismissed like a failed one.
+    mocks.tasks = [{ threadId: "w5", title: "Port docs", createdAt: "2026-11-01T00:00:00.000Z" }];
+    mocks.presence.w5 = { mood: "limited", detail: "", since: null, resetAt: "2099-01-01T09:30Z" };
+    render(false);
+    expect(byLabel("Port docs, Limit until <2099-01-01T09:30Z>")).not.toBeNull();
+    expect(container.querySelectorAll('[aria-label="menu:Dismiss task"]')).toHaveLength(1);
     mocks.tasks = [];
     render(true);
     expect(container.querySelector('[data-testid="assistant-task-list"]')).toBeNull();
@@ -825,12 +862,19 @@ describe("HomeAssistantsSection", () => {
     mocks.teams = [
       team("g1", "Busy", [], "hub", { unreadCount: 120, latestSeq: 130 }),
       team("g2", "Quiet", [], "hub", { unreadCount: 0, latestSeq: 5 }),
-      team("g3", "Empty", [], "hub", { unreadCount: 0, latestSeq: 0 }),
+      team("g3", "Empty", [], "hub", {
+        unreadCount: 0,
+        latestSeq: 0,
+        scopes: [{ projectId: null, unreadCount: 0, waiting: true, readSeq: 0 }],
+      }),
     ];
     render();
+    // The server's per-tab waiting flag marks the group that waits on the user.
     expect(
-      [...container.querySelectorAll('[data-testid="zone-indicator"]')].map((n) => n.textContent),
-    ).toEqual(["99+"]);
+      [...container.querySelectorAll('[data-testid="zone-indicator"]')]
+        .map((n) => n.textContent)
+        .sort(),
+    ).toEqual(["99+", "Needs you"]);
     expect(container.querySelectorAll('[aria-label="menu:Mark as read"]')).toHaveLength(1);
     const unread = container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="menu:Mark as unread"]',

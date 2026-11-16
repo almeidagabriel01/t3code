@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   type Assistant,
+  assistantEffectiveProjectIds,
   type AssistantError,
   assistantIdFromThreadId,
   type AutonomyError,
@@ -16,11 +17,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
+import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
+import * as ChannelOutbox from "../../../channels/ChannelOutbox.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import { runtimeModeRank } from "../../delegatedTaskModes.ts";
@@ -42,6 +46,7 @@ const brief = (
   name: assistant.name,
   projectId: assistant.projectId,
   projectIds: [...assistant.projectIds],
+  effectiveProjectIds: [...assistantEffectiveProjectIds(assistant, teams)],
   threadId: assistant.threadId,
   toolAccess: assistant.toolAccess,
   askBeforeActing: assistant.askBeforeActing ?? false,
@@ -61,12 +66,20 @@ const brief = (
       ? { mode: "all" }
       : { mode: "selected", names: [...assistant.integrations.names] },
   role: assistant.role,
+  defaultModel:
+    assistant.defaultModelSelection == null
+      ? null
+      : {
+          providerInstanceId: assistant.defaultModelSelection.instanceId,
+          model: assistant.defaultModelSelection.model,
+        },
   teams: teams
     .filter((team) => team.memberIds.includes(assistant.id))
     .map((team) => ({
       name: team.name,
       members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
       lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
+      projectIds: [...team.projectIds],
     })),
   archived: assistant.archivedAt !== null,
 });
@@ -188,6 +201,13 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   });
   const avatar =
     input.avatarHue === undefined ? undefined : ({ kind: "robot", hue: input.avatarHue } as const);
+  const defaultModel =
+    input.defaultModel == null
+      ? input.defaultModel
+      : {
+          instanceId: input.defaultModel.providerInstanceId,
+          model: input.defaultModel.model,
+        };
 
   if (input.integrations !== undefined)
     return yield* invalid("Only the user can change which integrations an assistant uses");
@@ -199,6 +219,12 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
     (input.notifications !== undefined || input.onProblem !== undefined)
   )
     yield* requireUserTurn(caller, "change when an assistant notifies them");
+  // Projects bound a project assistant, so only the user moves that bound.
+  if (
+    (input.action === "update" || input.action === "create") &&
+    (input.projectIds !== undefined || input.projectId !== undefined)
+  )
+    yield* requireUserTurn(caller, "change which projects an assistant may work in");
   /** One chat line per change, so a repeat of the same call adds none. */
   const announce = (team: AssistantTeam, lines: ReadonlyArray<string>) =>
     caller.caller === undefined
@@ -222,8 +248,27 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
         );
   const nameOf = (id: string) => all.find((other) => other.id === id)?.name ?? id;
   const listOf = (ids: ReadonlyArray<string>) => ids.map(nameOf).join(", ");
+  const projectList = (ids: ReadonlyArray<string>) =>
+    Effect.serviceOption(AssistantDirectory).pipe(
+      Effect.flatMap((directory) =>
+        Option.isSome(directory) && directory.value.projectTitles !== undefined
+          ? directory.value.projectTitles(ids)
+          : Effect.succeed<Readonly<Record<string, string>>>({}),
+      ),
+      Effect.map((titles) => ids.map((id) => titles[id] ?? id).join(", ")),
+    );
 
   switch (input.action) {
+    case "resend_undelivered": {
+      const outbox = yield* ChannelOutbox.ChannelOutbox;
+      const requeued = { telegram: 0, imessage: 0 };
+      for (const kind of input.channel === undefined
+        ? (["telegram", "imessage"] as const)
+        : [input.channel]) {
+        requeued[kind] = yield* outbox.resend(kind);
+      }
+      return { requeued } satisfies Out;
+    }
     case "notify_user": {
       const self = caller.caller === undefined ? null : assistantIdFromThreadId(caller.caller.id);
       const assistant = all.find(
@@ -295,6 +340,15 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           group: input.group.trim(),
           text: input.text.trim(),
           ...(input.paths === undefined ? {} : { paths: input.paths }),
+          ...(input.projectId === undefined ? {} : { project: input.projectId }),
+          ...(input.model === undefined
+            ? {}
+            : {
+                modelSelection: {
+                  instanceId: input.model.providerInstanceId,
+                  model: input.model.model,
+                },
+              }),
           clientRequestId: key,
         })
         .pipe(Effect.mapError(failure));
@@ -344,6 +398,8 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
             ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
             ...(input.role === undefined ? {} : { role: input.role }),
             ...(avatar === undefined ? {} : { avatar }),
+            // Its first conversation starts on it, and it is stored as its default.
+            ...(defaultModel == null ? {} : { modelSelection: defaultModel }),
           },
           { id: `mcp-${sha(key).slice(0, 24)}` },
         )
@@ -383,6 +439,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           : { projectIds: input.projectIds as ReadonlyArray<ProjectId> }),
         ...(input.role === undefined ? {} : { role: input.role }),
         ...(avatar === undefined ? {} : { avatar }),
+        ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
         // Only the mode changes; its rules, projects and channels stay as the user set them.
         ...(input.notifications === undefined && input.onProblem === undefined
           ? {}
@@ -448,14 +505,27 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           ...(input.name === undefined ? {} : { name: input.name }),
           memberIds,
           ...(lead === undefined ? {} : { leadId: lead }),
+          ...(input.action === "group_update" && input.projectIds !== undefined
+            ? { projectIds: input.projectIds as ReadonlyArray<ProjectId> }
+            : {}),
+          ...(input.addProjects === undefined
+            ? {}
+            : { addProjectIds: input.addProjects as ReadonlyArray<ProjectId> }),
+          ...(input.removeProjects === undefined
+            ? {}
+            : { removeProjectIds: input.removeProjects as ReadonlyArray<ProjectId> }),
         })
         .pipe(Effect.mapError(failure));
+      const gained = updated.projectIds.filter((id) => !team.projectIds.includes(id));
+      const lost = team.projectIds.filter((id) => !updated.projectIds.includes(id));
       const added = updated.memberIds.filter((id) => !team.memberIds.includes(id));
       const removed = team.memberIds.filter((id) => !updated.memberIds.includes(id));
       yield* announce(updated, [
         ...(updated.name === team.name ? [] : [`renamed the group to "${updated.name}"`]),
         ...(added.length === 0 ? [] : [`added ${listOf(added)}`]),
         ...(removed.length === 0 ? [] : [`removed ${listOf(removed)}`]),
+        ...(gained.length === 0 ? [] : [`gave the group ${yield* projectList(gained)}`]),
+        ...(lost.length === 0 ? [] : [`took ${yield* projectList(lost)} from the group`]),
         ...((updated.leadId ?? null) === (team.leadId ?? null)
           ? []
           : [
@@ -472,6 +542,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
 const teamBrief = (team: AssistantTeam, all: ReadonlyArray<Assistant>): Out => ({
   groupId: team.id,
   name: team.name,
+  projectIds: [...team.projectIds],
   members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
   lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
 });

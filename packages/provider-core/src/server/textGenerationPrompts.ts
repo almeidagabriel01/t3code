@@ -499,6 +499,10 @@ export interface AssistantGroupRoutingPromptInput {
   /** Oldest first. */
   readonly recentMessages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
   readonly request: string;
+  readonly followUps?: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+  readonly summary?: string | null;
+  readonly projects?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly newRequest?: boolean;
 }
 
 const ROUTING_INSTRUCTIONS_CHARS = 300;
@@ -521,28 +525,54 @@ export function buildAssistantGroupRoutingPrompt(input: AssistantGroupRoutingPro
     used += line.length;
     recent.unshift(line);
   }
+  const projects = input.projects ?? [];
+  const followUps = input.followUps ?? [];
+  const summary = input.summary?.trim() ?? "";
   const prompt = [
     `You route messages in the group chat "${input.groupName}" to the members who should work on them.`,
-    "Return a JSON object with assistantIds (an array of member ids) and noReply (a boolean).",
+    "Return a JSON object with assistantIds (an array of member ids), noReply (a boolean), projectId, question and title (strings).",
     "Rules:",
     "- pick each member whose role or area the request touches",
     "- when the request touches one area or none, pick the one member best able to take it",
     "- pick everyone when the request is addressed to the whole group",
     "- use only the ids listed below",
     "- when the message only thanks, acknowledges, or closes the topic and asks for nothing, return no ids and set noReply to true; otherwise noReply is false",
+    ...(projects.length === 0
+      ? ['- projectId and question are ""']
+      : [
+          "- projectId: the id of the project below that the request is about, judged from the request, its follow-ups and the recent messages",
+          '- when it could be about more than one of them and nothing settles it, do not guess: projectId is "" and question is one short sentence asking the user which project, naming the options, in the language of the request; otherwise question is ""',
+        ]),
+    input.newRequest === true
+      ? "- title: a short title for the request, at most 8 words, in its language, without @mentions"
+      : '- title is ""',
+    ...(projects.length === 0
+      ? []
+      : ["", "Projects:", ...projects.map((project) => `- id ${project.id}: ${project.name}`)]),
     "",
     "Members:",
     ...members,
+    ...(summary === "" ? [] : ["", "Summary of earlier chat:", limitSection(summary, 4_000)]),
     "",
     "Recent messages:",
     ...(recent.length === 0 ? ["(none)"] : recent),
     "",
     "Request:",
     limitSection(input.request, 8_000),
+    ...(followUps.length === 0
+      ? []
+      : [
+          "",
+          "Said in this request since:",
+          ...followUps.map((message) => `${message.from}: ${limitSection(message.text, 600)}`),
+        ]),
   ].join("\n");
   const outputSchema = Schema.Struct({
     assistantIds: Schema.Array(Schema.String),
     noReply: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    projectId: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+    question: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+    title: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   });
   return { prompt, outputSchema };
 }

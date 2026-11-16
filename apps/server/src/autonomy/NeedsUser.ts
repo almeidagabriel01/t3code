@@ -1,11 +1,17 @@
 import {
+  assistantIdFromThreadId,
+  CommandId,
   DecisionId,
+  DEFAULT_ASSISTANT_ID,
+  isAssistantThreadId,
+  isProviderNativeSubagentThread,
   RuntimeRequestId,
   ThreadId,
   type Decision,
   type DecisionsEvent,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -19,10 +25,16 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { AssistantTasks } from "../assistants/AssistantTasks.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import { MACHINE_REQUEST_KINDS, requestDecision, type RequestDecision } from "./needsYou.ts";
+import {
+  MACHINE_REQUEST_KINDS,
+  requestDecision,
+  waitWakeId,
+  type RequestDecision,
+} from "./needsYou.ts";
 
 /**
  * One thing a thread waits on the user for: a pending runtime request (approval or question) or
@@ -44,6 +56,28 @@ export type UserWait =
       readonly decision: Decision;
       readonly createdAt: string;
     };
+
+/** The assistant following a thread, and its current conversation. */
+export interface WaitOwner {
+  readonly assistantId: string;
+  readonly name: string;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  /** The task's title, when its thread has none. */
+  readonly title: string;
+  /** The waiting thread is a delegate_task child, whose questions go to its parent agent first. */
+  readonly delegated: boolean;
+}
+
+/** An assistant's live conversation. */
+export interface AssistantConversation {
+  readonly name: string;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+}
+
+/** Subagent chains are shallow; the cap only guards a malformed lineage loop. */
+const MAX_CHAIN_DEPTH = 8;
 
 export interface UserWaitChange {
   readonly type: "opened" | "resolved";
@@ -130,6 +164,25 @@ export class NeedsUser extends Context.Service<
       wait: UserWait,
       agent: string,
     ) => Effect.Effect<Option.Option<RequestDecision>, ProjectionStore.ProjectionStoreV2Error>;
+    /**
+     * The assistant following the thread: the launcher of it or of an ancestor (`AssistantTasks`),
+     * or the assistant whose conversation started its delegate_task chain. Assistant and group
+     * member conversations follow no one.
+     */
+    readonly owner: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<WaitOwner>, SqlError | Orchestrator.OrchestratorV2Error>;
+    /** The assistant's live conversation; None once archived or before it has one. */
+    readonly conversation: (
+      assistantId: string,
+    ) => Effect.Effect<Option.Option<AssistantConversation>, SqlError>;
+    /** The default assistant's conversation: the user's point of contact for every wait. */
+    readonly defaultAssistant: Effect.Effect<Option.Option<AssistantConversation>, SqlError>;
+    /** Takes back a wake about the wait that `targetThreadId` has not started yet. */
+    readonly withdrawWake: (
+      targetThreadId: ThreadId,
+      wait: Pick<UserWait, "threadId" | "key">,
+    ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
   }
 >()("t3/autonomy/NeedsUser") {}
 
@@ -138,6 +191,7 @@ const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const decisions = yield* DecisionService.DecisionService;
+  const tasks = yield* AssistantTasks;
 
   const pendingRequests = Effect.gen(function* () {
     const rows = yield* sql<{
@@ -224,7 +278,86 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return NeedsUser.of({ pending, changes, describe });
+  const conversation = Effect.fnUntraced(function* (assistantId: string) {
+    const rows = yield* sql<{
+      readonly name: string;
+      readonly thread_id: string | null;
+      readonly project_id: string;
+    }>`
+      SELECT name, thread_id, project_id FROM assistants
+      WHERE assistant_id = ${assistantId} AND archived_at IS NULL`;
+    const row = rows[0];
+    return row === undefined || row.thread_id === null
+      ? Option.none<AssistantConversation>()
+      : Option.some({
+          name: row.name,
+          threadId: ThreadId.make(row.thread_id),
+          projectId: row.project_id as ProjectId,
+        });
+  });
+
+  const owner: NeedsUser["Service"]["owner"] = Effect.fn("NeedsUser.owner")(function* (threadId) {
+    const follow = (assistantId: string, title: string, delegated: boolean) =>
+      conversation(assistantId).pipe(
+        Effect.map(Option.map((value) => ({ ...value, assistantId, title, delegated }))),
+      );
+    let current = threadId;
+    let delegated = false;
+    for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
+      if (isAssistantThreadId(current)) return Option.none();
+      const task = yield* tasks.forThread(current);
+      if (Option.isSome(task)) {
+        return yield* follow(task.value.assistantId, task.value.title, delegated);
+      }
+      const { thread } = yield* engine.getThreadRecords(current, []);
+      const parent = thread.lineage.parentThreadId;
+      if (thread.lineage.relationshipToParent !== "subagent" || parent === null) {
+        return Option.none();
+      }
+      const native = isProviderNativeSubagentThread(thread);
+      if (depth === 0) delegated = !native;
+      if (isAssistantThreadId(parent)) {
+        // A native subagent is part of the assistant's own turn.
+        if (native) return Option.none();
+        const group = yield* sql`SELECT 1 FROM assistant_group_threads WHERE thread_id = ${parent}`;
+        const assistantId = assistantIdFromThreadId(parent);
+        if (group.length > 0 || assistantId === null) return Option.none();
+        return yield* follow(assistantId, thread.title, delegated);
+      }
+      current = parent;
+    }
+    return Option.none();
+  });
+
+  const withdrawWake: NeedsUser["Service"]["withdrawWake"] = Effect.fn("NeedsUser.withdrawWake")(
+    function* (targetThreadId, wait) {
+      // Wakes queued before the id named the conversation woken were keyed by the waiting thread.
+      const ids = new Set([
+        waitWakeId(targetThreadId, wait.key),
+        waitWakeId(wait.threadId, wait.key),
+      ]);
+      const { runs } = yield* engine.getThreadRecords(targetThreadId, ["runs"]);
+      for (const run of runs) {
+        if (run.status !== "queued" || !ids.has(run.userMessageId)) continue;
+        yield* engine.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`${run.userMessageId}:cancel`),
+          threadId: targetThreadId,
+          runId: run.id,
+        });
+      }
+    },
+  );
+
+  return NeedsUser.of({
+    pending,
+    changes,
+    describe,
+    owner,
+    conversation,
+    defaultAssistant: conversation(DEFAULT_ASSISTANT_ID),
+    withdrawWake,
+  });
 });
 
 export const layer = Layer.effect(NeedsUser, make);

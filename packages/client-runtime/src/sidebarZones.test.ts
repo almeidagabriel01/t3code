@@ -160,7 +160,21 @@ describe("indicators", () => {
       { ...chat, pausedTasks: 1, unreadCount: 3 },
       { kind: "needs", count: 2 },
     ],
+    [
+      "a tab the server flags as waiting",
+      0,
+      ["failed"],
+      { ...chat, scopes: [{ projectId: null, unreadCount: 0, waiting: true, readSeq: 0 }] },
+      { kind: "needs", count: 1 },
+    ],
     ["a failed member", 0, ["failed", "working"], chat, { kind: "failed" }],
+    [
+      "a usage-limited member",
+      0,
+      ["limited", "working"],
+      { ...chat, pausedTasks: 1 },
+      { kind: "limited" },
+    ],
     ["a failed group task", 0, ["idle"], { ...chat, failedTasks: 1 }, { kind: "failed" }],
     [
       "paused group tasks",
@@ -187,6 +201,7 @@ describe("indicators", () => {
   it.each([
     [2, "needs", { kind: "needs", count: 2 }],
     [0, "failed", { kind: "failed" }],
+    [0, "limited", { kind: "limited" }],
     [0, "working", { kind: "running", count: 1 }],
     [0, "idle", null],
     // A disconnected environment's assistant reads idle; its cached waits show nothing.
@@ -365,6 +380,29 @@ describe("assistantStatusOf", () => {
     expect(status.of("e", bo).mood).toBe("working");
     expect(status.of("e", null).mood).toBe("idle");
     expect(status.items.map((item) => item.threadId)).toEqual(["ask-me"]);
+  });
+
+  it("a usage limit says until when through the platform's label", () => {
+    const limited = { id: "cap", threadId: "assistant:cap:1" };
+    const status = assistantStatusOf({
+      shells: [
+        thread("assistant:cap:1", {
+          runtime: {
+            status: "failed",
+            lastErrorClass: "usage_limit",
+            usageLimitResetAt: "2026-11-14T15:30:00.000Z",
+          },
+        }),
+      ],
+      decisions: [],
+      ownerOf,
+      sites: [],
+      reachable: () => true,
+    });
+    expect(status.of("e", limited).detail).toBe("Usage limit");
+    expect(status.of("e", limited, (resetAt) => `Limit until ${resetAt}`).detail).toBe(
+      "Limit until 2026-11-14T15:30:00.000Z",
+    );
   });
 
   it("a disconnected environment reads disconnected for all", () => {

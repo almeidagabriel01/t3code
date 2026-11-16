@@ -3,6 +3,12 @@ import {
   applyImessageStatusEvent,
   createImessageChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/imessageChannel";
+import {
+  applyUndeliveredResend,
+  lowerUndelivered,
+  newerStoredSettings,
+  type StoredSettings,
+} from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   ImessageChannelSettingsError,
@@ -51,12 +57,27 @@ export function useImessageChannel(environmentId: EnvironmentId) {
   const accessQuery = useEnvironmentQuery(imessageEnvironment.access({ environmentId, input: {} }));
   const statusResult = useAtomValue(imessageEnvironment.status({ environmentId, input: null }));
   // A change answers with the new settings; showing them avoids waiting on a refetch.
-  const [saved, setSaved] = useState<ImessageChannelSettings | null>(null);
-  const stored = saved ?? settingsQuery.data;
+  const [saved, setSaved] = useState<StoredSettings<ImessageChannelSettings> | null>(null);
+  const stored = newerStoredSettings(saved, settingsQuery.data, settingsQuery.dataUpdatedAt);
   const event = AsyncResult.getOrElse(statusResult, () => null);
-  const settings = stored && event ? applyImessageStatusEvent(stored, event) : stored;
+  const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
+  const live = stored && (event ? applyImessageStatusEvent(stored.value, event) : stored.value);
+  const settings = live && applyUndeliveredResend(live, resent, event, stored?.at ?? 0);
   const canConfigure = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    imessageEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
+  const failed = (result: Parameters<typeof squashAtomCommandFailure>[0]): ImessageReply => {
+    const failure = squashAtomCommandFailure(result);
+    const base =
+      failure instanceof Error && failure.message.trim().length > 0
+        ? failure.message
+        : "The request could not be completed.";
+    const detail = isImessageSettingsError(failure) ? failure.detail : undefined;
+    return { ok: false, message: detail ? `${detail}: ${base}` : base };
+  };
   return {
     settings,
     loadError: settingsQuery.error,
@@ -64,19 +85,25 @@ export function useImessageChannel(environmentId: EnvironmentId) {
     ownHandles: accessQuery.data?.ownHandles ?? [],
     checkAccess: accessQuery.refresh,
     canConfigure,
+    canResend,
     configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {
       const result = await configure({ environmentId, input });
       if (result._tag === "Success") {
-        setSaved(result.value);
+        setSaved({ value: result.value, at: Date.now() });
         return { ok: true };
       }
-      const failure = squashAtomCommandFailure(result);
-      const base =
-        failure instanceof Error && failure.message.trim().length > 0
-          ? failure.message
-          : "The request could not be completed.";
-      const detail = isImessageSettingsError(failure) ? failure.detail : undefined;
-      return { ok: false, message: detail ? `${detail}: ${base}` : base };
+      return failed(result);
+    },
+    resendUndelivered: async (): Promise<ImessageReply> => {
+      const pressed = saved;
+      const result = await resend({ environmentId, input: {} });
+      if (result._tag !== "Success") return failed(result);
+      // The answer cannot follow `saved` from the shared runtime, so it lowers it here.
+      const { requeued } = result.value;
+      setSaved((now) =>
+        now && now === pressed ? { ...now, value: lowerUndelivered(now.value, requeued) } : now,
+      );
+      return { ok: true };
     },
   };
 }

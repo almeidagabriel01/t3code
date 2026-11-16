@@ -3,6 +3,12 @@ import {
   applyTelegramStatusEvent,
   createTelegramChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/telegramChannel";
+import {
+  applyUndeliveredResend,
+  lowerUndelivered,
+  newerStoredSettings,
+  type StoredSettings,
+} from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   TelegramChannelSettingsError,
@@ -50,29 +56,50 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
   );
   const statusResult = useAtomValue(telegramEnvironment.status({ environmentId, input: null }));
   // A change answers with the new settings; showing them avoids waiting on a refetch.
-  const [saved, setSaved] = useState<TelegramChannelSettings | null>(null);
-  const stored = saved ?? settingsQuery.data;
+  const [saved, setSaved] = useState<StoredSettings<TelegramChannelSettings> | null>(null);
+  const stored = newerStoredSettings(saved, settingsQuery.data, settingsQuery.dataUpdatedAt);
   const event = AsyncResult.getOrElse(statusResult, () => null);
-  const settings = stored && event ? applyTelegramStatusEvent(stored, event) : stored;
+  const resent = useAtomValue(telegramEnvironment.undeliveredResend(environmentId));
+  const live = stored && (event ? applyTelegramStatusEvent(stored.value, event) : stored.value);
+  const settings = live && applyUndeliveredResend(live, resent, event, stored?.at ?? 0);
   const canConfigure = useAtomValue(telegramEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    telegramEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(telegramEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(telegramEnvironment.resendUndelivered, { reportFailure: false });
+  const failed = (result: Parameters<typeof squashAtomCommandFailure>[0]): TelegramReply => {
+    const failure = squashAtomCommandFailure(result);
+    const base =
+      failure instanceof Error && failure.message.trim().length > 0
+        ? failure.message
+        : "The request could not be completed.";
+    const detail = isTelegramSettingsError(failure) ? failure.detail : undefined;
+    return { ok: false, message: detail ? `${detail}: ${base}` : base };
+  };
   return {
     settings,
     loadError: settingsQuery.error,
     canConfigure,
+    canResend,
     configure: async (input: TelegramChannelConfigureInput): Promise<TelegramReply> => {
       const result = await configure({ environmentId, input });
       if (result._tag === "Success") {
-        setSaved(result.value);
+        setSaved({ value: result.value, at: Date.now() });
         return { ok: true };
       }
-      const failure = squashAtomCommandFailure(result);
-      const base =
-        failure instanceof Error && failure.message.trim().length > 0
-          ? failure.message
-          : "The request could not be completed.";
-      const detail = isTelegramSettingsError(failure) ? failure.detail : undefined;
-      return { ok: false, message: detail ? `${detail}: ${base}` : base };
+      return failed(result);
+    },
+    resendUndelivered: async (): Promise<TelegramReply> => {
+      const pressed = saved;
+      const result = await resend({ environmentId, input: {} });
+      if (result._tag !== "Success") return failed(result);
+      // The answer cannot follow `saved` from the shared runtime, so it lowers it here.
+      const { requeued } = result.value;
+      setSaved((now) =>
+        now && now === pressed ? { ...now, value: lowerUndelivered(now.value, requeued) } : now,
+      );
+      return { ok: true };
     },
   };
 }

@@ -1,13 +1,15 @@
 import {
-  assistantIdFromThreadId,
   CommandId,
-  isAssistantThreadId,
-  isProviderNativeSubagentThread,
   MessageId,
   type OrchestrationV2DomainEvent,
-  type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+import {
+  QUIET_REPLY,
+  TASK_EVENT_MESSAGE_PREFIX,
+  taskEventHeadline,
+  type TaskEventStatus,
+} from "@t3tools/shared/assistantTaskEvents";
 import {
   backgroundWorkHoldsCompletion,
   isPullRequestWatchTask,
@@ -27,36 +29,36 @@ import {
   type UserWait,
   type UserWaitChange,
 } from "../autonomy/NeedsUser.ts";
-import type { RequestDecision } from "../autonomy/needsYou.ts";
+import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
+import { TaskEventNotices } from "./TaskEventNotices.ts";
 
-const TASK_WAKE_PREFIX = "assistant-task:";
-const WAIT_WAKE_PREFIX = "assistant-task-waits:";
-const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
-/** Subagent chains are shallow; the cap only guards a malformed lineage loop. */
-const MAX_CHAIN_DEPTH = 8;
+const TERMINAL = new Set<string>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+] satisfies ReadonlyArray<TaskEventStatus>);
 const LIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const LAST_MESSAGE_CHARS = 1_500;
 
 export function taskWakeText(input: {
   readonly title: string;
   readonly threadId: ThreadId;
-  readonly status: string;
+  readonly status: TaskEventStatus;
   readonly lastMessage: string | null;
 }): string {
-  const link = formatThreadLink({ environmentId: null, threadId: input.threadId }, input.title);
-  const outcome = input.status === "completed" ? "finished" : input.status;
   const last =
     input.lastMessage === null
       ? ""
       : `\n\nIts last message:\n${input.lastMessage.slice(0, LAST_MESSAGE_CHARS)}`;
-  return `Task ${link} ${outcome}.${last}\n\nCheck its diff and run the tests. Ask a group member to review when that helps, send fixes with t3_thread_send, and only then report to the user.`;
+  return `${taskEventHeadline(input)}${last}\n\nIf this tells the user nothing new, reply with exactly ${QUIET_REPLY} and stop. Otherwise check its diff and run the tests, send any fixes to the task with t3_thread_send (never edit files here), then tell the user what changed in at most 3 short plain lines with the task's link. Add a "Waiting on you" line only if the user must act now; if you are only waiting on the task, leave it out.`;
 }
 
-function waitWakeText(input: {
+export function waitWakeText(input: {
   readonly title: string;
   readonly threadId: ThreadId;
   readonly source: UserWait["source"];
@@ -70,13 +72,13 @@ function waitWakeText(input: {
     prompt.answerable ? `Options: ${prompt.options.map((option) => option.label).join(" / ")}` : "",
   ].filter((line) => line !== "");
   const where = input.source === "decision" ? "in Activity" : `in ${link}`;
-  return `Task ${link} is waiting on the user. It shows them:\n\n${card.join("\n\n")}\n\nTell the user now, in this chat, what it needs and that they answer it ${where}. Never approve, deny or answer it for them: use t3_pending_request respond only when the user tells you to in this chat. If it was already answered, say nothing about it.`;
+  return `Task ${link} is waiting on the user. It shows them:\n\n${card.join("\n\n")}\n\nTell the user now, in this chat, what it needs and that they answer it ${where}. Never approve, deny or answer it for them: use t3_pending_request respond only when the user tells you to in this chat. If it was already answered, reply with exactly ${QUIET_REPLY} and nothing else.`;
 }
 
 /**
  * Wakes the assistant when a thread it launched ends a run or starts waiting on the user, so it
- * follows its tasks without waiting on them. Message ids derive from the run or the wait, so a
- * replayed event wakes once.
+ * follows its tasks without waiting on them. `TaskEventNotices` decides whether a run is news and
+ * keeps one per run; a wait's message id derives from the wait, so a replayed event wakes once.
  */
 export class AssistantTaskReactor extends Context.Service<
   AssistantTaskReactor,
@@ -93,19 +95,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const tasks = yield* AssistantTasks;
   const needsUser = yield* NeedsUser;
-
-  const liveOwner = Effect.fnUntraced(function* (assistantId: string) {
-    const rows = yield* sql<{ readonly thread_id: string | null; readonly project_id: string }>`
-      SELECT thread_id, project_id FROM assistants
-      WHERE assistant_id = ${assistantId} AND archived_at IS NULL`;
-    const row = rows[0];
-    return row === undefined || row.thread_id === null
-      ? Option.none()
-      : Option.some({
-          threadId: row.thread_id as ThreadId,
-          projectId: row.project_id as ProjectId,
-        });
-  });
+  const notices = yield* TaskEventNotices;
 
   /**
    * A completed run whose thread goes on by itself: a newer run is lined up, or it parked on work
@@ -140,7 +130,7 @@ const make = Effect.gen(function* () {
       ) {
         return;
       }
-      const owner = yield* liveOwner(task.value.assistantId);
+      const owner = yield* needsUser.conversation(task.value.assistantId);
       if (Option.isNone(owner)) return;
       const shell = yield* engine
         .getThreadShell(run.threadId)
@@ -157,33 +147,21 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => null),
         );
-      const id = `${TASK_WAKE_PREFIX}${run.id}`;
-      const sent = yield* threads
-        .sendToThread({
-          // The thread being written to is the assistant's, so its project, not the task's.
-          projectId: owner.value.projectId,
-          commandId: CommandId.make(id),
-          messageId: MessageId.make(id),
-          threadId: owner.value.threadId,
-          senderThreadId: run.threadId,
-          text: taskWakeText({
-            title: shell?.title ?? task.value.title,
-            threadId: run.threadId,
-            status: run.status,
-            lastMessage,
-          }),
-          attachments: [],
-          mode: "queue",
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(Effect.result);
-      if (sent._tag === "Failure") {
-        yield* Effect.logWarning("assistant task wake could not be sent", {
+      yield* notices.send({
+        // The thread being written to is the assistant's, so its project, not the task's.
+        threadId: owner.value.threadId,
+        projectId: owner.value.projectId,
+        run,
+        messageId: `${TASK_EVENT_MESSAGE_PREFIX}${run.id}`,
+        text: taskWakeText({
+          title: shell?.title ?? task.value.title,
           threadId: run.threadId,
-          cause: sent.failure,
-        });
-      }
+          status: run.status as TaskEventStatus,
+          lastMessage,
+        }),
+        createdBy: "agent",
+        senderThreadId: run.threadId,
+      });
     },
     (effect, event) =>
       effect.pipe(
@@ -193,67 +171,37 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  /**
-   * The assistant following a thread: the launcher of it or of an ancestor (`AssistantTasks`), or
-   * the assistant whose conversation started its delegate_task chain. `delegated` says the thread
-   * itself is a delegate_task child, whose questions go to its parent agent first.
-   */
-  const waitOwner = Effect.fnUntraced(function* (threadId: ThreadId) {
-    let current = threadId;
-    let delegated = false;
-    for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
-      // An assistant's own conversation, and a group member's, is not a task it follows.
-      if (isAssistantThreadId(current)) return Option.none();
-      const task = yield* tasks.forThread(current);
-      if (Option.isSome(task)) {
-        const owner = yield* liveOwner(task.value.assistantId);
-        return Option.map(owner, (value) => ({ ...value, delegated, title: task.value.title }));
-      }
-      const { thread } = yield* threads.getThreadRecords(current, []);
-      const parent = thread.lineage.parentThreadId;
-      if (thread.lineage.relationshipToParent !== "subagent" || parent === null) {
-        return Option.none();
-      }
-      const native = isProviderNativeSubagentThread(thread);
-      if (depth === 0) delegated = !native;
-      if (isAssistantThreadId(parent)) {
-        // A native subagent is part of the assistant's own turn.
-        if (native) return Option.none();
-        const group = yield* sql`SELECT 1 FROM assistant_group_threads WHERE thread_id = ${parent}`;
-        const assistantId = assistantIdFromThreadId(parent);
-        if (group.length > 0 || assistantId === null) return Option.none();
-        const owner = yield* liveOwner(assistantId);
-        return Option.map(owner, (value) => ({ ...value, delegated, title: thread.title }));
-      }
-      current = parent;
-    }
-    return Option.none();
-  });
-
   const handleWait: AssistantTaskReactor["Service"]["handleWait"] = Effect.fn(
     "AssistantTaskReactor.handleWait",
   )(
     function* ({ type, wait }) {
-      const owner = yield* waitOwner(wait.threadId);
+      if (type === "resolved") {
+        // Answered before the assistants got to it: take back the wakes still queued.
+        // Each conversation on its own: one failing read or cancel never keeps the other's wake.
+        const targets = [
+          yield* needsUser.owner(wait.threadId).pipe(Effect.orElseSucceed(() => Option.none())),
+          yield* needsUser.defaultAssistant.pipe(Effect.orElseSucceed(() => Option.none())),
+        ].flatMap((target) => (Option.isSome(target) ? [target.value.threadId] : []));
+        for (const threadId of new Set(targets)) {
+          yield* needsUser.withdrawWake(threadId, wait).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("assistant wait wake could not be taken back", {
+                threadId,
+                key: wait.key,
+                cause,
+              }),
+            ),
+          );
+        }
+        return;
+      }
+      const owner = yield* needsUser.owner(wait.threadId);
       if (Option.isNone(owner)) return;
       // DelegatedTaskQuestionReactor already brings a delegated task's question to its parent.
       if (owner.value.delegated && wait.source === "request" && wait.requestKind === "user_input") {
         return;
       }
-      const id = `${WAIT_WAKE_PREFIX}${wait.threadId}:${wait.key}`;
-      if (type === "resolved") {
-        // Answered before the assistant got to it: take the queued wake back.
-        const { runs } = yield* threads.getThreadRecords(owner.value.threadId, ["runs"]);
-        const queued = runs.find((run) => run.status === "queued" && run.userMessageId === id);
-        if (queued === undefined) return;
-        yield* engine.dispatch({
-          type: "queued-run.cancel",
-          commandId: CommandId.make(`${id}:cancel`),
-          threadId: owner.value.threadId,
-          runId: queued.id,
-        });
-        return;
-      }
+      const id = waitWakeId(owner.value.threadId, wait.key);
       const shell = yield* engine
         .getThreadShell(wait.threadId)
         .pipe(Effect.orElseSucceed(() => null));
@@ -291,6 +239,19 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  /** Task events queued before the notices door existed may sit in a backlog; keep the newest. */
+  const foldBacklogs = Effect.gen(function* () {
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT thread_id FROM assistants WHERE archived_at IS NULL AND thread_id IS NOT NULL`;
+    yield* Effect.forEach(rows, (row) => notices.foldQueued(row.thread_id as ThreadId), {
+      discard: true,
+    });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("assistant task backlog fold failed", { cause }),
+    ),
+  );
+
   /** Each loop restarts on its own failure, so one broken stream never stops the other. */
   const keepRunning = <E>(name: string, loop: Effect.Effect<void, E>) =>
     loop.pipe(
@@ -301,6 +262,9 @@ const make = Effect.gen(function* () {
 
   const start: AssistantTaskReactor["Service"]["start"] = Effect.fn("AssistantTaskReactor.start")(
     function* () {
+      // Folding beside the streams, not before them, so no run that ends meanwhile is missed;
+      // once per start, outside the retry, so a resubscribe never folds again.
+      yield* forkParked(foldBacklogs);
       yield* forkParked(
         keepRunning(
           "assistant task run stream",

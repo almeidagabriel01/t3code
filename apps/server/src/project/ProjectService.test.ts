@@ -5,7 +5,14 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AssistantId,
+  CommandId,
+  ServerSettingsError,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -30,6 +37,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { projectOverrideForWrite } from "@t3tools/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -96,13 +104,14 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  settingsLayer: ReturnType<typeof ServerSettings.layerTest> = ServerSettings.layerTest(),
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(settingsLayer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
@@ -254,6 +263,30 @@ it.layer(layerTest)("ProjectService", (it) => {
         ],
       });
       assert.equal(created.workspaceRoot, "/work/project");
+      // The model goes where web and mobile read and clear it: the project's settings override.
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectModel = Effect.map(
+        settings.getSettings,
+        (current) => current.projectSettingsOverrides[projectId]?.defaultModelSelection,
+      );
+      assert.deepEqual(yield* projectModel, modelSelection);
+      // Writing or clearing the model leaves the project's other settings alone.
+      const ada = AssistantId.make("assistant:ada");
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultModelSelection: modelSelection,
+            defaultAutoPull: true,
+            assistantModelSelections: { [ada]: modelSelection },
+          },
+        },
+      });
+      const otherSettings = Effect.map(settings.getSettings, (current) => {
+        const { defaultAutoPull, assistantModelSelections } =
+          current.projectSettingsOverrides[projectId] ?? {};
+        return { defaultAutoPull, assistantModelSelections };
+      });
+      const kept = { defaultAutoPull: true, assistantModelSelections: { [ada]: modelSelection } };
       assert.isNull(created.repositoryIdentity);
       assert.isNull(created.faviconPath);
 
@@ -273,7 +306,10 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectIcon: { kind: "emoji", emoji: "🦊" },
         faviconPath: "/work/project/custom.svg",
         defaultThreadEnvMode: "worktree",
+        defaultModelSelection: { ...modelSelection, model: "gpt-5.2-codex" },
       });
+      assert.deepEqual(yield* projectModel, { ...modelSelection, model: "gpt-5.2-codex" });
+      assert.deepEqual(yield* otherSettings, kept);
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
       assert.isTrue(updated.autoPull);
@@ -297,7 +333,10 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectIcon: null,
         faviconPath: null,
         defaultThreadEnvMode: null,
+        defaultModelSelection: null,
       });
+      assert.isUndefined(yield* projectModel);
+      assert.deepEqual(yield* otherSettings, kept);
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
       assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
@@ -651,6 +690,104 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
       assert.isNull(snapshot.projects[0]?.repositoryIdentity ?? null);
       assert.isNull(snapshot.projects[0]?.faviconPath ?? null);
     }).pipe(Effect.provide(layerTestFor(layerFailingMetadata)));
+  }),
+);
+
+it.effect("writes a project's model without losing another write, and converges on retry", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:model-write");
+    const model = (name: string) => ({ instanceId: ProviderInstanceId.make("codex"), model: name });
+    const armed = yield* Ref.make({ otherWrite: false, failWrite: false });
+    const take = (key: "otherWrite" | "failWrite") =>
+      Ref.modify(armed, (state) => [state[key], { ...state, [key]: false }] as const);
+    // Another client turns auto-pull off as early as each write lets it land: between a plain
+    // read and its write, else just before a locked one.
+    const layerSettings = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const base = yield* ServerSettings.ServerSettingsService;
+        const otherWrite = take("otherWrite").pipe(
+          Effect.flatMap((due) =>
+            due
+              ? base.modifySettings((current) => ({
+                  projectSettingsOverrides: {
+                    [projectId]: {
+                      ...projectOverrideForWrite(current.projectSettingsOverrides[projectId]),
+                      defaultAutoPull: false,
+                    },
+                  },
+                }))
+              : Effect.void,
+          ),
+        );
+        const failWrite = take("failWrite").pipe(
+          Effect.flatMap((due) =>
+            due
+              ? Effect.fail(
+                  new ServerSettingsError({
+                    settingsPath: "settings.json",
+                    operation: "write-file",
+                  }),
+                )
+              : Effect.void,
+          ),
+        );
+        return ServerSettings.ServerSettingsService.of({
+          ...base,
+          getSettings: base.getSettings.pipe(Effect.tap(() => otherWrite)),
+          updateSettings: (patch) => failWrite.pipe(Effect.andThen(base.updateSettings(patch))),
+          modifySettings: (patchOf) =>
+            otherWrite.pipe(
+              Effect.andThen(failWrite),
+              Effect.andThen(base.modifySettings(patchOf)),
+            ),
+        });
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest()));
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* service.create({
+        commandId: CommandId.make("command:model-write:create"),
+        projectId,
+        title: "Models",
+        workspaceRoot: "/work/model-write",
+        defaultModelSelection: model("first"),
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { defaultModelSelection: model("first"), defaultAutoPull: true },
+        },
+      });
+      const stored = Effect.map(
+        settings.getSettings,
+        (current) => current.projectSettingsOverrides[projectId],
+      );
+      const update = (commandId: string) =>
+        service.update({
+          commandId: CommandId.make(commandId),
+          projectId,
+          defaultModelSelection: model("second"),
+        });
+
+      yield* Ref.set(armed, { otherWrite: true, failWrite: false });
+      yield* update("command:model-write:race");
+      assert.deepEqual(yield* stored, {
+        defaultModelSelection: model("second"),
+        defaultAutoPull: false,
+      });
+
+      // The project commits first; a failed settings write fails the call, and a repeat, even
+      // with the same command id, writes it again.
+      yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: null } });
+      yield* Ref.set(armed, { otherWrite: false, failWrite: true });
+      const failed = yield* Effect.flip(update("command:model-write:retry"));
+      assert.equal(failed._tag, "ProjectOperationError");
+      assert.isUndefined(yield* stored);
+      yield* update("command:model-write:retry");
+      assert.deepEqual(yield* stored, { defaultModelSelection: model("second") });
+    }).pipe(Effect.provide(layerTestFor(layerMetadata, layerSettings)));
   }),
 );
 

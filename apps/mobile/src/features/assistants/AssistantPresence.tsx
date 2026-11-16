@@ -9,6 +9,7 @@ import {
   type AssistantPresenceSection,
 } from "@t3tools/client-runtime/assistantPresence";
 import {
+  ASSISTANT_TASK_STATE_LABEL,
   assistantTaskState,
   canDismissAssistantTask,
   type AssistantTaskState,
@@ -42,6 +43,7 @@ import {
 } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
 import { useOpenAssistantInfo } from "./openAssistantInfo";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 /** Who wrote in this agent's conversation: the assistant's own avatar, name, and access, in its color. */
 export function AssistantFeedMessage(props: {
@@ -125,6 +127,8 @@ export interface PresenceTask {
   readonly assistantId: string;
   readonly state: AssistantTaskState;
   readonly dismissed: boolean;
+  /** "Limit until 14:30" while a usage limit holds the task; null otherwise. */
+  readonly limitLabel?: string | null;
 }
 
 /**
@@ -142,6 +146,7 @@ export function ThreadAssistantStack(props: {
   const flows = useAssistantFlows(props.environmentId);
   const openInfo = useOpenAssistantInfo();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const owner = useTaskAssistant(props.environmentId, props.threadId);
   const taskShell = useThreadShell(
     owner === null ? null : scopeThreadRef(props.environmentId, props.threadId),
@@ -154,18 +159,24 @@ export function ThreadAssistantStack(props: {
     ? []
     : assistantThreadSenders(assistantSenders(messages, known), owner?.assistant ?? null);
   if (senders.length === 0) return null;
+  const taskState = taskShell === null ? "running" : assistantTaskState(taskShell);
   const task: PresenceTask | null =
     owner === null
       ? null
       : {
           assistantId: owner.assistant.id,
-          state: taskShell === null ? "running" : assistantTaskState(taskShell),
+          state: taskState,
           dismissed: taskRecord?.dismissedAt != null,
+          limitLabel:
+            taskState === "usage_limited"
+              ? (limitLabel(taskShell?.runtime?.usageLimitResetAt) ??
+                ASSISTANT_TASK_STATE_LABEL.usage_limited)
+              : null,
         };
   const looks = new Map(
     senders.map((sender) => [
       sender.assistantId,
-      assistantSenderLook(sender, status.of(props.environmentId, sender.assistant)),
+      assistantSenderLook(sender, status.of(props.environmentId, sender.assistant, limitLabel)),
     ]),
   );
   return (
@@ -204,6 +215,7 @@ function taskAction(task: PresenceTask, canAct: boolean): MenuAction {
     : {
         id: DISMISS_TASK,
         title: "Dismiss task",
+        ...(task.limitLabel ? { subtitle: task.limitLabel } : {}),
         image: "xmark",
         attributes: { disabled: !canAct || !canDismissAssistantTask(task.state) },
       };

@@ -2,26 +2,63 @@ import {
   ASSISTANT_GROUP_EVERYONE,
   ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
-  assistantGroupAddress,
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
+  assistantGroupCountsAsUnread,
+  assistantGroupFinishedScopes,
+  assistantGroupTasksNeedUser,
+  assistantGroupInstructionBody,
   assistantGroupMentions,
+  assistantGroupProjectIds,
+  assistantGroupProjectMentionRanges,
+  assistantGroupProjectMentions,
+  assistantGroupProjectSlugs,
   foldAssistantGroupText,
   type Assistant,
   type AssistantTeam,
+  type AssistantTeamChat,
+  type AssistantTeamChatScope,
   type AssistantGroupMessage,
+  type AssistantGroupScope,
   type AssistantGroupMessageId,
   type AssistantGroupTask,
   type AssistantGroupTaskId,
   type AssistantGroupTaskStatus,
   type AssistantGroupsEvent,
   type AssistantGroupsHistoryResult,
+  type ModelSelection,
+  type AssistantId,
+  type ProjectId,
+  type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
+import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
+import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import {
+  assistantHomeModel,
+  isPickedModelUsable,
+  type ModelSelectionLayers,
+  type ProviderModelListing,
+  resolveModelSelection,
+} from "@t3tools/shared/modelSelectionPrecedence";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
+import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
   readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage>;
   readonly tasks: ReadonlyMap<AssistantGroupTaskId, AssistantGroupTask>;
   /** Older messages exist than the ones loaded. */
   readonly hasMore: boolean;
+  /**
+   * First messages of loaded requests that lie before the loaded page. Kept apart so they name
+   * their request's block without counting as loaded history.
+   */
+  readonly requests: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage>;
 }
+
+const byId = (messages: ReadonlyArray<AssistantGroupMessage> | undefined) =>
+  new Map((messages ?? []).map((message) => [message.id, message]));
 
 /** Folds one event; the first is always a snapshot, so state starts from it. */
 export function applyAssistantGroupsEvent(
@@ -30,13 +67,26 @@ export function applyAssistantGroupsEvent(
 ): AssistantGroupChatState | null {
   if (event.type === "snapshot") {
     return {
-      messages: new Map(event.messages.map((message) => [message.id, message])),
+      messages: byId(event.messages),
       tasks: new Map(event.tasks.map((task) => [task.id, task])),
       hasMore: event.hasMore,
+      requests: byId(event.requests),
     };
   }
   if (state === null) return null;
   if (event.type === "message") {
+    // A request's first message comes again when its project or title is set; one older than the
+    // loaded page stays out of it, or paging would skip what lies between.
+    const oldest = oldestAssistantGroupSeq(state);
+    if (
+      state.requests.has(event.message.id) ||
+      (!state.messages.has(event.message.id) &&
+        event.message.requestId === event.message.id &&
+        oldest !== null &&
+        event.message.seq < oldest)
+    ) {
+      return { ...state, requests: new Map(state.requests).set(event.message.id, event.message) };
+    }
     return { ...state, messages: new Map(state.messages).set(event.message.id, event.message) };
   }
   const current = state.tasks.get(event.task.id);
@@ -59,7 +109,11 @@ export function applyAssistantGroupHistory(
     if (!messages.has(message.id) && message.seq < oldest) messages.set(message.id, message);
   const tasks = new Map(state.tasks);
   for (const task of page.tasks) if (!tasks.has(task.id)) tasks.set(task.id, task);
-  return { messages, tasks, hasMore: page.hasMore };
+  const requests = new Map(state.requests);
+  for (const id of messages.keys()) requests.delete(id);
+  for (const request of page.requests ?? [])
+    if (!messages.has(request.id) && !requests.has(request.id)) requests.set(request.id, request);
+  return { messages, tasks, hasMore: page.hasMore, requests };
 }
 
 export function oldestAssistantGroupSeq(state: AssistantGroupChatState): number | null {
@@ -126,6 +180,554 @@ export function assistantGroupFeed(
   }));
 }
 
+export type AssistantGroupRequestStatus =
+  /** The lead is still choosing who answers. */
+  | "routing"
+  /** The lead asked which project the request is for. */
+  | "needs-project"
+  | "working"
+  /** A task is paused or failed: the user resumes, reassigns or cancels it. */
+  | "needs-you"
+  | "done"
+  | "cancelled";
+
+export const ASSISTANT_GROUP_REQUEST_STATUS_LABEL: Record<AssistantGroupRequestStatus, string> = {
+  routing: "Routing",
+  "needs-project": "Needs project",
+  working: "Working",
+  "needs-you": "Needs you",
+  done: "Done",
+  cancelled: "Cancelled",
+};
+
+/** The composer's project choice when the user picks none. */
+export const ASSISTANT_GROUP_LEAD_DECIDES_LABEL = "Lead decides";
+
+export interface AssistantGroupRequestBlock {
+  readonly requestId: AssistantGroupMessageId;
+  /** The request's first message; null only while it is neither loaded nor sent along. */
+  readonly root: AssistantGroupMessage | null;
+  readonly projectId: ProjectId | null;
+  readonly title: string;
+  readonly status: AssistantGroupRequestStatus;
+  /** The loaded messages of the request, in seq order. */
+  readonly rows: ReadonlyArray<AssistantGroupFeedRow>;
+  readonly latestSeq: number;
+}
+
+export type AssistantGroupFeedItem =
+  | { readonly kind: "request"; readonly block: AssistantGroupRequestBlock }
+  /** A boundary, or a line that belongs to no request (a change to the group). */
+  | { readonly kind: "row"; readonly row: AssistantGroupFeedRow };
+
+/** First non-empty line with its leading mentions dropped, as the server titles a request. */
+function titleOf(message: AssistantGroupMessage | null): string {
+  if (message === null) return "Earlier request";
+  if (message.title !== undefined && message.title !== "") return message.title;
+  const line =
+    message.text
+      .split("\n")
+      .map((part) => part.replace(/^(?:\s*@[\p{L}\p{N}_-]+[,:]?)+\s*/u, "").trim())
+      .find((part) => part !== "") ?? "";
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line || "Request";
+}
+
+// A usage-limited task continues at its reset, so its request is still being worked.
+const OPEN_STATUSES: ReadonlySet<AssistantGroupTaskStatus> = new Set(
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
+);
+
+function requestStatus(
+  state: AssistantGroupChatState,
+  root: AssistantGroupMessage | null,
+  rows: ReadonlyArray<AssistantGroupFeedRow>,
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): AssistantGroupRequestStatus {
+  // A member's conversation waiting on the user outranks the work around it.
+  if (rows.some((row) => row.message.waiting?.resolved === false)) return "needs-you";
+  if (tasks.some((task) => OPEN_STATUSES.has(task.status))) return "working";
+  if (assistantGroupTasksNeedUser(tasks.map((task) => task.status))) return "needs-you";
+  if (tasks.length > 0) {
+    return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
+  }
+  if (root === null) return "done";
+  if (root.projectId === undefined && rows.some((row) => row.message.asksProject === true)) {
+    return "needs-project";
+  }
+  return assistantGroupAwaitingRoute(state, root) ? "routing" : "done";
+}
+
+/**
+ * The chat cut into its requests, each with its own messages and cards, ordered by the request's
+ * latest message so the one being worked sits next to the composer. Boundaries and lines of no
+ * request stay where they fall.
+ */
+export function assistantGroupRequestFeed(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupFeedItem> {
+  const groups = new Map<AssistantGroupMessageId, AssistantGroupFeedRow[]>();
+  const loose: AssistantGroupFeedItem[] = [];
+  for (const row of assistantGroupFeed(state)) {
+    const requestId = row.message.requestId;
+    if (requestId === undefined) {
+      loose.push({ kind: "row", row });
+      continue;
+    }
+    const rows = groups.get(requestId);
+    if (rows === undefined) groups.set(requestId, [row]);
+    else rows.push(row);
+  }
+  const blocks: AssistantGroupFeedItem[] = [...groups].map(([requestId, rows]) => {
+    const root = state.messages.get(requestId) ?? state.requests.get(requestId) ?? null;
+    const tasks = [...state.tasks.values()].filter(
+      (task) =>
+        (task.requestId ?? state.messages.get(task.requestMessageId)?.requestId) === requestId,
+    );
+    return {
+      kind: "request",
+      block: {
+        requestId,
+        root,
+        projectId: root?.projectId ?? null,
+        title: titleOf(root),
+        status: requestStatus(state, root, rows, tasks),
+        rows,
+        latestSeq: rows.at(-1)!.message.seq,
+      },
+    };
+  });
+  const seqOf = (item: AssistantGroupFeedItem) =>
+    item.kind === "request" ? item.block.latestSeq : item.row.message.seq;
+  return [...blocks, ...loose].sort((a, b) => seqOf(a) - seqOf(b));
+}
+
+/** The project a request runs in, from its root on the page or off it. */
+export function assistantGroupRequestProject(
+  state: AssistantGroupChatState,
+  requestId: AssistantGroupMessageId | undefined,
+): ProjectId | null {
+  if (requestId === undefined) return null;
+  return (state.messages.get(requestId) ?? state.requests.get(requestId))?.projectId ?? null;
+}
+
+export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
+
+/** The tab of a project's requests; General for those with none. */
+function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+  return projectId === null ? "general" : `project:${projectId}`;
+}
+
+export interface AssistantGroupTab {
+  readonly key: AssistantGroupTabKey;
+  /** undefined for All (unscoped reads); { projectId: null } for General. */
+  readonly scope: AssistantGroupScope | undefined;
+  /** Project title; "All", "General", or "Removed project" for an orphan scope. */
+  readonly label: string;
+  /** The project, for its favicon; null for All and General. */
+  readonly projectId: ProjectId | null;
+  readonly unreadCount: number;
+  readonly waiting: boolean;
+  /** Where the tab's "New" line and read marker start: the tab's own position, else the group's. */
+  readonly readSeq: number;
+}
+
+/** "Unknown project", "Unknown project 2"…: the first of a kind unnumbered. */
+const numbered = (label: string, index: number) => (index < 1 ? label : `${label} ${index + 1}`);
+
+/**
+ * A project's title, else the one the chat last knew. Before the environment's projects load, a
+ * group project reads "Unknown project", numbered in group order; any other nameless one is a
+ * "Removed project", numbered by the server's `removed` list of the group's request projects, so
+ * tabs, feed and composer agree; an older server's chat numbers its tabs and this one by id.
+ */
+export function assistantGroupProjectLabel(
+  projectId: ProjectId,
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
+  scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "title">> | undefined,
+  groupProjectIds: ReadonlyArray<ProjectId>,
+  removed?: ReadonlyArray<ProjectId>,
+): string {
+  const known = (id: ProjectId) =>
+    projects.find((project) => project.id === id)?.title ??
+    scopes?.find((scope) => scope.projectId === id)?.title;
+  const title = known(projectId);
+  if (title !== undefined) return title;
+  const loading = (id: ProjectId) => projects.length === 0 && groupProjectIds.includes(id);
+  if (loading(projectId)) {
+    const unknown = groupProjectIds.filter((id) => known(id) === undefined);
+    return numbered("Unknown project", unknown.indexOf(projectId));
+  }
+  const nameless = (ids: ReadonlyArray<ProjectId>) =>
+    ids.filter((id) => known(id) === undefined && !loading(id));
+  if (removed !== undefined) {
+    const order = nameless(removed);
+    const at = order.indexOf(projectId);
+    return numbered("Removed project", at === -1 ? order.length : at);
+  }
+  const listed = (scopes ?? []).flatMap((scope) =>
+    scope.projectId === null ? [] : [scope.projectId],
+  );
+  return numbered(
+    "Removed project",
+    nameless([...new Set([...listed, projectId])])
+      .sort()
+      .indexOf(projectId),
+  );
+}
+
+/**
+ * The group projects the composer offers: once the environment's projects load, only those it
+ * still has, since work cannot go to a deleted project or another environment's.
+ */
+export function assistantGroupComposerProjects(
+  groupProjectIds: ReadonlyArray<ProjectId>,
+  projects: ReadonlyArray<{ readonly id: ProjectId }>,
+): ReadonlyArray<ProjectId> {
+  return projects.length === 0
+    ? groupProjectIds
+    : groupProjectIds.filter((id) => projects.some((project) => project.id === id));
+}
+
+/** A composer pick (its project, its model), for the tab it was made in. */
+export interface AssistantGroupTabPick<T> {
+  readonly tab: AssistantGroupTabKey | null;
+  readonly value: T;
+}
+
+export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
+
+/**
+ * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
+ * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
+ * brings it back.
+ */
+export function assistantGroupTabPick<T>(
+  pick: AssistantGroupTabPick<T> | null,
+  tab: AssistantGroupTabKey | null,
+): AssistantGroupTabPick<T> | null {
+  return pick !== null && pick.tab === tab ? pick : null;
+}
+
+/**
+ * The project a new request gets: the pick made in the open tab, else that tab's project, but
+ * none while replying, since a reply keeps its request's. Only a group project counts; null
+ * lets the lead decide.
+ */
+export function assistantGroupComposerProject(input: {
+  readonly pick: AssistantGroupProjectPick | null;
+  readonly tab: Pick<AssistantGroupTab, "key" | "projectId"> | null;
+  readonly replying: boolean;
+  readonly groupProjects: ReadonlyArray<{ readonly id: ProjectId }>;
+}): ProjectId | null {
+  const held = assistantGroupTabPick(input.pick, input.tab?.key ?? null);
+  const chosen =
+    held !== null ? held.value : input.replying ? null : (input.tab?.projectId ?? null);
+  return input.groupProjects.some((project) => project.id === chosen) ? chosen : null;
+}
+
+/**
+ * What the composer's model chip shows: the pick for the next message, made in the open tab, as
+ * the resolver's `message` layer over the defaults, so a pick the project cannot use shows the
+ * default the server falls back to.
+ */
+export function assistantGroupComposerModel(input: {
+  readonly pick: AssistantGroupTabPick<ModelSelection> | null;
+  readonly tab: AssistantGroupTabKey | null;
+  readonly defaults: Omit<ModelSelectionLayers, "message">;
+  /** For the defaults; the pick is ruled as the server rules it, by `available`. */
+  readonly isUsable: (selection: ModelSelection) => boolean;
+  readonly available: {
+    readonly settings: Parameters<typeof isPickedModelUsable>[0];
+    readonly projectId: ProjectId | null;
+    readonly providers: ProviderModelListing;
+  };
+}) {
+  const { settings, projectId, providers } = input.available;
+  const pick = assistantGroupTabPick(input.pick, input.tab)?.value;
+  const resolved = resolveModelSelection(
+    {
+      ...input.defaults,
+      message:
+        pick !== undefined && isPickedModelUsable(settings, projectId, providers, pick)
+          ? pick
+          : undefined,
+    },
+    input.isUsable,
+  );
+  return { ...resolved, forMessage: resolved.layer === "message" };
+}
+
+/** Any tab waits on the user: the dot on All and on the group's row. */
+export function assistantGroupChatWaiting(chat: Pick<AssistantTeamChat, "scopes"> | undefined) {
+  return chat?.scopes?.some((scope) => scope.waiting) ?? false;
+}
+
+/**
+ * null (no tab row) when the server sent no scopes or the group has fewer than 2 effective
+ * projects. Else All, the effective projects, orphan scopes that still have unread or waiting,
+ * then General when the chat lists it. The `active` tab stays listed even once its project left
+ * the group, so the one being read never vanishes.
+ */
+export function assistantGroupTabs(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "chat">;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  readonly active?: string | null | undefined;
+}): ReadonlyArray<AssistantGroupTab> | null {
+  const chat = input.team.chat;
+  if (chat?.scopes === undefined) return null;
+  const title = new Map(input.projects.map((project) => [project.id, project.title]));
+  const groupIds = assistantGroupProjectIds(input.members, input.team.projectIds);
+  const effective = groupIds.filter((id) => title.has(id));
+  const scopes = chat.scopes;
+  // A project neither loaded nor listed is a stale key, not a tab being read.
+  const keptProject =
+    [...title.keys(), ...scopes.map((scope) => scope.projectId)].find(
+      (id) => id !== null && input.active === `project:${id}`,
+    ) ?? null;
+  const keptGeneral = input.active === "general";
+  const general = scopes.find((scope) => scope.projectId === null);
+  // General listed only for the end of work with no request has nothing to read: no tab.
+  const showsGeneral =
+    keptGeneral ||
+    (general !== undefined &&
+      (general.hasRequests !== false ||
+        general.unreadCount > 0 ||
+        general.waiting ||
+        (general.openTasks ?? 0) > 0));
+  if (effective.length < 2 && keptProject === null && !keptGeneral) return null;
+  const tab = (projectId: ProjectId | null, label: string): AssistantGroupTab => {
+    const found = scopes.find((scope) => scope.projectId === projectId);
+    return {
+      key: assistantGroupTabKey(projectId),
+      scope: { projectId },
+      label,
+      projectId,
+      unreadCount: found?.unreadCount ?? 0,
+      waiting: found?.waiting ?? false,
+      readSeq: found?.readSeq ?? chat.readSeq,
+    };
+  };
+  const orphans = scopes.flatMap((scope) =>
+    scope.projectId !== null &&
+    !effective.includes(scope.projectId) &&
+    (scope.unreadCount > 0 || scope.waiting || scope.projectId === keptProject)
+      ? [scope.projectId]
+      : [],
+  );
+  if (keptProject !== null && !effective.includes(keptProject) && !orphans.includes(keptProject)) {
+    orphans.push(keptProject);
+  }
+  return [
+    {
+      key: "all",
+      scope: undefined,
+      label: "All",
+      projectId: null,
+      unreadCount: chat.unreadCount,
+      waiting: assistantGroupChatWaiting(chat),
+      readSeq: chat.readSeq,
+    },
+    ...effective.map((id) => tab(id, title.get(id)!)),
+    ...orphans.map((id) =>
+      tab(
+        id,
+        assistantGroupProjectLabel(id, input.projects, scopes, groupIds, chat.removedProjectIds),
+      ),
+    ),
+    ...(showsGeneral ? [tab(null, "General")] : []),
+  ];
+}
+
+/**
+ * True while a tab-less view may only be data still loading: the server sent scopes, yet a member
+ * is not in the assistant list, or no project has arrived while the group names two or more. A
+ * member's deleted home project stays listed but projects are loaded, so that group is not pending.
+ */
+export function assistantGroupTabsPending(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat">;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId }>;
+  /** Every assistant the client has loaded for the environment, archived included. */
+  readonly assistants: { readonly has: (id: string) => boolean };
+}): boolean {
+  if (input.team.chat?.scopes === undefined) return false;
+  if (input.team.memberIds.some((id) => !input.assistants.has(id))) return true;
+  return (
+    input.projects.length === 0 &&
+    assistantGroupProjectIds(input.members, input.team.projectIds).length >= 2
+  );
+}
+
+/**
+ * The tabs to show and the open one; while members, projects or the saved tab load, pending and
+ * none. A server without scopes has no tabs, so it never waits for the saved one.
+ */
+export function assistantGroupTabView(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat"> | undefined;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  readonly assistants: { readonly has: (id: string) => boolean };
+  readonly saved: string | null | undefined;
+  /** The saved tab is still being read. */
+  readonly loading?: boolean;
+}): {
+  readonly pending: boolean;
+  readonly tabs: ReadonlyArray<AssistantGroupTab> | null;
+  readonly tab: AssistantGroupTab | null;
+  /** What the chat reads: the tab's scope, undefined for every request, null for nothing yet. */
+  readonly scope: AssistantGroupScope | undefined | null;
+} {
+  const { team } = input;
+  if (team === undefined) return { pending: false, tabs: null, tab: null, scope: null };
+  const known = { ...input, team };
+  // Decided before keeping the saved tab: a project still loading would otherwise show as removed.
+  if (
+    (input.loading === true && team.chat?.scopes !== undefined) ||
+    (assistantGroupTabs(known) === null && assistantGroupTabsPending(known))
+  ) {
+    return { pending: true, tabs: null, tab: null, scope: null };
+  }
+  const tabs = assistantGroupTabs({ ...known, active: input.saved });
+  const tab = tabs === null ? null : resolveAssistantGroupTab(input.saved, tabs);
+  return { pending: false, tabs, tab, scope: tab?.scope };
+}
+
+/** The saved key's tab, else All. */
+export function resolveAssistantGroupTab(
+  saved: string | null | undefined,
+  tabs: ReadonlyArray<AssistantGroupTab>,
+): AssistantGroupTab {
+  return tabs.find((tab) => tab.key === saved) ?? tabs[0]!;
+}
+
+/**
+ * After a send from tab `sent` lands in `landed`, the tab that still shows it, or null to stay on
+ * the open one (`saved`, read when the send settles): a user who left `sent` meanwhile stays where
+ * they went. One with no project yet may still get one from the lead: only All is sure to hold it.
+ */
+export function assistantGroupTabAfterSend(
+  tabs: ReadonlyArray<AssistantGroupTab>,
+  sent: AssistantGroupTabKey,
+  saved: string | null | undefined,
+  landed: ProjectId | null,
+): AssistantGroupTabKey | null {
+  const open = resolveAssistantGroupTab(saved, tabs);
+  if (open.key === "all" || open.key !== sent) return null;
+  const target = tabs.find((entry) => entry.scope?.projectId === landed);
+  if (target?.key === open.key) return null;
+  return landed === null ? "all" : (target?.key ?? "all");
+}
+
+/** A message the composer let go of: on its way, or refused and kept for the user to fix. */
+export interface AssistantGroupOutgoing {
+  /** The tab it was sent from: each tab holds at most one. */
+  readonly tab: AssistantGroupTabKey | null;
+  readonly failed: boolean;
+  /** The composer's files it took; no other tab shows or sends them. */
+  readonly attachmentIds: ReadonlyArray<string>;
+}
+
+/**
+ * The outgoing message the open tab's composer shows instead of its draft: the tab's own, and in
+ * All one on its way from any tab. Any other tab would show it beside a project it is not going to.
+ */
+export function assistantGroupShownOutgoing<T extends AssistantGroupOutgoing>(
+  outgoing: ReadonlyArray<T>,
+  tab: AssistantGroupTabKey | null,
+): T | null {
+  return (
+    outgoing.find((entry) => entry.tab === tab) ??
+    (tab === "all" ? outgoing.findLast((entry) => !entry.failed) : undefined) ??
+    null
+  );
+}
+
+/** The composer's files that belong to a message the open tab does not show. */
+export function assistantGroupHeldAttachments(
+  outgoing: ReadonlyArray<AssistantGroupOutgoing>,
+  shown: AssistantGroupOutgoing | null,
+): ReadonlySet<string> {
+  return new Set(outgoing.flatMap((entry) => (entry === shown ? [] : entry.attachmentIds)));
+}
+
+/**
+ * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ */
+export function assistantGroupSendRequestId(
+  failed: { readonly requestId: string; readonly sendKey: string } | null,
+  carries: ReadonlyArray<unknown>,
+  fresh: () => string,
+) {
+  const sendKey = JSON.stringify(carries);
+  return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
+const NO_OUTGOING: ReadonlyArray<never> = [];
+
+/**
+ * Each group composer's outgoing messages, one per tab, outside any one mount: a send that settles
+ * or is refused after the user left the chat shows in the composer they come back to, and a send
+ * from one tab never touches another tab's.
+ */
+export function createAssistantGroupOutgoingStore<T extends AssistantGroupOutgoing>() {
+  const groups = new Map<string, ReadonlyArray<T>>();
+  const listeners = new Set<() => void>();
+  return {
+    /** The same array until the group's messages change, as `useSyncExternalStore` needs. */
+    get: (group: string): ReadonlyArray<T> => groups.get(group) ?? NO_OUTGOING,
+    set: (group: string, tab: AssistantGroupTabKey | null, next: T | null) => {
+      const others = (groups.get(group) ?? NO_OUTGOING).filter((entry) => entry.tab !== tab);
+      const entries = next === null ? others : [...others, next];
+      if (entries.length === 0) groups.delete(group);
+      else groups.set(group, entries);
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear: () => groups.clear(),
+  };
+}
+
+/** False for a request whose project no longer matches the scope. */
+export function assistantGroupInScope(
+  block: Pick<AssistantGroupRequestBlock, "projectId">,
+  scope: AssistantGroupScope | undefined,
+): boolean {
+  return scope === undefined || block.projectId === scope.projectId;
+}
+
+/**
+ * A block opens by itself while it needs attention, holds unread messages, or is the newest one;
+ * finished requests fold away. The user's own toggle wins over this.
+ */
+export function assistantGroupRequestExpanded(
+  block: AssistantGroupRequestBlock,
+  readSeq: number,
+  newest: boolean,
+): boolean {
+  if (newest || (block.status !== "done" && block.status !== "cancelled")) return true;
+  const lastUserSeq = lastUserSeqs(block.rows.map((row) => row.message)).get(block.requestId);
+  return block.rows.some(
+    (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message, lastUserSeq),
+  );
+}
+
+/** Each request's newest line by the user among `messages`: what answers the lines before it. */
+function lastUserSeqs(messages: Iterable<AssistantGroupMessage>): Map<string, number> {
+  const latest = new Map<string, number>();
+  for (const message of messages) {
+    if (message.author !== "user" || message.requestId === undefined) continue;
+    latest.set(message.requestId, Math.max(latest.get(message.requestId) ?? 0, message.seq));
+  }
+  return latest;
+}
+
 type Recipient = Pick<Assistant, "id" | "name" | "handle">;
 
 function joinNames(names: ReadonlyArray<string>): string {
@@ -133,26 +735,208 @@ function joinNames(names: ReadonlyArray<string>): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
+/** The message a draft answers, as the composer quotes it. */
+export interface AssistantGroupReplyRef {
+  readonly id: AssistantGroupMessageId;
+  /** The member the quote names; null for a reply to a request itself. */
+  readonly to: string | null;
+  readonly projectId: ProjectId | null;
+}
+
+/** What the server reads besides the draft to route it (`AssistantGroups.post`). */
+export interface AssistantGroupSendContext {
+  /**
+   * Whose work the draft answers: the owner of the answered message's task, else the member the
+   * quote names while that message or its task is not loaded. The preview checks membership.
+   */
+  readonly replyOwner: { readonly id: string } | { readonly name: string } | null;
+  /** The request a reply continues; `ownerId` when exactly one member works it. */
+  readonly request: {
+    readonly projectId: ProjectId | null;
+    readonly started: boolean;
+    readonly ownerId: AssistantId | null;
+  } | null;
+  /** Paused or failed root tasks, newest first: of the reply's request, else of the group. */
+  readonly stopped: ReadonlyArray<{ readonly taskId: string; readonly ownerId: string }>;
+}
+
+/** The send context from the loaded chat; tasks of requests not loaded are not seen. */
+export function assistantGroupSendContext(
+  state: AssistantGroupChatState | null,
+  reply: AssistantGroupReplyRef | null,
+): AssistantGroupSendContext {
+  const target = reply === null ? undefined : state?.messages.get(reply.id);
+  if (reply !== null && target === undefined) {
+    // Older than the loaded history. A member's answer lies in a request that has started; what
+    // of it stopped is not known here.
+    return reply.to === null
+      ? { replyOwner: null, request: null, stopped: [] }
+      : {
+          replyOwner: { name: reply.to },
+          request: { projectId: reply.projectId, started: true, ownerId: null },
+          stopped: [],
+        };
+  }
+  const requestId = target?.requestId;
+  const request =
+    requestId === undefined
+      ? undefined
+      : (state?.messages.get(requestId) ?? state?.requests.get(requestId));
+  const tasks = [...(state?.tasks.values() ?? [])];
+  const ofRequest = tasks.filter(
+    // By `request_id` alone, as the server counts them: a task from before requests had ids
+    // neither starts nor stops its request.
+    (task) => requestId !== undefined && task.requestId === requestId,
+  );
+  const roots = ofRequest.filter((task) => task.kind === "root");
+  const owners = [...new Set(roots.map((task) => task.ownerId))];
+  const answersTask = target?.author === "assistant" && target.taskId != null;
+  const replyTask = answersTask ? state?.tasks.get(target.taskId!) : undefined;
+  return {
+    replyOwner:
+      replyTask !== undefined
+        ? { id: replyTask.ownerId }
+        : answersTask && reply?.to != null
+          ? { name: reply.to }
+          : null,
+    request:
+      request === undefined
+        ? null
+        : {
+            projectId: request.projectId ?? null,
+            started: ofRequest.length > 0,
+            ownerId: owners.length === 1 ? owners[0]! : null,
+          },
+    stopped: tasks
+      .filter(
+        (task) =>
+          task.kind === "root" &&
+          (task.status === "paused" || task.status === "failed") &&
+          (requestId === undefined || task.requestId === requestId),
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map((task) => ({ taskId: task.id, ownerId: task.ownerId })),
+  };
+}
+
+const replyOwnerKey = (owner: AssistantGroupSendContext["replyOwner"]) =>
+  owner === null ? null : "id" in owner ? `id:${owner.id}` : `name:${owner.name}`;
+
+/** Equal contexts route a draft alike, so the recipients line keeps the one it has. */
+export function assistantGroupSendContextEqual(
+  left: AssistantGroupSendContext,
+  right: AssistantGroupSendContext,
+): boolean {
+  const [a, b] = [left.request, right.request];
+  return (
+    replyOwnerKey(left.replyOwner) === replyOwnerKey(right.replyOwner) &&
+    (a === null || b === null
+      ? a === b
+      : a.projectId === b.projectId && a.started === b.started && a.ownerId === b.ownerId) &&
+    left.stopped.length === right.stopped.length &&
+    left.stopped.every(
+      (task, index) =>
+        task.taskId === right.stopped[index]!.taskId &&
+        task.ownerId === right.stopped[index]!.ownerId,
+    )
+  );
+}
+
 /**
- * Who a draft will reach, for the line under the composer, in the server's order: leading
- * mentions, the member it replies to, the only member, then the lead. The server still decides.
+ * The line under the composer: who a draft reaches, or why the server would refuse it, worked out
+ * as `AssistantGroups.post` does before routing. The server still decides.
  */
-export function assistantGroupRecipientsPreview(
-  text: string,
-  members: ReadonlyArray<Recipient>,
-  lead: Recipient | null,
-  replyTo: string | null = null,
-): string | null {
+export function assistantGroupRecipientsPreview(input: {
+  readonly text: string;
+  readonly members: ReadonlyArray<Recipient>;
+  readonly lead: Recipient | null;
+  /** From `assistantGroupLeadCanRoute`; only `false` predicts a refusal. */
+  readonly leadCanRoute?: boolean | undefined;
+  /** The group's projects, for `#project` and for whether the lead must pick one. */
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly name: string }>;
+  /** The composer's project for a new request, if any. */
+  readonly projectId: ProjectId | null;
+  readonly context: AssistantGroupSendContext;
+}): string | null {
+  const { text, members, lead, projects, context } = input;
   if (text.trim() === "") return null;
-  const picked = assistantGroupAddress(text, members);
-  if (picked !== null) {
+  const { request, replyOwner } = context;
+  // The server sends a reply to its owner only while they are a member.
+  const owners =
+    replyOwner === null
+      ? []
+      : members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
+  const decision = routeGroupMessage({
+    text,
+    members,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
+    stopped: context.stopped,
+    fromUser: true,
+    requestOwnerId: request?.ownerId ?? null,
+  });
+  // A resumed task's request has started and has its project, so nothing below applies.
+  if (decision?.kind === "resume") {
+    const owner = context.stopped.find((task) => task.taskId === decision.taskId)?.ownerId;
+    const name = members.find((member) => member.id === owner)?.name ?? "the member";
+    return `Resumes ${name}'s work`;
+  }
+  const mentioned = assistantGroupProjectMentions(text, projects);
+  const projectId =
+    request?.projectId ??
+    input.projectId ??
+    (mentioned.length === 1 ? mentioned[0]!.id : null) ??
+    (projects.length === 1 ? projects[0]!.id : null);
+  const started = request?.started === true;
+  const needsProject = !started && projectId === null && projects.length > 1;
+  const unrouted = request !== null && !started;
+  if (decision !== null && !needsProject && !unrouted) {
+    const picked = decision.ids.flatMap((id) => members.filter((member) => member.id === id));
     return picked.length === members.length && members.length > 1
       ? "To everyone"
       : `To ${joinNames(picked.map((member) => member.name))}`;
   }
-  if (replyTo !== null) return `To ${replyTo}`;
-  if (members.length === 1) return `To ${members[0]!.name}`;
-  return lead === null ? "Waits for a lead" : `${lead.name} (lead) will route it`;
+  const cannot = lead === null || input.leadCanRoute === false;
+  if (needsProject && cannot) {
+    return lead === null
+      ? "Pick a project first: the group has no lead to choose one"
+      : `Pick a project first: ${lead.name} (lead) can't choose one`;
+  }
+  if (lead === null) return "Waits for a lead";
+  if (cannot) {
+    return unrouted
+      ? `${lead.name} (lead) can't route this request: switch its model`
+      : `${lead.name} (lead) can't route: mention someone with @`;
+  }
+  return needsProject
+    ? `${lead.name} (lead) will pick the project`
+    : `${lead.name} (lead) will route it`;
+}
+
+/**
+ * Whether the server would let the lead route, on the model it routes on (`AssistantGroups`
+ * `leadSelection`): its conversation's, else its home project's default. Undefined while its
+ * conversation's shell is missing (shells may omit threads, so missing is not gone) or the server
+ * predates the flag.
+ */
+export function assistantGroupLeadCanRoute(input: {
+  readonly lead: Pick<Assistant, "threadId" | "projectId">;
+  /** The lead conversation's model; undefined while its thread is not loaded. */
+  readonly threadModel: ModelSelection | undefined;
+  readonly settings: ServerSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** The lead's home project, for its folder rule. */
+  readonly project: LegacyProjectSettingsFields | null;
+}): boolean | undefined {
+  if (input.lead.threadId !== null && input.threadModel === undefined) return undefined;
+  const selection =
+    input.threadModel ??
+    assistantHomeModel(input.settings, input.lead.projectId, input.project, input.providers);
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  // The server has no instance to route on either.
+  if (provider === undefined) return false;
+  return provider.supportsAssistantGroupRouting;
 }
 
 export type AssistantGroupMentionOption<M extends Recipient> =
@@ -182,40 +966,113 @@ export function assistantGroupMentionQuery(
   };
 }
 
-/** The text cut into plain and mention runs, for highlighting; same parser as the server's. */
-export function assistantGroupTextParts(
-  text: string,
-  members: ReadonlyArray<Pick<Assistant, "handle" | "name">>,
-): ReadonlyArray<{ readonly start: number; readonly text: string; readonly mention: boolean }> {
-  const parts: Array<{ start: number; text: string; mention: boolean }> = [];
-  let at = 0;
-  for (const found of assistantGroupMentions(text, members)) {
-    if (found.start > at)
-      parts.push({ start: at, text: text.slice(at, found.start), mention: false });
-    parts.push({ start: found.start, text: text.slice(found.start, found.end), mention: true });
-    at = found.end;
-  }
-  if (at < text.length) parts.push({ start: at, text: text.slice(at), mention: false });
-  return parts;
-}
-
 // Spans a mention link must not enter: code, links (a link inside one would nest), autolinks, bare URLs.
 const PROTECTED_SPAN = /(`+)[\s\S]*?\1|!?\[[^\]]*\]\([^)]*\)|<[^>\s]+>|https?:\/\/\S+/g;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
-/** Scheme of the link a member mention becomes; clients style it and never navigate. */
+/** Scheme of the link a member mention becomes (`/<handle>` or `/everyone` follows); clients style it and never navigate. */
 export const ASSISTANT_MENTION_HREF = "t3-mention:mention";
 
-/** Markdown with each member `@mention` made a mention link, except in code spans and fenced blocks. */
+/** Scheme of the link a `#project` mention becomes (`/<slug>` follows); clients style it and never navigate. */
+const ASSISTANT_PROJECT_HREF = "t3-mention:project";
+
+/** The member handle (or `everyone`) or project slug a group mention link names. */
+export function assistantGroupMentionHref(
+  href: string,
+): { readonly kind: "member" | "project"; readonly value: string } | null {
+  for (const [kind, scheme] of [
+    ["member", ASSISTANT_MENTION_HREF],
+    ["project", ASSISTANT_PROJECT_HREF],
+  ] as const) {
+    if (href.startsWith(`${scheme}/`)) return { kind, value: href.slice(scheme.length + 1) };
+  }
+  return null;
+}
+
+type MentionProject = { readonly id: string; readonly name: string };
+
+/** Each project's `#slug`, in order: the one place clients name a group project. */
+const projectSlugs = (projects: ReadonlyArray<MentionProject>) => {
+  const slugs = assistantGroupProjectSlugs(projects);
+  return projects.map((project) => slugs.get(project.id)!);
+};
+
+/** The `@handle`s and `#slug`s the composer draws as a group's own chips. */
+export function assistantGroupMentionTargets(
+  members: ReadonlyArray<Pick<Assistant, "handle">>,
+  projects: ReadonlyArray<MentionProject>,
+): { readonly memberHandles: ReadonlyArray<string>; readonly projectSlugs: ReadonlyArray<string> } {
+  return {
+    memberHandles: [
+      ...members.map((member) => foldAssistantGroupText(member.handle)),
+      ASSISTANT_GROUP_EVERYONE,
+    ],
+    projectSlugs: projectSlugs(projects),
+  };
+}
+
+export type AssistantGroupMentionTarget<M, P> =
+  /** `member` is null for `@everyone`. */
+  | { readonly kind: "member"; readonly member: M | null }
+  | { readonly kind: "project"; readonly project: P };
+
+/**
+ * The member or project a chip's value (after `@` or `#`) names, as the server reads it: a
+ * member by handle or name, a project by its `#slug`, case and accents ignored.
+ */
+export function assistantGroupMentionTarget<
+  M extends Pick<Assistant, "handle" | "name">,
+  P extends MentionProject,
+>(
+  kind: "member" | "project",
+  value: string,
+  members: ReadonlyArray<M>,
+  projects: ReadonlyArray<P>,
+): AssistantGroupMentionTarget<M, P> | null {
+  if (kind === "project") {
+    const project = projects[projectSlugs(projects).indexOf(foldAssistantGroupText(value))];
+    return project === undefined ? null : { kind, project };
+  }
+  const [found] = assistantGroupMentions(`@${value}`, members);
+  return found?.start === 0 && found.end === value.length + 1
+    ? { kind, member: found.member }
+    : null;
+}
+
+const linkProjects = (text: string, projects: ReadonlyArray<MentionProject>) => {
+  if (!text.includes("#")) return text;
+  const slugs = projectSlugs(projects);
+  let out = "";
+  let at = 0;
+  for (const found of assistantGroupProjectMentionRanges(text, projects)) {
+    out += `${text.slice(at, found.start)}[${text.slice(found.start, found.end)}](${ASSISTANT_PROJECT_HREF}/${slugs[projects.indexOf(found.project)]})`;
+    at = found.end;
+  }
+  return out + text.slice(at);
+};
+
+/**
+ * Markdown with each member `@mention` and group `#project` made a mention link, except in code
+ * spans and fenced blocks.
+ */
 export function assistantGroupMarkdownMentions(
   markdown: string,
   members: ReadonlyArray<Pick<Assistant, "handle" | "name">>,
+  projects: ReadonlyArray<{ readonly id: string; readonly name: string }> = [],
 ): string {
-  if (!markdown.includes("@")) return markdown;
-  const link = (text: string) =>
-    assistantGroupTextParts(text, members)
-      .map((part) => (part.mention ? `[${part.text}](${ASSISTANT_MENTION_HREF})` : part.text))
-      .join("");
+  if (!markdown.includes("@") && (projects.length === 0 || !markdown.includes("#"))) {
+    return markdown;
+  }
+  const link = (text: string) => {
+    let out = "";
+    let at = 0;
+    for (const found of assistantGroupMentions(text, members)) {
+      const handle = found.member === null ? "everyone" : found.member.handle.toLowerCase();
+      out += `${linkProjects(text.slice(at, found.start), projects)}[${text.slice(found.start, found.end)}](${ASSISTANT_MENTION_HREF}/${handle})`;
+      at = found.end;
+    }
+    return out + linkProjects(text.slice(at), projects);
+  };
   let fence: string | null = null;
   return markdown
     .split("\n")
@@ -273,15 +1130,132 @@ export function insertAssistantGroupMention(
   };
 }
 
+const PROJECT_BEING_TYPED = /(?:^|[\s(])#([\p{L}\p{N}_./-]*)$/u;
+
+/** The `#word` the caret is in, where a project mention could start. */
+export function assistantGroupProjectQuery(
+  text: string,
+  caret: number,
+): AssistantGroupMentionQuery | null {
+  const match = PROJECT_BEING_TYPED.exec(text.slice(0, caret));
+  if (match === null) return null;
+  return {
+    start: caret - match[1]!.length - 1,
+    end: caret,
+    query: foldAssistantGroupText(match[1]!),
+  };
+}
+
+/** The group's projects whose `#slug` or name starts with the query, in the group's order. */
+export function assistantGroupProjectOptions<
+  P extends { readonly id: string; readonly name: string },
+>(query: string, projects: ReadonlyArray<P>): ReadonlyArray<P & { readonly slug: string }> {
+  const slugs = projectSlugs(projects);
+  return projects
+    .map((project, index) => ({ ...project, slug: slugs[index]! }))
+    .filter(
+      (project) =>
+        project.slug.startsWith(query) || foldAssistantGroupText(project.name).startsWith(query),
+    );
+}
+
+/** One plain-text line of a markdown message, for a reply quote. */
+export function assistantGroupMessageExcerpt(text: string): string {
+  return text
+    .replace(/^\s*(?:```|~~~).*$/gm, "")
+    .replace(/^\s*(?:[-*+]|\d+[.)]|#{1,6}|>)\s+/gm, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`)(.+?)\1/g, "$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The text with the `#word` replaced by the project's `#slug` and a space, and where the caret goes. */
+export function insertAssistantGroupProject(
+  text: string,
+  mention: AssistantGroupMentionQuery,
+  project: { readonly slug: string },
+): { readonly text: string; readonly caret: number } {
+  const inserted = `#${project.slug} `;
+  const rest = text.slice(mention.end).replace(/^ /, "");
+  return {
+    text: `${text.slice(0, mention.start)}${inserted}${rest}`,
+    caret: mention.start + inserted.length,
+  };
+}
+
 export const ASSISTANT_GROUP_STATUS_LABEL: Record<AssistantGroupTaskStatus, string> = {
   queued: "Queued",
   running: "Running",
   waiting: "Waiting",
+  usage_limited: "Usage limit",
   completed: "Completed",
   paused: "Paused",
   cancelled: "Cancelled",
   failed: "Failed",
 };
+
+const ACTIVITY_STATUS: Partial<
+  Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, TaskEventStatus>
+> = {
+  completed: "completed",
+  done: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  paused: "interrupted",
+  "needs-you": "interrupted",
+};
+
+const ACTIVITY_LABEL: Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, string> = {
+  ...ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
+  ...ASSISTANT_GROUP_STATUS_LABEL,
+};
+
+/**
+ * A task or request as the thread's task activity line shows it. The title is the member thread's,
+ * else the instruction's gist without its routing line; empty with neither.
+ */
+export function assistantGroupActivity(
+  status: AssistantGroupTaskStatus | AssistantGroupRequestStatus,
+  source: { readonly threadTitle?: string | null | undefined; readonly instruction?: string } = {},
+): { readonly title: string; readonly status: TaskEventStatus | null; readonly label: string } {
+  const eventStatus = ACTIVITY_STATUS[status] ?? null;
+  return {
+    title:
+      source.threadTitle?.trim() ||
+      assistantGroupMessageExcerpt(assistantGroupInstructionBody(source.instruction ?? "")),
+    status: eventStatus,
+    // The thread's word for an ending; the thread has none for paused or waiting on the user.
+    label:
+      eventStatus === null || eventStatus === "interrupted"
+        ? ACTIVITY_LABEL[status]
+        : TASK_EVENT_STATUS_LABEL[eventStatus],
+  };
+}
+
+/** An answer's Worked fold label, as the thread words a finished turn. */
+export function assistantGroupWorkedLabel(
+  message: Pick<AssistantGroupMessage, "workedMs">,
+): string {
+  return message.workedMs === undefined
+    ? "Worked"
+    : `Worked for ${formatDuration(message.workedMs)}`;
+}
+
+/**
+ * Where an answer's relative file links resolve: its task thread's worktree, else that thread's
+ * project; the request's project only when there is no thread (or its shell is not loaded yet).
+ */
+export function assistantGroupAnswerRoot(input: {
+  readonly thread: {
+    readonly worktreePath: string | null;
+    readonly projectRoot: string | null | undefined;
+  } | null;
+  readonly requestRoot: string | null | undefined;
+}): string | null {
+  if (input.thread === null) return input.requestRoot ?? null;
+  return input.thread.worktreePath ?? input.thread.projectRoot ?? null;
+}
 
 const PAUSE_REASON_LABEL: Record<string, string> = {
   stopped: "Stopped",
@@ -292,25 +1266,29 @@ const PAUSE_REASON_LABEL: Record<string, string> = {
   routing_failed: "The lead could not route this",
 };
 
-/** The reason a paused task shows in words; unknown reasons read as "Paused". */
-export function assistantGroupPauseReasonLabel(reason: string | null): string {
-  return (reason !== null ? PAUSE_REASON_LABEL[reason] : undefined) ?? "Paused";
-}
-
 const FAILURE_REASON_LABEL: Record<string, string> = {
-  thread_unavailable: "Couldn't open the member's conversation",
-  could_not_start: "Couldn't start the task",
+  outside_project: "Owner cannot work in this request's project",
+  thread_unavailable: "Could not open the owner's conversation",
+  request_missing: "The request is gone",
+  could_not_start: "Could not start the owner's turn",
 };
 
-/** The words under a paused or failed task card; null when there is nothing to add. */
-export function assistantGroupTaskReasonLabel(task: {
-  readonly status: string;
-  readonly reason: string | null;
-}): string | null {
-  if (task.status === "paused") return assistantGroupPauseReasonLabel(task.reason);
-  if (task.status === "failed" && task.reason !== null) {
-    return FAILURE_REASON_LABEL[task.reason] ?? null;
-  }
+/** A cancellation the server made; one a member made carries its own words, shown elsewhere. */
+const CANCEL_REASON_LABEL: Record<string, string> = {
+  outside_project: "Owner no longer works in this request's project",
+};
+
+/**
+ * Why a paused, failed or cancelled task stopped, in words: an unknown pause reads as "Paused", an
+ * unknown failure or cancellation as nothing (the status already says it).
+ */
+export function assistantGroupTaskReasonLabel(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): string | null {
+  const known = task.reason === null ? undefined : task.reason;
+  if (task.status === "paused") return (known && PAUSE_REASON_LABEL[known]) || "Paused";
+  if (task.status === "failed") return (known && FAILURE_REASON_LABEL[known]) || null;
+  if (task.status === "cancelled") return (known && CANCEL_REASON_LABEL[known]) || null;
   return null;
 }
 
@@ -360,16 +1338,6 @@ export function assistantGroupAuthorName(
   }
 }
 
-/** A message the user did not write and that is worth reading (routing notes are chatter). */
-function countsAsUnread(message: Pick<AssistantGroupMessage, "author" | "kind">): boolean {
-  return (
-    message.author !== "user" &&
-    message.kind !== "routing" &&
-    message.kind !== "boundary" &&
-    message.kind !== "change"
-  );
-}
-
 /** The newest loaded message number, 0 for an empty chat. */
 export function assistantGroupLatestSeq(state: AssistantGroupChatState): number {
   let latest = 0;
@@ -377,17 +1345,41 @@ export function assistantGroupLatestSeq(state: AssistantGroupChatState): number 
   return latest;
 }
 
-/** Where the "New" line goes: the first message past the read position that others wrote. */
+/**
+ * Where the "New" line goes: the first message past the read position that others wrote. All
+ * passes `assistantGroupAllReadSeq`, so a message read in its tab is not new there.
+ */
 export function assistantGroupNewSeq(
   state: AssistantGroupChatState,
-  readSeq: number,
+  readSeq: number | ((message: AssistantGroupMessage) => number),
 ): number | null {
   let first: number | null = null;
+  const answered = lastUserSeqs(state.messages.values());
   for (const message of state.messages.values()) {
-    if (message.seq > readSeq && countsAsUnread(message) && (first === null || message.seq < first))
+    const position = typeof readSeq === "number" ? readSeq : readSeq(message);
+    if (
+      message.seq > position &&
+      assistantGroupCountsAsUnread(
+        message,
+        message.requestId === undefined ? undefined : answered.get(message.requestId),
+      ) &&
+      (first === null || message.seq < first)
+    )
       first = message.seq;
   }
   return first;
+}
+
+/** A message's read position as the server counts it: its request's tab, else the group's. */
+export function assistantGroupAllReadSeq(
+  state: AssistantGroupChatState,
+  chat: Pick<AssistantTeamChat, "readSeq" | "scopes">,
+): (message: AssistantGroupMessage) => number {
+  return (message) => {
+    if (message.requestId === undefined) return chat.readSeq;
+    const projectId = assistantGroupRequestProject(state, message.requestId);
+    return chat.scopes?.find((scope) => scope.projectId === projectId)?.readSeq ?? chat.readSeq;
+  };
 }
 
 /**
@@ -413,19 +1405,59 @@ type TeamChat = Pick<AssistantTeam, "name"> & {
   readonly archivedAt?: AssistantTeam["archivedAt"];
 };
 
-/** A group whose tasks went from open to none: the work of a request is done. */
+export interface AssistantGroupFinishedNotice {
+  readonly title: string;
+  readonly body: string;
+  /** The finished tab's project; null for General or an older server's unknown one. */
+  readonly projectId: ProjectId | null;
+  /** The tab that shows the work: All when an older server cannot say. */
+  readonly tab: AssistantGroupTabKey;
+}
+
+/**
+ * One notice per tab whose work just ended (`assistantGroupFinishedScopes`). The body is the
+ * group's latest line when it comes from that tab, else a plain "Work finished", led by the
+ * project in brackets like chat-app notices. An older server only says the whole group went
+ * idle: one notice on the preview's project.
+ */
 export function assistantGroupFinished(
   previous: TeamChat | undefined,
   next: TeamChat,
-): { readonly title: string; readonly body: string } | null {
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
+): ReadonlyArray<AssistantGroupFinishedNotice> {
   // Archiving a busy group pauses its tasks; that is not a request finishing.
-  if (next.archivedAt != null) return null;
-  if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
+  if (next.archivedAt != null || next.chat === undefined) return [];
+  const perTab = previous?.chat?.scopes?.some((scope) => (scope.openTasks ?? 0) > 0) ?? false;
+  const legacy = !perTab && previous?.chat?.working === true && !next.chat.working;
+  const finished = perTab
+    ? assistantGroupFinishedScopes(previous?.chat, next.chat)
+    : legacy
+      ? [next.chat.previewProjectId ?? null]
+      : [];
   const preview = next.chat.preview?.replace(/\s+/g, " ").trim() ?? "";
-  return {
-    title: `${next.name} finished`,
-    body: preview.length > 140 ? `${preview.slice(0, 139)}…` : preview,
-  };
+  const excerpt = preview.length > 140 ? `${preview.slice(0, 139)}…` : preview;
+  return finished.map((projectId) => {
+    const fromTab = legacy || (next.chat?.previewProjectId ?? null) === projectId;
+    const body = fromTab && excerpt !== "" ? excerpt : legacy ? "" : "Work finished";
+    const project = projects.find((candidate) => candidate.id === projectId);
+    return {
+      title: `${next.name} finished`,
+      body: project === undefined || body === "" ? body : projectNoticePrefix(project.title, body),
+      projectId,
+      tab: legacy && projectId === null ? "all" : assistantGroupTabKey(projectId),
+    };
+  });
+}
+
+/**
+ * The user already sees a finished tab's work in its open chat: on All (or with no tab row), or
+ * on that tab. Any other tab hides it, so it still deserves a notice.
+ */
+export function assistantGroupFinishedInView(
+  open: AssistantGroupTabKey | null,
+  finished: AssistantGroupTabKey,
+): boolean {
+  return open === null || open === "all" || open === finished;
 }
 
 /** The group's running tasks, oldest first: its Working now rows and its "N running". */

@@ -148,7 +148,7 @@ export type StoreAttachmentUploadResult =
   | { readonly ok: false; readonly status: number; readonly detail: string };
 
 export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(function* (
-  claims: AttachmentUploadClaims,
+  claims: Pick<AttachmentUploadClaims, "attachmentId" | "type" | "name" | "mimeType" | "sizeBytes">,
   body: Uint8Array | HttpServerRequest.HttpServerRequest["stream"],
 ) {
   if (body instanceof Uint8Array && body.byteLength !== claims.sizeBytes) {

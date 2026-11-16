@@ -75,6 +75,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { AssistantId } from "./assistants.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -91,6 +92,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
+  ProviderInstanceMutation,
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
@@ -1472,7 +1474,11 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
-} satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
+  assistantModelSelections: Schema.optionalKey(Schema.Record(AssistantId, ModelSelection)),
+} satisfies Record<
+  ProjectScopedServerSettingKey | "providerInstances" | "assistantModelSelections",
+  unknown
+>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 // Whole-entry writers must round-trip unknown keys; keep the type closed to catch misspellings.
@@ -2136,6 +2142,8 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  // A project or assistant model named an instance that is missing or disabled for that project.
+  "use-unavailable-provider-instance",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -2167,6 +2175,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
         this.managedBy,
         this.providerLabel ?? this.providerInstanceId ?? "this",
       );
+    }
+    if (this.operation === "use-unavailable-provider-instance") {
+      return `The provider instance ${this.providerInstanceId ?? ""} does not exist or is disabled for this project.`;
     }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
@@ -2282,7 +2293,11 @@ const ServerSettingsPatchFields = Schema.Struct({
   fallbackModelSelections: Schema.optionalKey(
     Schema.Array(ModelSelection).check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS)),
   ),
-  /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
+  /**
+   * Replaces each project's override set; null removes it. Omitted providerInstances and
+   * assistantModelSelections keep their stored value; assistantModelSelections merges per
+   * assistant, where null removes that assistant.
+   */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
       ProjectId,
@@ -2291,6 +2306,9 @@ const ServerSettingsPatchFields = Schema.Struct({
           Schema.Struct({
             ...ProjectSettingsOverrides.fields,
             sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+            assistantModelSelections: Schema.optionalKey(
+              Schema.Record(AssistantId, Schema.NullOr(ModelSelection)),
+            ),
           }),
         ),
       ),
@@ -2470,6 +2488,23 @@ export function requiredScopesForServerSettingsPatch(
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
   ];
+}
+
+export const ServerSettingsUpdateInput = Schema.Struct({
+  patch: ServerSettingsPatch,
+  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+});
+export type ServerSettingsUpdateInput = typeof ServerSettingsUpdateInput.Type;
+
+export function requiredScopesForServerSettingsUpdate(
+  input: ServerSettingsUpdateInput,
+): ReadonlyArray<AuthEnvironmentScope> {
+  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+  if (input.providerInstanceMutation === undefined) return scopes;
+  // A provider instance change with an empty patch touches nothing settings:write guards.
+  return Object.values(input.patch).every((value) => value === undefined)
+    ? [AuthProvidersManageScope]
+    : [...new Set([...scopes, AuthProvidersManageScope])];
 }
 
 /** Host-executed project scripts require settings-write authority in addition to orchestration:operate. */

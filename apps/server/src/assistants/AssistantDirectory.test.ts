@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { assistantNote } from "./assistantNote.ts";
 import * as Directory from "./AssistantDirectory.ts";
+import { effectiveProjectIdsOf, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
 
 const seed = (id: string, extra: { role?: string; archived?: boolean } = {}) =>
   Effect.gen(function* () {
@@ -51,7 +52,10 @@ it.effect("the note titles the projects that exist and keeps a gone one as its i
       VALUES ('p1', 'harvey', '/w', '[]', '2026-01-01', '2026-01-01')`;
     const directory = yield* Directory.AssistantDirectory;
     const note = yield* assistantNote(Option.some(directory), thread("pro"), "hello");
-    assert.include(note, "these projects: harvey (id: p1), gone.");
+    assert.include(
+      note,
+      "You work in: harvey (id: p1), gone. If the request does not make clear which one, ask before changing anything.",
+    );
   }).pipe(Effect.provide(directoryLayer)),
 );
 
@@ -126,4 +130,143 @@ it.effect(
         ["Team t1"],
       );
     }).pipe(Effect.provide(directoryLayer)),
+);
+
+it.effect("a project assistant works in its own projects plus its active groups' ones", () =>
+  Effect.gen(function* () {
+    const directory = yield* Directory.AssistantDirectory;
+    const sql = yield* SqlClient.SqlClient;
+    const scoped = (id: string, projects: ReadonlyArray<string>) =>
+      sql`UPDATE assistants SET scope = 'project', project_ids_json = ${JSON.stringify(projects)}
+        WHERE assistant_id = ${id}`;
+    const groupProjects = (id: string, projects: ReadonlyArray<string>) =>
+      sql`UPDATE assistant_teams SET project_ids_json = ${JSON.stringify(projects)} WHERE team_id = ${id}`;
+    yield* seed("ann");
+    yield* seed("bo");
+    yield* seed("cy");
+    yield* seed("jarvis");
+    yield* scoped("ann", ["p1", "own"]);
+    yield* scoped("bo", ["p1"]);
+    yield* scoped("cy", ["p1"]);
+    yield* teamRow("dev", ["ann", "bo", "jarvis"]);
+    yield* teamRow("old", ["ann"]);
+    yield* groupProjects("dev", ["new", "own"]);
+    yield* groupProjects("old", ["archived-only"]);
+    yield* sql`UPDATE assistant_teams SET archived_at = 'now' WHERE team_id = 'old'`;
+    const effective = (handle: string) =>
+      Effect.gen(function* () {
+        const found = Option.getOrThrow(yield* directory.forThread(thread(handle)));
+        const projectIds: ReadonlyArray<string> = yield* effectiveProjectIdsOf(
+          directory,
+          found.assistant,
+        );
+        return projectIds;
+      });
+    assert.deepEqual(yield* effective("ann"), ["p1", "own", "new"]);
+    assert.deepEqual(yield* effective("bo"), ["p1", "new", "own"]);
+    assert.deepEqual(yield* effective("cy"), ["p1"]);
+    // Scope "all" reaches everything already.
+    assert.deepEqual(yield* effective("jarvis"), []);
+    // Taking a project from the group keeps a member's own access to it.
+    yield* groupProjects("dev", ["new"]);
+    assert.deepEqual(yield* effective("ann"), ["p1", "own", "new"]);
+    assert.deepEqual(yield* effective("bo"), ["p1", "new"]);
+    // A member who joins later gets the group's projects with no other write.
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '["ann","bo","jarvis","cy"]' WHERE team_id = 'dev'`;
+    assert.deepEqual(yield* effective("cy"), ["p1", "new"]);
+
+    const refusal = (
+      handle: string,
+      input: { projectId?: ProjectId; delegate?: boolean; elsewhere?: boolean },
+    ) =>
+      projectScopeRefusal(Option.some(directory), {
+        threadId: thread(handle),
+        ...input,
+      }).pipe(Effect.map(Option.getOrNull));
+    const P = ProjectId.make;
+    // Allowed through the group, refused outside the effective list.
+    assert.isNull(yield* refusal("cy", { projectId: P("new") }));
+    assert.include(
+      yield* refusal("cy", { projectId: P("archived-only") }),
+      "projects on your list",
+    );
+    // One project: omitting it means home; several: it must be named.
+    yield* scoped("cy", ["p1"]);
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '["ann"]' WHERE team_id = 'dev'`;
+    assert.isNull(yield* refusal("cy", {}));
+    assert.isNull(yield* refusal("cy", { delegate: true }));
+    assert.include(yield* refusal("ann", {}), "You work in several projects: p1, own, new.");
+    assert.include(yield* refusal("ann", { delegate: true }), "t3_thread_launch");
+    assert.include(
+      yield* refusal("ann", { projectId: P("p1"), delegate: true }),
+      "t3_thread_launch",
+    );
+    assert.isNull(yield* refusal("ann", { projectId: P("new") }));
+    assert.include(
+      yield* refusal("ann", { projectId: P("new"), elsewhere: true }),
+      "projects on your list",
+    );
+    // A member's hidden group thread is held the same way.
+    const groupThread = ThreadId.make("assistant:ann:g-0123456789abcdef");
+    assert.include(
+      Option.getOrNull(
+        yield* projectScopeRefusal(Option.some(directory), { threadId: groupThread }),
+      ),
+      "several projects",
+    );
+
+    const note = yield* assistantNote(Option.some(directory), thread("ann"), "hello");
+    assert.include(note, "You work in: p1, own, new. If the request does not make clear which one");
+    assert.include(note, "The group works in: new.");
+  }).pipe(Effect.provide(directoryLayer)),
+);
+
+it.effect("a member's group conversation reaches its own projects and that group's only", () =>
+  Effect.gen(function* () {
+    const directory = yield* Directory.AssistantDirectory;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seed("ann");
+    yield* sql`UPDATE assistants SET scope = 'project', project_ids_json = '["p1"]'
+      WHERE assistant_id = 'ann'`;
+    yield* teamRow("site", ["ann"]);
+    yield* teamRow("app", ["ann"]);
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["web"]' WHERE team_id = 'site'`;
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["mobile"]' WHERE team_id = 'app'`;
+    const siteRequest = ThreadId.make("assistant:ann:g-1111111111111111");
+    const appChat = ThreadId.make("assistant:ann:g-2222222222222222");
+    // A request conversation of one group, and an older group-wide one of the other.
+    yield* sql`INSERT INTO assistant_group_request_threads
+      (request_id, assistant_id, team_id, thread_id) VALUES ('r1', 'ann', 'site', ${siteRequest})`;
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+      VALUES ('app', 'ann', ${appChat})`;
+    const refused = (threadId: ThreadId, projectId: string) =>
+      projectScopeRefusal(Option.some(directory), {
+        threadId,
+        projectId: ProjectId.make(projectId),
+      }).pipe(Effect.map(Option.isSome));
+    const reach = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const allowed: string[] = [];
+        for (const id of ["p1", "web", "mobile"]) {
+          if (!(yield* refused(threadId, id))) allowed.push(id);
+        }
+        return allowed;
+      });
+    assert.deepEqual(yield* reach(siteRequest), ["p1", "web"]);
+    assert.deepEqual(yield* reach(appChat), ["p1", "mobile"]);
+    // Outside a group nothing changes: the assistant's own thread reaches every group's projects.
+    assert.deepEqual(yield* reach(thread("ann")), ["p1", "web", "mobile"]);
+    // A group thread no group holds any more (cleared chat, deleted group) keeps its own projects.
+    assert.deepEqual(yield* reach(ThreadId.make("assistant:ann:g-3333333333333333")), ["p1"]);
+    yield* sql`UPDATE assistant_teams SET archived_at = 'now' WHERE team_id = 'site'`;
+    assert.deepEqual(yield* reach(siteRequest), ["p1"]);
+    yield* sql`UPDATE assistant_teams SET archived_at = NULL WHERE team_id = 'site'`;
+    // A member taken out of the group loses its projects even while the thread row lingers.
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '[]' WHERE team_id = 'site'`;
+    assert.deepEqual(yield* reach(siteRequest), ["p1"]);
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '["ann"]' WHERE team_id = 'site'`;
+    // The note and memory read the same list the refusal checks.
+    const note = yield* assistantNote(Option.some(directory), siteRequest, "hello");
+    assert.include(note, "You work in: p1, web.");
+  }).pipe(Effect.provide(directoryLayer)),
 );

@@ -27,6 +27,7 @@ import type * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ChannelGateway from "../ChannelGateway.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import {
   admitImessageRow,
@@ -177,26 +178,32 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
       readonly id: number;
       readonly chat_guid: string;
       readonly text_hash: string;
+      readonly first_sent_at_ms: number;
       readonly sent_at_ms: number;
     }>`
-        SELECT id, chat_guid, text_hash, sent_at_ms FROM imessage_sent
-        WHERE consumed = 0 AND sent_at_ms > ${now - OWN_REPLY_WINDOW_MS}`;
+        SELECT id, chat_guid, text_hash, sent_at_ms,
+          COALESCE(first_sent_at_ms, sent_at_ms) AS first_sent_at_ms
+        FROM imessage_sent
+        WHERE echoes_due > 0 AND sent_at_ms > ${now - OWN_REPLY_WINDOW_MS}`;
     const seen = yield* sql<{
       readonly chat_guid: string;
       readonly text_hash: string;
       readonly date_ms: number;
-    }>`SELECT chat_guid, text_hash, date_ms FROM imessage_seen`;
+      readonly from_me: number | null;
+    }>`SELECT chat_guid, text_hash, date_ms, from_me FROM imessage_seen`;
     return {
       sent: sent.map((row) => ({
         id: row.id,
         chatGuid: row.chat_guid,
         textHash: row.text_hash,
+        firstSentAtMs: row.first_sent_at_ms,
         sentAtMs: row.sent_at_ms,
       })),
       seen: seen.map((row) => ({
         chatGuid: row.chat_guid,
         textHash: row.text_hash,
         dateMs: row.date_ms,
+        fromMe: row.from_me === null ? null : row.from_me !== 0,
       })),
     } satisfies ImessageAdmissionMemory;
   }, orDieSql);
@@ -205,13 +212,15 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
     admission: ImessageAdmission,
   ) {
     if (admission.type === "pending_join" || admission.remember === undefined) return;
-    const { chatGuid, textHash, dateMs } = admission.remember;
+    const { chatGuid, textHash, dateMs, fromMe } = admission.remember;
     if (admission.type === "skip" && admission.consumeSentId !== undefined) {
-      yield* sql`UPDATE imessage_sent SET consumed = 1 WHERE id = ${admission.consumeSentId}`;
+      yield* sql`
+          UPDATE imessage_sent SET consumed = 1, echoes_due = MAX(echoes_due - 1, 0)
+          WHERE id = ${admission.consumeSentId}`;
     }
     yield* sql`
-          INSERT INTO imessage_seen (chat_guid, text_hash, date_ms)
-          VALUES (${chatGuid}, ${textHash}, ${dateMs})`;
+          INSERT INTO imessage_seen (chat_guid, text_hash, date_ms, from_me)
+          VALUES (${chatGuid}, ${textHash}, ${dateMs}, ${fromMe === null ? null : Number(fromMe)})`;
     yield* sql`
           DELETE FROM imessage_seen
           WHERE id <= (SELECT MAX(id) FROM imessage_seen) - ${SEEN_KEEP}`;
@@ -273,9 +282,7 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
       yield* saveCursor(state);
     }
     const now = (yield* DateTime.now).epochMilliseconds;
-    yield* sql`DELETE FROM imessage_sent WHERE sent_at_ms < ${now - SENT_RETENTION_MS}`.pipe(
-      Effect.orDie,
-    );
+    yield* ChannelOutbox.forgetSentPieces(sql, "imessage_sent", now - SENT_RETENTION_MS);
   });
 
   const pollOnce: ImessageChannelRuntime["Service"]["pollOnce"] = Effect.gen(function* () {

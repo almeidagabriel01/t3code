@@ -31,10 +31,12 @@ import {
 } from "../Sidebar.logic";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const STATE_TEXT: Record<AssistantTaskState, string> = {
   running: "text-info-foreground",
   waiting: "text-warning-foreground",
+  usage_limited: "text-warning-foreground",
   failed: "text-destructive-foreground",
   done: "text-muted-foreground",
 };
@@ -135,57 +137,62 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
     assistantShelfOpen(state.projectExpandedById, foldKey, "settled"),
   );
   const setExpanded = useUiStateStore((state) => state.setProjectExpanded);
+  const limitLabel = useUsageLimitLabel();
   const { pinned, open, snoozed, settled } = props.sections;
   if (pinned.length + open.length + snoozed.length + settled.length === 0) return null;
-  const renderCompactRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => (
-    <li
-      key={task.threadId}
-      className={cn(
-        "flex list-none items-center rounded-md py-px pe-1 hover:bg-foreground/8",
-        props.roomy ? "h-9" : "h-7",
-      )}
-    >
-      <button
-        type="button"
-        data-testid="assistant-task-row"
-        data-state={state}
-        aria-label={`${shell.title}, ${ASSISTANT_TASK_STATE_LABEL[state]}`}
-        aria-current={
-          props.activeThreadKey === `${environmentId}:${task.threadId}` ? "page" : undefined
-        }
-        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset,0.5rem) text-left text-xs outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        onClick={() => props.onOpen(scopeThreadRef(environmentId, task.threadId))}
+  const renderCompactRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => {
+    const label =
+      state === "usage_limited"
+        ? (limitLabel(shell.runtime?.usageLimitResetAt) ?? ASSISTANT_TASK_STATE_LABEL[state])
+        : ASSISTANT_TASK_STATE_LABEL[state];
+    return (
+      <li
+        key={task.threadId}
+        className={cn(
+          "flex list-none items-center rounded-md py-px pe-1 hover:bg-foreground/8",
+          props.roomy ? "h-9" : "h-7",
+        )}
       >
-        <AssistantAvatar
-          assistant={assistant}
-          mood={ASSISTANT_TASK_FACE[state]}
-          className="size-4"
-        />
-        <span className="min-w-0 flex-1 truncate">{shell.title}</span>
-        <span className={cn("shrink-0 font-normal", STATE_TEXT[state])}>
-          {ASSISTANT_TASK_STATE_LABEL[state]}
-        </span>
-      </button>
-      {canDismissAssistantTask(state) ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-micro"
-                variant="ghost-muted"
-                aria-label={`Dismiss ${shell.title}`}
-                disabled={!flows.canAct}
-                onClick={() => void flows.dismissTask(task.threadId)}
-              />
-            }
-          >
-            <XIcon />
-          </TooltipTrigger>
-          <TooltipPopup side="top">Dismiss task</TooltipPopup>
-        </Tooltip>
-      ) : null}
-    </li>
-  );
+        <button
+          type="button"
+          data-testid="assistant-task-row"
+          data-state={state}
+          aria-label={`${shell.title}, ${label}`}
+          aria-current={
+            props.activeThreadKey === `${environmentId}:${task.threadId}` ? "page" : undefined
+          }
+          className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset,0.5rem) text-left text-xs outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          onClick={() => props.onOpen(scopeThreadRef(environmentId, task.threadId))}
+        >
+          <AssistantAvatar
+            assistant={assistant}
+            mood={ASSISTANT_TASK_FACE[state]}
+            className="size-4"
+          />
+          <span className="min-w-0 flex-1 truncate">{shell.title}</span>
+          <span className={cn("shrink-0 font-normal", STATE_TEXT[state])}>{label}</span>
+        </button>
+        {canDismissAssistantTask(state) ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  aria-label={`Dismiss ${shell.title}`}
+                  disabled={!flows.canAct}
+                  onClick={() => void flows.dismissTask(task.threadId)}
+                />
+              }
+            >
+              <XIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Dismiss task</TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </li>
+    );
+  };
   const rowsOf = (key: keyof typeof SECTION_OF) =>
     props.sections[key].map((row) =>
       props.renderRow

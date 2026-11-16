@@ -33,6 +33,11 @@ const withFetch = <A, E>(
     return { exit, requests };
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
+/** How Node's fetch rejects: a TypeError whose cause holds the socket error's code. */
+const fetchFailure = (cause: Error) => async (): Promise<Response> => {
+  throw new TypeError("fetch failed", { cause });
+};
+
 const failureOf = (exit: Exit.Exit<unknown, unknown>) => {
   assert.isTrue(Exit.isFailure(exit));
   const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : undefined;
@@ -178,6 +183,23 @@ it.effect("turns every failure into a fixed code that never carries the token", 
         "unreachable",
         "unknown",
       ],
+      // Node's fetch: a name that does not resolve or a refused connection never sent the request.
+      [
+        fetchFailure(Object.assign(new Error("getaddrinfo"), { code: "ENOTFOUND" })),
+        "unreachable",
+        "not_sent",
+      ],
+      [
+        fetchFailure(Object.assign(new AggregateError([], "connect"), { code: "ECONNREFUSED" })),
+        "unreachable",
+        "not_sent",
+      ],
+      // A socket dropped mid-request may have posted.
+      [
+        fetchFailure(Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" })),
+        "unreachable",
+        "unknown",
+      ],
     ];
     for (const [response, code, outcome, retryAfter] of cases) {
       const { exit } = yield* withFetch(
@@ -192,4 +214,71 @@ it.effect("turns every failure into a fixed code that never carries the token", 
       assert.isFalse(String(error?.message).includes("secret"));
     }
   }),
+);
+
+const FILE_URL = `https://api.telegram.org/file/bot${TOKEN}/photos/file_1.jpg`;
+
+it.effect("downloads a file by its id, and never more bytes than allowed", () =>
+  Effect.gen(function* () {
+    const answer = (bytes: Uint8Array, fileSize?: number) => (url: string) =>
+      url.endsWith("/getFile")
+        ? json({ ok: true, result: { file_path: "photos/file_1.jpg", file_size: fileSize } })
+        : new Response(bytes, { status: 200 });
+    const got = yield* withFetch(answer(new Uint8Array([1, 2, 3])), (api) =>
+      api.downloadFile({ fileId: "abc", maxBytes: 3 }),
+    );
+    assert.deepStrictEqual(Exit.isSuccess(got.exit) && [...got.exit.value], [1, 2, 3]);
+    assert.deepStrictEqual(got.requests[0]?.body, { file_id: "abc" });
+    assert.strictEqual(got.requests[1]?.url, FILE_URL);
+    assert.strictEqual(got.requests[1]?.init.redirect, "manual");
+
+    // Telegram's own size is checked first, and the stream is cut even when it lied.
+    const declared = yield* withFetch(answer(new Uint8Array(2), 9), (api) =>
+      api.downloadFile({ fileId: "abc", maxBytes: 3 }),
+    );
+    assert.strictEqual(failureOf(declared.exit)?.code, "too_large");
+    assert.lengthOf(declared.requests, 1);
+    const streamed = yield* withFetch(answer(new Uint8Array(4)), (api) =>
+      api.downloadFile({ fileId: "abc", maxBytes: 3 }),
+    );
+    assert.strictEqual(failureOf(streamed.exit)?.code, "too_large");
+  }),
+);
+
+it.effect(
+  "refuses a file path that leaves the bot's files, and keeps the token out of errors",
+  () =>
+    Effect.gen(function* () {
+      for (const filePath of ["../bot1/getMe", "photos/../../x", "/etc/passwd", "a?b", ""]) {
+        const result = yield* withFetch(
+          () => json({ ok: true, result: { file_path: filePath } }),
+          (api) => api.downloadFile({ fileId: "abc", maxBytes: 3 }),
+        );
+        assert.strictEqual(failureOf(result.exit)?.code, "bad_request", filePath);
+        assert.lengthOf(result.requests, 1, filePath);
+      }
+      const failures = [
+        () => {
+          throw new Error(`connect failed for ${FILE_URL}`);
+        },
+        () => new Response(`not found: ${FILE_URL}`, { status: 404 }),
+        () => new Response(`oops ${TOKEN}`, { status: 500 }),
+      ];
+      for (const fail of failures) {
+        const result = yield* withFetch(
+          (url) =>
+            url.endsWith("/getFile")
+              ? json({ ok: true, result: { file_path: "photos/file_1.jpg" } })
+              : fail(),
+          (api) => api.downloadFile({ fileId: "abc", maxBytes: 3 }),
+        );
+        const error = failureOf(result.exit);
+        assert.notInclude(JSON.stringify(error), "secret");
+        assert.notInclude(String(error?.message), "secret");
+        assert.notInclude(
+          JSON.stringify(Exit.isFailure(result.exit) ? result.exit.cause : ""),
+          "secret",
+        );
+      }
+    }),
 );

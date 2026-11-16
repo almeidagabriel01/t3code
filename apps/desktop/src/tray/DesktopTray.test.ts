@@ -196,6 +196,32 @@ it.effect("does nothing off macOS and validates the payload", () =>
   }),
 );
 
+it.effect("lists long native subagent ids and drops only an unreadable row", () =>
+  run("darwin", ({ call }) =>
+    Effect.promise(async () => {
+      const nativeId =
+        "thread:provider:claudeAgent:native-thread:provider-thread%3Aprovider%3AclaudeAgent%3Anative-thread%3Apending%253Arun%253Athread%253Amcp%25253Alaunch%25253A70c2c5433962e0e24c245729fb7e65cb3f300f7c2e0e6bc5e3a7f2ce743f44ce%253Aordinal%253A1%3Aaea33ed6ffd3ca7b6";
+      expect(nativeId.length).toBeGreaterThan(200);
+      await call({
+        ...menu,
+        running: [
+          { environmentId: "env", threadId: "", title: "Broken", project: null, environment: null },
+          {
+            environmentId: "env",
+            threadId: nativeId,
+            title: "Subagent",
+            project: null,
+            environment: null,
+          },
+        ],
+      });
+      expect(labels()).toContain("Subagent");
+      expect(labels()).not.toContain("Broken");
+      expect(labels()).toContain("Approve me");
+    }),
+  ),
+);
+
 it.effect("keeps running when the tray cannot be created", () =>
   run("darwin", ({ call }) =>
     Effect.promise(async () => {

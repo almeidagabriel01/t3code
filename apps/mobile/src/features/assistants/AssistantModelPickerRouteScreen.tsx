@@ -1,4 +1,5 @@
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import type { ModelSelection } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -9,10 +10,26 @@ import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { updateAssistantDraft } from "./assistantDraft";
 import { useAssistantEditor } from "./useAssistantEditor";
 
+export type AssistantModelPickerParams = {
+  /** Picks the assistant's own default model instead of its conversation's. */
+  readonly default?: boolean;
+};
+
 /** Picks the assistant's model into the open form; nothing is saved until the form is. */
-export function AssistantModelPickerRouteScreen() {
+export function AssistantModelPickerRouteScreen({
+  route,
+}: StaticScreenProps<AssistantModelPickerParams | undefined>) {
   const navigation = useNavigation();
-  const { editor, config, effectiveProject, modelSelection } = useAssistantEditor();
+  const pickingDefault = route.params?.default === true;
+  const editorState = useAssistantEditor();
+  const { editor, config, effectiveProject } = editorState;
+  const modelSelection = pickingDefault
+    ? (editorState.defaultModelSelection ?? editorState.userDefaultModel)
+    : editorState.modelSelection;
+  const pick = (selection: ModelSelection) =>
+    updateAssistantDraft(
+      pickingDefault ? { defaultModelSelection: selection } : { modelSelection: selection },
+    );
   const projectId = effectiveProject?.id ?? null;
   const models = useMemo(
     () => buildModelOptions(config, modelSelection, undefined, projectId),
@@ -43,18 +60,17 @@ export function AssistantModelPickerRouteScreen() {
 
   return (
     <ThreadSettingsPickerScreen
-      title="Model and effort"
+      title={pickingDefault ? "Default model" : "Model and effort"}
       environmentId={editor.environmentId}
       projectId={projectId}
       providerGroups={providerGroups}
       selectedModel={modelSelection}
       prompt=""
       onPromptChange={() => {}}
-      onSelectModel={(option) => updateAssistantDraft({ modelSelection: option.selection })}
+      onSelectModel={(option) => pick(option.selection)}
       optionDescriptors={optionDescriptors}
       onUpdateOptionSelections={(options) => {
-        if (modelSelection)
-          updateAssistantDraft({ modelSelection: { ...modelSelection, options } });
+        if (modelSelection) pick({ ...modelSelection, options });
       }}
       runtimeMode="full-access"
       onUpdateRuntimeMode={() => {}}

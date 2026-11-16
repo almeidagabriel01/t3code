@@ -145,6 +145,7 @@ export function useAssistantSectionJumpThreads(
 const INDICATOR_DOT = {
   needs: "bg-warning",
   failed: "bg-adaptive-rose-600-400",
+  limited: "bg-warning",
   paused: "bg-foreground-muted",
   running: "bg-adaptive-sky-600-400",
 } as const;
@@ -155,6 +156,8 @@ function indicatorLabel(indicator: ZoneIndicator, assistant: boolean): string {
       return indicator.count === 1 ? "Needs you" : `${indicator.count} need you`;
     case "failed":
       return "Failed";
+    case "limited":
+      return "Usage limit";
     case "paused":
       return `${indicator.count} paused`;
     case "running":

@@ -653,6 +653,8 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<boolean>;
   /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
   readonly backgroundTasksEndWithProcess?: true;
+  /** Set only if the session's process runs its native subagents, so releasing it ends their work. */
+  readonly nativeWorkEndsWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
     cwd?: string | null,

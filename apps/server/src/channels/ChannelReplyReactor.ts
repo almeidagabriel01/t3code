@@ -2,8 +2,11 @@ import {
   assistantIdFromThreadId,
   ChannelOutboundMessage,
   type ChannelReplyAddress,
+  DEFAULT_AUTONOMY_SETTINGS,
   type Decision,
   type OrchestrationV2DomainEvent,
+  type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,12 +19,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
-import { cardContext } from "../autonomy/needsYou.ts";
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
+import { cardContext, WAIT_WAKE_PREFIX } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { turnOriginOf } from "../mcp/turnOrigin.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { decodeReplyAddress } from "./ChannelBridge.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
@@ -72,6 +78,7 @@ const make = Effect.gen(function* () {
   const channelLanguage = yield* ChannelLanguage;
   const sql = yield* SqlClient.SqlClient;
   const environment = yield* ServerEnvironment;
+  const settings = yield* ServerSettingsService;
 
   const targetFor = Effect.fn("ChannelReplyReactor.targetFor")(function* (threadId: string) {
     const assistantId = assistantIdFromThreadId(threadId);
@@ -89,9 +96,25 @@ const make = Effect.gen(function* () {
         };
   });
 
+  /** The thread's project; none when it cannot be read. */
+  const projectOf = (threadId: string) =>
+    engine.getThreadShell(threadId as ThreadId).pipe(
+      Effect.map((shell): ProjectId | null => shell?.projectId ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+
   const postRun = Effect.fn("ChannelReplyReactor.postRun")(function* (
     run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }>["payload"],
   ) {
+    // With waiting notices on, the wait's card reaches the chat app (AutonomyService), so the
+    // wake's answer stays in T3; with them off, the answer is the only word the chat gets.
+    if (run.userMessageId.startsWith(WAIT_WAKE_PREFIX)) {
+      const autonomy = yield* settings.getSettings.pipe(
+        Effect.map((current) => current.autonomy),
+        Effect.orElseSucceed(() => DEFAULT_AUTONOMY_SETTINGS),
+      );
+      if (autonomy.enabled && autonomy.notifyWaiting) return;
+    }
     const target = yield* targetFor(run.threadId);
     const deliveryId = `channel-run:${run.id}`;
     if (target === undefined || Option.isSome(yield* outbox.find(deliveryId))) return;
@@ -101,7 +124,13 @@ const make = Effect.gen(function* () {
       turnItemRunIds: [run.id],
       turnItemTypes: ["error"],
     });
-    const answer = records.messages.findLast((message) => message.text.trim() !== "")?.text;
+    const started = yield* threads.getThreadRecords(run.threadId, ["messages"], {
+      messageIds: [run.userMessageId],
+    });
+    const answer = assistantRunReply(
+      records.messages.findLast((message) => message.text.trim() !== "")?.text,
+      turnOriginOf(started.messages[0]),
+    );
     const failure = records.turnItems.findLast((item) => item.type === "error");
     const language = yield* channelLanguage.current;
     const text =
@@ -115,6 +144,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: target.address,
+      projectId: yield* projectOf(run.threadId),
       senderName: target.assistantName,
       text,
       ...(answer === undefined ? {} : { markdown: true }),
@@ -167,6 +197,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
+          projectId: yield* projectOf(decision.fromThreadId),
           senderName: target.assistantName,
           text: [shown.title, context.text, link].filter((part) => part !== "").join("\n\n"),
           ...(context.cut
@@ -192,6 +223,7 @@ const make = Effect.gen(function* () {
       yield* outbox.enqueue({
         deliveryId: `channel-decision-settled:${decision.id}`,
         destination,
+        projectId: yield* projectOf(decision.fromThreadId),
         senderName,
         // The settled line reads "<title> — <outcome>"; chat has no other place to put the title.
         // oxlint-disable-next-line t3code/no-em-dash-copy -- fixed product format

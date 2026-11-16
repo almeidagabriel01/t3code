@@ -17,7 +17,7 @@ import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
 
 /**
  * An assistant is a named, long-lived conversation: a row that points at its current real thread.
- * The thread's own model selection is the assistant's model; a reset starts a new generation.
+ * Its conversation runs on the thread's own model; a reset starts a new generation.
  */
 export const ASSISTANT_NAME_MAX_LENGTH = 60;
 export const ASSISTANT_ROLE_MAX_LENGTH = 60;
@@ -287,6 +287,8 @@ export const Assistant = Schema.Struct({
   integrations: AssistantIntegrations.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_INTEGRATIONS)),
   ),
+  /** The model its new work starts on when the project names none. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -319,6 +321,33 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * routes a group request that mentions nobody; it gains no permission.
  */
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
+export const AssistantTeamChatScope = Schema.Struct({
+  projectId: Schema.NullOr(ProjectId),
+  unreadCount: Schema.Int,
+  /** An open wait on the user, or the lead asking which project, in this tab. */
+  waiting: Schema.Boolean,
+  /** The tab's read position: its own, else the group's. */
+  readSeq: Schema.Int,
+  /** The project's title, kept after it is deleted; absent for General and unknown projects. */
+  title: Schema.optionalKey(Schema.String),
+  /**
+   * The group's queued, running or waiting tasks in this tab; absent when none, and from older
+   * servers. Every working task counts in one tab, so their sum is the group's `working`.
+   */
+  openTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * The group's stopped tasks in this tab, so an end tells apart from work that only moved to
+   * another tab; absent when none, and from older servers.
+   */
+  doneTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * General only: it holds a request. Without one it is listed only for its counts, and shows no
+   * tab for them alone. Absent from older servers, which list General only with a request.
+   */
+  hasRequests: Schema.optionalKey(Schema.Boolean),
+});
+export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
+
 export const AssistantTeamChat = Schema.Struct({
   latestSeq: Schema.Int,
   /** The last message the user has read; unread messages are the newer ones not written by them. */
@@ -326,6 +355,8 @@ export const AssistantTeamChat = Schema.Struct({
   unreadCount: Schema.Int,
   /** A task of the group is queued, running or waiting. */
   working: Schema.Boolean,
+  /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
+  runningCount: Schema.optionalKey(Schema.Int),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
   /**
@@ -337,8 +368,45 @@ export const AssistantTeamChat = Schema.Struct({
   failedTasks: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Each member's hidden thread for this group, where its group work runs. */
   threadIds: Schema.Array(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The project of the request `preview` comes from; null for none. Absent from older servers. */
+  previewProjectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
+  /**
+   * Per project tab (`null` = General): tabs with unread or waiting messages, their own read
+   * position or tasks, plus General when it has a request. Absent from older servers, which have
+   * no tabs.
+   */
+  scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
+  /**
+   * The projects of the group's requests that no longer exist, by id, so every client numbers
+   * their "Removed project" labels alike, whatever history it loaded. Absent from older servers.
+   */
+  removedProjectIds: Schema.optionalKey(Schema.Array(ProjectId)),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
+
+/**
+ * The tabs (`null` = General) whose work just ended: open tasks before, none now, and more of
+ * them stopped. A server without stopped counts only ends work while the group's open total falls.
+ */
+export function assistantGroupFinishedScopes(
+  previous: Pick<AssistantTeamChat, "scopes"> | undefined,
+  next: Pick<AssistantTeamChat, "scopes"> | undefined,
+): ReadonlyArray<ProjectId | null> {
+  const before = previous?.scopes ?? [];
+  const after = next?.scopes ?? [];
+  const now = (projectId: ProjectId | null) => after.find((scope) => scope.projectId === projectId);
+  const emptied = before.filter(
+    (scope) => (scope.openTasks ?? 0) > 0 && (now(scope.projectId)?.openTasks ?? 0) === 0,
+  );
+  if ([...before, ...after].some((scope) => scope.doneTasks !== undefined)) {
+    return emptied
+      .filter((scope) => (now(scope.projectId)?.doneTasks ?? 0) > (scope.doneTasks ?? 0))
+      .map((scope) => scope.projectId);
+  }
+  const total = (scopes: typeof before) =>
+    scopes.reduce((sum, scope) => sum + (scope.openTasks ?? 0), 0);
+  return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
+}
 
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
@@ -352,10 +420,33 @@ export const AssistantTeam = Schema.Struct({
   /** Absent from older servers. */
   instructions: Schema.optionalKey(AssistantTeamInstructions),
   memories: Schema.optionalKey(AssistantTeamMemories),
+  /** The model a group request starts on, below the project's own default. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Projects every member may work in, on top of its own; absent from older servers. */
+  projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type AssistantTeam = typeof AssistantTeam.Type;
+
+/**
+ * The projects a project assistant may work in: its own, then those of each active group it is in.
+ * Empty for scope "all", which reaches every project. The one place this union is computed.
+ */
+export function assistantEffectiveProjectIds(
+  assistant: Pick<Assistant, "id" | "scope" | "projectIds">,
+  teams: ReadonlyArray<Pick<AssistantTeam, "memberIds" | "archivedAt" | "projectIds">>,
+): ReadonlyArray<ProjectId> {
+  if (assistant.scope !== "project") return [];
+  return [
+    ...new Set([
+      ...assistant.projectIds,
+      ...teams.flatMap((team) =>
+        team.archivedAt === null && team.memberIds.includes(assistant.id) ? team.projectIds : [],
+      ),
+    ]),
+  ];
+}
 
 /** The first reason a team is unusable, or null. Clients and the server share it. */
 export function assistantTeamProblem(team: {
@@ -470,6 +561,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   integrations: Schema.optional(AssistantIntegrations),
   role: Schema.optional(AssistantRole),
   archived: Schema.optional(Schema.Boolean),
+  /** Null clears it. Unlike `modelSelection`, it leaves the current conversation's model alone. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
 
@@ -647,6 +740,12 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   instructions: Schema.optional(AssistantTeamInstructions),
   /** Replaces the whole list. */
   memories: Schema.optional(AssistantTeamMemories),
+  /** Null clears it. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** Replaces the group's projects; the two lists below then apply to it, removals last. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
+  addProjectIds: Schema.optional(Schema.Array(ProjectId)),
+  removeProjectIds: Schema.optional(Schema.Array(ProjectId)),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 

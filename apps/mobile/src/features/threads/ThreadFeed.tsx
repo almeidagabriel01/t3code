@@ -1,20 +1,17 @@
+import {
+  AssistantMarkdownContent,
+  type MarkdownLinkHandlers,
+  type MarkdownStyleSet,
+} from "./AssistantMarkdownContent";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { SendToMainChatButton } from "./SendToMainChatButton";
-import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
-  enrichedThreadLinkCustomization,
   withChipIcon,
 } from "../../native/useEnrichedLinkVariants";
-import {
-  enrichedSkillDisplayName,
-  enrichedSkillInstructionsPath,
-  enrichedSkillReference,
-} from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
@@ -46,7 +43,6 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
-  AuthFilesystemReadScope,
   idleCompactionOf,
   type OrchestrationMessageContext,
   ThreadId,
@@ -63,7 +59,6 @@ import {
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -73,30 +68,15 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
-import {
-  codexArtifactTemplatePresentationLabel,
-  type CodexArtifactTemplate,
-} from "@t3tools/shared/codexArtifactTemplates";
+import { type CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import {
-  executeAtomQuery,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
-import {
-  renderCodexInlineDirectivesAsMarkdown,
-  splitCodexArtifactTemplateMarkdown,
-} from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -150,21 +130,16 @@ import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
-import { splitMarkdownDetails } from "../../lib/markdownDetails";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
-  type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
-  type MarkdownImageSourceResolver,
-  type MarkdownLinkCustomization,
-  type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
-import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
+import { VideoPreviewModal } from "../../components/ui/VideoPreviewModal";
+import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
@@ -189,10 +164,6 @@ import { uuidv4 } from "../../lib/uuid";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import {
-  normalizeNativeMarkdownUrl,
-  resolveMarkdownLinkPresentation,
-} from "../../lib/markdownLinks";
 import {
   createThreadFeedCache,
   threadFeedCompactionLabels,
@@ -233,16 +204,8 @@ import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
-import { projectEnvironment } from "../../state/projects";
+import { usePreparedConnection } from "../../state/session";
 import {
-  needsWorkspaceBasenameLookup,
-  pickWorkspaceLinkMatch,
-  WORKSPACE_BASENAME_LOOKUP_LIMIT,
-  workspaceLinkLookupQuery,
-} from "@t3tools/client-runtime/workspace-basename-lookup";
-import {
-  resolveThreadLink,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
@@ -253,31 +216,23 @@ import { serverEnvironment } from "../../state/server";
 import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
-import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import { threadEnvironment } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
-import {
-  fileRoutePathSegments,
-  resolveFileLinkPath,
-  resolveWorkspaceFilePath,
-  resolveWorkspaceRelativeFilePath,
-} from "../files/filePath";
 import { waitForThreadShell } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
-import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { ThreadTaskEventRow } from "./ThreadTaskEventRow";
+import { WorkedForFold } from "./WorkedForFold";
+import { useThreadMarkdownLinks } from "./useThreadMarkdownLinks";
+import { ASSISTANT_FOLDED_HEIGHT, isAssistantMessageFoldable } from "./assistantMessageFold";
+import { FoldableContent } from "../../components/FoldableContent";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { assistantSenders, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
 import { AssistantFeedMessage } from "../assistants/AssistantPresence";
-import {
-  MarkdownImageAvailableWidthContext,
-  ThreadMarkdownImage,
-  ThreadMarkdownImageUnavailable,
-  ThreadMarkdownImageView,
-} from "./ThreadMarkdownImage";
-import { openSettings, openSettingsLink } from "../settings/settings-navigation";
+import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
 
@@ -287,7 +242,6 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
@@ -1067,200 +1021,12 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
   return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
 }
 
-interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string) => void;
-  readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
-  readonly onFileContextMenuAction: (href: string, actionId: string) => void;
-  readonly onImagePress?: (href: string) => void;
-  readonly resolveImageSource?: MarkdownImageSourceResolver;
-  readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
-  readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
-}
-
 interface MarkdownStyleSets {
   readonly user: MarkdownStyleSet;
   readonly assistant: MarkdownStyleSet;
 }
 
-interface MarkdownStyleSet {
-  readonly nativeTextStyle: NativeMarkdownTextStyle;
-}
-
-const ARTIFACT_TEMPLATE_SYMBOL_BY_KIND: Record<
-  CodexArtifactTemplate["artifactKind"],
-  AppSymbolName
-> = {
-  document: "doc.text",
-  presentation: "chart.bar.xaxis",
-  spreadsheet: "chart.bar.xaxis",
-  site: "safari",
-  "google-docs": "doc.text",
-  "google-slides": "chart.bar.xaxis",
-  "google-sheets": "chart.bar.xaxis",
-  image: "camera",
-  email: "text.bubble",
-  slack: "text.bubble",
-};
-
-function ArtifactTemplateCard(props: {
-  readonly template: CodexArtifactTemplate;
-  readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
-}) {
-  return (
-    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
-      <View className="h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
-        <SymbolView
-          name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
-          size={20}
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
-      </View>
-      <View className="min-w-0 flex-1">
-        <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
-          {props.template.displayName}
-        </Text>
-        <Text className="text-xs text-foreground-muted">
-          {codexArtifactTemplatePresentationLabel(props.template.artifactKind)}
-        </Text>
-      </View>
-      {props.onUse ? (
-        <Button
-          label="Use template"
-          tone="secondary"
-          accessibilityLabel={`Use ${props.template.displayName} template`}
-          onPress={() => props.onUse?.(props.template)}
-        />
-      ) : null}
-    </View>
-  );
-}
-
-const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
-  readonly markdown: string;
-  readonly environmentId: EnvironmentId;
-  readonly markdownStyles: MarkdownStyleSet;
-  readonly linkHandlers: MarkdownLinkHandlers;
-  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  readonly renderImage: MarkdownImageRenderer;
-  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
-}) {
-  const models = useModelMentions(props.environmentId, props.markdown);
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
-  const linkHandlers: MarkdownLinkHandlers = {
-    ...props.linkHandlers,
-    linkCustomization: (href) =>
-      withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
-  };
-
-  return (
-    <AssistantMarkdownBlocks
-      markdown={liveMarkdown}
-      markdownStyles={props.markdownStyles}
-      linkHandlers={linkHandlers}
-      onUseArtifactTemplate={props.onUseArtifactTemplate}
-      renderImage={props.renderImage}
-      skills={props.skills}
-      models={models}
-    />
-  );
-});
-
-// Folds split first, so an artifact card inside a fold stays inside it.
-function AssistantMarkdownBlocks(props: {
-  readonly markdown: string;
-  readonly markdownStyles: MarkdownStyleSet;
-  readonly linkHandlers: MarkdownLinkHandlers;
-  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  readonly renderImage: MarkdownImageRenderer;
-  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
-  readonly models: ReturnType<typeof useModelMentions>;
-}) {
-  const blocks = useMemo(
-    () =>
-      splitMarkdownDetails(props.markdown).map((block) =>
-        block.kind === "details"
-          ? block
-          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
-      ),
-    [props.markdown],
-  );
-  return blocks.map((block) => {
-    if (block.kind === "details") {
-      return (
-        <MarkdownDetailsFold
-          key={`details:${block.sourceOffset}`}
-          summary={block.summary}
-          initiallyOpen={block.open}
-        >
-          <AssistantMarkdownBlocks {...props} markdown={block.body} />
-        </MarkdownDetailsFold>
-      );
-    }
-    return block.segments.map((segment) => {
-      const offset = block.sourceOffset + segment.sourceOffset;
-      if (segment.kind === "artifact-template") {
-        return (
-          <ArtifactTemplateCard
-            key={`artifact-template:${offset}`}
-            template={segment.template}
-            onUse={props.onUseArtifactTemplate}
-          />
-        );
-      }
-      if (segment.markdown.trim().length === 0) return null;
-      return (
-        <SelectableMarkdownText
-          key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
-          skills={props.skills}
-          models={props.models}
-          textStyle={props.markdownStyles.nativeTextStyle}
-          {...props.linkHandlers}
-          renderImage={props.renderImage}
-        />
-      );
-    });
-  });
-}
-
-function MarkdownDetailsFold(props: {
-  readonly summary: string;
-  readonly initiallyOpen: boolean;
-  readonly children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(props.initiallyOpen);
-  const iconSubtleColor = useUniwindTheme()["--color-icon-subtle"];
-  return (
-    <View className="my-2 border-y border-border">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.summary}
-        accessibilityState={{ expanded }}
-        hitSlop={4}
-        className="min-h-10 flex-row items-center gap-2 py-2"
-        onPress={() => {
-          void Haptics.selectionAsync();
-          setExpanded((value) => !value);
-        }}
-      >
-        <ThreadDisclosureChevron
-          expanded={expanded}
-          collapsedDirection="right"
-          size={12}
-          tintColor={iconSubtleColor}
-        />
-        <Text className="min-w-0 shrink font-t3-medium text-sm text-foreground">
-          {props.summary}
-        </Text>
-      </Pressable>
-      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
-    </View>
-  );
-}
-
-function useMarkdownStyles(): MarkdownStyleSets {
+export function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
@@ -1571,45 +1337,15 @@ function RunFoldButton({
   };
 
   return (
-    <View className="min-w-0 flex-1">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: entry.expanded, busy: loading }}
-        onPress={toggle}
-        hitSlop={4}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
-        style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, rowSizing.estimatedRowHeight) }}
-      >
-        <Text
-          key={rowSizing.textSizeKey}
-          numberOfLines={1}
-          className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
-        >
-          {entry.label}
-          {error ? ` · ${error}` : ""}
-        </Text>
-        <ThreadDisclosureChevron
-          expanded={entry.expanded}
-          collapsedDirection="right"
-          size={15}
-          tintColor={iconColor}
-        />
-      </Pressable>
-      {loading ? (
-        <View
-          accessible={false}
-          importantForAccessibility="no-hide-descendants"
-          className="gap-2 px-1 pb-2"
-        >
-          {(["40%", "60%", "33%"] as const).map((width) => (
-            <View key={width} className="flex-row items-center gap-2">
-              <View className="size-3 rounded bg-subtle-strong" />
-              <View className="h-2.5 rounded-full bg-subtle-strong" style={{ width }} />
-            </View>
-          ))}
-        </View>
-      ) : null}
-    </View>
+    <WorkedForFold
+      label={entry.label}
+      expanded={entry.expanded}
+      loading={loading}
+      error={error}
+      onToggle={toggle}
+      rowSizing={rowSizing}
+      iconColor={iconColor}
+    />
   );
 }
 
@@ -1893,6 +1629,16 @@ function renderFeedEntry(
           icon="arrow.down.right.and.arrow.up.left"
           iconColor={iconSubtleColor}
           active={active}
+        />
+      );
+    }
+    const taskEvent = isUser ? taskEventActivity(message) : null;
+    if (taskEvent !== null) {
+      return (
+        <ThreadTaskEventRow
+          environmentId={props.environmentId}
+          message={message}
+          activity={taskEvent}
         />
       );
     }
@@ -2260,15 +2006,25 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              environmentId={props.environmentId}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <FoldableContent
+              foldable={isAssistantMessageFoldable({
+                threadId: props.threadId,
+                streaming: message.streaming,
+                turnInProgress: assistantTurnStillInProgress,
+                text: renderedText,
+              })}
+              foldedHeight={ASSISTANT_FOLDED_HEIGHT}
+            >
+              <AssistantMarkdownContent
+                markdown={renderedText}
+                environmentId={props.environmentId}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </FoldableContent>
           </MarkdownImageAvailableWidthContext>
         ) : null}
         <MessageAttachmentList
@@ -2706,9 +2462,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
-  const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
-  const openLinkedThread = useOpenLinkedThread();
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
       setReviewSelectedSectionId(
@@ -2758,50 +2512,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds, revealedMessageId } =
     interactionState;
-  const markdownLinkRequest = useRef<AbortController | null>(null);
-  const onInlinePlaybackStart = () => {
-    markdownLinkRequest.current?.abort();
-  };
-  useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
-  // A preview belongs to the thread and presentation it was opened from: a change closes it and
-  // aborts a pending lookup.
-  const markdownLinkScope = JSON.stringify([
-    props.environmentId,
-    props.threadId,
-    props.contentPresentation.kind,
-  ]);
-  // oxlint-disable-next-line react/exhaustive-effect-dependencies, t3code/no-unreasoned-state-sync -- A scope change (thread or presentation) aborts the pending link lookup opened from the old scope.
-  useLayoutEffect(() => () => markdownLinkRequest.current?.abort(), [markdownLinkScope]);
-  const [preview, setPreview] = useState<{
-    readonly scope: string;
-    readonly file: FilePreviewSource | null;
-    readonly video: VideoPreviewSource | null;
-  } | null>(null);
-  if (preview !== null && preview.scope !== markdownLinkScope) setPreview(null);
-  const expandedFile = preview?.scope === markdownLinkScope ? preview.file : null;
-  const expandedVideo = preview?.scope === markdownLinkScope ? preview.video : null;
-  const openPreview = (
-    scope: string,
-    media: { file: FilePreviewSource } | { video: VideoPreviewSource },
-  ) =>
-    setPreview((current) => {
-      const live = current?.scope === scope ? current : null;
-      return {
-        scope,
-        file: "file" in media ? media.file : (live?.file ?? null),
-        video: "video" in media ? media.video : (live?.video ?? null),
-      };
-    });
-  const closeFilePreview = () =>
-    setPreview((current) => (current === null ? null : { ...current, file: null }));
-  const closeVideoPreview = () =>
-    setPreview((current) => (current === null ? null : { ...current, video: null }));
-  const fileShareSourceIdentifier = useId();
-  const shareFileChip = useFileChipShare(
-    props.environmentId,
-    props.threadId,
+  const markdownStyles = useMarkdownStyles();
+  const {
+    linkHandlers: markdownLinkHandlers,
+    renderImage: renderMarkdownImage,
+    onPressPreview,
+    onInlinePlaybackStart,
+    expandedFile,
+    expandedVideo,
+    closeFilePreview,
+    closeVideoPreview,
     fileShareSourceIdentifier,
-  );
+  } = useThreadMarkdownLinks({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    skills: props.skills,
+    presentationKind: props.contentPresentation.kind,
+    markdownStyles: markdownStyles.assistant,
+  });
   const horizontalPadding = splitLayout ? 20 : 16;
   const contentLeftInset = props.contentSideInsets?.left ?? 0;
   const contentRightInset = props.contentSideInsets?.right ?? 0;
@@ -2837,338 +2566,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const openSkillInstructions = (path: string) => {
-    void Haptics.selectionAsync();
-    navigation.navigate("ThreadFile", {
-      environmentId: String(props.environmentId),
-      threadId: String(props.threadId),
-      path: fileRoutePathSegments(path),
-    });
-  };
-  const resolveLinkedThread = (href: string) => {
-    const link = parseThreadLinkHref(href);
-    if (!link) return null;
-    const resolved = resolveThreadLink(
-      (atom) => appAtomRegistry.get(atom),
-      link,
-      props.environmentId,
-    );
-    if (resolved !== null || link.environmentId !== null) return resolved;
-    // A v1 link names no environment, so it falls back to this message's.
-    return scopeThreadRef(props.environmentId, link.threadId);
-  };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
-    markdownLinkRequest.current?.abort();
-    const request = new AbortController();
-    markdownLinkRequest.current = request;
-    const skill = enrichedSkillReference(href, props.skills);
-    if (skill) {
-      const instructionsPath = enrichedSkillInstructionsPath(skill);
-      if (instructionsPath) openSkillInstructions(instructionsPath);
-      return;
-    }
-    if (openSettingsLink(navigation, href)) return;
-    if (parseThreadLinkHref(href)) {
-      const target = resolveLinkedThread(href);
-      if (target) {
-        openLinkedThread({
-          environmentId: String(target.environmentId),
-          threadId: String(target.threadId),
-        });
-      }
-      return;
-    }
-    const media = resolveMarkdownMediaPreview(href, {
-      environmentId: props.environmentId,
-      threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
-      imageEmbed,
-    });
-    if (media && media.kind !== "file") {
-      void Haptics.selectionAsync();
-      const scope = markdownLinkScope;
-      const openMediaPreview = () => {
-        if (request.signal.aborted) return;
-        openPreview(
-          scope,
-          media.kind === "video" ? { video: media.source } : { file: media.source },
-        );
-      };
-      const resource = "resource" in media.source ? media.source.resource : null;
-      const mediaPath = resource && "path" in resource ? resource.path : null;
-      if (
-        typeof mediaPath === "string" &&
-        readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
-      ) {
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.fileMetadata({
-            environmentId: props.environmentId,
-            input: { path: mediaPath },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then((result) => {
-          if (request.signal.aborted) return;
-          if (result._tag === "Success" && result.value?.kind === "directory") {
-            navigation.navigate("ThreadFile", {
-              environmentId: String(props.environmentId),
-              threadId: String(props.threadId),
-              path: fileRoutePathSegments(mediaPath),
-            });
-          } else openMediaPreview();
-        }, openMediaPreview);
-      } else openMediaPreview();
-      return;
-    }
-
-    const presentation = resolveMarkdownLinkPresentation(href);
-    if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
-      if (path === null) return;
-      const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
-      const openAt = (target: string) => {
-        if (request.signal.aborted) return;
-        void Haptics.selectionAsync();
-        navigation.navigate("ThreadFile", {
-          environmentId: String(props.environmentId),
-          threadId: String(props.threadId),
-          path: fileRoutePathSegments(target),
-          ...(presentation.line ? { line: String(presentation.line) } : {}),
-        });
-      };
-      if (
-        props.workspaceRoot &&
-        relativePath &&
-        !/[\\/]$/.test(presentation.path) &&
-        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
-        readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
-      ) {
-        const workspaceRoot = props.workspaceRoot;
-        const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.searchEntries({
-            environmentId: props.environmentId,
-            input: {
-              cwd: workspaceRoot,
-              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
-              kind: "file",
-              limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-            },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then(
-          (result) => {
-            const match =
-              result._tag === "Success"
-                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
-                : null;
-            if (!match || match === relativePath) {
-              openAt(relativePath);
-              return;
-            }
-            if (request.signal.aborted) return;
-            void executeAtomQuery(
-              appAtomRegistry,
-              projectEnvironment.fileMetadata({
-                environmentId: props.environmentId,
-                input: { path: originalPath },
-              }),
-              { signal: request.signal, reportFailure: false, reportDefect: false },
-            ).then(
-              (metadata) =>
-                openAt(
-                  metadata._tag === "Success" &&
-                    (needsWorkspaceBasenameLookup(relativePath)
-                      ? metadata.value?.kind !== "directory"
-                      : metadata.value === null)
-                    ? match
-                    : relativePath,
-                ),
-              () => openAt(relativePath),
-            );
-          },
-          () => openAt(relativePath),
-        );
-      } else openAt(relativePath ?? path);
-      return;
-    }
-
-    if (presentation.href) {
-      if (/^https?:\/\//i.test(presentation.href) && isPdfFile({ name: presentation.href })) {
-        openPreview(markdownLinkScope, {
-          file: { kind: "pdf", uri: presentation.href, name: "Document.pdf" },
-        });
-        return;
-      }
-      void openPullRequest(presentation.href);
-    }
-  };
-  const resolveImageSource = useMarkdownImageSource({
-    environmentId: props.environmentId,
-    threadId: props.threadId,
-    workspaceRoot: props.workspaceRoot ?? null,
-  });
-  const markdownLinkHandlers: MarkdownLinkHandlers = {
-    fileEmbedLabel: (href, standalone) =>
-      markdownFileEmbedLabel(
-        href,
-        {
-          environmentId: props.environmentId,
-          threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
-        },
-        standalone,
-      ),
-    onLinkPress: onMarkdownLinkPress,
-    linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
-    resolveImageSource,
-    fileContextMenu: (href) => {
-      const skill = enrichedSkillReference(href, props.skills);
-      if (skill) {
-        return {
-          title: enrichedSkillDisplayName(skill),
-          actions: [
-            {
-              id: "open-skill",
-              title: "View instructions",
-              disabled: !enrichedSkillInstructionsPath(skill),
-            },
-            { id: "copy-skill", title: "Copy skill" },
-          ],
-        };
-      }
-      const thread = resolveLinkedThread(href);
-      if (thread) {
-        return {
-          title:
-            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
-          actions: [
-            { id: "open-thread", title: "Open thread" },
-            { id: "copy-thread-link", title: "Copy link" },
-          ],
-        };
-      }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
-      return target ? fileChipMenu(target) : undefined;
-    },
-    onFileContextMenuAction: (href, actionId) => {
-      const skill = enrichedSkillReference(href, props.skills);
-      if (skill) {
-        const instructionsPath = enrichedSkillInstructionsPath(skill);
-        if (actionId === "open-skill" && instructionsPath) openSkillInstructions(instructionsPath);
-        else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
-        return;
-      }
-      const thread = resolveLinkedThread(href);
-      if (thread) {
-        if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
-        return;
-      }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
-      if (!target) return;
-      switch (actionId) {
-        case "copy-full-path":
-        case "copy-relative-path": {
-          const clipboardPath = fileChipClipboardPath(target, actionId);
-          if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
-          return;
-        }
-        case "open-file":
-          onMarkdownLinkPress(href);
-          return;
-        case "save":
-          shareFileChip(target);
-          return;
-      }
-    },
-  };
-  const renderMarkdownImage: MarkdownImageRenderer = (image) => {
-    const media = resolveMarkdownMediaPreview(image.href, {
-      environmentId: props.environmentId,
-      threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
-      imageEmbed: true,
-    });
-    if (media?.kind === "video") {
-      return (
-        <ThreadMarkdownVideo
-          key={image.href}
-          source={{ ...media.source, name: image.alt ?? media.source.name }}
-          onPlaybackStart={onInlinePlaybackStart}
-        />
-      );
-    }
-    if (media?.kind === "audio") {
-      return (
-        <ThreadInlineFilePreview
-          key={image.href}
-          source={media.source}
-          onOpen={() => onMarkdownLinkPress(image.href, true)}
-          onPlaybackStart={onInlinePlaybackStart}
-        />
-      );
-    }
-    const fileLink = resolveMarkdownLinkPresentation(image.href);
-    if (
-      (media && (media.kind === "pdf" || media.kind === "document" || media.kind === "file")) ||
-      (fileLink.kind === "file" && fileLink.line !== undefined)
-    ) {
-      const name = media?.source.name ?? (fileLink.kind === "file" ? fileLink.label : "Open file");
-      return (
-        <Text
-          accessibilityRole="link"
-          accessibilityLabel={`Open ${name}`}
-          onPress={() => onMarkdownLinkPress(image.href, true)}
-          style={{
-            color: markdownStyles.assistant.nativeTextStyle.linkColor,
-            fontSize: markdownStyles.assistant.nativeTextStyle.fontSize,
-            lineHeight: markdownStyles.assistant.nativeTextStyle.lineHeight,
-          }}
-        >
-          {name}
-        </Text>
-      );
-    }
-    const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
-    if (imageSource._tag === "Direct") {
-      return (
-        <ThreadMarkdownImageView
-          uri={normalizeNativeMarkdownUrl(imageSource.uri)}
-          sourceKey={imageSource.uri}
-          format={
-            /\.svg(?:[?#]|$)/i.test(imageSource.uri) ||
-            imageSource.uri.startsWith("data:image/svg+xml")
-              ? "svg"
-              : undefined
-          }
-          unavailable={false}
-          alt={image.alt}
-          actionsSource={media?.source.actionsSource}
-          onPressPreview={onPressPreview}
-        />
-      );
-    }
-    if (imageSource._tag === "Blocked") {
-      return <ThreadMarkdownImageUnavailable alt={image.alt} />;
-    }
-    return (
-      <ThreadMarkdownImage
-        environmentId={props.environmentId}
-        resource={{
-          _tag: "media-file",
-          threadId: props.threadId,
-          path: imageSource.path,
-        }}
-        alt={image.alt}
-        srcFragment={markdownImageSourceFragment(image.href)}
-        actionsSource={media?.source.actionsSource}
-        onPressPreview={onPressPreview}
-      />
-    );
-  };
   const renderViewedImage: MarkdownImageRenderer = (image) => {
     const viewedImage = resolveViewedImageAsset(image.href, {
       threadId: props.threadId,
@@ -3198,7 +2595,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       />
     ) : null;
   };
-  const markdownStyles = useMarkdownStyles();
   const renderReasoning = (text: string) => (
     <AssistantMarkdownContent
       markdown={text}
@@ -3544,11 +2940,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
   };
 
-  const onPressPreview = (source: FilePreviewSource) => {
-    markdownLinkRequest.current?.abort();
-    openPreview(markdownLinkScope, { file: source });
-  };
-
   // Without this, every row above the viewport is assumed to be
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
@@ -3750,6 +3141,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ) {
                 return "message:assistant-progress";
               }
+              if (taskEventActivity(entry.message) !== null) return "message:task-event";
               const { attribution } = resolveUserMessagePresentation(entry.message);
               return attribution === "automation" || attribution === "agent"
                 ? `message:${attribution}`

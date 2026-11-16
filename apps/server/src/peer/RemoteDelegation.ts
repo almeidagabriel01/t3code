@@ -264,13 +264,15 @@ const make = Effect.gen(function* () {
             'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
         });
       }
-      // The provider and model inherit as they do for a task here. Another
-      // provider there has no model to inherit, so the caller names one.
+      // No model named: the project there resolves its own precedence, as a task
+      // here follows this project's, so nothing of this thread's model is sent.
+      // A named model without a provider keeps this thread's provider.
       const inherited = parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
-      const model =
-        target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
-      if (model === undefined) {
+      if (
+        (target.providerInstanceId !== undefined || target.options !== undefined) &&
+        target.model === undefined
+      ) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
@@ -278,9 +280,13 @@ const make = Effect.gen(function* () {
       }
       const options =
         target.options ??
-        (instanceId === inherited.instanceId && model === inherited.model
+        (instanceId === inherited.instanceId && target.model === inherited.model
           ? inherited.options
           : undefined);
+      const modelSelection =
+        target.model === undefined
+          ? undefined
+          : { instanceId, model: target.model, ...(options === undefined ? {} : { options }) };
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
@@ -312,7 +318,7 @@ const make = Effect.gen(function* () {
         {
           projectId,
           title,
-          modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
+          ...(modelSelection === undefined ? {} : { modelSelection }),
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,

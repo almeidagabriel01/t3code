@@ -9,6 +9,7 @@ import {
   inferProjectTitleFromPath,
 } from "@t3tools/client-runtime/state/projects";
 import { newProjectId } from "../../lib/utils";
+import { offerProjectAssistantAccess } from "../assistants/ProjectAssistantAccessDialog";
 import { readProjects, waitForProject } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
@@ -70,6 +71,7 @@ export function DesktopAppActivationCoordinator() {
           const error = squashAtomCommandFailure(result);
           throw error instanceof Error ? error : new Error("T3 Code could not add the project.");
         }
+        offerProjectAssistantAccess(environmentId, projectId);
         return projectId;
       },
       waitForProject: async (projectRef) => {

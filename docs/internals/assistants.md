@@ -92,9 +92,17 @@ lead when it was that member; archiving leaves membership alone. `ensureForkSche
 ## Group chat (an OpenBot channel)
 
 `AssistantGroups` owns a group's chat (`assistant_group_messages`, seq per group) and its tasks
-(`assistant_group_tasks`). A chat message runs nothing itself: it opens one root task per recipient,
-and each member works its tasks in its own hidden thread for that group,
-`assistant:<assistantId>:g-<hash>` (`assistant_group_threads`). The suffix is a hash because team ids
+(`assistant_group_tasks`). A message that replies to nothing starts a request (`request_id` = its own
+id); every later message, task and answer of it carries that id, and the first message holds the
+request's `project_id` and `title`. A chat message runs nothing itself: it opens one root task per
+recipient, and each member works a request in its own hidden thread for that request, launched in the
+request's project, `assistant:<assistantId>:g-<hash>` (`assistant_group_request_threads`). Requests
+never share a thread, so a packet, `history`, `#seq` quotes, stopped-task lists and hand-off counts are
+all scoped to one request. When every task of a request is completed or cancelled its threads are
+settled (`settleThread`, retried when a cancelled run ends); a task opening again in it un-settles
+them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
+the per-group threads of chats from before requests; they stay for history and for runs that started
+on them, and `threadRowOf` reads both tables. The suffix is a hash because team ids
 may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
 source of a member's thread id: a deleted thread keeps its id reserved, so `ensureThread` launches the
 replacement under an id derived from the dead one and moves the row. `forThread` resolves these
@@ -104,9 +112,22 @@ lifecycle through the Orchestrator directly.
 
 Recipients are decided before any model, first match winning (`routeGroupMessage`): the `@` mentions
 anywhere in the text (`assistantGroupMentions`, the one parser the clients highlight and preview
-with), a reply to a member message, a user's bare "continue" (resumes the newest stopped root task),
-a user's follow-up while exactly one task is open (its owner), then a group of one. Only then does the
-lead route, through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
+with), a reply to a member message, a user's bare "continue" (resumes the newest stopped root task of the request replied to, else of
+the group), a user's reply into a request one member works (that member), then a group of one. A
+message replying to nothing is a new request and never follows up on what is open. Only then does the
+lead route; it also picks a new request's project among the members' projects
+(`assistantGroupProjectIds`) and titles it, and when the project is unclear it asks with a `notice`
+replying to the message and marked `asksProject` (clients show "Needs project" from that mark alone),
+so the user's answer routes the request again. The union of the members' projects only offers and infers; it never authorizes. A
+request's work goes only to members that may work in its project (`assistantWorksIn` in
+`AssistantSandboxPolicy.ts`, the one source of a member's projects): mentions, the lead's pick, assign,
+transfer, reply and reassign are filtered or refused, the chat gets a notice naming who was left out,
+`ensureRequestThread` refuses a launch outside it (the task fails with `outside_project`), and an
+agent's `group_post` passes `projectScopeRefusal`. Before the lead, the project comes from the request, then the composer's pick, then a
+single `#slug` in the text (`assistantGroupProjectMentions`, the same parser clients highlight with;
+slugs come from `assistantGroupProjectSlugs` over the group's live projects, so colliding titles get
+the same `-2` suffix on every surface only when all pass that same list);
+two `#projects` force the question even when the lead would infer one. The lead routes through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
 Antigravity), which may answer `noReply` for a thanks: no task, a muted `change` line that also marks
 the message as handled. With no lead a message is stored and left pending (clients show it as waiting,
 derived from "no task and no note"); `routePending` routes it when a team change sets one and on
@@ -114,11 +135,17 @@ start. A lead whose provider cannot route still refuses with `mention_required` 
 stored. Agents and schedules skip the continue and follow-up rules: they are not the user answering
 what is on screen.
 
-A member's task packet (`AssistantGroupPacket`) holds the chat since its last task, a rolling summary
-of the earlier chat, and older messages the instruction names (`#seq`) or replies to; `t3_group history`
-covers the rest. The summary lives in `assistant_group_summaries`, is refreshed in the background by
-`summarizeAssistantGroup` (the same providers as routing, on the server's text-generation model) once
-16k unsummarized characters pile up, and failing or missing it never delays a task.
+A member's task packet (`AssistantGroupPacket`) holds the request's messages since its last task and
+older messages of the request the instruction names (`#seq`) or replies to; `t3_group history` covers
+the rest of the request. Compact writes `assistant_group_summaries` with `summarizeAssistantGroup`;
+only the lead's routing reads it, because it mixes requests.
+
+What a member's request thread waits on the user for (pending non-machine runtime requests, and open
+decisions it asked, minus the mirrors of those requests and autonomy notices) comes from
+`threadsWaitingOnUser` in `AssistantGroupWaiting.ts`. `syncWaiting` posts one `notice` per wait in
+the request, keyed by `wait_key` (unique), and marks it resolved in place once the wait is gone. It
+runs on `runtime-request.updated` for a group thread, on any decision change from one
+(`AssistantGroupReactor` watches the decision stream), and in `reconcile` at start.
 
 A chat message may carry attachments, uploaded as pending first like any composer upload. `post` claims
 them into group-owned ids (`group-<hash>-…`) so they outlive the 24h pending sweep, and
@@ -128,9 +155,25 @@ messages name; sharing the group's ids would delete the group's files with one m
 group's own files go when the group is removed. Agent posts (`t3_assistant group_post`) still pass
 `paths`, which land as links in the text.
 
+A message's composer model is `assistant_group_messages.model_selection`, never a default. A task
+runs on the pick of the message that opened its task tree (`root_id` → `request_message_id`), else
+on the request's (`request_id`), so hand-offs, questions between members and later messages in the
+request share it; "continue" and the answer to a request not yet routed copy it onto the message
+that owns that work. Each task start, after the busy gate, resolves its thread's model with it as
+the `message` layer (`aimModel`): moving earlier would switch another message's live turn. A switch
+deferred by a still-running (stopping) turn makes the task wait rather than start on the old model.
+A pick the resolver cannot use (a provider it does not know or the project turns off, a model its
+provider does not list) falls to the next layer; `post` never refuses one.
+
+The switch records the model it applied in `aimed_model_selection`. A thread on it stays there when
+the project's or group's model changes; a thread off it was changed by the user, whose model then
+wins over that pick. Over a model picked in the thread by hand, the switch also records that model
+in `restore_model_selection`, and the next task without a pick switches back to it.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
-tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;
+tasks run per group. A finished run posts the `result` tool text or the run's last assistant message,
+with the run's work time (`worked_ms`) because clients never load the hidden member thread to measure it;
 a task with unsettled children waits and runs again with their results. Hand-offs (assign, transfer)
 count on the root and the ninth pauses with `handoff_limit`; member replies are a separate limit of two
 per request. A subtask may declare `resources` (`folder:<path>` trees, or ids); `pump` holds them only
@@ -144,15 +187,29 @@ seeds Jarvis) and `reconcile` heals changes made while the server was down. A sc
 assistants in the layer graph.
 
 Read position is `assistant_teams.read_seq` (one per group, not per user: a server has one owner).
-The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`), so team reads
-select from the view, not the table; `ensureForkSchema` recreates it on every start. Counter changes
+A project tab keeps its own cursor in `assistant_group_read_cursors`, falling back to `read_seq`; an
+unscoped mark read (the All tab, older clients) deletes every cursor. Every row copies its request's
+project (`request_project_id`) so a tab is one indexed read, and a request only moves from no project
+to one, so a scoped stream adds it to its new tab and never removes rows from another.
+The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`, with per-tab
+`scopes`), so team reads select from the view, not the table; `ensureForkSchema` drops it before the
+migrations and recreates it after them on every start. Counter changes
 go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
-notices are client-side (working to idle on that stream), like thread notices.
-The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes the finish
-as a completion of the last speaker's hidden thread, titled with the group and deep-linked to
-`/assistant-groups/<env>/<team>` (the relay takes any `/` path). Members' own completions are silent,
-so the relay worker needs no change.
+notices are client-side, like thread notices, and per tab: each scope carries its `openTasks` and
+`doneTasks` (working and stopped tasks), every task counts in exactly one tab (one with no request
+in General), and `assistantGroupFinishedScopes` reports a tab whose open count went to none while
+its stopped count rose. A request that gets a project mid-work moves its counts without a notice,
+even when another tab ends or opens in the same snapshot, so a tab stays listed while it has
+stopped tasks. General is then listed for its work with no request too, and `hasRequests` tells
+clients it has nothing else to show, so it gets no tab for that alone. Servers without `doneTasks`
+fall back to the group's open total falling.
+The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes each
+tab's finish as a completion of that tab's last speaker's hidden thread, titled with the group and
+deep-linked to `/assistant-groups/<env>/<team>?tab=<tab key>` (the relay takes any `/` path; apps
+older than the tab link reject it and open that thread instead). Tabs that end on one thread before
+its push goes out share that push, which names them and opens All. Members' own completions are
+silent, so the relay worker needs no change.
 
 A group's instructions and memories are columns on `assistant_teams` (`instructions`, `memories_json`)
 edited through `assistantTeams.update`, and every task packet carries them. Group memories are not in
@@ -195,17 +252,39 @@ These follow the row, none of them a new mechanism:
   or `backgroundWorkHoldsCompletion` holds it (the same rule as the task's parked status), minus
   pull request watches, which end silently on merge. The run that really ends reports. A failed,
   cancelled or interrupted run always reports.
+- Every run-end wake, from a task or a watch, goes through `TaskEventNotices`, the one door that
+  remembers what each assistant was told per subject thread (`assistant_task_notices`). A run is
+  judged with every run since the last notice (up to `WINDOW_RUNS`), so a run held by the rule above
+  or a failed send hands its news to the run that does report. With no answer to an agent and no
+  changed files in that window, no new HEAD and the same end state, it wakes no one. A new event
+  drops older queued events about the same task. A stopped run is judged at once; if that finds
+  nothing, its checkpoint can still make it news.
+- An assistant ends an event turn with `NO_REPLY` (`QUIET_REPLY`) when nothing is new.
+  `assistantRunReply` is the one exit for chat apps, group chat and autonomy delivery: a quiet event
+  turn posts nothing and other event turns send `briefReply`, while user and routine turns go out
+  whole. A reply is quiet only when it is the bare token (`isQuietReply`); text before a trailing
+  token goes out and shows without it (`withoutQuietToken`), on the server and in every client.
 - The same reactor wakes the owner when the task (or a `delegate_task` child of an assistant
   conversation) starts waiting on the user, from `NeedsUser.changes` (`autonomy/NeedsUser.ts`, the one
   definition of "waits on the user": pending non-machine requests and open decisions that are neither
-  notices nor approval mirrors; the Telegram/Activity notice reads `NeedsUser.pending`). The id
-  derives from the wait, a resolution cancels the wake if it is still queued, and a delegated child's
-  question is left to `DelegatedTaskQuestionReactor`, which already wakes its parent. The owner is
-  found up the subagent chain, so a task's own workers count. Each (re)subscription of
-  `NeedsUser.changes` subscribes first and then emits what already waits as `opened` (requests
-  through `subscribeDomainEvents`, which anchors on the event sink's sequence; decisions through
-  the snapshot their service takes after subscribing). So a start, or a wait that opened while a
-  stream was down, still wakes; the deterministic wake ids absorb the overlap. Assistant and group member threads are never followed this way.
+  notices nor approval mirrors). The owner is `NeedsUser.owner`, found up the subagent chain, so a
+  task's own workers count; assistant and group member conversations follow no one. A delegated
+  child's question is left to `DelegatedTaskQuestionReactor`, which already wakes its parent. Each
+  (re)subscription of `NeedsUser.changes` subscribes first and then emits what already waits as
+  `opened` (requests through `subscribeDomainEvents`, which anchors on the event sink's sequence;
+  decisions through the snapshot their service takes after subscribing), so a start, or a wait that
+  opened while a stream was down, still wakes.
+- Every wait, from any thread, also reaches the default assistant (Jarvis), the user's point of
+  contact: `AutonomyService.notifyWaiting` reads `NeedsUser.pending` and, besides the chat-app card,
+  queues a short notice (title, origin, thread link) in its conversation, with the same delay, pause
+  switch and baseline as the card. Its own conversation and its own turn's subagents are skipped.
+  The notice is a model turn, so past its provider instance's budget or the default's own it is
+  skipped for good; the card still goes.
+  A wake's id is `waitWakeId(<conversation>, <wait key>)`: when the default follows the thread itself,
+  the owner wake and the notice are one command, so the orchestrator's receipt sends it once. A
+  resolution cancels both while still queued, and a notice whose wait settled during its send is taken
+  back. The chat app gets each wait once, from the card: while waiting notices are on,
+  `ChannelReplyReactor` does not post a run that a wait wake started.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
@@ -345,7 +424,9 @@ through the same turn path as any message. Three things keep it from feeding its
 - Signals about `assistant:` threads, subagents, delegated children and side chats are dropped
   before any rule or watch is read. An assistant's own run therefore never triggers a rule.
 - A wake is keyed by (run or thread, event, rule or watch, assistant) in `autonomy_wakes`, claimed
-  before the send and given back if the send fails, so a replayed event wakes once.
+  before the send and given back if the send fails, so a replayed event wakes once. A run the
+  assistant was already told about spends a watch's claim but frees a rule's, so the interval below
+  only counts wakes that were sent.
 - Rule wakes also share a minimum interval per thread, and every wake counts against
   `maxWakesPerDay`. Watches are asked for, so only the daily cap limits them.
 

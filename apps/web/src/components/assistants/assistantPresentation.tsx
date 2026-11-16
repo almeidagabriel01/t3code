@@ -62,6 +62,7 @@ export const MOOD_TEXT: Record<AssistantMood, string> = {
   idle: "text-muted-foreground",
   working: "text-info-foreground",
   needs: "text-warning-foreground",
+  limited: "text-warning-foreground",
   failed: "text-destructive-foreground",
 };
 

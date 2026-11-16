@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./projectNotice": {
+      "types": "./src/projectNotice.ts",
+      "import": "./src/projectNotice.ts"
+    },
     "./heavyEntryName": {
       "types": "./src/heavyEntryName.ts",
       "import": "./src/heavyEntryName.ts"
@@ -163,6 +167,14 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./assistantGroupRouting": {
+      "types": "./src/assistantGroupRouting.ts",
+      "import": "./src/assistantGroupRouting.ts"
+    },
+    "./modelSelectionPrecedence": {
+      "types": "./src/modelSelectionPrecedence.ts",
+      "import": "./src/modelSelectionPrecedence.ts"
+    },
     "./backgroundActivitySettings": {
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
@@ -310,6 +322,10 @@
     "./settingsLinks": {
       "types": "./src/settingsLinks.ts",
       "import": "./src/settingsLinks.ts"
+    },
+    "./assistantTaskEvents": {
+      "types": "./src/assistantTaskEvents.ts",
+      "import": "./src/assistantTaskEvents.ts"
     },
     "./kanbanSubtasks": {
       "types": "./src/kanbanSubtasks.ts",

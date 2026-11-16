@@ -94,6 +94,9 @@ import {
   skillChipReplacements,
   splitOrLiftListItem,
   stepCaretAcrossStyledEdge,
+  GROUP_MEMBER_NODE,
+  GROUP_PROJECT_NODE,
+  type ComposerGroupMentions,
   type IsKnownModel,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
@@ -193,6 +196,8 @@ export interface ComposerPromptEditorProps {
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+  /** Opt-in for a group: its `@handle`s and `#slug`s become member and project chips. */
+  groupMentions?: (ComposerGroupMentions & { readonly render: GroupMentionRender }) | undefined;
 }
 
 export type ComposerCitationCommentRequest = {
@@ -224,6 +229,42 @@ const ComposerCitationCommentContext = createContext<{
 });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
+
+type GroupMentionRender = (kind: "member" | "project", value: string) => ReactNode;
+
+const GroupMentionRenderContext = createContext<GroupMentionRender | null>(null);
+
+function GroupMentionNodeView({ node }: NodeViewProps) {
+  const render = use(GroupMentionRenderContext);
+  const value = (node.attrs.value as string) ?? "";
+  return (
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+      {render?.(node.type.name === GROUP_MEMBER_NODE ? "member" : "project", value) ??
+        (node.attrs.source as string)}
+    </NodeViewWrapper>
+  );
+}
+
+const groupMentionNode = (name: string) =>
+  Node.create({
+    name,
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
+    addAttributes() {
+      return { value: { default: "" }, source: { default: "" } };
+    },
+    parseHTML() {
+      return [{ tag: `span[data-${name}]` }];
+    },
+    renderHTML({ HTMLAttributes }) {
+      return ["span", { [`data-${name}`]: "", ...HTMLAttributes }];
+    },
+    addNodeView() {
+      return ReactNodeViewRenderer(GroupMentionNodeView);
+    },
+  });
 
 const SURROUND_CLOSE: Record<string, string> = {
   "(": ")",
@@ -307,6 +348,9 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     </NodeViewWrapper>
   );
 }
+
+const GroupMemberExtension = groupMentionNode(GROUP_MEMBER_NODE);
+const GroupProjectExtension = groupMentionNode(GROUP_PROJECT_NODE);
 
 const ComposerSkillExtension = Node.create({
   name: "composer-skill",
@@ -901,6 +945,8 @@ function createComposerExtensions(richText: boolean) {
     ComposerUndoGroupingExtension,
     ComposerTextDirectionExtension,
     ComposerMentionExtension,
+    GroupMemberExtension,
+    GroupProjectExtension,
     ComposerSkillExtension,
     ComposerModelExtension,
     ComposerCitationExtension,
@@ -949,6 +995,7 @@ function ComposerPromptEditorTiptapInner(
     onPaste,
     editorRef,
     restoreFocusRef,
+    groupMentions: group,
   } = props;
   const richText = !literalText && (richTextEnabled ?? false);
   const clampEditorCursor = (text: string, position: number) =>
@@ -978,6 +1025,12 @@ function ComposerPromptEditorTiptapInner(
   const isKnownModel = useStableCallback((instanceId: string, model: string) =>
     modelKeys.has(modelMentionKey(instanceId, model)),
   );
+  // Keyed by content, so a parent's new arrays each render do not rebuild the document.
+  const groupKey = group
+    ? JSON.stringify({ memberHandles: group.memberHandles, projectSlugs: group.projectSlugs })
+    : null;
+  const groupMentions =
+    groupKey === null ? undefined : (JSON.parse(groupKey) as ComposerGroupMentions);
 
   const initialCursor = clampEditorCursor(value, cursor);
   const initialExpandedCursor = Math.max(0, Math.min(value.length, props.initialExpandedCursor));
@@ -1107,6 +1160,7 @@ function ComposerPromptEditorTiptapInner(
         styling: richText,
         literalText,
         isKnownModel: (instanceId, model) => modelKeys.has(modelMentionKey(instanceId, model)),
+        groupMentions,
       }),
       editable: !disabled,
       editorProps: {
@@ -1429,7 +1483,14 @@ function ComposerPromptEditorTiptapInner(
             insertMarkdownParagraphs(
               text,
               skillLabelFor,
-              { styling: richText, blocks: !nested, literalText, literalLength, isKnownModel },
+              {
+                styling: richText,
+                blocks: !nested,
+                literalText,
+                literalLength,
+                isKnownModel,
+                groupMentions,
+              },
               (content) => {
                 editorInstance
                   .chain()
@@ -1589,7 +1650,12 @@ function ComposerPromptEditorTiptapInner(
     if (previousSnapshot.value !== value) {
       saveCitationDraft(mountedEditor, previousSnapshot.value);
       mountedEditor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
+        buildDocJson(value, skillLabelFor, {
+          styling: richText,
+          literalText,
+          isKnownModel,
+          groupMentions,
+        }),
         {
           emitUpdate: false,
         },
@@ -1631,6 +1697,7 @@ function ComposerPromptEditorTiptapInner(
     richText,
     skillLabelFor,
     isKnownModel,
+    groupMentions,
     value,
   ]);
 
@@ -1802,73 +1869,75 @@ function ComposerPromptEditorTiptapInner(
   };
 
   return (
-    <RichComposerSkillsContext value={skills}>
-      <ComposerContextRecordsContext value={contextRecords}>
-        <ComposerCitationCommentContext value={citationCommentActions}>
-          <div
-            className={cn(
-              "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
-              containerClassName,
-            )}
-          >
-            <EditorContent
-              editor={editor}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Control" ||
-                  event.key === "Meta" ||
-                  event.key === "Alt" ||
-                  event.key === "Shift"
-                ) {
-                  onPageScrollRelease?.();
-                }
-                if (event.key !== "PageUp" && event.key !== "PageDown") return;
-                const target = event.currentTarget.querySelector(
-                  '[data-testid="composer-editor"]',
-                ) as HTMLElement | null;
-                if (!target) return;
-                const pageScrollKey = getTimelinePageScrollKey({
-                  altKey: event.altKey,
-                  clientHeight: target.clientHeight,
-                  ctrlKey: event.ctrlKey,
-                  defaultPrevented: event.defaultPrevented,
-                  isComposing: event.nativeEvent.isComposing,
-                  key: event.key,
-                  keyCode: event.keyCode,
-                  metaKey: event.metaKey,
-                  scrollHeight: target.scrollHeight,
-                  scrollTop: target.scrollTop,
-                  shiftKey: event.shiftKey,
-                });
-                if (!pageScrollKey) {
-                  onPageScrollRelease?.();
-                  return;
-                }
-                if (!onPageScrollKeyDown) return;
-                event.preventDefault();
-                onPageScrollKeyDown(pageScrollKey);
-              }}
-              onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
-              onBlur={onPageScrollRelease}
-              onPasteCapture={onPaste}
-              onCopyCapture={(event) => handleCopyCut(event, false)}
-              onCutCapture={(event) => handleCopyCut(event, true)}
-            />
-            {isEmpty && contextRecords.size === 0 && placeholder ? (
-              <div
-                className={cn(
-                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
-                  placeholderClassName,
-                )}
-              >
-                {placeholder}
-                {placeholderSuffix}
-              </div>
-            ) : null}
-          </div>
-        </ComposerCitationCommentContext>
-      </ComposerContextRecordsContext>
-    </RichComposerSkillsContext>
+    <GroupMentionRenderContext value={group?.render ?? null}>
+      <RichComposerSkillsContext value={skills}>
+        <ComposerContextRecordsContext value={contextRecords}>
+          <ComposerCitationCommentContext value={citationCommentActions}>
+            <div
+              className={cn(
+                "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
+                containerClassName,
+              )}
+            >
+              <EditorContent
+                editor={editor}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Control" ||
+                    event.key === "Meta" ||
+                    event.key === "Alt" ||
+                    event.key === "Shift"
+                  ) {
+                    onPageScrollRelease?.();
+                  }
+                  if (event.key !== "PageUp" && event.key !== "PageDown") return;
+                  const target = event.currentTarget.querySelector(
+                    '[data-testid="composer-editor"]',
+                  ) as HTMLElement | null;
+                  if (!target) return;
+                  const pageScrollKey = getTimelinePageScrollKey({
+                    altKey: event.altKey,
+                    clientHeight: target.clientHeight,
+                    ctrlKey: event.ctrlKey,
+                    defaultPrevented: event.defaultPrevented,
+                    isComposing: event.nativeEvent.isComposing,
+                    key: event.key,
+                    keyCode: event.keyCode,
+                    metaKey: event.metaKey,
+                    scrollHeight: target.scrollHeight,
+                    scrollTop: target.scrollTop,
+                    shiftKey: event.shiftKey,
+                  });
+                  if (!pageScrollKey) {
+                    onPageScrollRelease?.();
+                    return;
+                  }
+                  if (!onPageScrollKeyDown) return;
+                  event.preventDefault();
+                  onPageScrollKeyDown(pageScrollKey);
+                }}
+                onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
+                onBlur={onPageScrollRelease}
+                onPasteCapture={onPaste}
+                onCopyCapture={(event) => handleCopyCut(event, false)}
+                onCutCapture={(event) => handleCopyCut(event, true)}
+              />
+              {isEmpty && contextRecords.size === 0 && placeholder ? (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                    placeholderClassName,
+                  )}
+                >
+                  {placeholder}
+                  {placeholderSuffix}
+                </div>
+              ) : null}
+            </div>
+          </ComposerCitationCommentContext>
+        </ComposerContextRecordsContext>
+      </RichComposerSkillsContext>
+    </GroupMentionRenderContext>
   );
 }
 
@@ -1882,6 +1951,7 @@ function insertMarkdownParagraphs(
     literalText?: boolean;
     literalLength?: number;
     isKnownModel?: IsKnownModel;
+    groupMentions?: ComposerGroupMentions | undefined;
   },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {

@@ -829,6 +829,19 @@ describe("buildThreadFeed", () => {
     );
   });
 
+  it("shows no row for a quiet assistant reply", () => {
+    const quiet = { ...assistantMessage(), text: "NO_REPLY" };
+    expect(
+      buildThreadFeed([projected(userMessage(), 0), projected(quiet, 1)]).map((e) => e.id),
+    ).toEqual(["message-user"]);
+    const partial = { ...assistantMessage(), text: "NO_", streaming: true };
+    expect(buildThreadFeed([projected(partial, 1)])).toEqual([]);
+    const tail = { ...assistantMessage(), text: "Tarefa X falhou no CI.\n\nNO_REPLY" };
+    expect(buildThreadFeed([projected(tail, 1)])).toMatchObject([
+      { message: { text: "Tarefa X falhou no CI." } },
+    ]);
+  });
+
   it("folds progress messages while keeping the final assistant answer visible", () => {
     const opening = {
       ...assistantMessage("2026-06-20T00:00:01.500Z"),

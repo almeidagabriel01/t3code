@@ -7,6 +7,7 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { taskEventHeadline } from "@t3tools/shared/assistantTaskEvents";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,6 +17,10 @@ import {
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
+  assistantReplyText,
+  taskEventActivity,
+  taskEventActivitySegments,
+  usageLimitLabel,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
@@ -42,6 +47,11 @@ const waiting = shell({
   },
 });
 const failed = shell({ latestRunId: RunId.make("run-1"), status: "failed" });
+const limited = shell({
+  latestRunId: RunId.make("run-1"),
+  status: "failed",
+  lastErrorClass: "usage_limit",
+});
 const done = shell({});
 
 const task = (threadId: string, createdAt: string): AssistantTask => ({
@@ -52,16 +62,66 @@ const task = (threadId: string, createdAt: string): AssistantTask => ({
   createdAt,
 });
 
+describe("taskEventActivitySegments", () => {
+  it.each([
+    [
+      "both present",
+      { title: "Fix login", label: "Finished", project: "Payments" },
+      [
+        { kind: "title", text: "Fix login", separated: false },
+        { kind: "label", text: "Finished", separated: true },
+        { kind: "project", text: "Payments", separated: true },
+      ],
+    ],
+    [
+      "no title",
+      { title: " ", label: "Finished", project: "Payments" },
+      [
+        { kind: "label", text: "Finished", separated: false },
+        { kind: "project", text: "Payments", separated: true },
+      ],
+    ],
+    [
+      "no project",
+      { title: "Fix login", label: "Finished", project: "" },
+      [
+        { kind: "title", text: "Fix login", separated: false },
+        { kind: "label", text: "Finished", separated: true },
+      ],
+    ],
+    [
+      "neither",
+      { title: "", label: "Finished", project: null },
+      [{ kind: "label", text: "Finished", separated: false }],
+    ],
+  ] as const)("%s", (_name, parts, expected) => {
+    expect(taskEventActivitySegments(parts)).toEqual(expected);
+  });
+});
+
 describe("assistantTaskState", () => {
   it.each([
     ["running", running],
     ["waiting", waiting],
     ["failed", failed],
+    ["usage_limited", limited],
     ["done", done],
   ] as const)("a thread that is %s reads as %s", (state, thread) => {
     expect(assistantTaskState(thread)).toBe(state);
     expect(ASSISTANT_TASK_FACE[state]).toBeDefined();
-    expect(canDismissAssistantTask(state)).toBe(state === "done" || state === "failed");
+    expect(canDismissAssistantTask(state)).toBe(state !== "running" && state !== "waiting");
+  });
+});
+
+describe("usageLimitLabel", () => {
+  const now = Date.parse("2026-11-14T12:00:00.000Z");
+  it.each([
+    ["2026-11-14T15:30:00.000Z", "Limit until <2026-11-14T15:30:00.000Z>"],
+    ["2026-11-14T11:00:00.000Z", null],
+    [null, null],
+    ["not a date", null],
+  ])("reads %s as %s", (resetAt, label) => {
+    expect(usageLimitLabel(resetAt, now, (iso) => `<${iso}>`)).toBe(label);
   });
 });
 
@@ -191,5 +251,45 @@ describe("assistantSectionThreadKeys", () => {
         },
       ]),
     ).toEqual(keys);
+  });
+});
+
+describe("assistantReplyText", () => {
+  it.each([
+    ["NO_REPLY", false, null],
+    ["`NO_REPLY`.", false, null],
+    ["Task X failed in CI.\n\nNO_REPLY", false, "Task X failed in CI."],
+    ["The build broke.", false, "The build broke."],
+    // While streaming, a reply that may still turn into the token is held back.
+    ["NO_", true, null],
+    ["Task X failed in CI.\n\nNO_REP", true, "Task X failed in CI."],
+    ["No problem", true, "No problem"],
+    ["", true, ""],
+  ])("%j (streaming %s) → %j", (text, streaming, shown) => {
+    expect(assistantReplyText(text, streaming)).toBe(shown);
+  });
+});
+
+describe("taskEventActivity", () => {
+  const task = "mcp:launch:task" as ThreadId;
+
+  it("reads a task event into one line with the state the event told", () => {
+    const text = `${taskEventHeadline({ title: "Add retry", threadId: task, status: "failed" })}\n\nIts last message:\nTests fail.`;
+    expect(taskEventActivity({ id: "assistant-task:r1", text, senderThreadId: task })).toEqual({
+      threadId: task,
+      title: "Add retry",
+      status: "failed",
+      label: "Failed",
+    });
+  });
+
+  it("falls back to the task thread's title when the headline is not T3's", () => {
+    expect(
+      taskEventActivity({ id: "assistant-task:r1", text: "?", senderThreadId: task }, "Live title"),
+    ).toEqual({ threadId: task, title: "Live title", status: null, label: "Updated" });
+  });
+
+  it("leaves every other message alone", () => {
+    expect(taskEventActivity({ id: "m1", text: "hi", senderThreadId: task })).toBeNull();
   });
 });

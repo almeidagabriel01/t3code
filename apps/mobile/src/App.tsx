@@ -23,7 +23,7 @@ import { pipe } from "effect/Function";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import { RegistryContext } from "@effect/atom-react";
-import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
+import { ChipIconRasterizer } from "./native/ChipIconImages";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
 import { HeavyNoticeHost } from "./features/heavy/HeavyNoticeHost";
 import * as Dialog from "./components/ui/Dialog";
@@ -265,7 +265,7 @@ function AppContent() {
                 <Dialog.Host />
                 <ThreadArrangementHost />
                 <HeavyNoticeHost navigate={linkToAppPath} />
-                <ProjectChipIconRasterizer />
+                <ChipIconRasterizer />
               </NativeLayoutMetricsProvider>
             </GlobalVoiceInputControl>
             <OverlayPortalHost />

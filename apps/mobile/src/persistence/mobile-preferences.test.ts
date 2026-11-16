@@ -72,6 +72,15 @@ describe("mobile preferences parser", () => {
     }),
   );
 
+  it.effect("keeps each group's saved chat tab and drops the ones that are not text", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* loadFrom({ assistantGroupTabs: { "hub:g1": "project:p1", "hub:g2": 3 } }),
+      ).toEqual({ assistantGroupTabs: { "hub:g1": "project:p1" } });
+      expect(yield* loadFrom({ assistantGroupTabs: "all" })).toEqual({});
+    }),
+  );
+
   it.effect("keeps every valid board panel choice and drops the invalid ones", () =>
     Effect.gen(function* () {
       expect(

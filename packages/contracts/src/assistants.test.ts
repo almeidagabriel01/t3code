@@ -1,9 +1,12 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { ProjectId } from "./baseSchemas.ts";
+
 import {
   Assistant,
   assistantCommandNames,
+  assistantGroupFinishedScopes,
   AssistantHandle,
   assistantMcpServersProblem,
   assistantTeamProblem,
@@ -38,6 +41,86 @@ describe("assistantHandleFromName", () => {
     const result = assistantHandleFromName(name);
     expect(result).toBe(handle);
     if (result !== null) expect(isAssistantHandle(result)).toBe(true);
+  });
+});
+
+describe("assistantGroupFinishedScopes", () => {
+  // [project, open tasks, done tasks]; no done count anywhere is an older server.
+  const chat = (open: ReadonlyArray<readonly [string | null, number, number?]>) => ({
+    scopes: open.map(([projectId, openTasks, doneTasks]) => ({
+      projectId: projectId as ProjectId | null,
+      unreadCount: 0,
+      waiting: false,
+      readSeq: 0,
+      ...(openTasks === 0 ? {} : { openTasks }),
+      ...(doneTasks === undefined ? {} : { doneTasks }),
+    })),
+  });
+  it.each([
+    [
+      "one tab ends while another runs",
+      [
+        ["p", 1],
+        ["q", 2],
+      ],
+      [["q", 2]],
+      ["p"],
+    ],
+    [
+      "two tabs end together",
+      [
+        ["p", 1],
+        [null, 1],
+      ],
+      [],
+      ["p", null],
+    ],
+    ["a tab ends and keeps its line", [["p", 2]], [["p", 0]], ["p"]],
+    ["a tab still has work", [["p", 2]], [["p", 1]], []],
+    ["a request that gets a project moves its work", [[null, 2]], [["p", 2]], []],
+    ["new work elsewhere while one ends", [["p", 1]], [["q", 1]], []],
+    ["nothing was open", [], [], []],
+    [
+      "a tab ends as another opens",
+      [["p", 1]],
+      [
+        ["p", 0, 1],
+        ["q", 1],
+      ],
+      ["p"],
+    ],
+    [
+      "General's request moves to a project as another tab ends",
+      [
+        [null, 1],
+        ["q", 1],
+      ],
+      [
+        ["p", 1],
+        ["q", 0, 1],
+      ],
+      ["q"],
+    ],
+    [
+      "a reconnect brings an end, a new tab and a move together",
+      [
+        ["p", 1, 2],
+        [null, 1],
+      ],
+      [
+        ["p", 0, 3],
+        ["q", 1],
+        ["r", 1],
+      ],
+      ["p"],
+    ],
+    ["work that only leaves a tab", [[null, 1, 1]], [["p", 1]], []],
+    ["General's work with no request ends", [[null, 1, 0]], [[null, 0, 1]], [null]],
+  ] as const)("%s", (_name, before, after, expected) => {
+    expect(assistantGroupFinishedScopes(chat(before), chat(after))).toEqual(expected);
+  });
+  it("finds nothing without scopes, as from an older server", () => {
+    expect(assistantGroupFinishedScopes(undefined, { scopes: [] })).toEqual([]);
   });
 });
 

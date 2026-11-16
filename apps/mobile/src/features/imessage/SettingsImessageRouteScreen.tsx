@@ -2,6 +2,7 @@ import {
   formatImessageHandleInput,
   imessageDefaultCallingCode,
   imessageSuggestedSelfHandles,
+  imessageUndeliveredLabel,
 } from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ComponentProps } from "react";
@@ -20,6 +21,7 @@ import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ChannelLanguageSection } from "../settings/components/ChannelLanguageSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
+import { UndeliveredRepliesRow } from "../settings/components/UndeliveredRepliesRow";
 import {
   imessageAccessRow,
   imessageDeliveryNote,
@@ -211,6 +213,12 @@ function ImessageEnvironment(props: {
           icon="bolt.horizontal.circle"
           label={imessageStatusLabel(settings)}
           description={note ?? undefined}
+        />
+        <UndeliveredRepliesRow
+          label={imessageUndeliveredLabel(settings)}
+          disabled={!imessage.canResend}
+          onResend={imessage.resendUndelivered}
+          onError={setError}
         />
         <SettingsSwitchRow
           icon="text.bubble"

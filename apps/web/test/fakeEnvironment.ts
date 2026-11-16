@@ -4,6 +4,8 @@
 import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
+  ServerSettingsError,
+  type ServerSettings,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
@@ -62,6 +64,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ServerConfigStreamEvent,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import type {
@@ -238,6 +241,8 @@ export interface FakeThread {
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  /** Shell fields the runs do not derive, such as the last error's class. */
+  readonly shell?: Partial<OrchestrationV2ThreadShell>;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -302,6 +307,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     settledAt: thread.olderSettled ? AT : null,
     lastVisitedAt: AT,
     deletedAt: null,
+    ...thread.shell,
   };
 }
 
@@ -362,6 +368,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 
 let extraCapabilities: Record<string, boolean> = {};
 let hostOs: "linux" | "darwin" = "linux";
+let extraProjects: ReadonlyArray<OrchestrationProjectShell> = [];
 let reasoningEffort = false;
 const effortCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -385,11 +392,28 @@ let autonomyOverride: AutonomySettings | null = null;
 export function setFakeAutonomy(autonomy: AutonomySettings | null): void {
   autonomyOverride = autonomy;
 }
+let settingsOverride: Partial<ServerSettings> | null = null;
+/** Starts the server with these settings on top; reset when the environment is disposed. */
+export function setFakeServerSettings(settings: Partial<ServerSettings> | null): void {
+  settingsOverride = settings;
+}
+const configSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
+/** Sets the settings and pushes them to open config streams, as the server does after a write. */
+export function pushFakeServerSettings(settings: Partial<ServerSettings> | null): void {
+  settingsOverride = settings;
+  const event: ServerConfigStreamEvent = {
+    version: 1,
+    type: "settingsUpdated",
+    payload: { settings: currentServerConfig().settings },
+  };
+  for (const queue of configSubscribers) Effect.runSync(Queue.offer(queue, event));
+}
 const currentServerConfig = (): ServerConfig => {
   const config = serverConfig();
   return Object.keys(extraCapabilities).length === 0 &&
     hostOs === "linux" &&
     autonomyOverride === null &&
+    settingsOverride === null &&
     !reasoningEffort
     ? config
     : {
@@ -403,9 +427,11 @@ const currentServerConfig = (): ServerConfig => {
               })),
             }))
           : config.providers,
-        settings: autonomyOverride
-          ? { ...config.settings, autonomy: autonomyOverride }
-          : config.settings,
+        settings: {
+          ...config.settings,
+          ...settingsOverride,
+          ...(autonomyOverride ? { autonomy: autonomyOverride } : {}),
+        },
         environment: {
           ...config.environment,
           platform: { ...config.environment.platform, os: hostOs },
@@ -464,7 +490,7 @@ const handlers: Record<string, (input: never) => unknown> = {
           snapshot: {
             schemaVersion: 1,
             snapshotSequence: sequence,
-            projects: [project],
+            projects: [project, ...extraProjects],
             threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
             archivedThreads: [],
           },
@@ -512,7 +538,13 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
 };
 
 class FakeCommandRejected extends Schema.TaggedError<FakeCommandRejected>()("FakeCommandRejected", {
@@ -713,15 +745,23 @@ export const fakeGroupChat = {
     readonly reason: "mention_required" | "archived";
     readonly message: string;
   } | null,
+  /** Holds each post's reply until it settles. */
+  postGate: null as Promise<void> | null,
+  /** Cuts the next post off unanswered, as a connection lost on the way does. */
+  postCut: false,
   posts: [] as Array<Record<string, unknown>>,
+  /** Each post's `clientRequestId`, apart, so the posts' own expectations stay as they are. */
+  postRequestIds: [] as unknown[],
   taskActions: [] as Array<Record<string, unknown>>,
   reads: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
+  subscriptions: [] as Array<Record<string, unknown>>,
 };
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
-handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
-  subscribe<AssistantGroupsEvent>(
+handlers[WS_METHODS.assistantGroupsSubscribe] = (input: Record<string, unknown>) => {
+  fakeGroupChat.subscriptions.push(input);
+  return subscribe<AssistantGroupsEvent>(
     [
       {
         type: "snapshot",
@@ -735,6 +775,7 @@ handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
       return () => groupChatSubscribers.delete(queue);
     },
   );
+};
 /** Replaces the chat, including for a subscription an earlier screen left open. */
 export function publishGroupChat(
   messages: AssistantGroupMessage[],
@@ -750,16 +791,26 @@ handlers[WS_METHODS.assistantGroupsHistory] = (input: Record<string, unknown>) =
   fakeGroupChat.histories.push(input);
   return Effect.succeed(fakeGroupChat.older ?? { messages: [], tasks: [], hasMore: false });
 };
-handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
+handlers[WS_METHODS.assistantGroupsPost] = ({
+  clientRequestId,
+  ...input
+}: Record<string, unknown>) => {
+  fakeGroupChat.postRequestIds.push(clientRequestId);
   fakeGroupChat.posts.push(input);
+  if (fakeGroupChat.postCut) return Effect.interrupt;
   const refusal = fakeGroupChat.postRefusal;
-  if (refusal !== null) return Effect.fail(new AssistantError(refusal));
+  const gate = fakeGroupChat.postGate;
+  if (refusal !== null) {
+    const refused = Effect.fail(new AssistantError(refusal));
+    return gate === null ? refused : Effect.promise(() => gate).pipe(Effect.andThen(refused));
+  }
   const message = {
     ...fakeGroupChat.messages.at(-1)!,
     id: `posted-${fakeGroupChat.posts.length}`,
     text: String(input.text),
   } as AssistantGroupMessage;
-  return Effect.succeed({ message, tasks: [] });
+  const reply = { message, tasks: [] };
+  return gate === null ? Effect.succeed(reply) : Effect.promise(() => gate).pipe(Effect.as(reply));
 };
 handlers[WS_METHODS.assistantGroupsMarkRead] = (input: { readonly readSeq?: number }) => {
   fakeGroupChat.reads.push(input);
@@ -873,10 +924,18 @@ handlers[WS_METHODS.assistantsSetAvatarImage] = (input: { readonly assistantId: 
   return found ? Effect.succeed(found) : Effect.never;
 };
 
-/** Settings patches the fake server received. */
-export const fakeSettings = { patches: [] as unknown[] };
+/** Settings patches the fake server received; `refuse` names a path the next write fails on. */
+export const fakeSettings = { patches: [] as unknown[], refuse: null as string | null };
 handlers[WS_METHODS.serverUpdateSettings] = (input: { readonly patch: object }) => {
   fakeSettings.patches.push(input.patch);
+  if (fakeSettings.refuse !== null)
+    return Effect.fail(
+      new ServerSettingsError({
+        settingsPath: fakeSettings.refuse,
+        operation: "use-unavailable-provider-instance",
+        providerInstanceId: "codex",
+      }),
+    );
   return Effect.succeed({ ...baseServerConfig.settings, ...input.patch });
 };
 
@@ -976,6 +1035,7 @@ export const fakeImessage = {
   failConfigure: null as ImessageChannelSettingsErrorReason | null,
   configures: [] as unknown[],
   accessChecks: 0,
+  resends: 0,
 };
 /** Starts an iMessage scenario from a clean server. */
 export function resetFakeImessage(
@@ -988,6 +1048,7 @@ export function resetFakeImessage(
   fakeImessage.failConfigure = null;
   fakeImessage.configures = [];
   fakeImessage.accessChecks = 0;
+  fakeImessage.resends = 0;
 }
 const imessageStatusSubscribers = new Set<Queue.Queue<ImessageChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
@@ -995,6 +1056,14 @@ export function publishImessageStatus(event: ImessageChannelStatusEvent): void {
   for (const queue of imessageStatusSubscribers) Effect.runSync(Queue.offer(queue, event));
 }
 handlers[WS_METHODS.imessageChannelGetSettings] = () => Effect.sync(() => fakeImessage.settings);
+handlers[WS_METHODS.imessageChannelResendUndelivered] = () =>
+  Effect.sync(() => {
+    fakeImessage.resends += 1;
+    const { undeliveredCount: requeued = 0, ...rest } = fakeImessage.settings;
+    fakeImessage.settings = rest;
+    publishImessageStatus({ status: rest.status });
+    return { requeued };
+  });
 handlers[WS_METHODS.imessageChannelCheckAccess] = () =>
   Effect.sync(() => {
     fakeImessage.accessChecks += 1;
@@ -1037,12 +1106,19 @@ export const fakeTelegram = {
   settings: TELEGRAM_DEFAULTS,
   failConfigure: null as TelegramChannelSettingsErrorReason | null,
   configures: [] as TelegramChannelConfigureInput[],
+  resends: 0,
+  /** Holds each resend until it settles; `quietResend` answers without a status event. */
+  resendHeld: null as Promise<void> | null,
+  quietResend: false,
 };
 /** Starts a Telegram scenario from a clean server. */
 export function resetFakeTelegram(settings: Partial<TelegramChannelSettings> = {}): void {
   fakeTelegram.settings = { ...TELEGRAM_DEFAULTS, ...settings };
   fakeTelegram.failConfigure = null;
   fakeTelegram.configures = [];
+  fakeTelegram.resends = 0;
+  fakeTelegram.resendHeld = null;
+  fakeTelegram.quietResend = false;
 }
 const telegramStatusSubscribers = new Set<Queue.Queue<TelegramChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
@@ -1055,6 +1131,16 @@ handlers[WS_METHODS.telegramChannelSubscribeStatus] = () =>
     telegramStatusSubscribers.add(queue);
     return () => telegramStatusSubscribers.delete(queue);
   });
+handlers[WS_METHODS.telegramChannelResendUndelivered] = () =>
+  Effect.sync(() => void (fakeTelegram.resends += 1)).pipe(
+    Effect.andThen(Effect.promise(() => fakeTelegram.resendHeld ?? Promise.resolve())),
+    Effect.andThen(() => {
+      const { undeliveredCount: requeued = 0, ...rest } = fakeTelegram.settings;
+      fakeTelegram.settings = rest;
+      if (!fakeTelegram.quietResend) publishTelegramStatus({ status: rest.status });
+      return Effect.succeed({ requeued });
+    }),
+  );
 handlers[WS_METHODS.telegramChannelConfigure] = (input: TelegramChannelConfigureInput) => {
   fakeTelegram.configures.push(input);
   if (fakeTelegram.failConfigure !== null) {
@@ -1151,7 +1237,13 @@ const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(currentServerConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -1208,9 +1300,16 @@ export function installFakeEnvironment(
     readonly reasoningEffort?: boolean;
     /** Accepted for upstream tests; the command handler below settles every command. */
     readonly acceptCommands?: boolean;
+    /** More projects beside `PROJECT_ID`, by id and title. */
+    readonly projects?: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   } = {},
 ): Disposable {
   threads = fixtures;
+  extraProjects = (options.projects ?? []).map((extra) => ({
+    ...project,
+    ...extra,
+    workspaceRoot: `/workspace/${extra.title}`,
+  }));
   dispatched = [];
   acceptCommands = options.acceptCommands === true;
   hostOs = options.mac ? "darwin" : "linux";
@@ -1250,7 +1349,9 @@ export function installFakeEnvironment(
       fakeCommands.holdTypes.clear();
       fakeCommands.refuseHeld();
       autonomyOverride = null;
+      settingsOverride = null;
       fakeSettings.patches = [];
+      fakeSettings.refuse = null;
       fakeWatches.items = [];
       fakeWatches.calls = [];
       fakeIntegrations.state = null;

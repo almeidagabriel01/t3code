@@ -10,6 +10,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   CirclePauseIcon,
+  ClockAlertIcon,
   EllipsisIcon,
   InfoIcon,
   MailIcon,
@@ -73,6 +74,7 @@ type IndicatorKind = ZoneIndicator["kind"];
 const INDICATOR_LABEL: Record<IndicatorKind, (count: number) => string> = {
   needs: (count) => `${count} waiting on you`,
   failed: () => "Failed",
+  limited: () => "Usage limit",
   paused: (count) => `${count} paused`,
   running: (count) => `${count} running`,
   unread: (count) => `${count} unread`,
@@ -105,7 +107,7 @@ function ZoneIndicatorMark(props: { readonly kind: IndicatorKind; readonly count
         "flex shrink-0 items-center gap-1 text-xs font-normal tabular-nums",
         kind === "needs" && "text-warning-foreground",
         kind === "failed" && "text-destructive-foreground",
-        kind === "paused" && "text-warning-foreground",
+        (kind === "paused" || kind === "limited") && "text-warning-foreground",
         kind === "running" && "text-info-foreground",
       )}
     >
@@ -113,13 +115,17 @@ function ZoneIndicatorMark(props: { readonly kind: IndicatorKind; readonly count
         <CircleAlertIcon aria-hidden className="size-3.5" />
       ) : kind === "paused" ? (
         <CirclePauseIcon aria-hidden className="size-3.5" />
+      ) : kind === "limited" ? (
+        <ClockAlertIcon aria-hidden className="size-3.5" />
       ) : (
         <span
           aria-hidden
           className={cn("size-2 rounded-full", kind === "needs" ? "bg-warning" : "bg-info")}
         />
       )}
-      {kind === "failed" || (kind === "running" && count === 1) ? null : count}
+      {kind === "failed" || kind === "limited" || (kind === "running" && count === 1)
+        ? null
+        : count}
     </span>
   );
 }

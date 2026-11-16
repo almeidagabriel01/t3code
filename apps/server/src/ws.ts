@@ -95,7 +95,6 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -267,7 +266,6 @@ import { ProviderMemoryImportRuntime } from "./memory/imports/MemoryImportTypes.
 import * as MemoryHubService from "./memory/MemoryHubService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as MemorySyncService from "./memory/MemorySyncService.ts";
-import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1679,14 +1677,6 @@ export const layerWsRpc = (
           // An unreadable setting leaves the label omitted, which clients show as unknown.
           Effect.orElseSucceed(() => result),
         );
-      const authorizeEffect = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
-        effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? effect
-          : Effect.fail(rpcAuthorizationError(requiredScope));
-
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
       ) {
@@ -2705,7 +2695,8 @@ export const layerWsRpc = (
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>
           assistants.removeTeam(input.teamId).pipe(Effect.as({ teamId: input.teamId })),
-        [WS_METHODS.assistantGroupsSubscribe]: (input) => assistantGroups.subscribe(input.teamId),
+        [WS_METHODS.assistantGroupsSubscribe]: (input) =>
+          assistantGroups.subscribe(input.teamId, input.scope),
         [WS_METHODS.assistantGroupsHistory]: (input) => assistantGroups.history(input),
         [WS_METHODS.assistantGroupsPost]: (input) => assistantGroups.post(input, { kind: "user" }),
         [WS_METHODS.assistantGroupsTaskAction]: (input) => assistantGroups.taskAction(input),
@@ -2720,6 +2711,8 @@ export const layerWsRpc = (
         [WS_METHODS.imessageChannelConfigure]: (input) => imessageChannelSettings.configure(input),
         [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,
         [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
+        [WS_METHODS.imessageChannelResendUndelivered]: () =>
+          imessageChannelSettings.resendUndelivered,
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueueSubscribeCommands]: () => heavyCommands.stream,
@@ -2753,6 +2746,8 @@ export const layerWsRpc = (
         [WS_METHODS.telegramChannelGetSettings]: () => telegramChannelSettings.get,
         [WS_METHODS.telegramChannelConfigure]: (input) => telegramChannelSettings.configure(input),
         [WS_METHODS.telegramChannelSubscribeStatus]: () => telegramChannelSettings.streamStatus,
+        [WS_METHODS.telegramChannelResendUndelivered]: () =>
+          telegramChannelSettings.resendUndelivered,
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
@@ -3727,17 +3722,15 @@ export const layerWsRpc = (
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
+        // rpcRequiredScopes asks operate scope for the update and retry branches.
         [WS_METHODS.deviceList]: (input) =>
           input.inspectOnly && !input.updateTool
             ? deviceService.inspect
-            : authorizeEffect(
-                requiredScopeForDeviceList(input),
-                input.updateTool
-                  ? deviceService.updateTool(input.updateTool)
-                  : input.retryHostId
-                    ? deviceService.retryHost(input.retryHostId)
-                    : deviceService.list,
-              ),
+            : input.updateTool
+              ? deviceService.updateTool(input.updateTool)
+              : input.retryHostId
+                ? deviceService.retryHost(input.retryHostId)
+                : deviceService.list,
         [WS_METHODS.deviceOpen]: (input) =>
           threadWorkspaceRoot(input.threadId).pipe(
             Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),

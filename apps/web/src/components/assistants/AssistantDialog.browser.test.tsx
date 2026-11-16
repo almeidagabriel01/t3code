@@ -109,8 +109,15 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   ...overrides,
 });
 
-const team = (id: string, name: string, memberIds: string[], leadId?: string): AssistantTeam => ({
+const team = (
+  id: string,
+  name: string,
+  memberIds: string[],
+  leadId?: string,
+  projectIds: ProjectId[] = [],
+): AssistantTeam => ({
   id: id as AssistantTeamId,
+  projectIds,
   name,
   memberIds: memberIds as AssistantId[],
   leadId: (leadId ?? null) as AssistantId | null,
@@ -317,10 +324,37 @@ it("an unchanged assistant keeps its avatar out of the update", async () => {
   await using _screen = await openApp();
   openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "jarvis" as AssistantId });
   await userEvent.fill(page.getByLabelText("Name"), "Jarvis 2");
+  // A server without assistant default models sends no field, so there is nothing to edit.
+  expect(page.getByText("Default model").query()).toBeNull();
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() => expect(fakeAssistantEdits.updates).toHaveLength(1));
   expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("avatar");
   expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("icon");
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("defaultModelSelection");
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("clears an assistant's own default model back to the user's default", async () => {
+  fakeAssistantEdits.updates = [];
+  publishAssistants([
+    assistant("jarvis", "Jarvis", {
+      defaultModelSelection: { instanceId: "codex" as never, model: "gpt-5.5" },
+    }),
+  ]);
+  await using _screen = await openApp();
+  openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "jarvis" as AssistantId });
+  await expect
+    .element(page.getByRole("button", { name: "Assistant default model" }))
+    .toHaveTextContent("GPT-5.5");
+  await userEvent.click(page.getByRole("button", { name: "Use your default" }));
+  await expect.element(page.getByText("Follows your default model, GPT-5.4.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { assistantId: "jarvis", defaultModelSelection: null },
+    ]),
+  );
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("modelSelection");
   appAtomRegistry.set(assistantDialogAtom, null);
 });
 
@@ -375,6 +409,29 @@ it("joins the groups it is ticked into, leaves others and hands back a lead", as
       { teamId: "t2", memberIds: ["ana", "jarvis"] },
     ]),
   );
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("lists the projects a group gives and never saves them as its own", async () => {
+  fakeAssistantEdits.updates = [];
+  publishAssistants(
+    [
+      assistant("ana", "Ana", {
+        scope: "project",
+        projectIds: [],
+        avatar: { kind: "robot", hue: 150 },
+      }),
+    ],
+    [team("t2", "Research", ["ana"], undefined, [PROJECT_ID])],
+  );
+  await using _screen = await openApp();
+  openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "ana" as AssistantId });
+  await expect.element(page.getByText("From groups")).toBeVisible();
+  await expect.element(page.getByText("via Research")).toBeVisible();
+  await userEvent.click(page.getByRole("radio", { name: "Color 280" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() => expect(fakeAssistantEdits.updates).toHaveLength(1));
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("projectIds");
   appAtomRegistry.set(assistantDialogAtom, null);
 });
 

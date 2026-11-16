@@ -21,15 +21,13 @@ import {
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { MessageId, RunId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
-  shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
@@ -1526,6 +1524,65 @@ describe("deriveMessagesTimelineRows", () => {
       "work-after-steer",
       "final",
     ]);
+  });
+
+  it("skips quiet assistant replies and tightens consecutive task events", () => {
+    const time = new Date(Date.UTC(2026, 0, 1)).toISOString();
+    const entry = (
+      id: string,
+      role: "user" | "assistant",
+      text: string,
+      extra: { senderThreadId?: ThreadId } = {},
+    ): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: time,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text,
+        runId: null,
+        ...extra,
+        createdAt: time,
+        updatedAt: time,
+        streaming: false,
+      },
+    });
+    const streamingEntry = (id: string, text: string): TimelineEntry => {
+      const base = entry(id, "assistant", text);
+      return base.kind === "message"
+        ? { ...base, message: { ...base.message, streaming: true } }
+        : base;
+    };
+    const event = (runId: string) =>
+      entry(`assistant-task:${runId}`, "user", `Task [Build](t3://thread/x) finished.`, {
+        senderThreadId: ThreadId.make("thread-task"),
+      });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        event("run-1"),
+        event("run-2"),
+        entry("quiet", "assistant", "NO_REPLY"),
+        streamingEntry("partial", "NO_"),
+      ],
+      latestRun: null,
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.id)).toEqual(["assistant-task:run-1", "assistant-task:run-2"]);
+    expect(rows[0]).toMatchObject({ groupedWithNext: true });
+    expect(rows[1]).not.toHaveProperty("groupedWithNext");
+    const [tail] = deriveMessagesTimelineRows({
+      timelineEntries: [entry("tail", "assistant", "Tarefa X falhou no CI.\n\nNO_REPLY")],
+      latestRun: null,
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(tail).toMatchObject({ message: { text: "Tarefa X falhou no CI." } });
   });
 
   it("stacks back-to-back steers as one burst with a single steer label", () => {
@@ -4701,26 +4758,5 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
-  });
-});
-
-describe("shouldCollapseUserMessage", () => {
-  it("measures a quote chip by its label, not its encoded link", () => {
-    const quote = "A long assistant paragraph that the user quoted. ".repeat(40);
-    const citation = serializeAssistantCitation({
-      version: 1,
-      environmentId: EnvironmentId.make("environment"),
-      threadId: ThreadId.make("thread"),
-      messageId: MessageId.make("source"),
-      text: quote,
-      comment: "Why does this matter?",
-      start: 0,
-      end: quote.length,
-      prefix: "",
-      suffix: "",
-    });
-
-    expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
-    expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
   });
 });
