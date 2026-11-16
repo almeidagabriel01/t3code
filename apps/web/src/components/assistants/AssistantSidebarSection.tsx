@@ -418,12 +418,19 @@ function GroupMark(props: {
 }) {
   if (props.members.length === 0) {
     return (
-      <span
-        role="img"
-        aria-label="No members yet"
-        data-testid="group-status"
-        className="size-5 shrink-0 rounded-md border border-dashed border-foreground/24"
-      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label="No members yet"
+              data-testid="group-status"
+              className="size-5 shrink-0 rounded-md border border-dashed border-foreground/24"
+            />
+          }
+        />
+        <TooltipPopup side="top">No members yet</TooltipPopup>
+      </Tooltip>
     );
   }
   return (

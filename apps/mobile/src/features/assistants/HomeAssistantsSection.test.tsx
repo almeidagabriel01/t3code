@@ -729,6 +729,15 @@ describe("HomeAssistantsSection", () => {
     expect(container.querySelector('[data-testid="group-status"]')).not.toBeNull();
     expect(byLabel("Ops, No members yet")).not.toBeNull();
     expect(container.querySelectorAll('[data-testid="group-mark"]')).toHaveLength(1);
+    const caption = () => container.querySelector('[data-testid="group-empty-caption"]');
+    expect(caption()?.textContent).toBe("No members yet");
+    // A narrow row keeps the words for the screen reader only.
+    mocks.metaWidth = 300;
+    act(() => root.unmount());
+    root = createRoot(container);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(caption()).toBeNull();
+    expect(byLabel("Ops, No members yet")).not.toBeNull();
   });
 
   it.each([

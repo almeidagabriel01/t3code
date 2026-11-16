@@ -243,8 +243,9 @@ function IndicatorBadge(props: {
 
 /** The row's role text gives way below this width (14rem), so the name stays whole. */
 const ROLE_MIN_ROW_WIDTH = 224;
-/** Below this a folder's status gives way to its dot, so the group's name stays readable. */
+/** Below this a folder's words (status, empty caption) give way, so the group's name stays readable. */
 const FOLDER_WORDS_MIN_ROW_WIDTH = 320;
+const EMPTY_GROUP_LABEL = "No members yet";
 /** Below this the role would show as a couple of letters; the tooltip-less row drops it instead. */
 const META_MIN_WIDTH = 56;
 
@@ -496,6 +497,7 @@ const FolderRow = memo(function FolderRow(props: {
   const mutedIcon = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
   const empty = props.members.length === 0;
   const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
+  const narrow = rowWidth < FOLDER_WORDS_MIN_ROW_WIDTH;
   return (
     <View
       className="flex-row items-center"
@@ -522,7 +524,7 @@ const FolderRow = memo(function FolderRow(props: {
       )}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={empty ? `${team.name}, No members yet` : team.name}
+        accessibilityLabel={empty ? `${team.name}, ${EMPTY_GROUP_LABEL}` : team.name}
         onPress={() => openTeam.chat(environmentId, team.id)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 pr-2 active:opacity-70"
       >
@@ -533,20 +535,34 @@ const FolderRow = memo(function FolderRow(props: {
         />
         <Text
           className={cn(
-            "min-w-0 flex-1 text-base font-t3-medium",
+            // An empty group's caption takes only the room its name leaves.
+            "min-w-0 text-base font-t3-medium",
+            empty ? "shrink" : "flex-1",
             props.sidebar ? "text-drawer-foreground" : "text-foreground",
           )}
           numberOfLines={1}
         >
           {team.name}
         </Text>
+        {empty && !narrow ? (
+          <Text
+            testID="group-empty-caption"
+            className={cn(
+              "min-w-0 flex-1 text-right text-xs",
+              props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
+            )}
+            numberOfLines={1}
+          >
+            {EMPTY_GROUP_LABEL}
+          </Text>
+        ) : null}
         {props.indicatorKind !== null ? (
           <IndicatorBadge
             kind={props.indicatorKind}
             count={props.indicatorCount}
             assistant={false}
             sidebar={props.sidebar}
-            narrow={rowWidth < FOLDER_WORDS_MIN_ROW_WIDTH}
+            narrow={narrow}
           />
         ) : null}
       </Pressable>
