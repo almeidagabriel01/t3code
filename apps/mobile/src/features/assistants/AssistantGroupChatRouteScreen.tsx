@@ -21,6 +21,7 @@ import {
   assistantGroupTabPick,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
+  type AssistantGroupTabPick,
   assistantGroupTabView,
   type AssistantGroupChatState,
   type AssistantGroupTab,
@@ -1309,14 +1310,20 @@ export function AssistantGroupChatRouteScreen({
   );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
-  const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
+  // The reply being written, for the tab it was opened in.
+  const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<GroupReply> | null>(null);
   // The composer's own project pick, until a send or another tab.
   const [projectPick, setProjectPick] = useState<AssistantGroupProjectPick | null>(null);
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
   const [tabsHeight, setTabsHeight] = useState(0);
-  // Another tab, chosen or not (the saved one loading, a removed one), drops both picks for good.
+  // Another tab, chosen or not (the saved one loading, a removed one), drops the picks for good,
+  // and an open reply, which would answer a request out of view; the draft itself stays.
   if (assistantGroupTabPick(projectPick, tabKey) !== projectPick) setProjectPick(null);
+  if (assistantGroupTabPick(replyPick, tabKey) !== replyPick) setReplyPick(null);
+  const replyTo = assistantGroupTabPick(replyPick, tabKey)?.value ?? null;
+  const setReplyTo = (target: GroupReply | null) =>
+    setReplyPick(target === null ? null : { tab: tabKey, value: target });
 
   const composerProject = assistantGroupComposerProject({
     pick: projectPick,
@@ -1348,7 +1355,7 @@ export function AssistantGroupChatRouteScreen({
   // One way a send lands, by its reply or by the chat showing its post.
   const landed = (sent: GroupLandedSend) => {
     // What the user changed while the post was on its way stays: a new reply, pick or tab.
-    setReplyTo((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setReplyPick((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
     setProjectPick((current) =>
       assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
     );
@@ -1361,7 +1368,7 @@ export function AssistantGroupChatRouteScreen({
     }
   };
   const restore = (routing: GroupSendRouting) => {
-    setReplyTo(routing.reply);
+    setReplyPick(routing.reply);
     setProjectPick(routing.projectPick);
     setModelPick(routing.modelPick);
   };
@@ -1369,7 +1376,6 @@ export function AssistantGroupChatRouteScreen({
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
     savedTab.save(next.key);
-    setReplyTo(null);
   };
 
   const send = async (
@@ -1637,7 +1643,7 @@ export function AssistantGroupChatRouteScreen({
             : () => feed.current?.jump(replyTo.id)
         }
         onClearReply={() => setReplyTo(null)}
-        routing={{ reply: replyTo, projectPick, modelPick }}
+        routing={{ reply: replyPick, projectPick, modelPick }}
         onLanded={landed}
         onRestore={restore}
         messages={live?.messages}

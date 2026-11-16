@@ -15,6 +15,7 @@ import {
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
   type AssistantGroupSendRouting,
+  type AssistantGroupTabPick,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -124,7 +125,7 @@ export type GroupReplyTarget = {
 /** A reply being written, with the message it answers. */
 export type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessageId };
 
-export type GroupSendRouting = AssistantGroupSendRouting<GroupReply>;
+export type GroupSendRouting = AssistantGroupSendRouting<AssistantGroupTabPick<GroupReply>>;
 
 /** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
 export interface GroupLandedSend {

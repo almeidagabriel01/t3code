@@ -2264,6 +2264,14 @@ describe("requests", () => {
       Array(2).fill(expect.objectContaining({ projectId: "p2", modelSelection: OPUS })),
       first,
     ]);
+    // A model the user clears on it stays cleared after another tab: it is another message.
+    await setPick(null);
+    await click(TAB.beta);
+    await click(TAB.alpha);
+    expect(mocks.modelPick).toBeNull();
+    await click("Send");
+    expect(mocks.post.mock.lastCall?.[0]).not.toHaveProperty("modelSelection");
+    expect(mocks.requestIds.at(-1)).not.toBe(first);
   });
 
   it("drops both composer picks for good on a tab the user did not choose here", async () => {
