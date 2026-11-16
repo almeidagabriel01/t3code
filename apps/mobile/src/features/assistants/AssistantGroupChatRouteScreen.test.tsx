@@ -757,6 +757,7 @@ vi.mock("./useAssistantFlows", () => ({
 }));
 
 import { AssistantGroupChatRouteScreen } from "./AssistantGroupChatRouteScreen";
+import { clearGroupOutgoings } from "./GroupComposer";
 
 const member = (id: string, name: string, role: string) => ({
   id,
@@ -870,6 +871,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = window.document.createElement("div");
   root = createRoot(container);
+  clearGroupOutgoings();
   mocks.modelPick = null;
   Object.assign(mocks, {
     teams: [team()],
@@ -1297,6 +1299,16 @@ describe("group composer", () => {
     await click("Send");
     await landed(mocks.requestIds.at(-1));
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    // Edited before its post showed, it keeps the user's text and still lets go of the quote.
+    await click("Reply to Ada");
+    await type("thanks again");
+    await click("Send");
+    await type("thanks again!");
+    await landed(mocks.requestIds.at(-1));
+    expect([container.querySelector('[data-testid="group-reply-chip"]'), input().value]).toEqual([
+      null,
+      "thanks again!",
+    ]);
   });
 
   it("replies to a member's message from the row button or its menu, then clears or sends", async () => {
@@ -2206,6 +2218,21 @@ describe("requests", () => {
     await click(TAB.beta);
     expect(mocks.modelPick).toBeNull();
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    // Unless a failed send of that tab takes its picks back, so it goes again as sent, under its id.
+    await click(TAB.alpha);
+    await click("Project:Beta");
+    await pickOpus("project:p1");
+    await type("@beto go");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await click(TAB.beta);
+    await click(TAB.alpha);
+    await click("Send");
+    const [first, resent] = mocks.requestIds;
+    expect([mocks.post.mock.calls.map(([input]) => input), resent]).toEqual([
+      Array(2).fill(expect.objectContaining({ projectId: "p2", modelSelection: OPUS })),
+      first,
+    ]);
   });
 
   it("drops both composer picks for good on a tab the user did not choose here", async () => {

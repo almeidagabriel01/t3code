@@ -85,6 +85,8 @@ const outgoings = createAssistantGroupOutgoingStore<
       readonly text: string;
     }
 >();
+/** For tests: each starts with no outgoing messages. */
+export const clearGroupOutgoings = () => outgoings.clear();
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
