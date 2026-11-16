@@ -289,9 +289,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       attributes: { disabled: !controls.canDismiss, destructive: true },
                     },
                   ]}
-                  onPressAction={({ nativeEvent }) =>
-                    void act(run.id, nativeEvent.event as QueueAction)
-                  }
+                  onPressAction={({ nativeEvent }) => {
+                    if (nativeEvent.event === "edit" && !controls.canEdit) return;
+                    void act(run.id, nativeEvent.event as QueueAction);
+                  }}
                 >
                   <Pressable
                     accessibilityRole="button"
@@ -301,9 +302,14 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         ? "Opens this message in the composer for editing"
                         : (controls.editRefusal ?? editBlockedReason ?? undefined)
                     }
-                    disabled={!controls.canEdit}
-                    onPress={() => void act(run.id, "edit")}
-                    className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
+                    // Not `disabled`: Android's long press, which opens this row's menu, needs it enabled.
+                    accessibilityState={{ disabled: !controls.canEdit }}
+                    onPress={controls.canEdit ? () => void act(run.id, "edit") : undefined}
+                    className={
+                      controls.canEdit
+                        ? "min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
+                        : "min-h-14 flex-row items-center gap-2.5 py-2.5"
+                    }
                   >
                     <QueueAttachmentThumbnails
                       environmentId={target.environmentId}
