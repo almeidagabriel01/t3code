@@ -218,6 +218,15 @@ function unsettledSinceLastRun(
  */
 export type FinishedWorkSettlement = "now" | "own-pull-request" | "own-work";
 
+/** Both paths name one directory once `..`, trailing slashes and symlinks are resolved. */
+export const sameDirectory = Effect.fnUntraced(function* (left: string, right: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonical = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+  return (yield* canonical(left)) === (yield* canonical(right));
+});
+
 /**
  * Work nobody waits on any more settles without the inactivity timer: a subagent child whose
  * parent took its result (or settled), and a dismissed assistant task. A pull request the child
@@ -238,9 +247,7 @@ export function finishedWorkSettlement(
           ? !handoff.parentRunActive && handoff.parentReadResult
           : handoff.deliveryState === null || RESULT_TAKEN_STATES.has(handoff.deliveryState)));
     if (!handedOff) return null;
-    return thread.worktreePath === null || handoff.sharesParentWorktree
-      ? "now"
-      : "own-pull-request";
+    return thread.worktreePath === null ? "now" : "own-pull-request";
   }
   if (thread.assistantTaskDismissed && isListedThreadLineage(thread.lineage)) {
     return thread.worktreePath === null && thread.branch === null ? "now" : "own-work";
@@ -374,6 +381,11 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const inSameDirectory = (left: string, right: string) =>
+    sameDirectory(left, right).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   // A shell merge or close sends no event, and the branch lookup caches an open pull request,
   // so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
@@ -419,6 +431,15 @@ export const make = Effect.gen(function* () {
     hold: Exclude<FinishedWorkSettlement, "now">,
     projectRoot: string | undefined,
   ) {
+    // A child in its parent's checkout leaves the branch and its pull request to the parent.
+    const parentWorktreePath = thread.subagentHandoff?.parentWorktreePath ?? null;
+    if (
+      thread.worktreePath !== null &&
+      parentWorktreePath !== null &&
+      (yield* inSameDirectory(thread.worktreePath, parentWorktreePath))
+    ) {
+      return false;
+    }
     if (
       settlementPullRequestLinks(thread.pullRequests ?? []).some(
         (link) => link.snapshot?.state === "open",
@@ -813,7 +834,11 @@ export const make = Effect.gen(function* () {
         settled.lineage.relationshipToParent === "subagent" &&
         parentId !== null &&
         (yield* projections.getThread(parentId).pipe(
-          Effect.map((parent) => parent.worktreePath === worktreePath),
+          Effect.flatMap((parent) =>
+            parent.worktreePath === null
+              ? Effect.succeed(false)
+              : inSameDirectory(parent.worktreePath, worktreePath),
+          ),
           Effect.orElseSucceed(() => true),
         ))
       ) {

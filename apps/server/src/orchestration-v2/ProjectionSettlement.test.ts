@@ -561,7 +561,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       parentSettled: false,
       parentRunActive: true,
       parentReadResult: false,
-      sharesParentWorktree: true,
+      parentWorktreePath: "/worktrees/parent",
     });
     assert.deepEqual(byId.get(delegated)?.subagentHandoff, {
       origin: "app_owned",
@@ -570,7 +570,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       parentSettled: false,
       parentRunActive: true,
       parentReadResult: false,
-      sharesParentWorktree: false,
+      parentWorktreePath: "/worktrees/parent",
     });
     assert.deepEqual(byId.get(orphan)?.subagentHandoff, {
       origin: null,
@@ -579,8 +579,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       parentSettled: true,
       parentRunActive: false,
       parentReadResult: false,
-      // Neither has a worktree: both work in the project checkout.
-      sharesParentWorktree: true,
+      parentWorktreePath: null,
     });
     assert.equal(byId.get(task)?.subagentHandoff, null);
     assert.equal(byId.get(task)?.assistantTaskDismissed, true);

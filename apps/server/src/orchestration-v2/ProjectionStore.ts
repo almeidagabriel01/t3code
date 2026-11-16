@@ -245,7 +245,7 @@ export interface ProjectionSubagentHandoff {
   readonly parentRunActive: boolean;
   /** A run of the parent ended after the child finished, so it held the result. */
   readonly parentReadResult: boolean;
-  readonly sharesParentWorktree: boolean;
+  readonly parentWorktreePath: string | null;
 }
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -6964,8 +6964,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           parentSettled: row.parent_settled === 1,
                           parentRunActive: row.parent_run_active === 1,
                           parentReadResult: row.parent_read_result === 1,
-                          sharesParentWorktree:
-                            (thread.worktreePath ?? null) === row.parent_worktree_path,
+                          parentWorktreePath: row.parent_worktree_path,
                         }
                       : null,
                   assistantTaskDismissed: row.assistant_task_dismissed === 1,

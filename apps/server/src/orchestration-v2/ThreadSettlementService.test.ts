@@ -1,4 +1,5 @@
 import { GitManagerError, SourceControlProviderKind } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
@@ -1755,7 +1756,7 @@ function handoff(
     parentSettled: false,
     parentRunActive: false,
     parentReadResult: true,
-    sharesParentWorktree: true,
+    parentWorktreePath: "/worktrees/parent",
     ...overrides,
   };
 }
@@ -1887,19 +1888,9 @@ describe("finishedWorkSettlement", () => {
       "now",
     ],
     ["a pinned child", { pinnedAt: DateTime.makeUnsafe(NOW) }, null],
-    [
-      "a child in its parent's checkout, whatever pull request the branch has",
-      { worktreePath: "/worktrees/parent", branch: "feature" },
-      "now",
-    ],
-    [
-      "a child in its own worktree",
-      {
-        worktreePath: "/worktrees/child",
-        subagentHandoff: handoff({ sharesParentWorktree: false }),
-      },
-      "own-pull-request",
-    ],
+    ["a child in the project checkout", { worktreePath: null }, "now"],
+    // Whether that worktree is its parent's is a filesystem question (`sameDirectory`).
+    ["a child in a worktree", { worktreePath: "/worktrees/child" }, "own-pull-request"],
     [
       "a dismissed assistant task in its own worktree",
       {
@@ -1966,6 +1957,33 @@ describe("finishedWorkSettlement", () => {
   });
 });
 
+describe("sameDirectory", () => {
+  it.effect.each([
+    ["the same path", (dir: string) => [dir, dir], true],
+    ["a trailing slash", (dir: string) => [`${dir}/`, dir], true],
+    ["a `..` segment", (dir: string) => [`${dir}/sub/..`, dir], true],
+    ["a symlink to it", (dir: string) => [`${dir}-link`, dir], true],
+    ["another directory", (dir: string) => [`${dir}/sub`, dir], false],
+  ] satisfies ReadonlyArray<
+    readonly [string, (dir: string) => readonly [string, string], boolean]
+  >)("%s", ([_name, paths, expected]) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // macOS temp paths sit under the `/var` → `/private/var` symlink, like `/tmp`.
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-same-dir-" });
+      yield* fileSystem.makeDirectory(`${dir}/sub`);
+      yield* fileSystem.symlink(dir, `${dir}-link`);
+      yield* Effect.addFinalizer(() => fileSystem.remove(`${dir}-link`).pipe(Effect.ignore));
+      const [left, right] = paths(dir);
+      assert.strictEqual(yield* ThreadSettlementService.sameDirectory(left, right), expected);
+      assert.strictEqual(
+        yield* ThreadSettlementService.sameDirectory(left, yield* fileSystem.realPath(right)),
+        expected,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("ThreadSettlementServiceV2 finished work", () => {
   const settlementOff = {
     ...DEFAULT_SERVER_SETTINGS,
@@ -1989,15 +2007,18 @@ describe("ThreadSettlementServiceV2 finished work", () => {
           }),
           childThread("own-worktree-open-pr", {
             worktreePath: "/worktrees/open",
-            subagentHandoff: handoff({ sharesParentWorktree: false }),
+            subagentHandoff: handoff(),
           }),
           childThread("own-worktree-merged-pr", {
             worktreePath: "/worktrees/merged",
-            subagentHandoff: handoff({ sharesParentWorktree: false }),
+            subagentHandoff: handoff(),
           }),
+          // The parent's checkout, written another way: no git lookup, settled at once.
+          childThread("parent-checkout-trailing-slash", { worktreePath: "/worktrees/parent/" }),
+          childThread("parent-checkout-dot-dot", { worktreePath: "/worktrees/x/../parent" }),
           childThread("own-worktree-lookup-failed", {
             worktreePath: "/worktrees/lookup-failed",
-            subagentHandoff: handoff({ sharesParentWorktree: false }),
+            subagentHandoff: handoff(),
           }),
           childThread("task-unshipped", {
             lineage: taskLineage("task-unshipped"),
@@ -2044,7 +2065,11 @@ describe("ThreadSettlementServiceV2 finished work", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot(threads),
           settings: settlementOff,
-          existingWorktreePaths: Object.keys(statuses),
+          existingWorktreePaths: [
+            ...Object.keys(statuses),
+            "/worktrees/parent/",
+            "/worktrees/x/../parent",
+          ],
           gitStatus: (input) => statuses[input.cwd]!(input),
           branchPullRequest: (input) => {
             if (input.cwd === "/worktrees/lookup-failed") {
@@ -2070,6 +2095,8 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
             new Set([
               "native-done",
+              "parent-checkout-trailing-slash",
+              "parent-checkout-dot-dot",
               "own-worktree-merged-pr",
               "task-shipped",
               "task-branch-merged",
