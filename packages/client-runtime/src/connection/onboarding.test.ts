@@ -15,6 +15,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
+import {
+  type ConnectionCatalogDocument,
+  EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  registerConnectionInCatalog,
+  setConnectionEnabledInCatalog,
+} from "../platform/storageDocument.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import {
   BearerConnectionCredential,
@@ -159,27 +165,66 @@ function layerPairingHttp(
   return RpcHttp.layerRemoteHttpClient(fetchFn);
 }
 
+/** Stores backed by one in-memory catalog document, written by the same functions web and mobile use. */
+function layerCatalogStores(catalog: { current: ConnectionCatalogDocument }) {
+  const find = <A extends { readonly connectionId: string }>(
+    values: ReadonlyArray<A>,
+    connectionId: string,
+  ) => Option.fromUndefinedOr(values.find((value) => value.connectionId === connectionId));
+  return Layer.mergeAll(
+    Layer.mock(Persistence.ConnectionTargetStore)({
+      list: Effect.sync(() => catalog.current.targets),
+      listDisabled: Effect.sync(() => catalog.current.disabledEnvironmentIds),
+    }),
+    Layer.mock(Persistence.ConnectionRegistrationStore)({
+      register: (registration, routes) =>
+        Effect.sync(() => {
+          catalog.current = registerConnectionInCatalog(catalog.current, registration, routes);
+        }),
+      setEnabled: (environmentId, enabled) =>
+        Effect.sync(() => {
+          catalog.current = setConnectionEnabledInCatalog(catalog.current, environmentId, enabled);
+        }),
+    }),
+    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({
+      get: (connectionId) => Effect.sync(() => find(catalog.current.profiles, connectionId)),
+    }),
+    Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
+      get: (connectionId) =>
+        Effect.sync(() =>
+          Option.map(find(catalog.current.credentials, connectionId), (value) => value.credential),
+        ),
+      put: () => Effect.void,
+    }),
+  );
+}
+
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  catalog?: { current: ConnectionCatalogDocument },
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
     layerPairingHttp(calls, options),
-    Layer.mock(Persistence.ConnectionTargetStore)({
-      list: Effect.succeed([]),
-      listDisabled: Effect.succeed([]),
-    }),
-    Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
-      setEnabled: () => Effect.void,
-    }),
+    catalog === undefined
+      ? Layer.mergeAll(
+          Layer.mock(Persistence.ConnectionTargetStore)({
+            list: Effect.succeed([]),
+            listDisabled: Effect.succeed([]),
+          }),
+          Layer.mock(Persistence.ConnectionRegistrationStore)({
+            register: () => Effect.void,
+            setEnabled: () => Effect.void,
+          }),
+          Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
+          Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
+            get: () => Effect.succeedNone,
+            put: () => Effect.void,
+          }),
+        )
+      : layerCatalogStores(catalog),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
-    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
-    Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
-      get: () => Effect.succeedNone,
-      put: () => Effect.void,
-    }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
     Layer.succeed(
       Connectivity.Connectivity,
@@ -304,6 +349,80 @@ describe("connection onboarding", () => {
       );
     }).pipe(Effect.provide(layerPairingOnboarding())),
   );
+
+  describe("pairing a saved environment whose credential the host refuses", () => {
+    const savedCatalog = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: new BearerConnectionTarget({
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          connectionId: PAIRED_PROFILE.connectionId,
+          label: PAIRED_PROFILE.label,
+        }),
+        profile: PAIRED_PROFILE,
+        credential: new BearerConnectionCredential({ token: "refused-token" }),
+      }),
+    );
+    const cases = [
+      {
+        name: "again at its saved address replaces the refused credential on one route",
+        input: PAIRING_INPUT,
+        refused: false,
+        routes: ["https://remote.example.test/"],
+        tokens: ["bearer-token"],
+      },
+      {
+        name: "at a new address from the environment's own flow retires the refused credential",
+        input: {
+          host: "lan.example.test",
+          pairingCode: "pairing-token",
+          expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+        },
+        refused: false,
+        routes: ["https://lan.example.test/", "https://remote.example.test/"],
+        tokens: ["bearer-token", "bearer-token"],
+      },
+      {
+        name: "from another server claiming it stays blocked and keeps the code",
+        input: { host: "attacker.example.test", pairingCode: "pairing-token" },
+        refused: true,
+        routes: ["https://remote.example.test/"],
+        tokens: ["refused-token"],
+      },
+    ];
+    it.effect.each(cases)("$name", ({ input, refused, routes, tokens }) => {
+      const catalog = { current: savedCatalog };
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      return Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
+
+        const outcome = yield* onboarding.registerPairing(input).pipe(Effect.result);
+
+        expect(outcome).toMatchObject(
+          refused
+            ? {
+                _tag: "Failure",
+                failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+              }
+            : { _tag: "Success" },
+        );
+        expect(calls.some((call) => call.url.endsWith("/oauth/token"))).toBe(!refused);
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+        expect(entry === undefined ? [] : connectionRoutes(entry).map(routeHttpBaseUrl)).toEqual(
+          routes,
+        );
+        expect(
+          catalog.current.targets.map(
+            (target) =>
+              catalog.current.credentials.find(
+                (value) => "connectionId" in target && value.connectionId === target.connectionId,
+              )?.credential,
+          ),
+        ).toEqual(tokens.map((token) => new BearerConnectionCredential({ token })));
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls, catalog)));
+    });
+  });
 
   it.effect("refuses a pairing link that claims a saved environment from a new address", () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
