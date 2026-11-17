@@ -741,3 +741,19 @@ it.effect.each([
       );
     }).pipe(Effect.provide(database)),
 );
+
+it.effect("adds the team chat continuity columns once, however often the schema runs", () =>
+  Effect.gen(function* () {
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+    const added = [
+      ["assistant_teams", "conversation_mode"],
+      ["decisions", "kind"],
+      ["decisions", "steps_json"],
+      ["assistant_group_tasks", "pending_followup_json"],
+    ] as const;
+    for (const [table, column] of added) {
+      assert.include(yield* columnsOf(table), column, `${table}.${column}`);
+    }
+  }).pipe(Effect.provide(database)),
+);
