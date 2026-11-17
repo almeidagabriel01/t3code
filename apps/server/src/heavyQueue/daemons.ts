@@ -28,6 +28,27 @@ const BUILD_DAEMON = /\b(?:GradleDaemon|KotlinCompileDaemon)\b/;
 export const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
   BUILD_DAEMON.test(process.command);
 
+/** Whether `ps -axo command=` output lists a Gradle or Kotlin daemon. */
+export const hasBuildDaemon = (commands: string) => BUILD_DAEMON.test(commands);
+
+/**
+ * Whether a build daemon is up anywhere on this machine: one that outlived its job is no queue
+ * job's process, so the monitor does not see it, yet its memory is already in the reading.
+ */
+export const anyBuildDaemon = Effect.fn("HeavyQueueDaemons.anyBuildDaemon")(
+  function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return hasBuildDaemon(
+      yield* spawner
+        .string(
+          ChildProcess.make("/bin/ps", ["-axo", "command="], { stdin: "ignore", stderr: "ignore" }),
+        )
+        .pipe(Effect.timeout("2 seconds")),
+    );
+  },
+  Effect.orElseSucceed(() => false),
+);
+
 /** `lsof -F pn` records: each `p<pid>` line, then the `n<name>` lines of its files. */
 const records = (text: string) => {
   const out: Array<readonly [number, string]> = [];

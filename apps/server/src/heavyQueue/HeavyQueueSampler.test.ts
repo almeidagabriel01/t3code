@@ -104,6 +104,10 @@ Summary Footprint: 6123379008 B`;
     expect(Sampler.peaksOf([entry("a", 10, true)], processes, { a: 5000 }, { a: [20] })).toEqual({
       a: { cpu: 7, memoryBytes: 5000, daemons: [20] },
     });
+    // macOS measures by footprint: the tree's own footprint is the marginal cost.
+    expect(
+      Sampler.peaksOf([entry("a", 10, true)], processes, { a: 5000 }, { a: [20] }, { a: 1200 }),
+    ).toEqual({ a: { cpu: 7, memoryBytes: 5000, treeMemoryBytes: 1200, daemons: [20] } });
   });
 
   it("survives a cycle in the parent links", () => {
@@ -317,6 +321,8 @@ describe("HeavyQueueSampler", () => {
         const measured = yield* Sampler.readFootprints(jobs);
         expect(Object.keys(measured.jobs)).toEqual(["a"]);
         expect(measured.jobs.a).toBeGreaterThan(1024 ** 2);
+        // With no daemons, the tree alone is the whole job.
+        expect(measured.trees).toEqual(measured.jobs);
         // A device's pid is read in the same call, with no job running.
         const device = yield* Sampler.readFootprints([jobs[1]!], [process.pid]);
         expect(device.jobs).toEqual({});
@@ -325,7 +331,7 @@ describe("HeavyQueueSampler", () => {
       const elsewhere = yield* Sampler.readFootprints(jobs, [process.pid]).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
       );
-      expect(elsewhere).toEqual({ jobs: {}, byPid: new Map() });
+      expect(elsewhere).toEqual({ jobs: {}, trees: {}, byPid: new Map() });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

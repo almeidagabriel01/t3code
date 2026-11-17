@@ -15,6 +15,7 @@ import {
   parseNames,
   readClues,
   unseenJavaPeers,
+  hasBuildDaemon,
 } from "./daemons.ts";
 
 const START = Date.parse("2026-01-01T00:00:10.000Z");
@@ -156,6 +157,19 @@ describe("attributeDaemons", () => {
         new Set([50]),
       ),
     ).toEqual({});
+  });
+});
+
+describe("build daemons anywhere", () => {
+  it.each([
+    ["/usr/bin/java -cp gradle.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.10", true],
+    [
+      "java -cp k.jar org.jetbrains.kotlin.daemon.KotlinCompileDaemon --daemon-runFilesPath x",
+      true,
+    ],
+    ["/bin/zsh\nnode vite.js\n", false],
+  ])("%s → %s", (commands, alive) => {
+    expect(hasBuildDaemon(commands)).toBe(alive);
   });
 });
 
