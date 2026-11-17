@@ -1643,6 +1643,35 @@ it.effect("a subagent's pending approval reaches the default once, named for its
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect(
+  "a request settled while its default notice is sent leaves no wake and no Activity item",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      const { task } = yield* otherOrigins(h);
+      yield* pendingRequest(h, { id: "r1", threadId: task });
+      yield* TestClock.adjust(MIN);
+      // It settles after the sweep read it as pending, and after its Activity mirror was made.
+      const sql = yield* SqlClient.SqlClient;
+      h.onSend.current = () =>
+        settleRequest(h, "r1").pipe(Effect.provideService(SqlClient.SqlClient, sql), Effect.orDie);
+      yield* service.notifyWaiting;
+      const notice = `assistant-task-waits:${JARVIS}:request:r1`;
+      assert.deepEqual(
+        h.dispatched.filter((command) => command.type === "queued-run.cancel").map((c) => c.runId),
+        [`run:${notice}`],
+      );
+      yield* service.notifyWaiting;
+      const mirror = (yield* decisions.list({})).find(
+        (decision) => decision.approvalRequestId === "r1",
+      );
+      assert.equal(mirror?.status, "withdrawn");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("a notice the user took out of the queue is not sent again", () => {
   const h = harness();
   return Effect.gen(function* () {

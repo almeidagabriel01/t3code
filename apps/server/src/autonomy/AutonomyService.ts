@@ -1330,7 +1330,10 @@ const make = Effect.gen(function* () {
       yield* markTold(subject, decision.id, nowMs);
   });
 
-  /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
+  /**
+   * A notice whose cause settled leaves Activity. A request's answerable mirror too: its reactor
+   * withdraws it on the resolution, but a mirror made just after that would otherwise stay.
+   */
   const withdrawSettledNotices = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     const told = yield* sql<{
@@ -1341,7 +1344,8 @@ const make = Effect.gen(function* () {
       SELECT n.subject_key, n.decision_id, d.from_thread_id FROM autonomy_needs_you n
       JOIN decisions d ON d.decision_id = n.decision_id
       WHERE d.status = 'open'
-        AND d.client_request_id LIKE ${`${DecisionService.NOTICE_REQUEST_PREFIX}%`}`;
+        AND (d.client_request_id LIKE ${`${DecisionService.NOTICE_REQUEST_PREFIX}%`}
+          OR n.subject_key LIKE 'request:%')`;
     for (const row of told) {
       const still = row.subject_key.startsWith("request:")
         ? yield* sql`
