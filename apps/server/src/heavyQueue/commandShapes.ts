@@ -47,7 +47,7 @@ export const keepsRunning = (
 
 export type Kind = "exclusive" | "heavy" | "medium";
 
-const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev:desktop|dev app/i;
+const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev app/i;
 const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
 const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i;
 const FILE_ARG = /\S+\.(test|spec)\.\w+|\S+\.(ts|tsx|js|jsx|mjs)\b/;

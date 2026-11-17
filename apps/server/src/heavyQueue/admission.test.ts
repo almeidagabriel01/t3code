@@ -74,7 +74,7 @@ describe("command kinds and signatures", () => {
     ["vp test run src/a.test.ts", "medium"],
     ["vp run check:changed", "medium"],
     ["xcrun simctl boot iPhone", "exclusive"],
-    ["vp run dev:desktop", "exclusive"],
+    ["vp run dev:desktop", "heavy"],
   ])("%s is %s", (label, kind) => {
     expect(kindOf({ label })).toBe(kind);
   });

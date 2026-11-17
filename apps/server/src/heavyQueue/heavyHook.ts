@@ -3,6 +3,7 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
+import { keepsRunning } from "./commandShapes.ts";
 import { parseLine, type Command, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
@@ -52,7 +53,7 @@ const SUBCOMMANDS: Readonly<Record<string, RegExp>> = {
 };
 /** Script names that run tests, builds or checks; dev servers stay out, they never finish. */
 const SCRIPT =
-  /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$|^dev:desktop$/;
+  /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$/;
 const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const PREFIXES = new Set([
@@ -163,6 +164,8 @@ const heavyWords = (
   flags: ReadonlyArray<string>,
 ): boolean => {
   const [first, second] = words;
+  // A dev server or a watcher never ends: it is load on this Mac, never a job that holds a slot.
+  if (keepsRunning(program, words, flags)) return false;
   if (DIRECT.has(program)) return true;
   const sub = SUBCOMMANDS[program];
   if (sub !== undefined) return first !== undefined && sub.test(first);

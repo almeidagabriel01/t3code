@@ -1009,6 +1009,19 @@ describe("t3 heavy", () => {
       );
     });
 
+    it.each([
+      ["vp", ["run", "dev"]],
+      [SH, ["-c", "cd apps/web && vp run dev:desktop"]],
+      ["npx", ["expo", "start"]],
+      ["vp", ["test", "--watch"]],
+    ])("row 14: %s %j keeps running, so it runs outside the queue", (program, args) => {
+      const modeAt = () => ({ enabled: true, runner: true });
+      expect(heavyLaunch({ program, args, where: undefined }, "/w", "/h", modeAt, false)).toEqual({
+        kind: "direct",
+        service: true,
+      });
+    });
+
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
       const modeAt = (cwd: string) => (seen.push(cwd), { enabled: true, runner: true });
@@ -1240,7 +1253,8 @@ describe("t3 heavy", () => {
       ['git add a && git commit -m "x" && vp test run', COMMITS],
       ["vp run build", "Not on the Can run on Linux list: vp run build"],
       ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
-      ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
+      // It keeps running: load on this Mac, never a queue job.
+      ["vp run dev:desktop", "light"],
       ["vp test run <<EOF\nx\nEOF", "Reads its input from this Mac: vp test run"],
       ["echo a | vp test run", "Reads its input from this Mac: vp test run"],
       ["vp test run a & vp test run b & wait", "Runs in the background: vp test run"],

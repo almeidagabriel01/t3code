@@ -25,6 +25,7 @@ import {
   UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
+import { costOf } from "./costClass.ts";
 import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
@@ -201,7 +202,7 @@ export const jobOf = (
 };
 
 export type HeavyLaunch =
-  | { readonly kind: "direct" }
+  | { readonly kind: "direct"; readonly service?: true }
   | {
       readonly kind: "queue";
       readonly cwd: string;
@@ -231,6 +232,11 @@ export const heavyLaunch = (
   // Inside a queue job the slot is already held; queuing again would wait on itself.
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
+  const line = jobLine(job.program, job.args);
+  // A dev server or a watcher never ends: it would hold a slot for good, so it runs outside.
+  if (costOf({ label: line, line }, null, 0).class === "service") {
+    return { kind: "direct", service: true };
+  }
   const mode = modeAt(job.cwd);
   if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
   const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
@@ -636,6 +642,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     (cwd) => modeFor(readDoc(dir), cwd),
     process.env[HEAVY_JOB_ENV] === "1",
   );
+  if (launch.kind === "direct" && launch.service === true) {
+    process.stderr.write(
+      `[t3 heavy] keeps running (${name ?? labelOf(program, args)}): runs outside the queue; its load counts in this Mac's reading.\n`,
+    );
+  }
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
     // The shell reports a folder it cannot enter itself, as it would without T3.
     runDirect(program, args, process.env);

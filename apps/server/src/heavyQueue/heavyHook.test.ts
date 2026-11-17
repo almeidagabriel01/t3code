@@ -91,6 +91,12 @@ const LIGHT = [
   "echo vitest",
   "test -f package.json && echo yes",
   "vp run dev",
+  // Rows 15 and 16: what keeps running is load, never a queue job.
+  "vp run dev:desktop",
+  "npx expo start",
+  "vp test --watch",
+  "pnpm exec vitest watch",
+  "cd apps/web && vp run dev",
   "pnpm install",
   "node scripts/x.mjs",
   "npx prettier --check .",

@@ -1306,7 +1306,8 @@ describe("patterns and eligibility", () => {
     ["vp run typecheck && vp run lint", "linux", null],
     ["vp run build && vp test run", "not-listed", "Not on the Can run on Linux list: vp run build"],
     ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
-    ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
+    // A dev server stays here, but no longer makes everything else wait.
+    ["vp run dev:desktop", "mac-only", "Always on this Mac: dev:desktop"],
     ["echo hi", "mac-only", "Nothing in it runs on Linux"],
     ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
     // The Linux copy has no `.git`: what diffs against it stays here, except check:changed,
