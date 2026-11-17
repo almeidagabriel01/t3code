@@ -4,7 +4,6 @@ import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   estimate,
-  kindOf,
   machineHold,
   plan,
   signatureOf,
@@ -14,6 +13,7 @@ import {
   type Run,
   type Sustained,
 } from "./admission.ts";
+import { kindOf } from "./commandShapes.ts";
 
 const GIB = 1024 ** 3;
 const NOW = Date.parse("2026-01-01T01:00:00.000Z");
@@ -108,6 +108,31 @@ describe("command kinds and signatures", () => {
     expect(signatureOf("vp test run src/a.test.ts")).not.toBe(
       signatureOf("vp test run src/b/c.test.ts"),
     );
+  });
+
+  // Keys the old signature learned in the incident (`vp fmt $=files 2>`, `git commit "feat`).
+  it.each([
+    [`files=(a.ts b.ts); vp fmt "$@" "\${files[@]}" 2>/dev/null`, "vp fmt"],
+    [`vp fmt --stdin-filepath="$f" < "$f" 2>&1 | diff -q - "$f"`, "vp fmt files"],
+    ["pnpm exec vp fmt apps/a.ts apps/b.ts", "vp fmt files"],
+    ["vp lint --no-ignore a.ts b.ts c.ts", "vp lint files"],
+    [`git commit -m "feat: x" a.ts 2>&1 | tail -8; git log --oneline -2`, "git commit"],
+    [`git commit -q -m "runex fix" apps/a.ts`, "git commit"],
+    ["pnpm --filter web run build", "pnpm web run build"],
+    ["cd apps/server && vp run typecheck 2>&1 | tail -20", "vp run typecheck"],
+    ["npx vitest run src/a.test.ts", "vitest run src/a.test.ts"],
+    ["vp lint a.ts && vp run dev", "vp lint files && vp run dev"],
+    [`bash -c 'cd /w && vp run typecheck'`, "vp run typecheck"],
+  ])("keys %s by its work, not its arguments", (line, signature) => {
+    expect(signatureOf(line)).toBe(signature);
+  });
+
+  it("keys a line by its full text when the label is cut at 200 characters", () => {
+    const line = `cd /w; files=(${"packages/x/src/a.ts ".repeat(12)}); for f in "\${files[@]}"; do vp fmt --stdin-filepath="$f" < "$f"; done`;
+    const history = { "vp fmt files": [run(1, 0.2, 2_000)] };
+    expect(
+      estimate(history, { label: line.slice(0, 200), line }, 10, HEAVY_QUEUE_DEFAULTS),
+    ).toEqual({ cpu: 1, memoryBytes: 0.2 * GIB, durationMs: 2_000 });
   });
 
   it("estimates from the median run and the most CPU, else by kind; unread CPU never counts", () => {

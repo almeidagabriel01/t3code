@@ -829,7 +829,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
   let changed = false;
   for (const gone of before.entries) {
     if (gone.startedAt === null || kept.has(gone.id)) continue;
-    const signature = signatureOf(gone.label);
+    const signature = signatureOf((gone as QueuedEntry).line ?? gone.label);
     const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
@@ -852,7 +852,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
 /** How long `entry`'s command usually takes on `runner`, from that machine's runs; null without any. */
 export const usualMs = (
   doc: Pick<QueueDoc, "history" | "linuxHistory">,
-  entry: Pick<HeavyQueueEntry, "label">,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
   runner: HeavyRunner,
 ) => medianDuration(runsOf(runner === "linux" ? doc.linuxHistory : doc.history, entry));
 

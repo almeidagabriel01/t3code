@@ -4,7 +4,9 @@
  */
 import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
 
-import { heavyRoute, heavySegment } from "./heavyHook.ts";
+import { kindOf, runTarget } from "./commandShapes.ts";
+import { filesOf, workPartsOf } from "./costClass.ts";
+import { heavyRoute } from "./heavyHook.ts";
 
 export interface Sample {
   readonly at: number;
@@ -136,54 +138,52 @@ export interface SizingLimits {
 }
 type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes">;
 
-type Kind = "exclusive" | "heavy" | "medium";
-
-const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev:desktop|dev app/i;
-const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
-const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i;
-const FILE_ARG = /\S+\.(test|spec)\.\w+|\S+\.(ts|tsx|js|jsx|mjs)\b/;
-
-/** Server-held entries are device opens; unknown commands count as heavy. */
-/** Judged from the full command line: the label is cut short for the row. */
-export const kindOf = (
-  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
-): Kind => {
-  const line = entry.line ?? entry.label;
-  if (entry.server === true || EXCLUSIVE.test(line)) return "exclusive";
-  if (HEAVY.test(line)) return "heavy";
-  if (MEDIUM.test(line) || (/\btest\b/.test(line) && FILE_ARG.test(line))) {
-    return "medium";
-  }
-  return "heavy";
-};
-
-const REDIRECT = /^\d*[<>]/;
 const TEST_RUN = /^(test|vitest|jest|playwright|pytest)$/;
+const COMMAND_WORD = /^[a-z@][\w:.@+-]*$/i;
+
+/** One work part's key: its program (past `exec`/`dlx`), subcommand words and file scope. */
+const partSignature = (part: ReturnType<typeof workPartsOf>[number]) => {
+  const { program, words } = runTarget(part.program, part.words);
+  const command: string[] = [program];
+  for (const word of words) {
+    if (command.length > (program === "git" ? 1 : 3) || !COMMAND_WORD.test(word)) break;
+    if (/\.\w{1,5}$/.test(word)) break;
+    command.push(word);
+  }
+  const files = filesOf(part);
+  const path = command.some((word) => TEST_RUN.test(word))
+    ? files?.find((file) => file !== "")
+    : undefined;
+  // A test run keeps its target's last two segments, so one file never shares the suite's runs.
+  const scope =
+    path !== undefined
+      ? path.split(/[\\/]/).filter(Boolean).slice(-2).join("/")
+      : files === null
+        ? null
+        : "files";
+  return [...command, ...(scope === null ? [] : [scope])].join(" ");
+};
 
 /**
- * The command's first words, plus the file or folder a test run names (its last two segments, so
- * any worktree and `cd` share it): one test file never shares the suite's runs. Flags and
- * redirections never count, and other paths (a commit's files) would only split one command.
+ * A command's history key, from its parsed work: program, `exec` target, subcommand words and a
+ * `files` scope. Redirections, variables, quoted arguments and commit messages never count, so
+ * any worktree, `cd` or message shares one key.
  */
-export const signatureOf = (label: string): string => {
-  const all = (heavySegment(label) ?? label).split(/\s+/).filter((word) => word !== "");
-  const words = all.filter(
-    (word, at) =>
-      !word.startsWith("-") && !REDIRECT.test(word) && !/^\d*[<>]+&?$/.test(all[at - 1] ?? ""),
-  );
-  const isPath = (word: string) => /[\\/]|\.\w{1,5}$/.test(word);
-  const command = words.filter((word) => !isPath(word)).slice(0, 4);
-  const path = command.some((word) => TEST_RUN.test(word)) ? words.find(isPath) : undefined;
-  const target = path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/");
-  return [...command, ...(target === undefined ? [] : [target])].join(" ").toLowerCase();
+export const signatureOf = (line: string): string => {
+  const parts = workPartsOf(line);
+  const key =
+    parts.length > 0
+      ? parts.map(partSignature).join(" && ")
+      : line.trim().split(/\s+/).slice(0, 4).join(" ");
+  return key.toLowerCase();
 };
 
-/** A command's recorded runs. Own keys only: a label such as `constructor` names no runs. */
+/** A command's recorded runs, keyed by its whole line. Own keys only: `constructor` names none. */
 export const runsOf = <A>(
   book: Readonly<Record<string, ReadonlyArray<A>>>,
-  entry: Pick<HeavyQueueEntry, "label">,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
 ): ReadonlyArray<A> => {
-  const signature = signatureOf(entry.label);
+  const signature = signatureOf(entry.line ?? entry.label);
   return Object.hasOwn(book, signature) ? book[signature]! : [];
 };
 
@@ -198,7 +198,10 @@ interface Cost {
  * The most CPU a command's finished runs used; undefined when none was read. Older files hold 0
  * for runs whose processes the monitor never saw, so only a positive reading counts.
  */
-export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label">) => {
+export const learnedCpu = (
+  history: History,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
+) => {
   const cpus = runsOf(history, entry).flatMap((run) =>
     typeof run.cpu === "number" && run.cpu > 0 ? [run.cpu] : [],
   );
@@ -207,7 +210,7 @@ export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label
 
 export const estimate = (
   history: History,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
   cpuCount: number,
   guesses: Guesses,
 ): Cost => {
@@ -234,7 +237,7 @@ export const estimate = (
 /** Learned to stay small; a command never seen is not light. */
 const isLight = (
   input: Pick<PlanInput, "history" | keyof SizingLimits>,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
 ) =>
   runsOf(input.history, entry).length > 0 &&
   estimate(input.history, entry, 1, input).memoryBytes < input.lightJobMegabytes * MIB;
@@ -276,7 +279,7 @@ const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sampl
 export const jobVerdict = (
   input: Pick<PlanInput, "history" | "holding" | keyof MacLimits | keyof Guesses>,
   sample: Sample,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
 ) => {
   const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
   const floor = (floorPercent / 100) * sample.totalMemoryBytes;

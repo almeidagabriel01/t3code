@@ -16,7 +16,6 @@ import {
 
 import {
   jobVerdict,
-  kindOf,
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
@@ -27,6 +26,7 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
+import { isDevServer, kindOf, PACKAGE_MANAGERS, runTarget } from "./commandShapes.ts";
 import {
   commitOnly,
   FOLDER_FLAGS,
@@ -239,16 +239,7 @@ export const needsGit = (values: ReadonlyArray<string>) =>
     return GIT_DRIVEN.test(flag ? value.replace(/=.*$/, "") : value);
   });
 
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
-const DEV_SERVER = /^(dev|start|serve|watch|preview)([:._-].*)?$/;
-const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
-  vite: /^(dev|serve|preview)?$/,
-  next: /^(dev|start)$/,
-  expo: /^start$/,
-};
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
-const EXEC = /^(exec|dlx|x)$/;
 const MAC_TOOLS = new Set(["xcodebuild", "xcrun", "simctl", "emulator", "adb", "instruments"]);
 
 /**
@@ -256,21 +247,14 @@ const MAC_TOOLS = new Set(["xcodebuild", "xcrun", "simctl", "emulator", "adb", "
  * `node_modules` are this Mac's), Xcode, simulator and emulator tools, and dev servers.
  */
 const alwaysMac = (part: Part): boolean => {
-  let { program, words } = part;
   // `npx vite`, `pnpm exec next dev`: the tool they run decides.
-  if (EXECUTORS.has(program) || (PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? ""))) {
-    const at = EXECUTORS.has(program) ? 0 : 1;
-    program = words[at]?.split("/").pop() ?? "";
-    words = words.slice(at + 1);
-  }
+  const { program, words } = runTarget(part.program, part.words);
   const [first = "", second = ""] = words;
   if (MAC_TOOLS.has(program)) return true;
   if (program === "expo" && first.startsWith("run")) return true;
-  if (DEV_PROGRAMS[program]?.test(first) === true) return true;
-  if (!PACKAGE_MANAGERS.has(program)) return false;
-  const script = first === "run" || first === "run-script" ? second : first;
+  if (isDevServer(program, words)) return true;
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
-  return INSTALLS.test(first) || INSTALLS.test(second) || DEV_SERVER.test(script);
+  return PACKAGE_MANAGERS.has(program) && (INSTALLS.test(first) || INSTALLS.test(second));
 };
 
 const PYTHON =
