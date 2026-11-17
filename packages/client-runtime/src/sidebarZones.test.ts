@@ -9,6 +9,7 @@ import {
   folderAttention,
   folderIndicator,
   folderIndicatorDetail,
+  folderIndicatorTarget,
   needsYouCards,
   needsYouDue,
   needsYouItems,
@@ -349,6 +350,24 @@ describe("indicators", () => {
         groupProjectIds: [ProjectId.make("p1")],
       }),
     ).toEqual(expected);
+  });
+
+  it.each([
+    ["nothing waits", [scope("p1", { unreadCount: 2 })], null],
+    ["an older server names no request", [scope("p1", { waiting: true })], null],
+    [
+      "the first tab that names one",
+      [
+        scope(null, { waiting: true }),
+        scope("p1", {
+          waiting: true,
+          waitingRequest: { requestId: "m7", title: "Fix", reason: "paused", assistantId: null },
+        }),
+      ],
+      { tab: "project:p1", requestId: "m7" },
+    ],
+  ] as const)("a folder's click target when %s", (_name, scopes, expected) => {
+    expect(folderIndicatorTarget({ scopes: [...scopes] })).toEqual(expected);
   });
 
   it.each([

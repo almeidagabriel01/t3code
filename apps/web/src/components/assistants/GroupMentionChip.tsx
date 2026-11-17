@@ -16,6 +16,40 @@ export interface GroupMentionProject {
  * A member (`@handle`, a name, or `everyone`) or a group project (`#slug`) as a chip in the
  * composer's chip family: the member's face or the project's icon, then the name.
  */
+/** A project in the chip family: its favicon, else a folder, then its name. */
+export function GroupProjectChip({
+  environmentId,
+  projectId,
+  label,
+  ...rest
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string | undefined;
+  readonly label: string;
+  readonly "data-testid"?: string;
+  readonly "data-mention-kind"?: string;
+}) {
+  const known = useProjects().find(
+    (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+  );
+  return (
+    <ContextChip
+      kind="mention"
+      data-testid="group-project-chip"
+      {...rest}
+      contentEditable={false}
+      spellCheck={false}
+    >
+      {known ? (
+        <ProjectFavicon project={known} className="size-[1em] self-center" />
+      ) : (
+        <FolderIcon aria-hidden />
+      )}
+      <ContextChipLabel>{label}</ContextChipLabel>
+    </ContextChip>
+  );
+}
+
 export function GroupMentionChip(props: {
   readonly kind: "member" | "project";
   /** The handle or name after `@`, or the slug after `#`. */
@@ -24,7 +58,6 @@ export function GroupMentionChip(props: {
   readonly projects: ReadonlyArray<GroupMentionProject>;
   readonly environmentId: EnvironmentId;
 }) {
-  const environmentProjects = useProjects();
   const target = assistantGroupMentionTarget(
     props.kind,
     props.value,
@@ -33,25 +66,14 @@ export function GroupMentionChip(props: {
   );
   if (props.kind === "project") {
     const project = target?.kind === "project" ? target.project : undefined;
-    const known = environmentProjects.find(
-      (candidate) =>
-        candidate.environmentId === props.environmentId && candidate.id === project?.id,
-    );
     return (
-      <ContextChip
-        kind="mention"
+      <GroupProjectChip
+        environmentId={props.environmentId}
+        projectId={project?.id}
+        label={project?.name ?? props.value}
         data-testid="group-mention-chip"
         data-mention-kind="project"
-        contentEditable={false}
-        spellCheck={false}
-      >
-        {known ? (
-          <ProjectFavicon project={known} className="size-[1em] self-center" />
-        ) : (
-          <FolderIcon aria-hidden />
-        )}
-        <ContextChipLabel>{project?.name ?? props.value}</ContextChipLabel>
-      </ContextChip>
+      />
     );
   }
   const member = target?.kind === "member" ? (target.member ?? undefined) : undefined;

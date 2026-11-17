@@ -1,7 +1,6 @@
 import {
   assistantIdFromThreadId,
   type AssistantTeamChat,
-  type AssistantTeamChatWaitingRequest,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
@@ -13,7 +12,9 @@ import {
 import {
   assistantGroupChatWaiting,
   assistantGroupProjectLabel,
-  assistantGroupTaskReasonLabel,
+  assistantGroupTabKey,
+  assistantGroupWaitingWhy,
+  type AssistantGroupTabKey,
 } from "./assistantGroupChat.ts";
 import { sortByAttention, type AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
@@ -412,25 +413,6 @@ export function folderIndicator(input: {
 
 const FOLDER_DETAIL_LINES = 4;
 
-function waitingWhy(request: AssistantTeamChatWaitingRequest): string {
-  switch (request.reason) {
-    case "wait":
-      return "Waiting for your answer";
-    case "project":
-      return "Needs a project";
-    case "failed":
-      return (
-        assistantGroupTaskReasonLabel({ status: "failed", reason: request.taskReason ?? null }) ??
-        "Failed"
-      );
-    case "paused":
-      return (
-        assistantGroupTaskReasonLabel({ status: "paused", reason: request.taskReason ?? null }) ??
-        "Paused"
-      );
-  }
-}
-
 /**
  * Where a group folder's indicator comes from, one line per tab and kind ("<kind> · <tab>[:
  * <request>]"): what needs the user, then work running, then unread. At most four, then "+N".
@@ -458,7 +440,7 @@ export function folderIndicatorDetail(input: {
       const request = scope.waitingRequest;
       return [
         `Needs you · ${tab(scope.projectId)}${
-          request === undefined ? "" : `: ${request.title} (${waitingWhy(request)})`
+          request === undefined ? "" : `: ${request.title} (${assistantGroupWaitingWhy(request)})`
         }`,
       ];
     }),
@@ -472,6 +454,17 @@ export function folderIndicatorDetail(input: {
   return lines.length <= FOLDER_DETAIL_LINES
     ? lines
     : [...lines.slice(0, FOLDER_DETAIL_LINES), `+${lines.length - FOLDER_DETAIL_LINES}`];
+}
+
+/** Where a click on a group's indicator leads: the tab and request of its first wait, if known. */
+export function folderIndicatorTarget(chat: Pick<AssistantTeamChat, "scopes"> | undefined): {
+  readonly tab: AssistantGroupTabKey;
+  readonly requestId: string;
+} | null {
+  const scope = chat?.scopes?.find((entry) => entry.waiting && entry.waitingRequest !== undefined);
+  return scope?.waitingRequest === undefined
+    ? null
+    : { tab: assistantGroupTabKey(scope.projectId), requestId: scope.waitingRequest.requestId };
 }
 
 /** The words every screen shows for an indicator; an assistant reads Working, a group N running. */

@@ -5,6 +5,7 @@ import {
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   assistantGroupCountsAsUnread,
   assistantGroupFinishedScopes,
+  assistantGroupTaskNeedsUser,
   assistantGroupTasksNeedUser,
   assistantGroupInstructionBody,
   assistantGroupMentions,
@@ -17,6 +18,7 @@ import {
   type AssistantTeam,
   type AssistantTeamChat,
   type AssistantTeamChatScope,
+  type AssistantTeamChatWaitingReason,
   type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantGroupMessageId,
@@ -43,6 +45,7 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
+import type { AssistantMood } from "./assistantRobot.ts";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
@@ -317,7 +320,7 @@ export function assistantGroupRequestProject(
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
 /** The tab of a project's requests; General for those with none. */
-function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
   return projectId === null ? "general" : `project:${projectId}`;
 }
 
@@ -948,6 +951,52 @@ export function assistantGroupSendContextEqual(
 }
 
 /**
+ * The session a draft lands in, for the composer's context meter: the member who answers (a
+ * resumed task's owner, the one routing names, else the lead) and its thread in the replied request.
+ * Null for a new request, which opens fresh threads, and while that member has no task loaded there.
+ */
+export function assistantGroupComposerSession(input: {
+  readonly state: AssistantGroupChatState | null;
+  /** The request a reply continues; null for a new request. */
+  readonly requestId: AssistantGroupMessageId | null;
+  readonly text: string;
+  readonly members: ReadonlyArray<Recipient>;
+  readonly leadId: AssistantId | null;
+  readonly context: AssistantGroupSendContext;
+}): AssistantGroupTask | null {
+  const { state, requestId, context } = input;
+  if (state === null || requestId === null) return null;
+  const { replyOwner } = context;
+  const owners =
+    replyOwner === null
+      ? []
+      : input.members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
+  const decision = routeGroupMessage({
+    text: input.text,
+    members: input.members,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
+    stopped: context.stopped,
+    fromUser: true,
+    requestOwnerId: context.request?.ownerId ?? null,
+  });
+  if (decision?.kind === "resume") {
+    return state.tasks.get(decision.taskId as AssistantGroupTaskId) ?? null;
+  }
+  // A draft to several members lands in several sessions: no one meter speaks for them.
+  if (decision !== null && decision.ids.length > 1) return null;
+  const ownerId = decision?.ids[0] ?? input.leadId;
+  let newest: AssistantGroupTask | null = null;
+  for (const task of state.tasks.values()) {
+    const taskRequest = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (task.ownerId !== ownerId || taskRequest !== requestId) continue;
+    if (newest === null || newest.updatedAt < task.updatedAt) newest = task;
+  }
+  return newest;
+}
+
+/**
  * The line under the composer: who a draft reaches, or why the server would refuse it, worked out
  * as `AssistantGroups.post` does before routing. The server still decides.
  */
@@ -1398,6 +1447,120 @@ export function assistantGroupTaskReasonLabel(
   return null;
 }
 
+/** Why a request waits on the user, as the folder tooltip and the "Waiting on you" strip say it. */
+export function assistantGroupWaitingWhy(request: {
+  readonly reason: AssistantTeamChatWaitingReason;
+  readonly taskReason?: string | null | undefined;
+}): string {
+  switch (request.reason) {
+    case "wait":
+      return "Waiting for your answer";
+    case "project":
+      return "Needs a project";
+    case "failed":
+    case "paused":
+      return (
+        assistantGroupTaskReasonLabel({
+          status: request.reason,
+          reason: request.taskReason ?? null,
+        }) ?? (request.reason === "failed" ? "Failed" : "Paused")
+      );
+  }
+}
+
+export interface AssistantGroupWaitingItem {
+  readonly requestId: AssistantGroupMessageId;
+  readonly title: string;
+  readonly projectId: ProjectId | null;
+  readonly reason: AssistantTeamChatWaitingReason;
+  /** The member whose wait or task it is; null for the lead's project question. */
+  readonly assistantId: AssistantId | null;
+  /** The paused or failed task the user resumes; null for a wait or a project question. */
+  readonly task: AssistantGroupTask | null;
+}
+
+/**
+ * The requests that wait on the user, oldest first, one item each, by the rule the server's
+ * `waiting` follows: an open wait, the lead asking for a project, or tasks that need the user
+ * (one asked for before the newest boundary no longer counts). Open tasks come with the snapshot;
+ * a wait off the loaded page comes from its tab's `waitingRequest`, the oldest there.
+ */
+export function assistantGroupWaitingRequests(
+  state: AssistantGroupChatState,
+  scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "waitingRequest">> = [],
+): ReadonlyArray<AssistantGroupWaitingItem> {
+  const rootOf = (requestId: AssistantGroupMessageId) =>
+    state.messages.get(requestId) ?? state.requests.get(requestId) ?? null;
+  const item = (
+    requestId: AssistantGroupMessageId,
+    rest: Pick<AssistantGroupWaitingItem, "reason" | "assistantId" | "task">,
+  ): AssistantGroupWaitingItem => {
+    const root = rootOf(requestId);
+    return { requestId, title: titleOf(root), projectId: root?.projectId ?? null, ...rest };
+  };
+  const found = new Map<AssistantGroupMessageId, AssistantGroupWaitingItem>();
+  const tasksOf = new Map<AssistantGroupMessageId, AssistantGroupTask[]>();
+  for (const task of state.tasks.values()) {
+    const requestId = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (requestId === undefined) continue;
+    tasksOf.set(requestId, [...(tasksOf.get(requestId) ?? []), task]);
+  }
+  let boundarySeq = 0;
+  const messages = [...state.messages.values()].sort((a, b) => a.seq - b.seq);
+  for (const message of messages) {
+    if (message.kind === "boundary") boundarySeq = message.seq;
+    const requestId = message.requestId;
+    if (requestId === undefined || found.has(requestId)) continue;
+    if (message.waiting?.resolved === false) {
+      found.set(
+        requestId,
+        item(requestId, { reason: "wait", assistantId: message.assistantId ?? null, task: null }),
+      );
+    } else if (
+      message.asksProject === true &&
+      rootOf(requestId)?.projectId === undefined &&
+      !tasksOf.has(requestId)
+    ) {
+      found.set(requestId, item(requestId, { reason: "project", assistantId: null, task: null }));
+    }
+  }
+  // A task's own asking message dates it; one off the page is older than any loaded boundary.
+  const afterBoundary = (task: AssistantGroupTask) =>
+    boundarySeq === 0 || (rootOf(task.requestMessageId)?.seq ?? 0) > boundarySeq;
+  for (const [requestId, tasks] of tasksOf) {
+    if (found.has(requestId) || !assistantGroupTasksNeedUser(tasks)) continue;
+    const task = tasks
+      .filter((entry) => afterBoundary(entry) && assistantGroupTaskNeedsUser(entry, tasks))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (task === undefined) continue;
+    found.set(
+      requestId,
+      item(requestId, {
+        reason: task.status === "failed" ? "failed" : "paused",
+        assistantId: task.ownerId,
+        task,
+      }),
+    );
+  }
+  for (const { projectId, waitingRequest } of scopes) {
+    if (waitingRequest === undefined) continue;
+    const requestId = waitingRequest.requestId as AssistantGroupMessageId;
+    if (found.has(requestId)) continue;
+    found.set(requestId, {
+      requestId,
+      title: waitingRequest.title,
+      projectId,
+      reason: waitingRequest.reason,
+      assistantId: waitingRequest.assistantId,
+      task: null,
+    });
+  }
+  // A request with no loaded root lies before the page.
+  const seqOf = (requestId: AssistantGroupMessageId) =>
+    rootOf(requestId)?.seq ?? Number.NEGATIVE_INFINITY;
+  return [...found.values()].sort((a, b) => seqOf(a.requestId) - seqOf(b.requestId));
+}
+
 /** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
 export function assistantGroupWaitingReason(
   task: Pick<AssistantGroupTask, "status" | "reason">,
@@ -1576,6 +1739,94 @@ export const assistantGroupRunningTasks = (
 
 export const assistantGroupRunningCount = (state: AssistantGroupChatState): number =>
   assistantGroupRunningTasks(state).length;
+
+/** A member at work: its newest open task, where it runs, and since when it is in that state. */
+export interface AssistantGroupMemberWork {
+  readonly task: AssistantGroupTask;
+  readonly projectId: ProjectId | null;
+}
+
+/** One line per member with open work, its newest task, most recently changed first. */
+export function assistantGroupMemberWork(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupMemberWork> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of state.tasks.values()) {
+    if (!OPEN_STATUSES.has(task.status)) continue;
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt < task.updatedAt) newest.set(task.ownerId, task);
+  }
+  return [...newest.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map((task) => ({
+      task,
+      projectId: assistantGroupRequestProject(
+        state,
+        task.requestId ?? state.messages.get(task.requestMessageId)?.requestId,
+      ),
+    }));
+}
+
+/** The face a member shows for one task: working, held by a limit, stopped on the user, failed or done. */
+export const ASSISTANT_GROUP_TASK_MOOD: Record<AssistantGroupTaskStatus, AssistantMood> = {
+  queued: "working",
+  running: "working",
+  waiting: "working",
+  usage_limited: "limited",
+  paused: "needs",
+  failed: "failed",
+  completed: "idle",
+  cancelled: "idle",
+};
+
+/** The members with a task in a request, each once by its newest task, in the order they joined it. */
+export function assistantGroupRequestOwners(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<AssistantGroupTask> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of [...tasks].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt <= task.updatedAt)
+      newest.set(task.ownerId, task);
+  }
+  return [...newest.values()];
+}
+
+/**
+ * A request's tasks as a tree, depth first: each root, then what it handed off, then their
+ * replies. A task whose parent is not loaded, or that sits in a parent cycle, starts its own branch.
+ */
+export function assistantGroupTaskTree(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<{ readonly task: AssistantGroupTask; readonly depth: number }> {
+  const ordered = [...tasks].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const ids = new Set(ordered.map((task) => task.id));
+  const children = new Map<string, AssistantGroupTask[]>();
+  for (const task of ordered) {
+    const parent = task.parentId !== null && ids.has(task.parentId) ? task.parentId : "";
+    children.set(parent, [...(children.get(parent) ?? []), task]);
+  }
+  const rows: Array<{ readonly task: AssistantGroupTask; readonly depth: number }> = [];
+  const seen = new Set<string>();
+  const walk = (parent: string, depth: number) => {
+    for (const task of children.get(parent) ?? []) {
+      if (seen.has(task.id)) continue;
+      seen.add(task.id);
+      rows.push({ task, depth });
+      walk(task.id, depth + 1);
+    }
+  };
+  walk("", 0);
+  for (const task of ordered) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    rows.push({ task, depth: 0 });
+    walk(task.id, 1);
+  }
+  return rows;
+}
 
 /** The divider's wording, for a boundary message's `new` or `compact` text. */
 export function assistantGroupBoundaryLabel(message: Pick<AssistantGroupMessage, "text">): string {

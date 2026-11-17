@@ -14,7 +14,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldCompactBeforeSend } from "./contextWindow.ts";
+import {
+  contextWindowReading,
+  shouldCompactBeforeSend,
+  type ContextWindowSnapshot,
+} from "./contextWindow.ts";
 import type { ThreadStructure } from "./models.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -260,5 +264,58 @@ describe("shouldCompactBeforeSend", () => {
     expect(shouldCompactBeforeSend(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected,
     );
+  });
+});
+
+describe("contextWindowReading", () => {
+  const usage = (
+    usedTokens: number,
+    maxTokens: number | null,
+    autoCompactThreshold: number | null = null,
+  ) =>
+    ({
+      usedTokens,
+      maxTokens,
+      autoCompactThreshold,
+      usedPercentage: maxTokens === null ? null : (usedTokens / maxTokens) * 100,
+    }) as ContextWindowSnapshot;
+  it.each([
+    [
+      "a known window",
+      usage(50_000, 200_000),
+      { usedPercent: 25, compactAtPercent: null, tone: null },
+    ],
+    [
+      "near the limit",
+      usage(165_000, 200_000),
+      { usedPercent: 83, compactAtPercent: null, tone: "warning" },
+    ],
+    [
+      "at the limit",
+      usage(190_000, 200_000),
+      { usedPercent: 95, compactAtPercent: null, tone: "error" },
+    ],
+    [
+      "past the limit, clamped",
+      usage(250_000, 200_000),
+      { usedPercent: 100, compactAtPercent: null, tone: "error" },
+    ],
+    [
+      "an unknown window",
+      usage(50_000, null),
+      { usedPercent: null, compactAtPercent: null, tone: null },
+    ],
+    [
+      "a compaction point inside",
+      usage(10, 200_000, 150_000),
+      { usedPercent: 0, compactAtPercent: 75, tone: null },
+    ],
+    [
+      "a compaction point outside",
+      usage(10, 200_000, 300_000),
+      { usedPercent: 0, compactAtPercent: null, tone: null },
+    ],
+  ] as const)("%s", (_name, snapshot, expected) => {
+    expect(contextWindowReading(snapshot)).toMatchObject(expected);
   });
 });
