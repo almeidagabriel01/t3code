@@ -284,7 +284,8 @@ const HEAVY_PREFILTER = STARTS.flatMap((start) => [
  */
 export const hookScript = (hookCommand: string) => `#!/bin/sh
 # Written by T3 Code for its Claude Code hook (Settings > Maintenance > Heavy work).
-[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && exit 0
+# Read the input first even when leaving: a writer racing an early exit gets EPIPE.
+[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && { cat >/dev/null; exit 0; }
 input=
 while IFS= read -r line || [ -n "$line" ]; do input="$input$line
 "; done
