@@ -9,6 +9,8 @@ type Item = { message: { id: string } };
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
+    /** What `useGroupDraftSkills` resolves for the draft. */
+    skills: [] as unknown[],
     modelPick: null as unknown,
     pickListeners: new Set<() => void>(),
     /** Group threads that wait on the user's approval. */
@@ -44,7 +46,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     drafts: new Map<string, string>(),
     draftListeners: new Set<() => void>(),
     flush: vi.fn(),
-    editor: null as null | { onSubmit?: (alternate: boolean) => void },
+    editor: null as null | { onSubmit?: (alternate: boolean) => void; skills?: unknown },
     prepare: vi.fn(),
     release: vi.fn(),
     converse: vi.fn(),
@@ -262,7 +264,25 @@ vi.mock("../threads/ComposerAttachmentButton", () => ({
     </>
   ),
 }));
-vi.mock("../threads/ComposerCommandPopover", () => ({ ComposerPopoverSurface: Children }));
+vi.mock("../threads/ComposerCommandPopover", () => ({
+  ComposerPopoverSurface: Children,
+  ComposerCommandPopover: (props: {
+    items: ReadonlyArray<{ id: string; label: string }>;
+    triggerKind: string;
+    onSelect: (item: unknown) => void;
+  }) => (
+    <div data-testid="skill-menu" data-kind={props.triggerKind}>
+      {props.items.map((item) => (
+        <button
+          key={item.id}
+          aria-label={`Use ${item.label}`}
+          onClick={() => props.onSelect(item)}
+        />
+      ))}
+    </div>
+  ),
+}));
+vi.mock("./useGroupDraftSkills", () => ({ useGroupDraftSkills: () => mocks.skills }));
 vi.mock("../threads/ThreadComposer", () => ({ ComposerSurface: Children }));
 vi.mock("../threads/AssistantMarkdownContent", () => ({
   AssistantMarkdownContent: (props: {
@@ -776,6 +796,10 @@ vi.mock("../../state/assistants", async () => {
     }),
   };
 });
+vi.mock("./GroupContextMeter", () => ({ GroupContextMeter: () => null }));
+vi.mock("../threads/use-visible-second-clock", () => ({
+  useVisibleSecondClock: () => Date.parse("2026-11-07T10:01:00Z"),
+}));
 vi.mock("../../components/ui/useBarInset", () => ({ useBarInset: () => 100 }));
 vi.mock("../../components/ui/GlassSurface", async () => ({
   GlassSurface: (await import("react-native")).View,
@@ -980,6 +1004,7 @@ beforeEach(() => {
     requestIds: [],
     decisions: [],
     voicePhase: "idle",
+    skills: [],
     shells: new Map(),
     worktrees: new Map(),
     threadProjects: new Map(),
@@ -1225,6 +1250,25 @@ describe("group composer", () => {
     expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@ada do it" });
     expect(input().value).toBe("");
     expect(mocks.scrollToEnd).toHaveBeenCalledOnce();
+  });
+
+  it("offers the recipient's skills after $ or /, inserts one, and leaves @ to members", async () => {
+    const deploy = { name: "deploy", displayName: "Deploy", enabled: true, userInvocable: true };
+    render();
+    await type("$dep");
+    // No skills for the recipient: `$` opens nothing.
+    expect(container.querySelector('[data-testid="skill-menu"]')).toBeNull();
+    mocks.skills = [deploy];
+    await type("ship $dep");
+    expect(mocks.editor?.skills).toEqual([deploy]);
+    await click("Use Deploy");
+    expect(input().value).toBe("ship $deploy ");
+    await type("/dep");
+    await click("Use skill:deploy");
+    expect(input().value).toBe("$deploy ");
+    await type("@");
+    expect(container.querySelector('[data-testid="skill-menu"]')).toBeNull();
+    expect(byLabel("Mention Ada")).not.toBeNull();
   });
 
   it("previews everyone, the lead's routing and the missing mention", async () => {
@@ -1482,6 +1526,38 @@ describe("task cards", () => {
     await openFirstConversation();
     expect(mocks.selectDetail).toHaveBeenCalledWith(THREAD);
     expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("shows who works on what, a request's owners and its task tree, a removed member too", async () => {
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@beto go", requestId: "m1" })],
+      [
+        task("t1", "running", "beto", { requestId: "m1" }),
+        task("t22", "completed", "gone", {
+          kind: "child",
+          parentId: "t1",
+          rootId: "t1",
+          requestId: "m1",
+        }),
+      ],
+    );
+    render();
+    const labels = (testId: string) =>
+      [...container.querySelectorAll(`[data-testid="${testId}"] [aria-label]`)].map((node) =>
+        node.getAttribute("aria-label"),
+      );
+    // Only open work is pinned; the running task has run from 10:00:02 to the clock's 10:01:00.
+    expect(labels("group-member-work")).toEqual(["Beto, Running, 58s. Open thread"]);
+    expect(labels("group-request-owners")).toEqual([
+      "Beto, Running. Open thread",
+      "Removed member, Completed. Open thread",
+    ]);
+    expect(labels("group-task-tree")).toEqual([
+      "Beto, Running, 58s. Open thread",
+      "Removed member, Completed, 6s. Open thread",
+    ]);
+    await click("Beto, Running, 58s. Open thread");
+    expect(mocks.selectDetail).toHaveBeenCalledWith(THREAD);
   });
 });
 
@@ -2039,7 +2115,7 @@ describe("requests", () => {
     tabbed();
     const list = container.querySelector('[data-testid="list"]')!;
     expect(list.getAttribute("data-inset-top")).toBe(android ? null : "44");
-    expect(container.querySelector('[data-testid="group-tabs-glass"]') === null).toBe(android);
+    expect(container.querySelector('[data-testid="group-pinned-rows"]') === null).toBe(android);
     // In flow on Android it sits above the list; pinned on iOS it draws over it, after it.
     const row = container.querySelector('[data-testid="group-tabs"]')!;
     expect(Boolean(row.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
@@ -2205,10 +2281,13 @@ describe("requests", () => {
       [...container.querySelectorAll('[data-testid="group-request-line"] button')].map((line) =>
         line.getAttribute("aria-label"),
       );
+    // Each line ends with its owners, each opening that member's thread.
     expect(lines()).toEqual([
       "Fix build, Finished, Alpha. Expand request",
+      "Ada, Completed. Open thread",
       "ship it, Needs project. Expand request",
       "Review, Working, Beta. Expand request",
+      "Beto, Running. Open thread",
       "Old, Routing, Removed project. Expand request",
     ]);
     await click("Review, Working, Beta. Expand request");

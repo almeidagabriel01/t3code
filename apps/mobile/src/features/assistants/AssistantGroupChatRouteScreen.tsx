@@ -13,6 +13,7 @@ import {
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
+  assistantGroupMemberWork,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
   assistantGroupLandedPick,
@@ -67,6 +68,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
   type Ref,
 } from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
@@ -144,7 +146,8 @@ import {
   type GroupSendResult,
   type GroupSendRouting,
 } from "./GroupComposer";
-import { GroupProjectTabs } from "./GroupProjectTabs";
+import { GroupMemberWorkStrip, RequestOwners, RequestTaskTree } from "./GroupMemberWork";
+import { GroupPinnedRows, GroupProjectTabs } from "./GroupProjectTabs";
 import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
 import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
@@ -748,20 +751,25 @@ function RequestHeader(props: {
   readonly projectName: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  /** The request's owners, each opening its thread. */
+  readonly owners: ReactNode;
 }) {
   const { block } = props;
   if (!props.expanded) {
     const activity = assistantGroupActivity(block.status);
     return (
-      <View testID="group-request-line" className="mx-3 mt-4">
-        <TaskEventActivityRow
-          title={block.title}
-          status={activity.status}
-          label={activity.label}
-          project={props.projectName}
-          onOpen={props.onToggle}
-          action="Open request"
-        />
+      <View testID="group-request-line" className="mx-3 mt-4 flex-row items-center gap-1">
+        <View className="min-w-0 flex-1">
+          <TaskEventActivityRow
+            title={block.title}
+            status={activity.status}
+            label={activity.label}
+            project={props.projectName}
+            onOpen={props.onToggle}
+            action="Open request"
+          />
+        </View>
+        {props.owners}
       </View>
     );
   }
@@ -807,6 +815,7 @@ function RequestHeader(props: {
           )}
         </View>
       </View>
+      {props.owners}
     </Pressable>
   );
 }
@@ -817,19 +826,23 @@ function AllRequestLine(props: {
   readonly chip: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly owners: ReactNode;
 }) {
   const activity = assistantGroupActivity(props.block.status);
   return (
-    <View testID="group-request-line" className="mx-3 mt-4">
-      <TaskEventActivityRow
-        title={props.block.title}
-        status={activity.status}
-        label={activity.label}
-        {...(props.chip === null ? {} : { chip: { label: props.chip } })}
-        actionLabel={props.expanded ? "Collapse" : "Expand"}
-        action={props.expanded ? "Collapse request" : "Expand request"}
-        onOpen={props.onToggle}
-      />
+    <View testID="group-request-line" className="mx-3 mt-4 flex-row items-center gap-1">
+      <View className="min-w-0 flex-1">
+        <TaskEventActivityRow
+          title={props.block.title}
+          status={activity.status}
+          label={activity.label}
+          {...(props.chip === null ? {} : { chip: { label: props.chip } })}
+          actionLabel={props.expanded ? "Collapse" : "Expand"}
+          action={props.expanded ? "Collapse request" : "Expand request"}
+          onOpen={props.onToggle}
+        />
+      </View>
+      {props.owners}
     </View>
   );
 }
@@ -864,9 +877,12 @@ function RequestFooter(props: {
   readonly disabled: boolean;
   readonly onPickProject: (project: GroupComposerProject) => void;
   readonly onReply: () => void;
+  /** The request's tasks as a tree, when more than one member works it. */
+  readonly tree: ReactNode;
 }) {
   return (
     <View className="gap-2 px-4 pb-1 pt-1.5">
+      {props.tree}
       {props.block.status === "needs-project" && props.projects.length > 0 ? (
         <View testID="group-request-projects" className="gap-1.5">
           <Text className="text-xs text-foreground-muted">Pick a project for this request</Text>
@@ -941,7 +957,18 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
     groupProjectIds,
     environmentProjects,
   ).map((id) => ({ id, name: projectName(id) }));
-  return { team, everyone, byId, members, groupProjects, projectName };
+  // Only current members are named on work: anyone else shows as a removed member.
+  const memberById = new Map<string, Assistant>(members.map((member) => [member.id, member]));
+  return { team, everyone, byId, members, memberById, groupProjects, projectName };
+}
+
+/** Opens a member's thread by id, so the tablet sidebar's chat needs no route. */
+function useOpenGroupThread(environmentId: EnvironmentId) {
+  const selectDetail = useSelectWorkspaceDetail();
+  return (threadId: string) => {
+    const params = { environmentId: String(environmentId), threadId: ThreadId.make(threadId) };
+    selectDetail({ name: "Thread", params });
+  };
 }
 
 /** What the screen asks of its feed, which remounts per tab. */
@@ -966,15 +993,14 @@ function GroupFeed({
   /** null when the group has no tabs: every request, as before tabs. */
   readonly tab: AssistantGroupTab | null;
   readonly live: AssistantGroupChatState | null;
-  /** The pinned tab row's height on iOS, added under the bar's own inset. */
+  /** The pinned rows' height on iOS, added under the bar's own inset. */
   readonly topInset: number | undefined;
   readonly onReply: (target: GroupReply) => void;
 }) {
   const { environmentId, team, tab, live, topInset } = props;
   const teamId = team.id;
   const { themeAppearance } = useAppearancePreferences();
-  const { byId, members, groupProjects, projectName } = props.people;
-  const selectDetail = useSelectWorkspaceDetail();
+  const { byId, members, memberById, groupProjects, projectName } = props.people;
   const markdownStyles = useMarkdownStyles();
   const links = useMarkdownLinkHost({
     environmentId,
@@ -1122,10 +1148,7 @@ function GroupFeed({
     if (!reply.ok) Dialog.alert("Could not update the task", reply.message);
   };
 
-  const openThread = (threadId: string) => {
-    const params = { environmentId: String(environmentId), threadId: ThreadId.make(threadId) };
-    selectDetail({ name: "Thread", params });
-  };
+  const openThread = useOpenGroupThread(environmentId);
 
   const requestProject = (requestId: AssistantGroupMessage["requestId"]) =>
     chat === null ? null : assistantGroupRequestProject(chat, requestId);
@@ -1148,6 +1171,8 @@ function GroupFeed({
     if (!reply.ok) Dialog.alert("Could not set the project", reply.message);
   };
 
+  const work = { environmentId, members: memberById, onOpenThread: openThread };
+
   const toggle = (block: AssistantGroupRequestBlock, expanded: boolean) =>
     setToggles((current) => new Map(current).set(block.requestId, !expanded));
 
@@ -1160,7 +1185,7 @@ function GroupFeed({
           ref={list}
           renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
           className="flex-1"
-          // Added to the bar's automatic inset, so the pinned tab row covers nothing.
+          // Added to the bar's automatic inset, so the pinned rows cover nothing.
           contentInset={topInset === undefined ? undefined : { top: topInset }}
           scrollIndicatorInsets={topInset === undefined ? undefined : { top: topInset }}
           data={feedEntries}
@@ -1220,6 +1245,9 @@ function GroupFeed({
                   chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
                   expanded={item.expanded}
                   onToggle={() => toggle(item.block, item.expanded)}
+                  owners={
+                    <RequestOwners {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
+                  }
                 />
               ) : (
                 <RequestHeader
@@ -1229,11 +1257,17 @@ function GroupFeed({
                   }
                   expanded={item.expanded}
                   onToggle={() => toggle(item.block, item.expanded)}
+                  owners={
+                    <RequestOwners {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
+                  }
                 />
               )
             ) : item.kind === "footer" ? (
               <RequestFooter
                 block={item.block}
+                tree={
+                  <RequestTaskTree {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
+                }
                 projects={groupProjects}
                 disabled={archived || !actions.canPost}
                 onPickProject={(project) => void pickProject(item.block, project)}
@@ -1327,6 +1361,7 @@ export function AssistantGroupChatRouteScreen({
   const openInfo = useOpenAssistantInfo();
   const projects = useProjects();
   const people = useGroupPeople(environmentId, teamId);
+  const openThread = useOpenGroupThread(environmentId);
   const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
   const navigation = useNavigation();
@@ -1368,7 +1403,7 @@ export function AssistantGroupChatRouteScreen({
   const [projectPick, setProjectPick] = useState<AssistantGroupProjectPick | null>(null);
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
-  const [tabsHeight, setTabsHeight] = useState(0);
+  const [pinnedHeight, setPinnedHeight] = useState(0);
   // Another tab, chosen or not (the saved one loading, a removed one), drops the picks for good,
   // and an open reply, which would answer a request out of view; the draft itself stays.
   if (assistantGroupTabPick(projectPick, tabKey) !== projectPick) setProjectPick(null);
@@ -1476,14 +1511,21 @@ export function AssistantGroupChatRouteScreen({
   const converseDisabled = !flows.canConverse || team.chat?.working === true;
   // The server refuses these while tasks run; the menu says why instead of only greying them out.
   const converseHint = team.chat?.working === true ? { subtitle: "Stop its tasks first" } : {};
-  const tabRow =
-    tabs === null || tab === null ? null : (
-      <GroupProjectTabs
-        tabs={tabs}
-        activeKey={tab.key}
-        onSelect={selectTab}
-        onHeight={setTabsHeight}
-      />
+  const memberWork = live === null ? [] : assistantGroupMemberWork(live);
+  const pinned =
+    (tabs === null || tab === null) && memberWork.length === 0 ? null : (
+      <GroupPinnedRows onHeight={setPinnedHeight}>
+        {tabs === null || tab === null ? null : (
+          <GroupProjectTabs tabs={tabs} activeKey={tab.key} onSelect={selectTab} />
+        )}
+        <GroupMemberWorkStrip
+          environmentId={environmentId}
+          members={people.memberById}
+          work={memberWork}
+          projectName={projectName}
+          onOpenThread={openThread}
+        />
+      </GroupPinnedRows>
     );
   return (
     <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
@@ -1659,7 +1701,7 @@ export function AssistantGroupChatRouteScreen({
           },
         ]}
       />
-      {Platform.OS === "ios" ? null : tabRow}
+      {Platform.OS === "ios" ? null : pinned}
       {pending ? (
         <View className="flex-1" />
       ) : (
@@ -1672,11 +1714,11 @@ export function AssistantGroupChatRouteScreen({
           actions={actions}
           tab={tab}
           live={live}
-          topInset={tabRow !== null && Platform.OS === "ios" ? tabsHeight : undefined}
+          topInset={pinned !== null && Platform.OS === "ios" ? pinnedHeight : undefined}
           onReply={setReplyTo}
         />
       )}
-      {Platform.OS === "ios" ? tabRow : null}
+      {Platform.OS === "ios" ? pinned : null}
       {archived ? (
         <View
           accessibilityRole="alert"
