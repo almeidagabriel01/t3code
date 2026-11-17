@@ -44,12 +44,21 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-      // A decision a member asked, or its answer from anywhere, updates the request's notice.
+      // A decision a member asked, or its answer from anywhere, updates the request's notice; once
+      // its outcome is handed over, the task that waited on it runs again.
       Effect.andThen(
         forkParked(
           Stream.runForEach(decisions.subscribe.pipe(Stream.retry(RESUBSCRIBE)), (event) =>
             event.type === "upserted" && isAssistantGroupThreadId(event.decision.fromThreadId)
-              ? groups.syncWaitingThread(event.decision.fromThreadId)
+              ? groups
+                  .syncWaitingThread(event.decision.fromThreadId)
+                  .pipe(
+                    Effect.andThen(
+                      event.decision.status === "open"
+                        ? Effect.void
+                        : groups.settleDecision(event.decision.fromThreadId),
+                    ),
+                  )
               : Effect.void,
           ).pipe(
             Effect.catchCause((cause) =>

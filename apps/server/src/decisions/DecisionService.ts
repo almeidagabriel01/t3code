@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { AssistantGroupGate } from "../assistants/AssistantGroupGate.ts";
 import { userInputOptionIndex } from "../autonomy/needsYou.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
@@ -125,8 +126,7 @@ const toDecision = (row: DecisionRow): Decision => ({
 });
 
 /** What the requesting agent reads. It never says "approved" for anything but a chosen option. */
-const deliveryText = (row: DecisionRow): string => {
-  const decision = toDecision(row);
+export const decisionDeliveryText = (decision: Decision): string => {
   const head = `"${decision.title}" [decision ${decision.id}]`;
   if (decision.status === "expired") {
     return `The decision ${head} expired at ${decision.expiresAt} with no answer. Nothing was approved; do not assume approval. Continue without it or ask in chat.`;
@@ -148,6 +148,7 @@ const deliveryText = (row: DecisionRow): string => {
       : []),
   ].join("\n");
 };
+const deliveryText = (row: DecisionRow) => decisionDeliveryText(toDecision(row));
 
 export class DecisionService extends Context.Service<
   DecisionService,
@@ -190,6 +191,8 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const random = yield* SecureRandom.SecureRandom;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // Absent outside the full server (most tests): every outcome then goes to its thread.
+  const groupGate = yield* Effect.serviceOption(AssistantGroupGate);
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<DecisionsEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -388,26 +391,38 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** A group task the decision holds takes the outcome as its next turn instead of a message. */
+  const claimedByGroup = (row: DecisionRow) =>
+    groupGate._tag === "None"
+      ? Effect.succeed(false)
+      : groupGate.value.claimDecision({
+          decisionId: row.decision_id,
+          threadId: row.from_thread_id,
+          text: deliveryText(row),
+        });
+
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {
     const now = yield* nowIso;
     const result = yield* (
       row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX)
         ? Effect.void
-        : row.approval_request_id === null
-          ? threads.sendToThread({
-              projectId: row.project_id as ProjectId,
-              // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
-              commandId: CommandId.make(`decision-answer:${row.decision_id}`),
-              messageId: MessageId.make(`decision-answer:${row.decision_id}`),
-              threadId: row.from_thread_id as ThreadId,
-              text: deliveryText(row),
-              // Already claimed to this thread when the answer was taken.
-              attachments: toDecision(row).answer?.attachments ?? [],
-              mode: "queue",
-              createdBy: "user",
-              creationSource: "server",
-            })
-          : respondToApproval(row)
+        : row.approval_request_id !== null
+          ? respondToApproval(row)
+          : (yield* claimedByGroup(row))
+            ? Effect.void
+            : threads.sendToThread({
+                projectId: row.project_id as ProjectId,
+                // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
+                commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+                messageId: MessageId.make(`decision-answer:${row.decision_id}`),
+                threadId: row.from_thread_id as ThreadId,
+                text: deliveryText(row),
+                // Already claimed to this thread when the answer was taken.
+                attachments: toDecision(row).answer?.attachments ?? [],
+                mode: "queue",
+                createdBy: "user",
+                creationSource: "server",
+              })
     ).pipe(Effect.result);
     if (result._tag === "Success") {
       yield* sql`

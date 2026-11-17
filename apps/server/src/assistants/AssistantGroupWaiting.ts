@@ -31,15 +31,17 @@ const optionLabels = (json: string): ReadonlyArray<string> => {
 };
 
 /**
- * The decisions that hold a member's group task: open choices its conversation asked with
- * t3_decision. Mirrors of runtime requests, autonomy notices and manual to-dos never hold it.
+ * The decisions that hold a member's group task: choices its conversation asked with t3_decision
+ * that are open, or settled with the outcome not yet handed over (so the task never runs again
+ * without it). Mirrors of runtime requests, autonomy notices and manual to-dos never hold it.
  */
 export const decisionsHoldingThread = Effect.fn("AssistantGroupWaiting.decisionsHoldingThread")(
   function* (threadId: string) {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly decision_id: string }>`
       SELECT decision_id FROM decisions
-      WHERE from_thread_id = ${threadId} AND status = 'open'
+      WHERE from_thread_id = ${threadId}
+        AND (status = 'open' OR (delivered_at IS NULL AND delivery_error IS NULL))
         AND approval_request_id IS NULL
         AND client_request_id NOT LIKE ${`${NOTICE_REQUEST_PREFIX}%`}
         AND COALESCE(kind, 'choice') = 'choice'

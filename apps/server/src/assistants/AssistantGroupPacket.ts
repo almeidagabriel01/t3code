@@ -220,5 +220,9 @@ export const subagentResultText = (input: {
 export const launchResultsText = (results: string) =>
   `The work you started for this request is done:\n\n${results}\n\nCheck each one's diff and run the tests, and send any fixes with t3_thread_send (never edit files here). Your answer to this task is what the group chat gets, so give it once the work is right.`;
 
+/** What a task that waited on the user's answer to its decisions reads when it runs again. */
+export const decisionResultsText = (outcomes: ReadonlyArray<string>) =>
+  launchResultsText(outcomes.join("\n\n"));
+
 export const handOverText = (from: string, note: string) =>
   `${from} (a teammate, not the user) handed this task to you${note.trim() === "" ? "." : `: ${note.trim()}`}`;

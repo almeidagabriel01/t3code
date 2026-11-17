@@ -108,7 +108,7 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
-import { AssistantGroupGate } from "./AssistantGroupGate.ts";
+import { AssistantGroupGate, type GroupDecisionOutcome } from "./AssistantGroupGate.ts";
 import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import {
@@ -119,6 +119,7 @@ import {
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {
   childResultsText,
+  decisionResultsText,
   groupTaskPacket,
   handOverText,
   launchResultText,
@@ -365,6 +366,8 @@ interface TaskRow {
   /** Root only: hand-offs since a task of the request last delivered a result. */
   readonly undelivered_hops: number;
   readonly followup: string | null;
+  /** Decision outcomes that reached the task while it ran or waited; its next turn takes them. */
+  readonly pending_followup_json: string | null;
   readonly expected_result: string | null;
   readonly source_seqs_json: string;
   readonly resources_json: string;
@@ -450,6 +453,15 @@ const encodeStrings = Schema.encodeSync(StringsJson);
 const sourceSeqsOf = (row: TaskRow) =>
   Option.getOrElse(decodeNumbers(row.source_seqs_json), () => []);
 const resourcesOf = (row: TaskRow) => Option.getOrElse(decodeStrings(row.resources_json), () => []);
+const PendingFollowupsJson = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ decisionId: Schema.String, text: Schema.String })),
+);
+const decodePendingFollowups = Schema.decodeUnknownOption(PendingFollowupsJson);
+const encodePendingFollowups = Schema.encodeSync(PendingFollowupsJson);
+const pendingFollowupsOf = (row: TaskRow) =>
+  row.pending_followup_json === null
+    ? []
+    : Option.getOrElse(decodePendingFollowups(row.pending_followup_json), () => []);
 
 const toTask = (row: TaskRow, threadId: ThreadId): AssistantGroupTask => ({
   id: row.task_id as AssistantGroupTaskId,
@@ -621,6 +633,14 @@ export class AssistantGroups extends Context.Service<
      * it; otherwise nobody waits on it and the caller reports it the usual way.
      */
     readonly settleLaunch: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /**
+     * Takes over a decision's outcome when its thread is a request's and the member's task there
+     * runs or waits on it: the outcome becomes the task's next turn. False hands it back for the
+     * usual delivery to the thread.
+     */
+    readonly claimDecision: (input: GroupDecisionOutcome) => Effect.Effect<boolean>;
+    /** A decision of a request conversation changed: its waiting tasks may run again. */
+    readonly settleDecision: (threadId: ThreadId) => Effect.Effect<void>;
     /** A member's run on a group thread ended or changed; moves its task along. */
     readonly handleRunEvent: (event: OrchestrationV2DomainEvent) => Effect.Effect<void>;
     /** Team and assistant changes: members leaving, groups archived or deleted. */
@@ -1032,7 +1052,16 @@ const make = Effect.gen(function* () {
   });
 
   type TaskPatch = Partial<
-    Pick<TaskRow, "status" | "reason" | "revision" | "owner_id" | "result_text" | "followup">
+    Pick<
+      TaskRow,
+      | "status"
+      | "reason"
+      | "revision"
+      | "owner_id"
+      | "result_text"
+      | "followup"
+      | "pending_followup_json"
+    >
   >;
   const patchTask = Effect.fn("AssistantGroups.patchTask")(function* (
     task: TaskRow,
@@ -1042,7 +1071,8 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<TaskRow>`
       UPDATE assistant_group_tasks SET status = ${next.status}, reason = ${next.reason},
         revision = ${next.revision}, owner_id = ${next.owner_id}, result_text = ${next.result_text},
-        followup = ${next.followup}, updated_at = ${yield* nowIso}
+        followup = ${next.followup}, pending_followup_json = ${next.pending_followup_json},
+        updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
     // Working, running and waiting-on-the-user counters all follow the status.
@@ -2173,6 +2203,8 @@ const make = Effect.gen(function* () {
         })),
       ),
     );
+    const answered = pendingFollowupsOf(task);
+    // The outcomes are taken in the same write that runs the task again, so none is lost or repeated.
     return yield* patchTask(task, {
       status: "queued",
       reason: null,
@@ -2185,8 +2217,12 @@ const make = Effect.gen(function* () {
             ? // A thread or subagent it named is gone without a trace (its rows were removed).
               [launchResultsText("What you waited on can no longer be found.")]
             : []),
+        ...(answered.length === 0
+          ? []
+          : [decisionResultsText(answered.map((outcome) => outcome.text))]),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
       ].join("\n\n"),
+      pending_followup_json: null,
     });
   });
 
@@ -3149,6 +3185,19 @@ const make = Effect.gen(function* () {
         yield* patchTask(task, { status: "waiting", reason: workReason(live), followup: null });
         return;
       }
+      // The user settled one of its decisions while it ran: that outcome is its next turn.
+      const answered = pendingFollowupsOf(task);
+      if (answered.length > 0) {
+        yield* patchTask(task, {
+          status: "queued",
+          reason: null,
+          revision: task.revision + 1,
+          result_text: null,
+          followup: decisionResultsText(answered.map((outcome) => outcome.text)),
+          pending_followup_json: null,
+        });
+        return;
+      }
       const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
       // A member woken by its subtasks may end quiet: a muted line, so the request never reads as waiting.
       const quiet = said !== undefined && isQuietReply(said);
@@ -3293,6 +3342,66 @@ const make = Effect.gen(function* () {
     if (origin?.request_id == null) return false;
     return yield* settleConversation(origin, threadId);
   });
+
+  const claimDecision: AssistantGroups["Service"]["claimDecision"] = Effect.fn(
+    "AssistantGroups.claimDecision",
+  )(
+    function* (input) {
+      return yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const row = yield* threadRowOf(input.threadId);
+          if (row?.request_id == null) return false;
+          const open = yield* sql<TaskRow>`
+            SELECT * FROM assistant_group_tasks
+            WHERE request_id = ${row.request_id} AND owner_id = ${row.assistant_id}
+              AND status IN ('running', 'waiting')
+            ORDER BY rowid ASC`;
+          const task = open.find(
+            (candidate) =>
+              candidate.status === "running" ||
+              workInReason(candidate.reason).decisions.includes(input.decisionId),
+          );
+          if (task === undefined) return false;
+          const pending = pendingFollowupsOf(task);
+          // A repeated delivery (a retry after a crash) lands on the outcome already taken.
+          if (!pending.some((outcome) => outcome.decisionId === input.decisionId)) {
+            const next = encodePendingFollowups([
+              ...pending,
+              { decisionId: input.decisionId, text: input.text },
+            ]);
+            yield* sql`
+              UPDATE assistant_group_tasks SET pending_followup_json = ${next}
+              WHERE task_id = ${task.task_id}`;
+          }
+          return true;
+        }),
+      );
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: a decision outcome could not be taken over", {
+            decisionId: input.decisionId,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      ),
+  );
+
+  const settleDecision: AssistantGroups["Service"]["settleDecision"] = Effect.fn(
+    "AssistantGroups.settleDecision",
+  )(
+    function* (threadId) {
+      const row = yield* threadRowOf(threadId);
+      if (row?.request_id != null) yield* settleConversation(row);
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: a decision's tasks could not be settled", { cause }),
+        ),
+      ),
+  );
 
   /**
    * Work under a member's request conversation ended: the tasks it held may run again. True when
@@ -4445,6 +4554,8 @@ const make = Effect.gen(function* () {
     handleRunEvent,
     syncWaitingThread,
     settleLaunch,
+    claimDecision,
+    settleDecision,
     handleAssistantEvent,
     reconcile,
     settleWaiting,
@@ -4461,8 +4572,8 @@ export const installLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const gate = yield* AssistantGroupGate;
     const groups = yield* AssistantGroups;
-    yield* gate.install(
-      (input) =>
+    yield* gate.install({
+      post: (input) =>
         groups
           .post(
             {
@@ -4473,13 +4584,14 @@ export const installLayer = Layer.effectDiscard(
             { kind: "routine", label: input.label },
           )
           .pipe(Effect.asVoid),
-      (input) =>
+      note: (input) =>
         groups.announceRoutine({
           teamId: input.teamId as AssistantTeamId,
           label: input.label,
           text: input.text,
           clientRequestId: input.clientRequestId,
         }),
-    );
+      claimDecision: groups.claimDecision,
+    });
   }),
 );
