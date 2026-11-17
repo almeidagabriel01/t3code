@@ -70,7 +70,7 @@ import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
@@ -78,6 +78,7 @@ import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
+import { ThreadContextMeter } from "./ComposerContextMeter";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -1114,6 +1115,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
+                {/* Collapsed, the row has no room to spare beside the editor. */}
+                {compactEditor.isExpanded && !props.isDraft ? (
+                  <ThreadContextMeter
+                    threadRef={scopeThreadRef(props.environmentId, props.selectedThread.id)}
+                  />
+                ) : null}
                 {modelControl}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}

@@ -379,25 +379,35 @@ export function FloatingWorkingControl(props: {
             </Animated.View>
           </View>
         </LayoutAnimationConfig>
-      ) : NATIVE_LIQUID_GLASS_SUPPORTED ? (
-        <UniwindGlassView
-          colorScheme={props.colorScheme}
-          glassEffectStyle="regular"
-          isInteractive
-          className="h-[44px] w-[44px] items-center justify-center overflow-hidden rounded-full"
-        >
-          <ScrollToEndButton onPress={props.onScrollToEnd} />
-        </UniwindGlassView>
       ) : (
-        <ControlPill
-          accessibilityLabel="Scroll to end"
-          activateOnPressIn
-          className="h-[44px] w-[44px] border border-border bg-glass-fallback shadow-md shadow-black/10"
-          icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
-          onPress={props.onScrollToEnd}
-        />
+        <FloatingScrollToEndButton colorScheme={props.colorScheme} onPress={props.onScrollToEnd} />
       )}
     </Animated.View>
+  );
+}
+
+/** The thread's round "Scroll to end" control on its own: native glass where supported. */
+export function FloatingScrollToEndButton(props: {
+  readonly colorScheme: "light" | "dark";
+  readonly onPress: () => void;
+}) {
+  return NATIVE_LIQUID_GLASS_SUPPORTED ? (
+    <UniwindGlassView
+      colorScheme={props.colorScheme}
+      glassEffectStyle="regular"
+      isInteractive
+      className="h-[44px] w-[44px] items-center justify-center overflow-hidden rounded-full"
+    >
+      <ScrollToEndButton onPress={props.onPress} />
+    </UniwindGlassView>
+  ) : (
+    <ControlPill
+      accessibilityLabel="Scroll to end"
+      activateOnPressIn
+      className="h-[44px] w-[44px] border border-border bg-glass-fallback shadow-md shadow-black/10"
+      icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
+      onPress={props.onPress}
+    />
   );
 }
 

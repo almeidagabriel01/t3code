@@ -165,7 +165,8 @@ export function ComposerAttachmentMediaRow({
   readonly supportsAttachmentUploads: boolean;
   readonly maxFileAttachmentBytes: number | null;
   readonly environmentId: EnvironmentId;
-  readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
+  /** Absent for uploads no thread draft owns, such as a group message's. */
+  readonly attachmentDraftTarget?: ScopedThreadRef | DraftId | undefined;
   readonly canOperateThread: boolean;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
@@ -299,7 +300,9 @@ export function ComposerAttachmentMediaRow({
                           retryAttachmentUpload({
                             environmentId,
                             image: ready,
-                            draftTarget: attachmentDraftTarget,
+                            ...(attachmentDraftTarget
+                              ? { draftTarget: attachmentDraftTarget }
+                              : {}),
                           })
                         }
                         disabled={!canOperateThread}
@@ -397,7 +400,7 @@ export function ComposerAttachmentMediaRow({
                         retryAttachmentUpload({
                           environmentId,
                           image: file,
-                          draftTarget: attachmentDraftTarget,
+                          ...(attachmentDraftTarget ? { draftTarget: attachmentDraftTarget } : {}),
                         })
                       }
                       disabled={!canOperateThread}
@@ -445,7 +448,7 @@ export function ComposerAttachmentFileList({
   readonly maxFileAttachmentBytes: number | null;
   readonly fileStagingLimit: number | null;
   readonly environmentId: EnvironmentId;
-  readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
+  readonly attachmentDraftTarget?: ScopedThreadRef | DraftId | undefined;
   readonly canOperateThread: boolean;
   readonly onPreviewFile: (fileId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
@@ -503,7 +506,7 @@ export function ComposerAttachmentFileList({
                         retryAttachmentUpload({
                           environmentId,
                           image: file,
-                          draftTarget: attachmentDraftTarget,
+                          ...(attachmentDraftTarget ? { draftTarget: attachmentDraftTarget } : {}),
                         })
                       }
                       disabled={!canOperateThread}
@@ -533,11 +536,14 @@ export function ComposerAttachmentFileList({
 
 export function ComposerFilePreviewDialog({
   file,
+  origin = "Draft",
   onRemove,
   onPreviewFileIdChange,
 }: {
   readonly file: ComposerFileAttachment;
-  readonly onRemove: (fileId: string) => void;
+  readonly origin?: string;
+  /** Absent for a file already sent. */
+  readonly onRemove?: ((fileId: string) => void) | undefined;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
   const onClose = () => onPreviewFileIdChange(null);
@@ -560,7 +566,7 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
-          origin="Draft"
+          origin={origin}
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {
                 asset: {
@@ -569,10 +575,14 @@ export function ComposerFilePreviewDialog({
                 },
               }
             : {})}
-          onRemove={() => {
-            onRemove(file.id);
-            onClose();
-          }}
+          {...(onRemove
+            ? {
+                onRemove: () => {
+                  onRemove(file.id);
+                  onClose();
+                },
+              }
+            : {})}
           onClose={onClose}
         />
       </DialogPopup>

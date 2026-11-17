@@ -28,9 +28,9 @@ vi.mock("../../state/server", () => ({
 }));
 
 import type { ModelOption } from "../../lib/modelOptions";
+import { buildComposerSkillItem } from "./composerSkillItems";
 import {
   buildComposerModelItems,
-  buildComposerSkillItem,
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,

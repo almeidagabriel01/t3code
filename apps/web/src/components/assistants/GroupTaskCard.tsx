@@ -5,6 +5,8 @@ import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantGroupTaskActions,
@@ -12,13 +14,16 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { useThreadShell } from "../../state/entities";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -49,6 +54,8 @@ export function GroupTaskCard(props: {
   readonly environmentId: EnvironmentId;
   /** Shown when the card is not under its owner's own message. */
   readonly owner?: Assistant | undefined;
+  /** The request's project chip, so a card read alone says where it runs. */
+  readonly project?: ReactNode;
   /** Active members that can take the task over, without its owner. */
   readonly reassignTo: ReadonlyArray<Assistant>;
   readonly canAct: boolean;
@@ -79,6 +86,7 @@ export function GroupTaskCard(props: {
     measure();
     return observeResize(request, measure);
   };
+  const waitingOn = assistantGroupWaitingOn(task);
   return (
     <div
       data-testid="group-task-card"
@@ -102,6 +110,7 @@ export function GroupTaskCard(props: {
           <span aria-hidden className="size-1.5 rounded-full bg-current" />
           {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
         </span>
+        {props.project}
         <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">
           <RelativeTime timestamp={task.updatedAt} />
         </span>
@@ -150,6 +159,23 @@ export function GroupTaskCard(props: {
         <p data-testid="group-task-waiting" className="text-warning-foreground">
           {waiting}
         </p>
+      )}
+      {waitingOn === null ? null : (
+        <div
+          data-testid="group-task-waiting-threads"
+          className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span className="text-warning-foreground">{assistantGroupWaitingOnLabel(waitingOn)}</span>
+          {(["threads", "subagents"] as const).flatMap((kind) =>
+            waitingOn[kind].map((threadId) => (
+              <WaitingThreadLink
+                key={`${kind}:${threadId}`}
+                environmentId={props.environmentId}
+                threadId={threadId}
+              />
+            )),
+          )}
+        </div>
       )}
       {reasonLabel === null ? null : <p className="text-muted-foreground">{reasonLabel}</p>}
       {needs === null ? null : (
@@ -202,5 +228,22 @@ export function GroupTaskCard(props: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function WaitingThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const title = useThreadShell(ref)?.title.trim();
+  return (
+    <Link
+      to="/$environmentId/$threadId"
+      params={buildThreadRouteParams(ref)}
+      className="max-w-60 cursor-pointer truncate rounded-sm text-foreground/80 underline decoration-foreground/30 underline-offset-2 hover:text-foreground hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+    >
+      {title || "Untitled thread"}
+    </Link>
   );
 }

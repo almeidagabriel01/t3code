@@ -53,6 +53,11 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupLatestSeq,
+  assistantGroupMemberWork,
+  assistantGroupComposerSession,
+  assistantGroupRequestOwners,
+  assistantGroupTaskTree,
+  ASSISTANT_GROUP_TASK_MOOD,
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupReadStep,
@@ -68,6 +73,8 @@ import {
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
   assistantGroupTaskReasonLabel,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
   assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
@@ -78,6 +85,8 @@ import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
   type AssistantGroupTabKey,
+  assistantGroupWaitingRequests,
+  assistantGroupWaitingWhy,
 } from "./assistantGroupChat.ts";
 
 const message = (seq: number, overrides: Partial<AssistantGroupMessage> = {}) =>
@@ -312,6 +321,12 @@ describe("group requests", () => {
       status: "done",
     },
     {
+      name: "a task waiting on threads it opened",
+      tasks: [task("a", 1, { status: "waiting", reason: "threads:t-1,t-2" })],
+      extra: [],
+      status: "working",
+    },
+    {
       name: "a paused task",
       tasks: [task("a", 1, { status: "paused" })],
       extra: [],
@@ -498,6 +513,7 @@ describe("group feed", () => {
     ["failed", "outside_project", "Owner cannot work in this request's project"],
     ["failed", "thread_unavailable", "Could not open the owner's conversation"],
     ["failed", "could_not_start", "Could not start the owner's turn"],
+    ["failed", "thread_usage_limit", "A launched thread hit its usage limit"],
     ["failed", "failed", null],
     ["failed", null, null],
     ["running", "stopped", null],
@@ -507,6 +523,52 @@ describe("group feed", () => {
     const label = assistantGroupTaskReasonLabel({ status, reason });
     if (expected instanceof RegExp) assert.match(label ?? "", expected);
     else assert.strictEqual(label, expected);
+  });
+
+  it.each([
+    ["waiting", "threads:t-1", [["t-1"], []]],
+    ["waiting", "threads:t-1,t-2", [["t-1", "t-2"], []]],
+    ["waiting", "threads: t-1 ,, t-2 ,", [["t-1", "t-2"], []]],
+    ["waiting", "threads:t-1,t-1", [["t-1"], []]],
+    ["waiting", "threads:", null],
+    ["waiting", "threads: , ", null],
+    ["waiting", "subagents:s-1", [[], ["s-1"]]],
+    [
+      "waiting",
+      "threads:a,b;subagents:x,y",
+      [
+        ["a", "b"],
+        ["x", "y"],
+      ],
+    ],
+    ["waiting", "subagents:x;threads:a", [["a"], ["x"]]],
+    ["waiting", "threads:assistant:ada:g-1,t-2", [["assistant:ada:g-1", "t-2"], []]],
+    ["waiting", "threads:a;notes:n-1", [["a"], []]],
+    ["waiting", "notes:n-1", null],
+    ["waiting", "threads:;subagents:x", [[], ["x"]]],
+    ["waiting", "threads:a;", [["a"], []]],
+    ["waiting", ";;", null],
+    ["waiting", "waiting for folder:/w/app (used by Bo)", null],
+    ["waiting", null, null],
+    ["queued", "threads:t-1", null],
+    ["running", "subagents:s-1", null],
+  ] as const)("reads a %s task's reason %j as what it waits on", (status, reason, expected) => {
+    const waitingOn = assistantGroupWaitingOn({ status, reason });
+    const actual: ReadonlyArray<ReadonlyArray<string>> | null =
+      waitingOn === null ? null : [waitingOn.threads, waitingOn.subagents];
+    assert.deepStrictEqual(actual, expected === null ? null : expected.map((ids) => [...ids]));
+  });
+
+  it.each([
+    [2, 0, "Waiting on 2 threads"],
+    [0, 1, "Waiting on 1 subagent"],
+    [1, 2, "Waiting on 1 thread and 2 subagents"],
+  ] as const)("labels a wait on %i threads and %i subagents", (threads, subagents, expected) => {
+    const ids = (count: number) => Array.from({ length: count }, (_, i) => `t-${i}` as ThreadId);
+    assert.strictEqual(
+      assistantGroupWaitingOnLabel({ threads: ids(threads), subagents: ids(subagents) }),
+      expected,
+    );
   });
 });
 
@@ -1307,6 +1369,260 @@ describe("read position", () => {
     assert.deepStrictEqual(
       assistantGroupFinished(previous, next, projects).map((notice) => [notice.tab, notice.body]),
       expected as unknown as string[][],
+    );
+  });
+});
+
+describe("assistantGroupMemberWork", () => {
+  it("lists each member once by its newest open task, with the request's project", () => {
+    const at = (minute: number) => `2026-11-01T00:0${minute}:00.000Z`;
+    const state = start({
+      type: "snapshot",
+      messages: [message(1, { requestId: "m1" as never, projectId: "p1" as ProjectId })],
+      tasks: [
+        task("ada-old", 1, { status: "queued", updatedAt: at(1) }),
+        task("ada-new", 1, { status: "running", updatedAt: at(3) }),
+        task("bob", 9, {
+          ownerId: "bob" as AssistantId,
+          status: "usage_limited",
+          updatedAt: at(2),
+          requestId: "m9" as never,
+        }),
+        task("cy", 1, { ownerId: "cy" as AssistantId, status: "completed", updatedAt: at(4) }),
+        task("di", 1, { ownerId: "di" as AssistantId, status: "paused", updatedAt: at(5) }),
+      ],
+      hasMore: true,
+      requests: [message(9, { requestId: "m9" as never })],
+    });
+    assert.deepStrictEqual(
+      assistantGroupMemberWork(state).map((work) => [work.task.id, work.projectId]),
+      [
+        ["ada-new", "p1"],
+        ["bob", null],
+      ],
+    );
+  });
+});
+
+describe("assistantGroupComposerSession", () => {
+  const at = (second: number) => `2026-11-01T00:00:0${second}.000Z`;
+  const state = start({
+    type: "snapshot",
+    messages: [message(1, { requestId: "m1" as never })],
+    tasks: [
+      task("jarvis-1", 1, {
+        ownerId: "jarvis" as AssistantId,
+        status: "completed",
+        updatedAt: at(1),
+      }),
+      task("ada-old", 1, { status: "completed", updatedAt: at(2) }),
+      task("ada-new", 1, { status: "completed", updatedAt: at(3) }),
+      task("beto-paused", 1, {
+        ownerId: "beto" as AssistantId,
+        status: "paused",
+        updatedAt: at(4),
+      }),
+      task("ada-elsewhere", 2, { requestId: "m2" as never, updatedAt: at(5) }),
+    ],
+    hasMore: false,
+  });
+  const quiet = { replyOwner: null, request: null, stopped: [] };
+  it.each([
+    ["a new request opens fresh threads", null, "@ada hi", "jarvis", quiet, null],
+    [
+      "a mention reaches that member's newest task there",
+      "m1",
+      "@ada hi",
+      "jarvis",
+      quiet,
+      "ada-new",
+    ],
+    ["no mention goes to the lead", "m1", "hi", "jarvis", quiet, "jarvis-1"],
+    ["a lead with no task there has no session", "m1", "hi", "cy", quiet, null],
+    ["no lead and no mention has none", "m1", "hi", null, quiet, null],
+    [
+      "a draft to two members lands in two sessions: none",
+      "m1",
+      "@ada @beto hi",
+      "jarvis",
+      quiet,
+      null,
+    ],
+    [
+      "a reply that resumes a stopped task reads that task",
+      "m1",
+      "go on",
+      "jarvis",
+      { ...quiet, stopped: [{ taskId: "beto-paused", ownerId: "beto" }] },
+      "beto-paused",
+    ],
+  ] as const)("%s", (_name, requestId, text, leadId, context, expected) => {
+    const session = assistantGroupComposerSession({
+      state,
+      requestId: requestId as never,
+      text,
+      members: [ada, beto, jarvis],
+      leadId: leadId as AssistantId | null,
+      context,
+    });
+    assert.strictEqual<string | null>(session?.id ?? null, expected);
+  });
+});
+
+describe("assistantGroupWaitingRequests", () => {
+  const beto = "beto" as AssistantId;
+  const at = (seq: number, request: number, overrides: Partial<AssistantGroupMessage> = {}) =>
+    message(seq, { requestId: `m${request}` as never, ...overrides });
+  const waits = { threadId: "assistant:beto:g-1" as ThreadId, resolved: false };
+  const read = (
+    state: AssistantGroupChatState,
+    scopes?: Parameters<typeof assistantGroupWaitingRequests>[1],
+  ) =>
+    assistantGroupWaitingRequests(state, scopes).map((item) => [
+      item.requestId,
+      item.reason,
+      item.assistantId,
+      item.task?.id ?? null,
+    ]);
+
+  it("lists waits, project questions and tasks that need the user, oldest first", () => {
+    const state = start({
+      type: "snapshot",
+      messages: [
+        at(2, 2),
+        at(3, 2, { author: "assistant", assistantId: beto, waiting: waits }),
+        at(4, 4),
+        at(5, 4, { kind: "notice", author: "assistant", asksProject: true }),
+        at(6, 6),
+        at(7, 7),
+        at(8, 8),
+      ],
+      tasks: [
+        // Off the page: the snapshot still carries its task and its request's first message.
+        task("t1", 1, { requestId: "m1" as never, status: "paused", reason: "routing_failed" }),
+        task("t6", 6, { status: "paused", reason: "stopped" }),
+        task("t7", 7, { ownerId: beto, status: "failed" }),
+        task("t8", 8, { status: "paused", reason: "routing_failed" }),
+        task("t8-busy", 8, { status: "running" }),
+      ],
+      hasMore: true,
+      requests: [at(1, 1, { title: "Old bug" })],
+    });
+    assert.deepStrictEqual(read(state), [
+      ["m1", "paused", "ada", "t1"],
+      ["m2", "wait", beto, null],
+      ["m4", "project", null, null],
+      ["m7", "failed", beto, "t7"],
+    ]);
+    assert.strictEqual(assistantGroupWaitingRequests(state)[0]!.title, "Old bug");
+  });
+
+  it("drops tasks asked for before the newest boundary, not a later reply's or an open wait", () => {
+    const state = start(
+      snapshot(
+        [
+          at(1, 1),
+          at(2, 2),
+          at(3, 2, { author: "assistant", assistantId: beto, waiting: waits }),
+          message(4, { kind: "boundary" }),
+          at(5, 1),
+          at(6, 6),
+        ],
+        [
+          task("t1", 1, { status: "paused", reason: "routing_failed" }),
+          task("t5", 5, { requestId: "m1" as never, status: "failed" }),
+          task("t6", 6, {
+            requestId: "m6" as never,
+            requestMessageId: "m3" as never,
+            status: "paused",
+            reason: "x",
+          }),
+        ],
+      ),
+    );
+    // t6 belongs to request m6 but was asked for by a line before the boundary.
+    assert.deepStrictEqual(read(state), [
+      ["m1", "failed", "ada", "t5"],
+      ["m2", "wait", beto, null],
+    ]);
+  });
+
+  it("adds a tab's waiting request off the loaded page, first, as the server names it", () => {
+    const state = start(
+      snapshot([at(5, 5, { author: "assistant", assistantId: beto, waiting: waits })], []),
+    );
+    const scopes = [
+      {
+        projectId: null,
+        waitingRequest: { requestId: "m1", title: "Old ask", reason: "wait", assistantId: beto },
+      },
+      {
+        projectId: null,
+        waitingRequest: { requestId: "m5", title: "dup", reason: "wait", assistantId: beto },
+      },
+    ] as const;
+    assert.deepStrictEqual(read(state, scopes), [
+      ["m1", "wait", beto, null],
+      ["m5", "wait", beto, null],
+    ]);
+    assert.strictEqual(assistantGroupWaitingRequests(state, scopes)[0]!.title, "Old ask");
+  });
+
+  it.each([
+    [{ reason: "wait" }, "Waiting for your answer"],
+    [{ reason: "project" }, "Needs a project"],
+    [{ reason: "paused" }, "Paused"],
+    [{ reason: "failed" }, "Failed"],
+  ] as const)("%o reads %s", (request, expected) => {
+    assert.strictEqual(assistantGroupWaitingWhy(request), expected);
+  });
+});
+
+describe("request owners and task tree", () => {
+  const at = (second: number) => `2026-11-01T00:00:${String(second).padStart(2, "0")}.000Z`;
+  it("names each owner once by its newest task, in the order they joined", () => {
+    const owners = assistantGroupRequestOwners([
+      task("a1", 1, { createdAt: at(1), updatedAt: at(1), status: "completed" }),
+      task("b1", 1, { ownerId: "bo" as AssistantId, createdAt: at(2), updatedAt: at(5) }),
+      task("a2", 1, { createdAt: at(3), updatedAt: at(4), status: "paused" }),
+    ]);
+    assert.deepStrictEqual(
+      owners.map((owner) => [owner.ownerId, owner.id, ASSISTANT_GROUP_TASK_MOOD[owner.status]]),
+      [
+        ["ada", "a2", "needs"],
+        ["bo", "b1", "working"],
+      ],
+    );
+  });
+
+  it("orders tasks depth first under their parents, orphans and cycles as their own roots", () => {
+    const tree = assistantGroupTaskTree([
+      task("reply", 1, { parentId: "child" as never, kind: "reply", createdAt: at(4) }),
+      task("root", 1, { createdAt: at(1) }),
+      task("child", 1, { parentId: "root" as never, kind: "child", createdAt: at(2) }),
+      task("orphan", 1, { parentId: "gone" as never, kind: "child", createdAt: at(3) }),
+      task("second", 1, { createdAt: at(5) }),
+    ]);
+    assert.deepStrictEqual(
+      tree.map((row) => [row.task.id, row.depth]),
+      [
+        ["root", 0],
+        ["child", 1],
+        ["reply", 2],
+        ["orphan", 0],
+        ["second", 0],
+      ],
+    );
+    const cycle = assistantGroupTaskTree([
+      task("x", 1, { parentId: "y" as never }),
+      task("y", 1, { parentId: "x" as never }),
+    ]);
+    assert.deepStrictEqual(
+      cycle.map((row) => [row.task.id, row.depth]),
+      [
+        ["x", 0],
+        ["y", 1],
+      ],
     );
   });
 });

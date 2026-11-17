@@ -558,7 +558,7 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
   return attachment.type === "file";
 }
 
-function isMediaAttachment(attachment: ChatAttachment): boolean {
+export function isMediaAttachment(attachment: ChatAttachment): boolean {
   return (
     isImageAttachment(attachment) ||
     (isFileAttachment(attachment) && videoMimeType(attachment) !== null)
@@ -777,7 +777,7 @@ function MessageAttachmentFile(props: {
   );
 }
 
-function UserMessageMedia(props: {
+export function UserMessageMedia(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
@@ -963,7 +963,7 @@ function PendingMessageMedia(props: {
 }
 
 /** A message's files as its bubble shows them; a guest's waiting message uses it too. */
-function MessageAttachmentList(props: {
+export function MessageAttachmentList(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly environmentId: EnvironmentId;
   readonly onPressPreview: (source: FilePreviewSource) => void;
