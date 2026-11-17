@@ -3,7 +3,7 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
-import { keepsRunning } from "./commandShapes.ts";
+import { EXECUTORS, keepsRunning, PACKAGE_MANAGERS } from "./commandShapes.ts";
 import { parseLine, type Command, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
@@ -76,8 +76,6 @@ const SUBCOMMANDS: Readonly<Record<string, RegExp>> = {
 /** Script names that run tests, builds or checks; dev servers stay out, they never finish. */
 const SCRIPT =
   /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$/;
-const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const PREFIXES = new Set([
   "time",
   "nice",
@@ -201,7 +199,7 @@ const heavyWords = (
   if (program === "vpr" || program === "make" || program === "just") {
     return first !== undefined && SCRIPT.test(first);
   }
-  if (!RUNNERS.has(program) || first === undefined) return false;
+  if (!PACKAGE_MANAGERS.has(program) || first === undefined) return false;
   if (first === "exec" || first === "dlx" || first === "x") {
     return second !== undefined && heavyWords(base(second), words.slice(2), flags);
   }
@@ -224,7 +222,7 @@ const END = "[!A-Za-z0-9_-]";
 const PROGRAMS = [
   ...DIRECT,
   ...Object.keys(SUBCOMMANDS),
-  ...RUNNERS,
+  ...PACKAGE_MANAGERS,
   "vpr",
   "make",
   "just",

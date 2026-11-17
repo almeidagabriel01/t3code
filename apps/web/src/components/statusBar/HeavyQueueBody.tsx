@@ -106,7 +106,6 @@ import { useHeavyQueueActions, useStopHeavyCommand } from "./useKillTarget";
 const ASK_REFRESH_MS = 1_000;
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 
-/** Ticks once a second only while `active`, so an idle list never repaints. */
 /** Ticks every `refreshMs` while a row counts down; null leaves the clock still. */
 function useRowClock(refreshMs: number | null) {
   const [now, setNow] = useState(() => Date.now());
