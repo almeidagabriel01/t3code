@@ -771,6 +771,18 @@ describe("admission by real capacity", () => {
     ).toEqual([]);
   });
 
+  it("classes a job by the runs of the machine it goes to, else by the other's", () => {
+    const line = "vp run compile";
+    const linux = { [signatureOf(line)]: [{ durationMs: 4_000 }] };
+    const mac = { [signatureOf(line)]: [run(1, 1, 600_000)] };
+    const onLinux = { ...entry("l", line), runner: "linux" as const };
+    expect(laneOf({ history: {}, linuxHistory: linux }, onLinux)).toBe("quick");
+    expect(laneOf({ history: mac, linuxHistory: linux }, onLinux)).toBe("quick");
+    expect(laneOf({ history: mac, linuxHistory: linux }, entry("m", line))).toBe("standard");
+    // A command that only ever ran on Linux reads its runs there until this Mac has its own.
+    expect(laneOf({ history: {}, linuxHistory: linux }, entry("m", line))).toBe("quick");
+  });
+
   it("starts the aged head as soon as its room appears", () => {
     const entries = [
       entry("r1", "vp run e2e", 60_000),

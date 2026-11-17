@@ -633,6 +633,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     enabled: doc.enabled,
     paused: doc.paused,
     history: doc.history,
+    linuxHistory: doc.linuxHistory,
     sample: doc.sample,
     lastStartAt: doc.lastStartAt,
     holding: doc.holding,

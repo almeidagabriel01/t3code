@@ -266,6 +266,8 @@ export interface PlanInput extends MacLimits, SizingLimits {
   readonly enabled: boolean;
   readonly paused: boolean;
   readonly history: History;
+  /** Runs on Linux, for the cost class of a job that goes there. */
+  readonly linuxHistory?: LinuxHistory;
   readonly sample: Sample | null;
   /** Written for older builds, which wait one settle window after it; this one counts load instead. */
   readonly lastStartAt: number | null;
@@ -376,10 +378,14 @@ const HELD_ROOM = new Set<HeavyQueueHold | null>([
 /** How a queue entry is admitted: its cost class, with a hooked commit in its own slot. */
 export type Lane = "standard" | "quick" | "commit" | "service";
 
-type CostInput = Pick<PlanInput, "history" | "quickSeconds" | "serviceIdleMinutes"> & {
+type CostInput = Pick<
+  PlanInput,
+  "history" | "linuxHistory" | "quickSeconds" | "serviceIdleMinutes"
+> & {
   readonly now?: number;
 };
 type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
+  readonly runner?: HeavyQueueEntry["runner"];
   readonly line?: string;
   readonly startedAt?: string | null;
   readonly idleSince?: number;
@@ -387,7 +393,11 @@ type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
 
 /** The cost class admission uses for `entry`, with its why; the one the Resource Manager shows. */
 export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
-  const runs = runsOf(input.history, entry);
+  // The usual run on the machine it goes to; a command that only ran on the other reads its runs there.
+  const books = [input.history, input.linuxHistory ?? {}];
+  const [own, other] = entry.runner === "linux" ? books.toReversed() : books;
+  const ownRuns = runsOf(own!, entry);
+  const runs = ownRuns.length > 0 ? ownRuns : runsOf(other!, entry);
   // A server-held slot (a device open) is never idle work: its CPU is T3's own.
   const now = entry.server === true ? undefined : input.now;
   const cost = costOf(
