@@ -104,19 +104,73 @@ export const isAlive = (pid: number) => {
 
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+/** Who holds a lock: its pid, plus a random part so a reused pid never passes for the owner. */
+const lockToken = () => `${process.pid} ${NodeCrypto.randomBytes(6).toString("hex")}`;
+const readToken = (lock: string) => {
+  try {
+    return NodeFS.readFileSync(NodePath.join(lock, "owner"), "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A lock is stale when its owner is dead, or when it names no owner (one died between taking it
+ * and writing its token) and is older than `LOCK_STALE_MS`. A live owner keeps it however long it
+ * pauses: a swapped-out process resuming must find its lock still its own.
+ */
+export const lockIsStale = (
+  token: string | null,
+  ageMs: number,
+  alive: (pid: number) => boolean,
+) => {
+  const pid = Number(token?.split(" ")[0]);
+  if (token !== null && Number.isInteger(pid) && pid > 0) return !alive(pid);
+  return ageMs > LOCK_STALE_MS;
+};
+
+const ageOf = (path: string) => Date.now() - NodeFS.statSync(path).mtimeMs;
+
+/** Clears a stale lock unless someone else is: one breaker at a time, re-checking under `breaking`. */
+const breakIfStale = (lock: string) => {
+  const breaking = `${lock}.breaking`;
+  try {
+    NodeFS.mkdirSync(breaking);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // A breaker that died mid-break leaves this behind; it only ever lives for a few calls.
+    try {
+      if (ageOf(breaking) > LOCK_STALE_MS)
+        NodeFS.rmSync(breaking, { recursive: true, force: true });
+    } catch {}
+    return;
+  }
+  try {
+    const token = readToken(lock);
+    if (lockIsStale(token, ageOf(lock), isAlive)) {
+      NodeFS.rmSync(lock, { recursive: true, force: true });
+    }
+  } catch {
+    // The lock went away meanwhile: nothing to break.
+  } finally {
+    NodeFS.rmSync(breaking, { recursive: true, force: true });
+  }
+};
+
 const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
+  const token = lockToken();
   NodeFS.mkdirSync(dir, { recursive: true });
   while (true) {
     try {
       NodeFS.mkdirSync(lock);
+      NodeFS.writeFileSync(NodePath.join(lock, "owner"), token);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
-        // ponytail: two contenders can clear the same stale lock and one then deletes the other's fresh lock; holds last milliseconds, so it is rare and the next mutation heals the file.
-        if (Date.now() - NodeFS.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          NodeFS.rmSync(lock, { recursive: true, force: true });
+        if (lockIsStale(readToken(lock), ageOf(lock), isAlive)) {
+          breakIfStale(lock);
           continue;
         }
       } catch {
@@ -128,7 +182,8 @@ const withLock = <A>(dir: string, run: () => A): A => {
   try {
     return run();
   } finally {
-    NodeFS.rmSync(lock, { recursive: true, force: true });
+    // Only our own lock: one broken while we were away belongs to its new owner now.
+    if (readToken(lock) === token) NodeFS.rmSync(lock, { recursive: true, force: true });
   }
 };
 

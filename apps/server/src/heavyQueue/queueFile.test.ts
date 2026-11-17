@@ -1688,3 +1688,100 @@ describe("Runner in the queue file", () => {
     });
   });
 });
+
+describe("the lock across processes", () => {
+  const QUEUE_FILE = NodePath.join(import.meta.dirname, "queueFile.ts");
+  /** A real process that takes the lock: enqueues `label`, optionally tries to start, and reports. */
+  const contender = (dir: string, id: string, label: string, start: boolean) => {
+    const script = NodePath.join(dir, "contender.ts");
+    if (!NodeFS.existsSync(script)) {
+      NodeFS.writeFileSync(
+        script,
+        [
+          `import * as Queue from ${JSON.stringify(QUEUE_FILE)};`,
+          `const [dir, id, label, start] = process.argv.slice(2);`,
+          `const at = Date.now();`,
+          `Queue.recordSampleIfStale(dir, { at, busyCores: 0, cpuCount: 10, availableMemoryBytes: 24 * 1024 ** 3, totalMemoryBytes: 32 * 1024 ** 3 }, 1000);`,
+          `Queue.enqueue(dir, { id, pid: process.pid, threadId: null, label, cwd: "/", createdAt: new Date(at).toISOString(), startedAt: null });`,
+          `const status = start === "1" ? Queue.tryStart(dir, id).status : "queued";`,
+          `process.stdout.write(status + "\\n");`,
+          // Alive until told: a running entry whose process exits is pruned.
+          `process.stdin.resume();`,
+          `process.stdin.on("end", () => process.exit(0));`,
+        ].join("\n"),
+      );
+    }
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      [script, dir, id, label, start ? "1" : "0"],
+      {
+        stdio: ["pipe", "pipe", "inherit"],
+      },
+    );
+    const reported = new Promise<string>((resolve, reject) => {
+      child.stdout.once("data", (data: Buffer) => resolve(String(data).trim()));
+      child.once("exit", (code) => reject(new Error(`contender ${id} exited ${code}`)));
+    });
+    return { child, reported };
+  };
+  const finish = (children: ReadonlyArray<NodeChildProcess.ChildProcess>) =>
+    Promise.all(
+      children.map(
+        (child) =>
+          new Promise<void>((resolve) => {
+            child.once("exit", () => resolve());
+            child.stdin?.end();
+          }),
+      ),
+    );
+
+  it.each([
+    ["a dead owner", `${deadPid()} x`, 0, true],
+    ["a live owner paused far past the stale age", `${process.pid} x`, 3_600_000, false],
+    ["no token yet, just taken", null, 100, false],
+    ["no token, older than the stale age", null, 3_600_000, true],
+    ["an older build's lock, recent", null, 1_000, false],
+  ] as const)("a lock with %s is stale: %s", (_name, token, ageMs, stale) => {
+    expect(Queue.lockIsStale(token, ageMs, Queue.isAlive)).toBe(stale);
+  });
+
+  it("8 processes starting at once never pass the slots", async () => {
+    const dir = tempDir();
+    const labels = [
+      ...Array.from({ length: 4 }, (_, i) => `vp fmt f${i}.ts`),
+      ...Array.from({ length: 2 }, (_, i) => `git commit -m x${i} a.ts`),
+      "vp run build",
+      "vp run bundle",
+    ];
+    const contenders = labels.map((label, i) => contender(dir, `c${i}`, label, true));
+    await Promise.all(contenders.map((each) => each.reported));
+    const running = Queue.read(dir).filter((entry) => entry.startedAt !== null);
+    const count = (pattern: RegExp) => running.filter((entry) => pattern.test(entry.label)).length;
+    try {
+      expect(count(/^vp fmt/)).toBeLessThanOrEqual(2);
+      expect(count(/^git commit/)).toBeLessThanOrEqual(1);
+      expect(running.length).toBeLessThanOrEqual(3 + 2 + 1);
+      expect(running.length).toBeGreaterThan(0);
+    } finally {
+      await finish(contenders.map((each) => each.child));
+    }
+  });
+
+  it("a stale lock is broken once: no contender's write is lost", async () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${deadPid()} gone`);
+    const contenders = Array.from({ length: 8 }, (_, i) =>
+      contender(dir, `e${i}`, `job ${i}`, false),
+    );
+    await Promise.all(contenders.map((each) => each.reported));
+    try {
+      expect(ids(dir).toSorted()).toEqual(Array.from({ length: 8 }, (_, i) => `e${i}`));
+      expect(NodeFS.existsSync(lock)).toBe(false);
+      expect(NodeFS.existsSync(`${lock}.breaking`)).toBe(false);
+    } finally {
+      await finish(contenders.map((each) => each.child));
+    }
+  });
+});
