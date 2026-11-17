@@ -951,7 +951,7 @@ it.effect.each<{
     if (waitingRequests !== undefined) {
       assert.deepEqual(
         Object.fromEntries(
-          (chat.scopes ?? []).flatMap((scope) =>
+          (chat.scopes ?? []).flatMap((scope): [string, readonly [string, string]][] =>
             scope.waitingRequest === undefined
               ? []
               : [
