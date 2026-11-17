@@ -632,18 +632,23 @@ it("shows a task's expected result and resources, and why a queued or limited on
   await expect.element(cards.nth(1).getByTestId("group-task-waiting")).not.toBeInTheDocument();
 });
 
-it("names and links the threads a waiting task opened, never their raw ids", async () => {
+it("names and links the threads and subagents a waiting task holds on, never their raw ids", async () => {
   publishGroupChat(
     [message(1)],
-    [task("launched", 1, { status: "waiting", reason: "threads:thread-a, thread-gone" })],
+    [
+      task("launched", 1, {
+        status: "waiting",
+        reason: "threads:thread-gone;subagents:thread-a",
+      }),
+    ],
   );
   await using _screen = await openChat();
   const line = main().getByTestId("group-task-waiting-threads");
-  await expect.element(line.getByText("Waiting on 2 threads")).toBeVisible();
+  await expect.element(line.getByText("Waiting on 1 thread and 1 subagent")).toBeVisible();
   const links = line.getByRole("link");
-  await expect.element(links.first()).toHaveTextContent("Thread thread-a");
-  await expect.element(links.first()).toHaveAttribute("href", expect.stringContaining("thread-a"));
-  await expect.element(links.nth(1)).toHaveTextContent("Untitled thread");
+  await expect.element(links.first()).toHaveTextContent("Untitled thread");
+  await expect.element(links.nth(1)).toHaveTextContent("Thread thread-a");
+  await expect.element(links.nth(1)).toHaveAttribute("href", expect.stringContaining("thread-a"));
   await expect.element(line).not.toHaveTextContent("thread-gone");
 });
 

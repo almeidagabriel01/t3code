@@ -4,8 +4,8 @@ import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
-  assistantGroupWaitingThreadIds,
-  assistantGroupWaitingThreadsLabel,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantGroupTaskActions,
@@ -69,7 +69,7 @@ export function GroupTaskCard(props: {
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
-  const waitingThreadIds = assistantGroupWaitingThreadIds(task);
+  const waitingOn = assistantGroupWaitingOn(task);
   return (
     <div
       data-testid="group-task-card"
@@ -117,21 +117,21 @@ export function GroupTaskCard(props: {
           {waiting}
         </p>
       )}
-      {waitingThreadIds === null ? null : (
+      {waitingOn === null ? null : (
         <div
           data-testid="group-task-waiting-threads"
           className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
         >
-          <span className="text-warning-foreground">
-            {assistantGroupWaitingThreadsLabel(waitingThreadIds.length)}
-          </span>
-          {waitingThreadIds.map((threadId) => (
-            <WaitingThreadLink
-              key={threadId}
-              environmentId={props.environmentId}
-              threadId={threadId}
-            />
-          ))}
+          <span className="text-warning-foreground">{assistantGroupWaitingOnLabel(waitingOn)}</span>
+          {(["threads", "subagents"] as const).flatMap((kind) =>
+            waitingOn[kind].map((threadId) => (
+              <WaitingThreadLink
+                key={`${kind}:${threadId}`}
+                environmentId={props.environmentId}
+                threadId={threadId}
+              />
+            )),
+          )}
         </div>
       )}
       {reasonLabel === null ? null : <p className="text-muted-foreground">{reasonLabel}</p>}
