@@ -32,6 +32,7 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
@@ -1426,6 +1427,7 @@ const FAILURE_REASON_LABEL: Record<string, string> = {
   thread_unavailable: "Could not open the owner's conversation",
   request_missing: "The request is gone",
   could_not_start: "Could not start the owner's turn",
+  thread_usage_limit: "A launched thread hit its usage limit",
 };
 
 /** A cancellation the server made; one a member made carries its own words, shown elsewhere. */
@@ -1566,6 +1568,47 @@ export function assistantGroupWaitingReason(
   task: Pick<AssistantGroupTask, "status" | "reason">,
 ): string | null {
   return task.status === "queued" && task.reason?.startsWith("waiting for ") ? task.reason : null;
+}
+
+/** What a waiting member's turn holds on: work threads it launched and live subagent threads. */
+export interface AssistantGroupWaitingOn {
+  readonly threads: ReadonlyArray<ThreadId>;
+  readonly subagents: ReadonlyArray<ThreadId>;
+}
+
+/**
+ * Reads a waiting task's `threads:<id>,<id>;subagents:<id>` reason. Ids may hold `:`, so each part
+ * splits on its first one; unknown kinds and blank ids are skipped.
+ */
+export function assistantGroupWaitingOn(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): AssistantGroupWaitingOn | null {
+  if (task.status !== "waiting" || task.reason === null) return null;
+  const ids = { threads: new Set<string>(), subagents: new Set<string>() };
+  for (const part of task.reason.split(";")) {
+    const colon = part.indexOf(":");
+    const kind = part.slice(0, colon).trim();
+    if (colon < 0 || (kind !== "threads" && kind !== "subagents")) continue;
+    for (const id of part.slice(colon + 1).split(",")) {
+      if (id.trim() !== "") ids[kind].add(id.trim());
+    }
+  }
+  if (ids.threads.size === 0 && ids.subagents.size === 0) return null;
+  return {
+    threads: [...ids.threads].map((id) => ThreadId.make(id)),
+    subagents: [...ids.subagents].map((id) => ThreadId.make(id)),
+  };
+}
+
+const countLabel = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** "Waiting on 2 threads", "Waiting on 1 subagent", "Waiting on 2 threads and 1 subagent". */
+export function assistantGroupWaitingOnLabel(waitingOn: AssistantGroupWaitingOn): string {
+  const parts = [
+    waitingOn.threads.length > 0 ? countLabel(waitingOn.threads.length, "thread") : null,
+    waitingOn.subagents.length > 0 ? countLabel(waitingOn.subagents.length, "subagent") : null,
+  ].filter((part) => part !== null);
+  return `Waiting on ${parts.join(" and ")}`;
 }
 
 /**

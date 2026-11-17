@@ -73,6 +73,8 @@ import {
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
   assistantGroupTaskReasonLabel,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
   assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
@@ -319,6 +321,12 @@ describe("group requests", () => {
       status: "done",
     },
     {
+      name: "a task waiting on threads it opened",
+      tasks: [task("a", 1, { status: "waiting", reason: "threads:t-1,t-2" })],
+      extra: [],
+      status: "working",
+    },
+    {
       name: "a paused task",
       tasks: [task("a", 1, { status: "paused" })],
       extra: [],
@@ -505,6 +513,7 @@ describe("group feed", () => {
     ["failed", "outside_project", "Owner cannot work in this request's project"],
     ["failed", "thread_unavailable", "Could not open the owner's conversation"],
     ["failed", "could_not_start", "Could not start the owner's turn"],
+    ["failed", "thread_usage_limit", "A launched thread hit its usage limit"],
     ["failed", "failed", null],
     ["failed", null, null],
     ["running", "stopped", null],
@@ -514,6 +523,52 @@ describe("group feed", () => {
     const label = assistantGroupTaskReasonLabel({ status, reason });
     if (expected instanceof RegExp) assert.match(label ?? "", expected);
     else assert.strictEqual(label, expected);
+  });
+
+  it.each([
+    ["waiting", "threads:t-1", [["t-1"], []]],
+    ["waiting", "threads:t-1,t-2", [["t-1", "t-2"], []]],
+    ["waiting", "threads: t-1 ,, t-2 ,", [["t-1", "t-2"], []]],
+    ["waiting", "threads:t-1,t-1", [["t-1"], []]],
+    ["waiting", "threads:", null],
+    ["waiting", "threads: , ", null],
+    ["waiting", "subagents:s-1", [[], ["s-1"]]],
+    [
+      "waiting",
+      "threads:a,b;subagents:x,y",
+      [
+        ["a", "b"],
+        ["x", "y"],
+      ],
+    ],
+    ["waiting", "subagents:x;threads:a", [["a"], ["x"]]],
+    ["waiting", "threads:assistant:ada:g-1,t-2", [["assistant:ada:g-1", "t-2"], []]],
+    ["waiting", "threads:a;notes:n-1", [["a"], []]],
+    ["waiting", "notes:n-1", null],
+    ["waiting", "threads:;subagents:x", [[], ["x"]]],
+    ["waiting", "threads:a;", [["a"], []]],
+    ["waiting", ";;", null],
+    ["waiting", "waiting for folder:/w/app (used by Bo)", null],
+    ["waiting", null, null],
+    ["queued", "threads:t-1", null],
+    ["running", "subagents:s-1", null],
+  ] as const)("reads a %s task's reason %j as what it waits on", (status, reason, expected) => {
+    const waitingOn = assistantGroupWaitingOn({ status, reason });
+    const actual: ReadonlyArray<ReadonlyArray<string>> | null =
+      waitingOn === null ? null : [waitingOn.threads, waitingOn.subagents];
+    assert.deepStrictEqual(actual, expected === null ? null : expected.map((ids) => [...ids]));
+  });
+
+  it.each([
+    [2, 0, "Waiting on 2 threads"],
+    [0, 1, "Waiting on 1 subagent"],
+    [1, 2, "Waiting on 1 thread and 2 subagents"],
+  ] as const)("labels a wait on %i threads and %i subagents", (threads, subagents, expected) => {
+    const ids = (count: number) => Array.from({ length: count }, (_, i) => `t-${i}` as ThreadId);
+    assert.strictEqual(
+      assistantGroupWaitingOnLabel({ threads: ids(threads), subagents: ids(subagents) }),
+      expected,
+    );
   });
 });
 
