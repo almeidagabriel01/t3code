@@ -323,7 +323,7 @@ const tieOf = (
   vars: ReadonlyMap<string, string | null>,
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
-  synced: WorkContext["synced"],
+  { synced, inText }: { readonly synced?: WorkContext["synced"]; readonly inText?: boolean },
   read: ReadScript | undefined,
 ): string | null => {
   const text = part.values.slice(part.remoteAt).join(" ");
@@ -337,17 +337,24 @@ const tieOf = (
   const { command } = part;
   // The job's one slot, Stop and requeue follow a single run at a time.
   if (command.next === "&") return `Runs in the background: ${nameOf(text)}`;
-  // `remoto` gives the command no input there, which is all `< /dev/null` asks for.
-  const reads = (redirect: Redirect) =>
-    redirect.op.includes("<") &&
-    !(redirect.op.endsWith("<") && redirect.target?.value === "/dev/null");
-  if (command.piped || command.redirects.some(reads)) {
+  // Inside a text that runs there whole, a file it reads is judged like a path argument below.
+  // Elsewhere the redirect stays here, and `remoto` gives the command no input but `/dev/null`.
+  const fromFile = (redirect: Redirect) =>
+    /^\d*<>?$/.test(redirect.op) && (inText === true || redirect.target?.value === "/dev/null");
+  const files = command.redirects.filter(fromFile).flatMap((each) => each.target ?? []);
+  if (command.piped || command.redirects.some((each) => each.op.includes("<") && !fromFile(each))) {
     return `Reads its input from this Mac: ${nameOf(text)}`;
   }
   if (cwd === null) return null;
   // `remoto` syncs the checkout it runs from, so each part is judged against its own.
   const root = rootOf(cwd);
   if (root === null) return `Runs outside a git checkout: ${cwd}`;
+  for (const word of files) {
+    const expanded = expand(word, vars, cwd);
+    if (!("value" in expanded) || expanded.value === "/dev/null") continue;
+    const tie = outsideTie(expanded.value, cwd, root);
+    if (tie !== null) return tie;
+  }
   const program = programTie(
     part.command.words
       .slice(part.programAt)
@@ -441,7 +448,11 @@ export const bodyVerdict = (
 ): Verdict => {
   const verdict = eligibilityOf(
     { label: body, cwd, ...(where === undefined ? {} : { where }) },
-    { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
+    {
+      ...context,
+      rootOf: (dir) => (root !== null && inside(dir, root) ? root : null),
+      inText: true,
+    },
   );
   if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") return verdict;
   return readLine(body).parts.some((part) => part.program === "git")
@@ -482,7 +493,10 @@ const setsUpShell = ([first = "", second = ""]: ReadonlyArray<string>) =>
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced"> & {
+    /** Judging a `sh -c` text or script body: its redirects run there with it. */
+    readonly inText?: boolean;
+  },
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -529,7 +543,7 @@ export const eligibilityOf = (
               rootOf,
             );
       const at = moved?.cwd ?? cwd;
-      const tie = tieOf(part, at, vars, rootOf, config, context.synced, read);
+      const tie = tieOf(part, at, vars, rootOf, config, context, read);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
       if (part.script?.body === null) return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
@@ -864,7 +878,11 @@ export const intentOf = (
   }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
-    return mac(verdict.reason!);
+    return mac(
+      entry.where === "linux"
+        ? `You asked for Linux (remoto); runs here: ${verdict.reason}`
+        : verdict.reason!,
+    );
   }
   if (entry.route === "mac") return mac((entry as QueuedEntry).routeReason ?? "Moved to this Mac");
   if (entry.route === "linux") return { intent: "linux", reason: "" };

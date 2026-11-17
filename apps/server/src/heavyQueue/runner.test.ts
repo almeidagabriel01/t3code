@@ -16,6 +16,7 @@ import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
+  intentOf,
   foldMarker,
   installFailure,
   linkMachine,
@@ -1329,6 +1330,18 @@ describe("patterns and eligibility", () => {
     ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
+  });
+
+  it.each([
+    [{ where: "linux" as const }, "You asked for Linux (remoto); runs here: "],
+    [{}, ""],
+  ])("a tied line says when an agent asked for Linux (%j)", (asked, prefix) => {
+    const entry = job("a", "xcodebuild -scheme App test", { cwd: "/w", ...asked });
+    const config = { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true };
+    expect(intentOf(entry, { ...at, config, worktree: "/w" })).toEqual({
+      intent: "mac",
+      reason: `${prefix}Always on this Mac: xcodebuild`,
+    });
   });
 
   // The Linux copy rebuilds `node_modules` from a lockfile, and nothing else that git ignores.

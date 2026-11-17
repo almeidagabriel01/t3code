@@ -1274,6 +1274,18 @@ describe("t3 heavy", () => {
       // It keeps running: load on this Mac, never a queue job.
       ["vp run dev:desktop", "light"],
       ["vp test run <<EOF\nx\nEOF", "Reads its input from this Mac: vp test run"],
+      ["vp test run <<< x", "Reads its input from this Mac: vp test run"],
+      // The redirect stays here and Linux gets no input; inside a text it runs there, read as a path.
+      ["vp test run < a.ts", "Reads its input from this Mac: vp test run"],
+      ["vp test run < /dev/null", "linux", "X vp test run < /dev/null"],
+      ["sh -c 'vp test run < a.ts'", "linux", "X sh -c 'vp test run < a.ts'"],
+      ["sh -c 'vp test run < /private/tmp/a.ts'", `${OUTSIDE}/private/tmp/a.ts`],
+      // The incident: the `diff` the text pipes into runs there with it.
+      [
+        `remoto bash -c 'files=(a.ts); for f in "\${files[@]}"; do vp fmt --stdin-filepath="$f" < "$f" | diff -q - "$f"; done'`,
+        "linux",
+        `X bash -c 'files=(a.ts); for f in "\${files[@]}"; do vp fmt --stdin-filepath="$f" < "$f" | diff -q - "$f"; done'`,
+      ],
       ["echo a | vp test run", "Reads its input from this Mac: vp test run"],
       ["vp test run a & vp test run b & wait", "Runs in the background: vp test run"],
       ["eval vp test run", "Couldn't read this command safely (eval)"],
