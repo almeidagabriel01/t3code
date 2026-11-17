@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   ProviderInstanceId,
   ProviderInteractionMode,
+  RunId,
   RuntimeMode,
   ThreadId,
   ProjectId,
@@ -36,6 +37,8 @@ const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
 const sideChatThreadId = ThreadId.make("thread:side-chat");
+const wakeThreadId = ThreadId.make("thread:queued-wake");
+const stoppedWakeThreadId = ThreadId.make("thread:stopped-queued-wake");
 const otherFullAccessThreadId = ThreadId.make("thread:other-full-access");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
@@ -43,6 +46,14 @@ const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanc
   pendingBackgroundTasks: [
     { taskId: "task:background", kind: "subagent" as const, providerInstanceId },
   ],
+});
+
+const queuedWakeShell = (threadId: ThreadId, stopRequested: boolean) => ({
+  ...liveThreadShell(threadId, { activeRunId: null }),
+  latestRunId: RunId.make(`run:${threadId}`),
+  latestRunStartedAt: null,
+  latestRunCompletedAt: null,
+  latestRunStopRequested: stopRequested,
 });
 
 const shells = new Map([
@@ -66,6 +77,9 @@ const shells = new Map([
     },
   ],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  // The provider woke itself (a background task's notice) and already calls tools while its run queues.
+  [wakeThreadId, queuedWakeShell(wakeThreadId, false)],
+  [stoppedWakeThreadId, queuedWakeShell(stoppedWakeThreadId, true)],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
   [
@@ -253,6 +267,8 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+const queuedWake = threadCaller(wakeThreadId);
+const stoppedQueuedWake = threadCaller(stoppedWakeThreadId);
 const sideChat = threadCaller(sideChatThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -290,6 +306,8 @@ it.effect.each([
   ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
   ["acts_as_caller", supervised, {}, "ran"],
   ["acts_as_caller", ended, {}, "parent_not_active"],
+  ["acts_as_caller", queuedWake, {}, "ran"],
+  ["acts_as_caller", stoppedQueuedWake, {}, "parent_not_active"],
   ["acts_as_caller", background, {}, "ran"],
   ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
   ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
@@ -299,6 +317,7 @@ it.effect.each([
 
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
+  ["writes", queuedWake, {}, "ran"],
   ["writes", background, {}, "ran"],
   ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],

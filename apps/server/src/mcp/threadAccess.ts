@@ -128,11 +128,21 @@ export const assertTargetWithinLimits = (
     Effect.asVoid,
   );
 
-/** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
+/**
+ * Background subagents retain credentials until provider exit; archived threads and other instances
+ * cannot act. A run still queued counts: a provider that wakes itself calls tools before T3 starts it.
+ */
 export const isLiveCallerShell = (
   shell: Pick<
     OrchestrationV2ThreadShell,
-    "archivedAt" | "activeRunId" | "providerInstanceId" | "pendingBackgroundTasks"
+    | "archivedAt"
+    | "activeRunId"
+    | "providerInstanceId"
+    | "pendingBackgroundTasks"
+    | "latestRunId"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+    | "latestRunStopRequested"
   > | null,
   providerInstanceId: ProviderInstanceId | undefined,
 ) =>
@@ -140,6 +150,10 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
+    (shell.latestRunId != null &&
+      shell.latestRunStartedAt == null &&
+      shell.latestRunCompletedAt == null &&
+      shell.latestRunStopRequested !== true) ||
     (shell.pendingBackgroundTasks?.some(
       (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
     ) ??
