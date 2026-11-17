@@ -83,6 +83,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     showTab: vi.fn(() => () => {}),
     /** The tab a push's link put in the route. */
     routeTab: undefined as string | undefined,
+    routeRequest: undefined as string | undefined,
     writeSettings: vi.fn(),
     canWriteSettings: true,
     /** Members' own models in project p1, by assistant id. */
@@ -966,6 +967,7 @@ const render = () =>
               environmentId: "hub",
               teamId: "g1",
               ...(mocks.routeTab === undefined ? {} : { tab: mocks.routeTab }),
+              ...(mocks.routeRequest === undefined ? {} : { request: mocks.routeRequest }),
             },
           } as never
         }
@@ -1048,6 +1050,7 @@ beforeEach(() => {
     fn.mockReset();
   mocks.showTab.mockReset().mockReturnValue(() => {});
   mocks.routeTab = undefined;
+  mocks.routeRequest = undefined;
   mocks.preferences = {};
   mocks.preferenceListeners.clear();
   mocks.savePreferences.mockImplementation(
@@ -1991,6 +1994,115 @@ describe("requests", () => {
     mocks.teams = [team({ chat: read, ...extra })];
     render();
   };
+
+  const PAUSED = [
+    // A pause the user did not ask for: one they asked for waits on no one.
+    task("t1", "paused", "ada", { requestMessageId: "r1", requestId: "r1" }),
+    TASKS[1]!,
+  ];
+  const waitingRows = () =>
+    [...container.querySelectorAll('[data-testid="group-waiting-strip"] [aria-label]')].map(
+      (node) => node.getAttribute("aria-label"),
+    );
+  const requestTint = () =>
+    container.querySelector(
+      '[data-testid="group-request-line"] ~ [data-testid="group-jump-highlight"]',
+    ) ?? container.querySelector('[data-testid="group-jump-highlight"]');
+
+  it("pins what waits on the user, oldest first, and resumes a stopped task from there", async () => {
+    mocks.live = snapshot(REQUESTS, PAUSED);
+    mocks.teams = [team({ chat: read })];
+    render();
+    expect(container.querySelector('[data-testid="group-waiting-strip"]')?.textContent).toContain(
+      "Waiting on you (2)",
+    );
+    expect(waitingRows()).toEqual([
+      expect.stringMatching(/^Fix build\. Ada: .+\. Open request$/),
+      "Resume Fix build",
+      "ship it. Jarvis: Needs a project. Open request",
+    ]);
+    await click("Resume Fix build");
+    expect(mocks.taskAction).toHaveBeenCalledWith({ taskId: "t1", action: "resume" });
+    // Opening a loaded request opens its block in place and tints its title row.
+    await click(waitingRows()[0]!);
+    expect(requestTint()).not.toBeNull();
+    expect(mocks.olderThan).not.toHaveBeenCalled();
+  });
+
+  it("offers no Resume in an archived group, and drops the strip once nothing waits", () => {
+    mocks.live = snapshot(REQUESTS, PAUSED);
+    mocks.teams = [team({ chat: read, archivedAt: "2026-11-07T09:00:00Z" })];
+    render();
+    expect(byLabel("Resume Fix build")).toBeNull();
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.live = snapshot(REQUESTS.slice(0, 3), TASKS.slice(0, 1));
+    mocks.teams = [team({ chat: read })];
+    render();
+    expect(container.querySelector('[data-testid="group-waiting-strip"]')).toBeNull();
+  });
+
+  it("pages back to a waiting request the page does not hold, or says it is gone", async () => {
+    const older = REQUESTS.slice(0, 3);
+    const waitingRequest = {
+      requestId: "r1",
+      title: "Fix build",
+      reason: "paused",
+      assistantId: "ada",
+    };
+    mocks.live = snapshot(REQUESTS.slice(3), TASKS.slice(1), true);
+    mocks.teams = [
+      team({
+        chat: {
+          ...read,
+          scopes: [{ projectId: "p1", unreadCount: 0, waiting: true, readSeq: 6, waitingRequest }],
+        },
+      }),
+    ];
+    mocks.olderThan.mockResolvedValueOnce({
+      ok: true,
+      value: { messages: older, tasks: [], hasMore: false },
+    });
+    render();
+    // The server names it for a tab whose request is out of the page.
+    expect(waitingRows()[0]).toMatch(/^Fix build\. Ada: /);
+    await click(waitingRows()[0]!);
+    await act(async () => {});
+    expect(mocks.olderThan).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("fix the build");
+    expect(requestTint()).not.toBeNull();
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.olderThan.mockResolvedValueOnce({
+      ok: true,
+      value: { messages: [], tasks: [], hasMore: false },
+    });
+    render();
+    await click(waitingRows()[0]!);
+    await act(async () => {});
+    expect(mocks.alert).toHaveBeenCalledWith("Request not found", "It is no longer in this chat.");
+  });
+
+  it("opens a linked request once its chat shows, or says it is in another tab", async () => {
+    mocks.routeRequest = "r3";
+    mocks.live = snapshot(REQUESTS, TASKS);
+    mocks.teams = [team({ chat: read })];
+    render();
+    await act(async () => {});
+    expect(requestTint()).not.toBeNull();
+    expect(mocks.setParams).toHaveBeenCalledWith({ request: undefined });
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.routeRequest = "r1";
+    tabbed("project:p2");
+    await act(async () => {});
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Request is in another tab",
+      "Open its project's tab or All to see it.",
+    );
+  });
 
   it("quotes the request being answered and opens its folded block to show it", async () => {
     setup();

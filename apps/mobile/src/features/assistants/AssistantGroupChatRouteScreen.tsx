@@ -14,6 +14,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupMemberWork,
+  assistantGroupWaitingRequests,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
   assistantGroupLandedPick,
@@ -148,6 +149,7 @@ import {
 } from "./GroupComposer";
 import { GroupMemberWorkStrip, RequestOwners, RequestTaskTree } from "./GroupMemberWork";
 import { GroupPinnedRows, GroupProjectTabs } from "./GroupProjectTabs";
+import { GroupWaitingStrip } from "./GroupWaitingStrip";
 import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
 import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
@@ -974,8 +976,13 @@ function useOpenGroupThread(environmentId: EnvironmentId) {
 /** What the screen asks of its feed, which remounts per tab. */
 type GroupFeedHandle = {
   readonly jump: (id: AssistantGroupMessage["id"]) => void;
+  /** Pages back until the request shows, then opens it, or says it is gone. */
+  readonly goToRequest: (requestId: string) => void;
   readonly scrollToEnd: () => void;
 };
+
+/** A quoted message's row, or a request's title row. */
+type JumpTarget = { readonly kind: "message" | "request"; readonly id: string };
 
 /**
  * One tab's messages: its own pages, folds, New line and read marker. The screen keys it by tab,
@@ -1013,12 +1020,21 @@ function GroupFeed({
   const projects = useProjects();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  // A message to bring into view once the list holds it (its request may still be folded).
-  const pendingJump = useRef<AssistantGroupMessage["id"] | null>(null);
-  const [highlight, setHighlight] = useState<{
-    readonly id: AssistantGroupMessage["id"];
-    readonly nonce: number;
-  } | null>(null);
+  // One page read at a time, shared by "Load earlier" and a jump to a request.
+  const paging = useRef(false);
+  const mounted = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a jump that pages back must not act on a feed that left the screen
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // A message or request to bring into view once the list holds it (it may still be folded).
+  const pendingJump = useRef<JumpTarget | null>(null);
+  const [highlight, setHighlight] = useState<(JumpTarget & { readonly nonce: number }) | null>(
+    null,
+  );
   const highlightNonce = useRef(0);
   // The user's own fold or open of a request, over the default.
   const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -1089,10 +1105,14 @@ function GroupFeed({
       ),
   });
 
-  const entryIndexOf = (id: AssistantGroupMessage["id"]) =>
-    feedEntries.findIndex((entry) => entry.kind === "row" && entry.row.message.id === id);
+  const entryIndexOf = (target: JumpTarget) =>
+    feedEntries.findIndex((entry) =>
+      target.kind === "request"
+        ? entry.kind === "header" && entry.block.requestId === target.id
+        : entry.kind === "row" && entry.row.message.id === target.id,
+    );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a quoted message once the request holding it has opened
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a quoted message or a request once the list holds it
   useEffect(() => {
     if (pendingJump.current === null) return;
     const index = entryIndexOf(pendingJump.current);
@@ -1100,6 +1120,18 @@ function GroupFeed({
     pendingJump.current = null;
     void list.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 });
   });
+
+  /** Scrolls to the target once the list holds it and tints it once. */
+  const bringIntoView = (target: JumpTarget) => {
+    pendingJump.current = target;
+    highlightNonce.current += 1;
+    const nonce = highlightNonce.current;
+    setHighlight({ ...target, nonce });
+    setTimeout(
+      () => setHighlight((current) => (current?.nonce === nonce ? null : current)),
+      HIGHLIGHT_MS,
+    );
+  };
 
   /** Brings a quoted message into view and tints it once, opening its request if folded. */
   const jump = (id: AssistantGroupMessage["id"]) => {
@@ -1114,22 +1146,60 @@ function GroupFeed({
     if (holder.kind === "request") {
       setToggles((current) => new Map(current).set(holder.block.requestId, true));
     }
-    pendingJump.current = id;
-    highlightNonce.current += 1;
-    const nonce = highlightNonce.current;
-    setHighlight({ id, nonce });
-    setTimeout(
-      () => setHighlight((current) => (current?.nonce === nonce ? null : current)),
-      HIGHLIGHT_MS,
-    );
+    bringIntoView({ kind: "message", id });
   };
+
+  const goToRequest = async (requestId: string) => {
+    if (chat === null || paging.current) return;
+    const holder = (state: AssistantGroupChatState) =>
+      [...state.messages.values()].find((message) => message.requestId === requestId);
+    // ponytail: pages one by one; a request far back would want a server read around it.
+    let state = chat;
+    let failed = false;
+    const loaded: AssistantGroupsHistoryResult[] = [];
+    paging.current = true;
+    setLoadingOlder(true);
+    while (holder(state) === undefined && state.hasMore) {
+      const reply = await actions.olderThan(teamId, state, scope);
+      if (!reply.ok) {
+        failed = true;
+        Dialog.alert("Could not load earlier messages", reply.message);
+        break;
+      }
+      loaded.push(reply.value);
+      state = applyAssistantGroupHistory(state, reply.value);
+    }
+    paging.current = false;
+    // The feed left the screen while it paged.
+    if (!mounted.current) return;
+    setLoadingOlder(false);
+    if (loaded.length > 0) setPages((current) => [...current, ...loaded]);
+    const held = holder(state);
+    if (held === undefined) {
+      if (!failed) Dialog.alert("Request not found", "It is no longer in this chat.");
+      return;
+    }
+    const projectId = assistantGroupRequestProject(state, held.requestId);
+    if (!assistantGroupInScope({ projectId }, scope)) {
+      return Dialog.alert("Request is in another tab", "Open its project's tab or All to see it.");
+    }
+    setToggles((current) => new Map(current).set(requestId, true));
+    bringIntoView({ kind: "request", id: requestId });
+  };
+
   const scrollToEnd = () => list.current?.scrollToEnd({ animated: true });
-  useImperativeHandle(ref, () => ({ jump, scrollToEnd }));
+  useImperativeHandle(ref, () => ({
+    jump,
+    goToRequest: (requestId) => void goToRequest(requestId),
+    scrollToEnd,
+  }));
 
   const loadOlder = async () => {
-    if (chat === null || !chat.hasMore || loadingOlder) return;
+    if (chat === null || !chat.hasMore || paging.current) return;
+    paging.current = true;
     setLoadingOlder(true);
     const reply = await actions.olderThan(teamId, chat, scope);
+    paging.current = false;
     setLoadingOlder(false);
     if (!reply.ok) return Dialog.alert("Could not load earlier messages", reply.message);
     setPages((current) => [...current, reply.value]);
@@ -1239,29 +1309,40 @@ function GroupFeed({
           }
           renderItem={({ item }) =>
             item.kind === "header" ? (
-              isAll ? (
-                <AllRequestLine
-                  block={item.block}
-                  chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
-                  expanded={item.expanded}
-                  onToggle={() => toggle(item.block, item.expanded)}
-                  owners={
-                    <RequestOwners {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
-                  }
-                />
-              ) : (
-                <RequestHeader
-                  block={item.block}
-                  projectName={
-                    item.block.projectId === null ? null : projectName(item.block.projectId)
-                  }
-                  expanded={item.expanded}
-                  onToggle={() => toggle(item.block, item.expanded)}
-                  owners={
-                    <RequestOwners {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
-                  }
-                />
-              )
+              <View>
+                {isAll ? (
+                  <AllRequestLine
+                    block={item.block}
+                    chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
+                    expanded={item.expanded}
+                    onToggle={() => toggle(item.block, item.expanded)}
+                    owners={
+                      <RequestOwners
+                        {...work}
+                        tasks={item.block.rows.flatMap((row) => row.tasks)}
+                      />
+                    }
+                  />
+                ) : (
+                  <RequestHeader
+                    block={item.block}
+                    projectName={
+                      item.block.projectId === null ? null : projectName(item.block.projectId)
+                    }
+                    expanded={item.expanded}
+                    onToggle={() => toggle(item.block, item.expanded)}
+                    owners={
+                      <RequestOwners
+                        {...work}
+                        tasks={item.block.rows.flatMap((row) => row.tasks)}
+                      />
+                    }
+                  />
+                )}
+                {highlight?.kind === "request" && highlight.id === item.block.requestId ? (
+                  <JumpHighlight key={highlight.nonce} />
+                ) : null}
+              </View>
             ) : item.kind === "footer" ? (
               <RequestFooter
                 block={item.block}
@@ -1314,7 +1395,7 @@ function GroupFeed({
                     onOpenConversation={(task) => openThread(task.threadId)}
                     onOpenThread={openThread}
                   />
-                  {highlight?.id === item.row.message.id ? (
+                  {highlight?.kind === "message" && highlight.id === item.row.message.id ? (
                     <JumpHighlight key={highlight.nonce} />
                   ) : null}
                 </View>
@@ -1349,6 +1430,8 @@ export function AssistantGroupChatRouteScreen({
   readonly teamId: string;
   /** The tab a push opens, from its link. */
   readonly tab?: string;
+  /** A request to bring into view once the tab shows, as a needs-you indicator asks. */
+  readonly request?: string;
 }>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const teamId = AssistantTeamId.make(route.params.teamId);
@@ -1397,6 +1480,16 @@ export function AssistantGroupChatRouteScreen({
   );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
+  const pushedRequest = route.params.request;
+  const focusRequest = useEffectEvent((requestId: string) => {
+    feed.current?.goToRequest(requestId);
+    navigation.setParams({ request: undefined } as never);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link's one-shot intent: once its tab shows with its chat, the feed pages to the request
+  useEffect(() => {
+    if (pushedRequest === undefined || pushedTab !== undefined || pending || live === null) return;
+    focusRequest(pushedRequest);
+  }, [pushedRequest, pushedTab, pending, live]);
   // The reply being written, for the tab it was opened in.
   const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<GroupReply> | null>(null);
   // The composer's own project pick, until a send or another tab.
@@ -1512,12 +1605,31 @@ export function AssistantGroupChatRouteScreen({
   // The server refuses these while tasks run; the menu says why instead of only greying them out.
   const converseHint = team.chat?.working === true ? { subtitle: "Stop its tasks first" } : {};
   const memberWork = live === null ? [] : assistantGroupMemberWork(live);
+  const waiting =
+    live === null
+      ? []
+      : assistantGroupWaitingRequests(live, team.chat?.scopes).filter((item) =>
+          assistantGroupInScope(item, scope ?? undefined),
+        );
+  const resume = async (task: AssistantGroupTask) => {
+    const reply = await actions.taskAction({ taskId: task.id, action: "resume" });
+    if (!reply.ok) Dialog.alert("Could not update the task", reply.message);
+  };
   const pinned =
-    (tabs === null || tab === null) && memberWork.length === 0 ? null : (
+    (tabs === null || tab === null) && memberWork.length === 0 && waiting.length === 0 ? null : (
       <GroupPinnedRows onHeight={setPinnedHeight}>
         {tabs === null || tab === null ? null : (
           <GroupProjectTabs tabs={tabs} activeKey={tab.key} onSelect={selectTab} />
         )}
+        <GroupWaitingStrip
+          environmentId={environmentId}
+          items={waiting}
+          members={people.memberById}
+          lead={members.find((member) => member.id === team.leadId)}
+          canResume={actions.canAct && !archived}
+          onOpen={(requestId) => feed.current?.goToRequest(requestId)}
+          onResume={(task) => void resume(task)}
+        />
         <GroupMemberWorkStrip
           environmentId={environmentId}
           members={people.memberById}

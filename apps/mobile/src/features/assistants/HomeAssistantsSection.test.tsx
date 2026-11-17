@@ -287,7 +287,10 @@ vi.mock("../../components/ui/Menu", () => ({
   ),
 }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-06T12:00:00Z") }));
-vi.mock("../../state/entities", () => ({ useQuietThreadShells: helpers.quietShells }));
+vi.mock("../../state/entities", () => ({
+  useQuietThreadShells: helpers.quietShells,
+  useProjects: () => [{ id: "p1", environmentId: "hub", title: "t3code" }],
+}));
 vi.mock("../../state/assistants", async () => {
   const { buildThreadOwnership } = await import("../../state/threadOwnership");
   const { assistantStatusOf } = await import("@t3tools/client-runtime/sidebarZones");
@@ -477,7 +480,7 @@ const team = (
   },
 ) => ({
   environmentId,
-  team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
+  team: { id, name, memberIds, projectIds: ["p1"], ...(chat === undefined ? {} : { chat }) },
 });
 
 let root: Root;
@@ -768,6 +771,36 @@ describe("HomeAssistantsSection", () => {
     render();
     expect(indicators()).toEqual([label]);
     expect(container.textContent).not.toContain("spinner");
+  });
+
+  it("a folder's indicator says where it comes from and opens the request that waits", async () => {
+    mocks.active = [bot(0, { threadId: "assistant:a0:1" }), bot(1)];
+    const waiting = {
+      projectId: "p1",
+      unreadCount: 0,
+      waiting: true,
+      readSeq: 0,
+      waitingRequest: { requestId: "m7", title: "Fix", reason: "paused", assistantId: null },
+    };
+    mocks.teams = [
+      team("g1", "Finance", ["a0", "a1"], "hub", {
+        unreadCount: 0,
+        latestSeq: 9,
+        scopes: [waiting],
+      }),
+    ];
+    mocks.pending["assistant:a0:1"] = {
+      id: "r1",
+      kind: "command",
+      createdAt: "2026-11-01T00:00:00.000Z",
+    };
+    render();
+    const detail = "Needs you · t3code: Fix (Paused)";
+    expect(container.querySelector(`[aria-label="menu:${detail}"]`)).not.toBeNull();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>(`[aria-label="Needs you. ${detail}"]`)!.click(),
+    );
+    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1", { tab: "project:p1", requestId: "m7" });
   });
 
   it("an assistant row shows its full name, the role muted, and one static indicator", () => {
