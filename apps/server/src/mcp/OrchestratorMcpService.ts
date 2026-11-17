@@ -150,7 +150,7 @@ import {
 } from "./delegatedTaskModes.ts";
 import {
   captureCallerMemoryCeiling,
-  isLiveCallerShell,
+  isLiveCaller,
   isSideChatToItsMainChat,
   threadNotFound,
 } from "./threadAccess.ts";
@@ -1293,10 +1293,11 @@ const make = Effect.gen(function* () {
       return threadManagement.getThreadShell(parent.thread.id).pipe(
         Effect.mapError(threadManagementFailure),
         Effect.flatMap((shell) =>
-          isLiveCallerShell(shell, scope.thread?.providerInstanceId)
-            ? Effect.void
-            : Effect.fail(notActive),
+          isLiveCaller(threadManagement, shell, scope.thread?.providerInstanceId).pipe(
+            Effect.mapError(threadManagementFailure),
+          ),
         ),
+        Effect.flatMap((live) => (live ? Effect.void : Effect.fail(notActive))),
       );
     }
     return parent.thread.archivedAt !== null ||
