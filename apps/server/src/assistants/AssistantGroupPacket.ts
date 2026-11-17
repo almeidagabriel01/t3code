@@ -206,9 +206,17 @@ export function launchResultText(input: {
     : `${headline}\nIts last message:\n${clip(input.lastMessage, LAUNCH_LAST_MESSAGE_CHARS)}`;
 }
 
-/** What a task that waited on the threads it launched reads when they are all done. */
+/** One provider-native subagent of the member's own conversation that ended while its task waited. */
+export const subagentResultText = (input: {
+  readonly title: string;
+  readonly threadId: ThreadId;
+  readonly status: string;
+}) =>
+  `Subagent ${formatThreadLink({ environmentId: null, threadId: input.threadId }, input.title.trim() || "Subagent")} ended (${input.status}).`;
+
+/** What a task that waited on the work it started reads when it is all done. */
 export const launchResultsText = (results: string) =>
-  `The threads you launched for this request are done:\n\n${results}\n\nCheck each one's diff and run the tests, and send any fixes with t3_thread_send (never edit files here). Your answer to this task is what the group chat gets, so give it once the work is right.`;
+  `The work you started for this request is done:\n\n${results}\n\nCheck each one's diff and run the tests, and send any fixes with t3_thread_send (never edit files here). Your answer to this task is what the group chat gets, so give it once the work is right.`;
 
 export const handOverText = (from: string, note: string) =>
   `${from} (a teammate, not the user) handed this task to you${note.trim() === "" ? "." : `: ${note.trim()}`}`;

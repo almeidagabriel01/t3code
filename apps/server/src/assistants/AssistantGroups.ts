@@ -119,6 +119,7 @@ import {
   handOverText,
   launchResultText,
   launchResultsText,
+  subagentResultText,
   PACKET_SUMMARY_CHARS,
   type PacketMember,
 } from "./AssistantGroupPacket.ts";
@@ -200,16 +201,32 @@ const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelle
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
-/** A task waiting on threads launched from its conversation names them: `threads:<id>,<id>`. */
-const LAUNCH_REASON_PREFIX = "threads:";
 /** Launch chains are shallow; the cap only guards a malformed loop. */
 const MAX_LAUNCH_DEPTH = 8;
-const launchReason = (threadIds: ReadonlyArray<string>) =>
-  threadIds.length === 0 ? null : `${LAUNCH_REASON_PREFIX}${threadIds.join(",")}`;
-const launchesInReason = (reason: string | null) =>
-  reason?.startsWith(LAUNCH_REASON_PREFIX) === true
-    ? reason.slice(LAUNCH_REASON_PREFIX.length).split(",")
-    : [];
+
+/**
+ * Work still alive under a member's conversation: threads launched from it (down their chain) and
+ * the provider-native subagents it runs, each by thread id, oldest first.
+ */
+interface LiveWork {
+  readonly threads: ReadonlyArray<string>;
+  readonly subagents: ReadonlyArray<string>;
+}
+const WORK_KINDS = ["threads", "subagents"] as const;
+/** A waiting task names what holds it: `threads:<id>,<id>;subagents:<id>`, empty parts left out. */
+const workReason = (work: LiveWork) =>
+  WORK_KINDS.filter((kind) => work[kind].length > 0)
+    .map((kind) => `${kind}:${work[kind].join(",")}`)
+    .join(";") || null;
+const workInReason = (reason: string | null): LiveWork => {
+  const parts = new Map(
+    (reason ?? "").split(";").map((part) => {
+      const cut = part.indexOf(":");
+      return [part.slice(0, cut), part.slice(cut + 1).split(",")] as const;
+    }),
+  );
+  return { threads: parts.get("threads") ?? [], subagents: parts.get("subagents") ?? [] };
+};
 
 /**
  * Candidate projects whose effective model inputs differ between two settings: the project's
@@ -1939,26 +1956,53 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A waiting task runs again once nothing holds it: the subtasks it gave, and the threads launched
-   * from its conversation (down their chain). Until then its reason names the threads still live,
-   * and each one that ends adds its result to what the task reads when it runs. A thread stopped by
-   * a usage limit that does not continue fails the task, so the user decides.
+   * The provider-native subagents a conversation runs, live or ended, oldest first. Live is the
+   * projection's own rule (`liveNativeSubagent`); one without a child thread holds but has no link.
+   */
+  const nativeSubagents = (threadId: string) =>
+    sql<{
+      readonly child_thread_id: string | null;
+      readonly title: string | null;
+      readonly status: string;
+      readonly live: number;
+    }>`
+      SELECT native.child_thread_id, json_extract(native.payload_json, '$.title') AS title,
+        native.status, ${ProjectionStore.liveNativeSubagent(sql, "native")} AS live
+      FROM orchestration_v2_projection_subagents native
+      WHERE native.thread_id = ${threadId} AND native.origin = 'provider_native'
+      ORDER BY native.started_at ASC, native.subagent_id ASC`;
+
+  /** What still runs under a conversation; `held` also counts subagents that have no thread yet. */
+  const liveWork = Effect.fn("AssistantGroups.liveWork")(function* (threadId: string) {
+    const threads: string[] = [];
+    for (const launch of yield* launchesFrom([threadId])) {
+      if ((yield* launchState(launch)).live) threads.push(launch.thread_id);
+    }
+    const subagents = (yield* nativeSubagents(threadId)).filter((row) => row.live === 1);
+    return {
+      threads,
+      subagents: subagents.flatMap((row) => row.child_thread_id ?? []),
+      held: threads.length > 0 || subagents.length > 0,
+    };
+  });
+
+  /**
+   * A waiting task runs again once nothing holds it: the subtasks it gave, and the work still alive
+   * under its conversation (`liveWork`). Until then its reason names that work, and each thread or
+   * subagent that ends adds its outcome to what the task reads when it runs. A thread stopped by a
+   * usage limit that does not continue fails the task, so the user decides.
    */
   const settleWait = Effect.fn("AssistantGroups.settleWait")(function* (task: TaskRow) {
     if (task.status !== "waiting") return task;
     const threadId = (yield* wireTasks([task]))[0]!.threadId;
-    const waitedOn = new Set(launchesInReason(task.reason));
-    const live: string[] = [];
+    const waitedOn = workInReason(task.reason);
     const ended: string[] = [];
     let limited = false;
+    // Only work it waited on reports: what ended before the turn did was seen there.
     for (const launch of yield* launchesFrom([threadId])) {
+      if (!waitedOn.threads.includes(launch.thread_id)) continue;
       const state = yield* launchState(launch);
-      if (state.live) {
-        live.push(launch.thread_id);
-        continue;
-      }
-      // Only threads it waited on report: one that ended before the turn did was seen there.
-      if (!waitedOn.has(launch.thread_id)) continue;
+      if (state.live) continue;
       const lastMessage =
         state.status === null || !("runId" in state)
           ? undefined
@@ -1973,13 +2017,25 @@ const make = Effect.gen(function* () {
       );
       limited ||= "limited" in state && state.limited;
     }
+    for (const row of yield* nativeSubagents(threadId)) {
+      if (row.live === 1 || row.child_thread_id === null) continue;
+      if (!waitedOn.subagents.includes(row.child_thread_id)) continue;
+      ended.push(
+        subagentResultText({
+          title: row.title ?? "Subagent",
+          threadId: row.child_thread_id as ThreadId,
+          status: row.status,
+        }),
+      );
+    }
     const reported = [task.followup, ...ended].filter((part) => part != null && part !== "");
     const followup = reported.length === 0 ? null : reported.join("\n\n");
     if (limited) {
       return yield* patchTask(task, { status: "failed", reason: "thread_usage_limit", followup });
     }
-    const reason = launchReason(live);
-    if (live.length > 0 || (yield* unsettledChildren(task.task_id)).length > 0) {
+    const live = yield* liveWork(threadId);
+    if (live.held || (yield* unsettledChildren(task.task_id)).length > 0) {
+      const reason = workReason(live);
       if (reason === task.reason && followup === task.followup) return task;
       return yield* patchTask(task, { reason, followup });
     }
@@ -2003,9 +2059,9 @@ const make = Effect.gen(function* () {
       followup: [
         ...(followup !== null
           ? [launchResultsText(followup)]
-          : waitedOn.size > 0
+          : workReason(waitedOn) !== null
             ? // Nothing to report: the user dismissed what it waited on.
-              [launchResultsText("The threads you waited on were dismissed.")]
+              [launchResultsText("What you waited on was dismissed.")]
             : []),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
       ].join("\n\n"),
@@ -2924,15 +2980,6 @@ const make = Effect.gen(function* () {
     };
   });
 
-  /** The threads launched from a conversation that still run, oldest first. */
-  const liveLaunches = Effect.fn("AssistantGroups.liveLaunches")(function* (threadId: string) {
-    const live: string[] = [];
-    for (const launch of yield* launchesFrom([threadId])) {
-      if ((yield* launchState(launch)).live) live.push(launch.thread_id);
-    }
-    return live;
-  });
-
   const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (run: OrchestrationV2Run) {
     const task = yield* taskOfRun(run);
     if (task === undefined) return;
@@ -2973,11 +3020,11 @@ const make = Effect.gen(function* () {
             AND created_at >= ${DateTime.formatIso(run.requestedAt)}`;
       }
     } else {
-      // Read under the lock: a thread whose run already ended holds nothing, and one that ends
-      // later finds this task waiting (`settleLaunch`).
-      const live = yield* liveLaunches(run.threadId);
-      if (live.length > 0 || (yield* unsettledChildren(task.task_id)).length > 0) {
-        yield* patchTask(task, { status: "waiting", reason: launchReason(live), followup: null });
+      // Read under the lock: work that already ended holds nothing, and work that ends later
+      // finds this task waiting (`settleConversation`).
+      const live = yield* liveWork(run.threadId);
+      if (live.held || (yield* unsettledChildren(task.task_id)).length > 0) {
+        yield* patchTask(task, { status: "waiting", reason: workReason(live), followup: null });
         return;
       }
       const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
@@ -3107,22 +3154,25 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
     if (origin?.request_id == null) return false;
-    const requestId = origin.request_id;
-    yield* lock
+    yield* settleConversation(origin);
+    return true;
+  });
+
+  /** Work under a member's request conversation ended: the tasks it held may run again. */
+  const settleConversation = (row: ThreadRow) =>
+    lock
       .withPermits(1)(
         Effect.gen(function* () {
           const waiting = yield* sql<TaskRow>`
             SELECT * FROM assistant_group_tasks
-            WHERE request_id = ${requestId} AND owner_id = ${origin.assistant_id}
+            WHERE request_id = ${row.request_id} AND owner_id = ${row.assistant_id}
               AND status = 'waiting'
             ORDER BY rowid ASC`;
           for (const task of waiting) yield* settleWait(task);
-          yield* pump(origin.team_id);
+          yield* pump(row.team_id);
         }),
       )
-      .pipe(quietly("a launched thread's end could not be settled"));
-    return true;
-  });
+      .pipe(quietly("work that ended under a request conversation could not be settled"));
 
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",
@@ -3130,6 +3180,13 @@ const make = Effect.gen(function* () {
     function* (event) {
       if (event.type === "runtime-request.updated") {
         if (isAssistantGroupThreadId(event.threadId)) yield* syncWaitingThread(event.threadId);
+        return;
+      }
+      if (event.type === "subagent.updated") {
+        if (event.payload.origin !== "provider_native") return;
+        if (!isAssistantGroupThreadId(event.threadId)) return;
+        const owner = yield* threadRowOf(event.threadId);
+        if (owner?.request_id != null) yield* settleConversation(owner);
         return;
       }
       if (event.type !== "run.created" && event.type !== "run.updated") return;

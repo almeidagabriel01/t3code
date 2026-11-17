@@ -141,6 +141,8 @@ const harness = (options: Options = {}) => {
   const fakeThreads = new Map<string, FakeThread>();
   const runs = new Map<string, FakeRun[]>();
   const answers = new Map<string, string>();
+  /** Background work a thread's shell reports, by thread. */
+  const background = new Map<string, ReadonlyArray<Record<string, unknown>>>();
   /** Runs that failed on a usage limit, with the limit's reset time. */
   const limits = new Map<string, string>();
   const sent: Array<{
@@ -211,7 +213,11 @@ const harness = (options: Options = {}) => {
         if (thread === undefined) return Effect.fail(new Boom());
         return Effect.succeed(
           thread.deletedAt === null
-            ? { title: thread.title, archivedAt: thread.archivedAt, pendingBackgroundTasks: [] }
+            ? {
+                title: thread.title,
+                archivedAt: thread.archivedAt,
+                pendingBackgroundTasks: background.get(threadId) ?? [],
+              }
             : null,
         );
       }) as never,
@@ -602,6 +608,7 @@ const harness = (options: Options = {}) => {
     state,
     finish,
     finishTask,
+    background,
     launch,
     endLaunch,
     tasks,
@@ -2694,7 +2701,7 @@ it.effect("a task waits for the threads it launched, then runs again with their 
     assert.lengthOf(h.sent, 2);
     const woken = h.sent[1]!;
     assert.equal(woken.threadId, ada);
-    assert.include(woken.text, "The threads you launched for this request are done:");
+    assert.include(woken.text, "The work you started for this request is done:");
     assert.match(woken.text, /\[Work thread:api\]\([^)\n]+\) finished\./);
     assert.include(woken.text, "API fixed.");
     assert.match(woken.text, /\[Work thread:docs\]\([^)\n]+\) failed\./);
@@ -2758,7 +2765,7 @@ it.effect.each<{
     yield* release(h);
     yield* groups.settleLaunch(ThreadId.make("thread:api"));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
-    assert.include(h.sent[1]!.text, "The threads you launched for this request are done:");
+    assert.include(h.sent[1]!.text, "The work you started for this request is done:");
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -2802,6 +2809,134 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+/** A provider-native subagent of `threadId`, as the projection stores it. */
+const nativeSubagent = (threadId: string, child: string, status: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status,
+          started_at, updated_at, payload_json)
+      VALUES (${`subagent:${child}`}, ${threadId}, 'node:parent', 'claudeAgent', ${child},
+        'provider_native', ${status}, '2026-02-01', '2026-02-01', ${JSON.stringify({ title: `Agent ${child}` })})
+      ON CONFLICT (subagent_id) DO UPDATE SET status = excluded.status`;
+  });
+const subagentEvent = (threadId: string, origin = "provider_native") =>
+  ({
+    type: "subagent.updated",
+    threadId,
+    payload: { origin },
+  }) as never as OrchestrationV2DomainEvent;
+
+it.effect(
+  "a conversation's live native subagent keeps its request open, and its end runs the task again",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      const ada = h.threadOf("ada");
+      yield* nativeSubagent(ada, "thread:sub", "running");
+      // One that already ended holds nothing.
+      yield* nativeSubagent(ada, "thread:done", "completed");
+      yield* h.launch("thread:api", ada);
+      yield* h.finish(0, "completed", "Started.");
+      assert.deepInclude((yield* h.tasks)[0], {
+        status: "waiting",
+        reason: "threads:thread:api;subagents:thread:sub",
+      });
+      yield* h.endLaunch("thread:api", "completed", "API fixed.");
+      assert.deepInclude((yield* h.tasks)[0], {
+        status: "waiting",
+        reason: "subagents:thread:sub",
+      });
+      // Not delivered, so nothing settles its conversation.
+      assert.isFalse(h.dispatched.some((command) => command.type === "thread.settle"));
+      // Another subagent's progress, or one that is not native, changes nothing.
+      yield* groups.handleRunEvent(subagentEvent(ada, "app_owned"));
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      assert.lengthOf(h.sent, 1);
+
+      yield* nativeSubagent(ada, "thread:sub", "completed");
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+      assert.lengthOf(h.sent, 2);
+      assert.include(h.sent[1]!.text, "API fixed.");
+      assert.match(
+        h.sent[1]!.text,
+        /Subagent \[Agent thread:sub\]\([^)\n]+\) ended \(completed\)\./,
+      );
+      assert.notInclude(h.sent[1]!.text, "thread:done");
+      yield* h.finish(1, "completed", "Fixed and reviewed.");
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+      assert.isTrue(h.dispatched.some((command) => command.type === "thread.settle"));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { kept: "brought back to active", thread: { settledOverride: "active" } },
+  { kept: "pinned", thread: { settledOverride: null, pinnedAt: "now" } },
+  { kept: "written in by the user", thread: { settledOverride: null } },
+])("after its request closes, a conversation $kept is never settled again", ({ thread }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const ada = h.threadOf("ada");
+    yield* h.finish(0, "completed", "Fixed.");
+    const settles = () => h.dispatched.filter((command) => command.type === "thread.settle");
+    assert.lengthOf(settles(), 1);
+    Object.assign(h.fakeThreads.get(ada)!, thread);
+    // The user's own turn, a background wake and a subagent ending in it all end there.
+    for (const [index, messageId] of ["m:user", "wake:subagent"].entries()) {
+      const run = { id: `run:${messageId}`, userMessageId: messageId, status: "completed" };
+      h.runs.get(ada)!.push({ ...run, ordinal: index + 2 });
+      yield* groups.handleRunEvent({
+        type: "run.updated",
+        payload: { ...run, threadId: ada },
+      } as never as OrchestrationV2DomainEvent);
+    }
+    yield* nativeSubagent(ada, "thread:sub", "completed");
+    yield* groups.handleRunEvent(subagentEvent(ada));
+    assert.lengthOf(settles(), 1);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { work: "a dismissed thread", holds: false, dismissed: true, background: [] },
+  {
+    work: "a thread with only a PR watch",
+    holds: false,
+    dismissed: false,
+    background: [{ taskId: "pull-request-watch:1", kind: "background_task" }],
+  },
+  {
+    work: "a thread parked on background work that wakes it",
+    holds: true,
+    dismissed: false,
+    background: [{ taskId: "bg-1", kind: "background_task" }],
+  },
+])("$work at the turn's end holds the task: $holds", ({ holds, dismissed, background }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"), "completed");
+    h.background.set("thread:api", background);
+    if (dismissed) {
+      h.runs.get("thread:api")![0]!.status = "queued";
+      yield* h.sqlRows(
+        "UPDATE assistant_tasks SET dismissed_at = '2026-03-01' RETURNING thread_id",
+      );
+    }
+    yield* h.finish(0, "completed", "Fixed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), [holds ? "ada:waiting" : "ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("a task waits for both what it assigned and what it launched", () => {
   const h = harness();
