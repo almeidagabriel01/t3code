@@ -36,16 +36,17 @@ type Env = Readonly<Record<string, string | undefined>>;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
 /** The Mac path a word names (`~/…`, `$HOME/…` or absolute), or null for anything else. */
-const macPath = (word: Word, value: string, home: string) => {
-  if (word.tilde && /^~(\/|$)/.test(value)) return home + value.slice(1);
+const macPath = (word: Word, value: string, home: string, tilde: boolean) => {
+  if (tilde && /^~(\/|$)/.test(value)) return home + value.slice(1);
   const homeVar = /^\$(HOME|\{HOME\})(?=\/|$)/.exec(value);
   if (homeVar !== null && word.vars.length === 1) return home + value.slice(homeVar[0].length);
   return value.startsWith("/") && word.vars.length === 0 ? value : null;
 };
 
 /**
- * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` value or a
- * redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper sets there.
+ * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` or `NAME=`
+ * value, or a redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper
+ * sets there.
  * Linux has no Mac home, so `cd ~/<checkout>/sub` would land in a folder that doesn't exist.
  */
 const shellTextInCopy = (text: string, root: string, home: string) => {
@@ -54,9 +55,12 @@ const shellTextInCopy = (text: string, root: string, home: string) => {
     const targets = command.redirects.flatMap((redirect) =>
       redirect.target === null ? [] : [redirect.target],
     );
-    for (const word of [...command.words, ...targets]) {
-      const flag = /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
-      const path = macPath(word, word.value.slice(flag.length), home);
+    for (const word of [...command.assigns, ...command.words, ...targets]) {
+      const name = /^[A-Za-z_]\w*=/.exec(word.value)?.[0];
+      const flag = name ?? /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
+      // Bash expands an unquoted `~` after an identifier's `=`, not after a flag's.
+      const tilde = name === undefined ? word.tilde : text.startsWith(`${name}~`, word.start);
+      const path = macPath(word, word.value.slice(flag.length), home, tilde);
       if (path === null) continue;
       const relative = NodePath.relative(root, NodePath.normalize(path));
       if (relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
@@ -64,7 +68,8 @@ const shellTextInCopy = (text: string, root: string, home: string) => {
       edits.push({
         start: word.start,
         end: word.end,
-        text: `${flag === "" ? "" : shellQuote(flag)}${copy}`,
+        // A quoted name would stop being an assignment.
+        text: `${name ?? (flag === "" ? "" : shellQuote(flag))}${copy}`,
       });
     }
   }

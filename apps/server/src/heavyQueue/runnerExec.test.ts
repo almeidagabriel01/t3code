@@ -142,7 +142,20 @@ describe("running on Linux through remoto", () => {
       `vp test '--root='"$T3_COPY"'/apps/web' > "$T3_COPY"'/out.txt'`,
     ],
     ["echo $(cat /Users/me/wt/list)", `echo $(cat "$T3_COPY"'/list')`],
+    [
+      "[[ $x =~ ^a ]] && cat <~/wt/a >~/wt/b",
+      `[[ $x =~ ^a ]] && cat <"$T3_COPY"'/a' >"$T3_COPY"'/b'`,
+    ],
+    // Bash expands `~` after an identifier's `=`, in an assignment or an argument alike.
+    [
+      "FOO=~/wt/x BAR=/Users/me/wt/y env BAZ=$HOME/wt vp test",
+      `FOO="$T3_COPY"'/x' BAR="$T3_COPY"'/y' env BAZ="$T3_COPY" vp test`,
+    ],
     // Not the checkout, a quoted `~`, another home or variable: left as written.
+    [
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+    ],
     ["cd /Users/me/other && vp test", "cd /Users/me/other && vp test"],
     ["cd /Users/me/wt-2 && vp test", "cd /Users/me/wt-2 && vp test"],
     ["echo '~/wt' $WT/x ~other/wt", "echo '~/wt' $WT/x ~other/wt"],
