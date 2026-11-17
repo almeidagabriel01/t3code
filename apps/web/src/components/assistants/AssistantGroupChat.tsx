@@ -1351,6 +1351,8 @@ function GroupFeed(props: {
   const navigate = useNavigate();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // One page read at a time, across "Load earlier" and a jump to an older request.
+  const paging = useRef(false);
   // The user's own open or closed choice per request; the rest follow assistantGroupRequestExpanded.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const scroller = useRef<HTMLDivElement>(null);
@@ -1490,10 +1492,12 @@ function GroupFeed(props: {
   });
 
   const loadOlder = async () => {
-    if (chat === null || !chat.hasMore || loadingOlder) return;
+    if (chat === null || !chat.hasMore || paging.current) return;
     const element = scroller.current;
+    paging.current = true;
     setLoadingOlder(true);
     const reply = await actions.olderThan(teamId, chat, scope);
+    paging.current = false;
     setLoadingOlder(false);
     if (!reply.ok) return failed("Could not load earlier messages", reply.message);
     if (element !== null) anchor.current = { height: element.scrollHeight, top: element.scrollTop };
@@ -1591,20 +1595,40 @@ function GroupFeed(props: {
     setJumps((count) => count + 1);
   };
   const goToRequest = async (requestId: string) => {
-    if (chat === null) return;
-    const holds = (state: AssistantGroupChatState) =>
-      [...state.messages.values()].some((message) => message.requestId === requestId);
+    if (chat === null || paging.current) return;
+    const holder = (state: AssistantGroupChatState) =>
+      [...state.messages.values()].find((message) => message.requestId === requestId);
+    const holds = (state: AssistantGroupChatState) => holder(state) !== undefined;
     // ponytail: pages one by one; a jump far back would want a server read around the request.
     let state = chat;
     const loaded: AssistantGroupsHistoryResult[] = [];
+    paging.current = true;
+    setLoadingOlder(true);
     while (!holds(state) && state.hasMore) {
       const reply = await actions.olderThan(teamId, state, scope);
-      if (!reply.ok) return failed("Could not load earlier messages", reply.message);
+      if (!reply.ok) {
+        state = chat;
+        failed("Could not load earlier messages", reply.message);
+        break;
+      }
       loaded.push(reply.value);
       state = applyAssistantGroupHistory(state, reply.value);
     }
-    if (!holds(state)) return failed("Request not found", "It is no longer in this chat.");
+    paging.current = false;
+    // The feed left the screen while it paged.
+    if (scroller.current?.isConnected !== true) return;
+    setLoadingOlder(false);
     if (loaded.length > 0) setPages((current) => [...current, ...loaded]);
+    const held = holder(state);
+    if (held === undefined) {
+      if (state !== chat || !chat.hasMore)
+        failed("Request not found", "It is no longer in this chat.");
+      return;
+    }
+    const projectId = assistantGroupRequestProject(state, held.requestId);
+    if (!assistantGroupInScope({ projectId }, scope)) {
+      return failed("Request is in another tab", "Open its project's tab or All to see it.");
+    }
     setToggled((current) => new Map(current).set(requestId, true));
     stickToBottom.current = false;
     seeking.current = requestId;
@@ -1695,7 +1719,7 @@ function GroupFeed(props: {
         items={
           chat === null
             ? []
-            : assistantGroupWaitingRequests(chat).filter((item) =>
+            : assistantGroupWaitingRequests(chat, team.chat?.scopes).filter((item) =>
                 assistantGroupInScope(item, scope),
               )
         }
@@ -1926,10 +1950,13 @@ export function AssistantGroupChat(props: {
   const { focusRequest, focusTab } = props;
   const focused = useStableCallback(() => props.onFocused?.());
   const wantedTab = tabs?.some((entry) => entry.key === focusTab) ? focusTab! : "all";
+  // The link moves the tab once; a tab the user picks after that stays.
+  const movedTabFor = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link's one-shot intent from the URL
   useEffect(() => {
     if (focusRequest === undefined || pending || live === null) return;
-    if (tabKey !== null && tabKey !== wantedTab) {
+    if (tabKey !== null && tabKey !== wantedTab && movedTabFor.current !== focusRequest) {
+      movedTabFor.current = focusRequest;
       setSavedTab(wantedTab);
       return;
     }

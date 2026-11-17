@@ -908,6 +908,21 @@ it("says when a request it was sent to is no longer in the chat", async () => {
   await expect.element(page.getByText("Request not found")).toBeVisible();
 });
 
+it("says a linked request lies in another tab instead of losing it, and leaves the tab to the user", async () => {
+  twoRequests(SITE_PROJECT);
+  await using screen = await openChat({ people: sitePeople(), team: team({ chat: scopedChat() }) });
+  await expect.element(tab("All")).toBeVisible();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+    search: { tab: `project:${PROJECT_ID}`, request: "m3" },
+  });
+  await expect.element(page.getByText("Request is in another tab")).toBeVisible();
+  await expect.element(tab("render")).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(tab("All"));
+  await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+});
+
 it("opens the request a group's Needs you indicator points at, from the sidebar", async () => {
   publishGroupChat([
     message(1, { ...inRequest(1), text: "pick a project" }),
