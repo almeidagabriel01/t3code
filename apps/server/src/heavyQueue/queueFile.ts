@@ -57,12 +57,15 @@ import {
   withRecord,
 } from "./heavyNotices.ts";
 import {
+  beforeBoot,
+  bootAtOf,
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   intentOf,
   mayPublish,
   linkAttempts,
+  linuxStops,
   nextHealth,
   planRoutes,
   runnerConfigFor,
@@ -210,6 +213,8 @@ export interface LostRun {
   readonly pgidOnly?: true;
   /** One process stops it at a time: a late stop would also end the next run in that folder. */
   readonly stoppingUntil?: number;
+  /** When its attempt started: a Linux boot after it ended the run, so nothing is left to stop. */
+  readonly startedAt?: number;
 }
 
 interface JobResult {
@@ -379,10 +384,11 @@ const loadDoc = (dir: string): QueueDoc => {
                 isObject(value.remote) &&
                 typeof value.remote.id === "string",
             )
-            .map((lost) => ({
+            .map(({ startedAt, ...lost }) => ({
               ...lost,
               key: typeof lost.key === "string" ? lost.key : `${lost.entryId}:${lost.remote.id}`,
               remote: { ...lost.remote, pgid: realPgid(lost.remote.pgid) },
+              ...(typeof startedAt === "number" ? { startedAt } : {}),
             }))
         : [],
       events: parseLog(parsed?.events),
@@ -592,8 +598,9 @@ const withoutAttempt = ({
   forced: _forced,
   cpu: _cpu,
   memory: _memory,
+  stop: _stop,
   ...rest
-}: HeavyQueueEntry) => ({ ...rest, startedAt: null });
+}: QueuedEntry) => ({ ...rest, startedAt: null });
 
 /** Starts `id` when the admission plan picks it; running entries stay in front, so index order is wait order. */
 const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
@@ -643,6 +650,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       failure: _failure,
       linuxFailedAt: _failed,
       unconfirmed: _unconfirmed,
+      evictedAt: _evictedAt,
       ...rest
     }: QueuedEntry = entry;
     const record = startRecord(
@@ -1275,23 +1283,43 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
       : { doc, result: false },
   );
 
-/** Folds one heartbeat into Linux health, offline only after the configured failures in a row. */
+/**
+ * Folds one heartbeat into Linux health, offline only after the configured failures in a row. A
+ * reading also marks the Linux runs that must stop (`linuxStops`), and settles the lost runs a
+ * boot since ended: never stopped by their process group, which may be someone else's by now.
+ */
 export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) =>
   mutate(
     dir,
-    (doc) => ({
-      doc: {
-        ...doc,
-        linux: nextHealth(
-          doc.linux,
-          check,
-          doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
-          doc.heavyOverLimitSeconds * 1000,
-          now,
-        ),
-      },
-      result: undefined,
-    }),
+    (doc) => {
+      const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+      const linux = nextHealth(doc.linux, check, machine, doc.heavyOverLimitSeconds * 1000, now);
+      if (!check.ok) return { doc: { ...doc, linux }, result: undefined };
+      const stops = linuxStops(linux, doc.entries, machine);
+      const bootAt = bootAtOf(linux);
+      const lostRuns = doc.lostRuns.filter(
+        (lost) => lost.startedAt === undefined || !beforeBoot(bootAt, lost.startedAt),
+      );
+      const ended = new Set(
+        doc.lostRuns.filter((lost) => !lostRuns.includes(lost)).map((lost) => lost.entryId),
+      );
+      const entries = doc.entries.map((entry: QueuedEntry): QueuedEntry => {
+        const stop = stops[entry.id];
+        // A restart outranks a memory stop: that run's process group is gone with it.
+        if (stop !== undefined && (entry.stop === undefined || stop === "reboot")) {
+          return { ...entry, stop };
+        }
+        const settled =
+          entry.startedAt === null &&
+          entry.unconfirmed === true &&
+          ended.has(entry.id) &&
+          !lostRuns.some((lost) => lost.entryId === entry.id);
+        if (!settled) return entry;
+        const { unconfirmed: _unconfirmed, ...rest } = entry;
+        return rest;
+      });
+      return { doc: { ...doc, linux, lostRuns, entries }, result: undefined };
+    },
     now,
   );
 
@@ -1411,6 +1439,8 @@ export const requeue = (
     | "linuxFailedAt"
     | "linkFailures"
     | "failure"
+    | "evictedAt"
+    | "evictions"
   >,
 ) =>
   mutate(dir, (doc) => {
@@ -1435,10 +1465,19 @@ export const requeue = (
         ? null
         : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
     const remote = next.unconfirmed === true ? lostRemoteOf(target) : null;
+    const startedAt = target.startedAt === null ? null : Date.parse(target.startedAt);
     const lost: ReadonlyArray<LostRun> =
       remote === null
         ? []
-        : [{ key: NodeCrypto.randomUUID(), entryId: id, cwd: target.cwd, remote }];
+        : [
+            {
+              key: NodeCrypto.randomUUID(),
+              entryId: id,
+              cwd: target.cwd,
+              remote,
+              ...(startedAt === null || Number.isNaN(startedAt) ? {} : { startedAt }),
+            },
+          ];
     return {
       doc: {
         ...doc,

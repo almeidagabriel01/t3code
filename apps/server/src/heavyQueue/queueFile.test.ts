@@ -18,8 +18,10 @@ import * as Queue from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
+  LINUX_SETTLE_MS,
   parseHeartbeat,
   runnerCopyId,
+  type QueuedEntry,
   type RunnerBlock,
 } from "./runner.ts";
 import {
@@ -1019,7 +1021,7 @@ describe("Runner in the queue file", () => {
     );
   });
 
-  // With the PC gone, the agent hears at once, even before Linux can confirm the run stopped.
+  // On its last attempt, the agent hears at once, even before Linux can confirm the run stopped.
   it.each([
     [false, "Linux couldn't run this: Linux dropped it mid-run"],
     [
@@ -1030,14 +1032,14 @@ describe("Runner in the queue file", () => {
     "Tell the agent ends a job Linux dropped (unconfirmed %s), without a nobody-answered notice",
     (unconfirmed, reason) => {
       const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })), false);
-      Queue.enqueue(
-        dir,
-        test("a", {
+      Queue.enqueue(dir, {
+        ...test("a", {
           dropped: true,
           linuxFailedAt: NOW - 1000,
           ...(unconfirmed ? { unconfirmed } : {}),
         }),
-      );
+        linkFailures: 3,
+      });
       expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason });
       expect(Queue.read(dir)).toEqual([]);
       expect(Queue.readDoc(dir).events).toEqual([]);
@@ -1067,7 +1069,12 @@ describe("Runner in the queue file", () => {
     Queue.enqueue(dir, test("a", { cwd }));
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
     Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
-    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW + 1 });
+    Queue.requeue(dir, "a", {
+      dropped: true,
+      unconfirmed: true,
+      linuxFailedAt: NOW + 1,
+      linkFailures: 3,
+    });
     const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
     for (let i = 1; i <= DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i += 1) {
       Queue.recordHealth(dir, { ok: false, error: "down" }, NOW + i * beat);
@@ -1173,7 +1180,13 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
     expect(Queue.route(dir, "a", "mac")).toBe("unconfirmed");
     expect(Queue.readDoc(dir).lostRuns).toEqual([
-      { key: expect.any(String), entryId: "a", cwd: again.cwd, remote: { id: "w-1", pgid: 7 } },
+      {
+        key: expect.any(String),
+        entryId: "a",
+        cwd: again.cwd,
+        remote: { id: "w-1", pgid: 7 },
+        startedAt: NOW,
+      },
     ]);
     Queue.settleLostRun(dir, Queue.readDoc(dir).lostRuns[0]!, true);
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
@@ -1525,12 +1538,13 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir)).toEqual([]);
   });
 
-  /** Starts each on Linux, one heartbeat apart, so the next one does not wait for a reading. */
+  /** Starts each on Linux, a minute apart, so the next one does not wait for a reading. */
   const startOnLinux = (dir: string, ids: ReadonlyArray<string>) =>
     ids.forEach((id, at) => {
-      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW + at + 1);
+      const now = NOW + at * LINUX_SETTLE_MS + 1;
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, now);
       Queue.enqueue(dir, test(id));
-      expect(Queue.tryStart(dir, id, NOW + at + 1)).toMatchObject({ runner: "linux" });
+      expect(Queue.tryStart(dir, id, now)).toMatchObject({ runner: "linux" });
     });
 
   it("counts a waiter's place and running job on the machine it waits for", () => {
@@ -1590,6 +1604,47 @@ describe("Runner in the queue file", () => {
     expect(Queue.usualMs(doc, test("x"), "linux")).toBe(60_000);
     expect(Queue.usualMs(doc, test("x"), "mac")).toBe(30_000);
     expect(Queue.usualMs(doc, { label: "vp run lint" }, "linux")).toBeNull();
+  });
+
+  const stops = (dir: string) =>
+    Object.fromEntries(Queue.read(dir).map((e: QueuedEntry) => [e.id, e.stop ?? null]));
+  /** A heartbeat with `available` of 100 bytes free, and `/proc/uptime` when given. */
+  const reading = (available: number, uptime?: number) => ({
+    ok: true as const,
+    reading: parseHeartbeat(
+      `0.5 0.4 0.3 1/2 3\n6\nMem: 100 10 20 0 0 ${available}${uptime === undefined ? "" : `\n${uptime} 1000`}`,
+    ),
+  });
+
+  it("a reading low on memory marks only the newest running Linux job to stop", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    startOnLinux(dir, ["a", "b"]);
+    Queue.recordHealth(dir, reading(80), NOW + 2 * LINUX_SETTLE_MS);
+    expect(stops(dir)).toEqual({ a: null, b: null });
+    Queue.recordHealth(dir, reading(5), NOW + 2 * LINUX_SETTLE_MS);
+    expect(stops(dir)).toEqual({ a: null, b: "memory" });
+  });
+
+  // The boot ended them: nothing is left to stop, by a process group that may be someone else's now.
+  it("a reading after Linux restarted marks the runs from before it, and settles their lost runs", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    startOnLinux(dir, ["a", "lost"]);
+    Queue.setProgress(dir, "lost", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    Queue.requeue(dir, "lost", {
+      dropped: true,
+      unconfirmed: true,
+      linuxFailedAt: NOW + LINUX_SETTLE_MS + 2,
+    });
+    const at = NOW + 10 * LINUX_SETTLE_MS;
+    // Up 15 minutes, since before both started: nothing changes.
+    Queue.recordHealth(dir, reading(80, 900), at);
+    expect(stops(dir)).toEqual({ a: null, lost: null });
+    expect(Queue.readDoc(dir).lostRuns).toHaveLength(1);
+    // Up 5 minutes: both started before the boot.
+    Queue.recordHealth(dir, reading(80, 300), at);
+    expect(stops(dir)).toEqual({ a: "reboot", lost: null });
+    expect(Queue.readDoc(dir).lostRuns).toEqual([]);
+    expect(Queue.read(dir).find((e) => e.id === "lost")).not.toHaveProperty("unconfirmed");
   });
 
   it("probe: Linux with every slot busy is full and the command would wait", () => {

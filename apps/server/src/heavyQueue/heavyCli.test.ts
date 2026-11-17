@@ -889,7 +889,8 @@ describe("t3 heavy", () => {
       expect(run.stderr().includes("Not copied back (changed on this Mac): mine.txt\n")).toBe(on);
     });
 
-    // A PC that went away answers neither check: the agent hears before Linux can confirm.
+    // On a run's last attempt, a PC that went away answers neither check: the agent hears
+    // before Linux can confirm.
     it.each([
       ["answers the stop check", "echo gone", ""],
       [
@@ -898,7 +899,7 @@ describe("t3 heavy", () => {
         ", and hasn't confirmed it stopped there",
       ],
     ] as const)(
-      "Tell the agent hands back a run Linux dropped once Linux is offline and the PC %s, never running it here",
+      "Tell the agent hands back a run Linux dropped on its last attempt once Linux is offline and the PC %s, never running it here",
       async (_, stop, unconfirmed) => {
         const { dir, env } = setup(
           [
@@ -928,6 +929,8 @@ describe("t3 heavy", () => {
           dir,
         );
         await run.until("err", "Linux: running");
+        // Two earlier attempts lost the link: this drop is its last.
+        Queue.setProgress(dir, Queue.read(dir)[0]!.id, { linkFailures: 2 } as never);
         NodeFS.writeFileSync(down, "");
         const fail = { ok: false as const, error: "ssh: connect to host pc: Connection refused" };
         Queue.recordHealth(dir, fail, 1);
@@ -963,6 +966,24 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stderr()).toContain("moved by the user");
       expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    // Linux short of memory stops its newest run (the queue marks it): not a failure, it waits again.
+    it("a running Linux job stopped for memory goes back to the queue, not as a drop", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      const id = Queue.read(dir)[0]!.id;
+      Queue.setProgress(dir, id, { stop: "memory" } as never);
+      await run.until("err", "Linux ran short of memory");
+      // Requeued before the note: it may already run again, still counting the stop.
+      const entry = Queue.read(dir).find((e) => e.id === id);
+      expect(entry).toMatchObject({ evictions: 1 });
+      for (const key of ["dropped", "linkFailures", "linuxFailedAt", "stop"]) {
+        expect(entry).not.toHaveProperty(key);
+      }
+      run.child.kill("SIGTERM");
+      await run.exited;
     });
 
     it("without remoto installed, Linux counts as unavailable", async () => {

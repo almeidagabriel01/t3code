@@ -19,6 +19,8 @@ import {
   foldMarker,
   installFailure,
   linkMachine,
+  LINUX_EVICT_SHARE,
+  linuxStops,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -313,7 +315,7 @@ describe("routing matrix", () => {
       b: { runner: "linux", ungated: false },
     });
     expect(plan.reasons.d).toBe(
-      "waiting for Linux: a fresh reading since the last job started there",
+      "waiting for Linux: a reading a minute after the last job started there",
     );
   });
 
@@ -405,19 +407,64 @@ describe("routing matrix", () => {
     expect(easing.reasons.a).toBe("waiting for Linux: easing back under its limits");
   });
 
-  it("the next Linux start waits for a heartbeat taken after the last one started", () => {
-    const entries = [
-      { ...runningOn("l1", "linux"), startedAt: ago(5_000) },
-      job("a", "vp test run"),
-    ];
-    const at = (okAt: number, health: LinuxHealth = READ) =>
-      planRoutes(input(entries, { runnerWhere: "linux" }, { health: { ...health, okAt } })).admits
-        .a;
-    expect(at(NOW - 6_000)).toBeUndefined();
-    expect(at(NOW - 5_000)).toBeUndefined();
-    expect(at(NOW - 4_000)).toEqual({ runner: "linux", ungated: false });
-    // Without numbers in the heartbeat, only the slots count.
-    expect(at(NOW - 6_000, ONLINE)).toEqual({ runner: "linux", ungated: false });
+  // 17/11 16:42: five starts one heartbeat apart, each before the last one's load showed.
+  it("the next Linux start waits for a reading a minute after the last one started", () => {
+    const starts = (startedAgo: number, health: LinuxHealth = READ) =>
+      Object.keys(
+        planRoutes(
+          input(
+            [
+              { ...runningOn("l1", "linux"), startedAt: ago(startedAgo) },
+              ...["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run")),
+            ],
+            { runnerWhere: "linux" },
+            { health, machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxSlots: 6 } },
+          ),
+        ).admits,
+      );
+    expect(starts(20_000)).toEqual([]);
+    // With no numbers in the heartbeat as well.
+    expect(starts(20_000, ONLINE)).toEqual([]);
+    expect(starts(70_000)).toEqual(["a"]);
+    // The reading (a second old) is exactly a minute after the start, or just short of it.
+    expect(starts(61_000)).toEqual(["a"]);
+    expect(starts(60_999)).toEqual([]);
+  });
+
+  it.each([
+    ["a reading 5 minutes old", { ...READ, okAt: NOW - 300_000 }, "a fresh reading of Linux"],
+    ["no reading yet", { ...READ, okAt: null }, "a fresh reading of Linux"],
+    // Under the sustained limits, but past the instant ones: no new start.
+    [
+      "10% memory free",
+      { ...READ, availableMemoryBytes: 1.2 * GIB, overLimit: false },
+      "1.2 GB free, keeping 20%",
+    ],
+    ["CPU at 95%", { ...READ, cpuPercent: 95, overLimit: false }, "CPU 95%, limit 70%"],
+  ] as const)("with %s nothing starts on Linux", (_, health, why) => {
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(plan.admits).toEqual({});
+    expect(plan.reasons.a).toBe(`waiting for Linux: ${why}`);
+  });
+
+  // Stopped twice for memory beside others: only alone, so stop and start never loop.
+  it.each([
+    ["another Linux job running", [runningOn("l1", "linux")], "linux-wait"],
+    ["Linux idle", [], "linux-start"],
+  ] as const)("a job evicted twice, with %s: %s", (_, beside, outcome) => {
+    const plan = planRoutes(
+      input(
+        [...beside, job("a", "vp test run", { evictions: 2 } as never)],
+        { runnerWhere: "linux" },
+        { health: READ },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "linux-wait") {
+      expect(plan.reasons.a).toBe(
+        "waiting for Linux: Linux ran short of memory beside other jobs: waiting to run there alone",
+      );
+    }
   });
 
   it("two waiters of one worktree never take Linux together", () => {
@@ -671,7 +718,7 @@ describe("Mac first, Hybrid and Everything", () => {
     ["vp test run", 6],
   ] as const;
 
-  /** Minutes until the last job ends, replanning whenever a job ends, with fresh readings. */
+  /** Minutes until the last job ends, replanning each minute, with a reading each minute. */
   const makespan = (where: "mac" | "linux" | "automatic") => {
     const MINUTE = 60_000;
     const minutes = new Map(MIXED.map(([, length], at) => [`j${at}`, length]));
@@ -699,7 +746,7 @@ describe("Mac first, Hybrid and Everything", () => {
       }
       const running = entries.filter((entry) => entry.startedAt !== null);
       expect(running.length).toBeGreaterThan(0);
-      t = Math.min(...running.map((entry) => ends.get(entry.id)!));
+      t += 1;
       entries = entries.filter((entry) => entry.startedAt === null || ends.get(entry.id)! > t);
     }
     return t;
@@ -713,7 +760,7 @@ describe("Mac first, Hybrid and Everything", () => {
     };
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
-    expect(spans).toEqual({ mac: 19, linux: 20, hybrid: 12 });
+    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 12 });
   });
 });
 
@@ -830,7 +877,8 @@ describe("the Mac↔Linux link", () => {
       plannedWith(
         entry,
         { runnerUnavailable: "mac" },
-        { health: { ...ONLINE, okAt: NOW - 60_000 } },
+        // Fresh, and older than every failure: only the backoff sends it back.
+        { health: { ...ONLINE, okAt: NOW - 10_000 } },
       ),
     ).toBe(outcome);
   });
@@ -943,14 +991,17 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     ["wait", "linux-wait"],
     ["ask", "ask"],
     ["agent", "cancel"],
-  ] as const)("dropped mid-run: %s → %s, apart from the unavailable policy", (policy, outcome) => {
-    const plan = offline(job("a", "vp test run", { dropped: true }), {
-      runnerDropped: policy,
-      runnerUnavailable: "wait",
-    });
-    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
-    if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
-  });
+  ] as const)(
+    "dropped on its last attempt: %s → %s, apart from the unavailable policy",
+    (policy, outcome) => {
+      const plan = offline(job("a", "vp test run", { dropped: true, linkFailures: 3 } as never), {
+        runnerDropped: policy,
+        runnerUnavailable: "wait",
+      });
+      expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+      if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+    },
+  );
 
   // Tell the agent hands every failure back, in every mode: nothing reruns on this Mac.
   it.each(
@@ -1008,25 +1059,24 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     },
   );
 
-  // The PC went away: Linux was marked offline after the drop. Its policy acts at once, before
-  // Linux can confirm the run stopped, and Linux coming back does not undo it; only a rerun waits
-  // for the confirmation. A blip that never took Linux offline still goes back by itself.
+  // A drop (the link, or the PC going away or restarting) goes back to Linux by itself while it
+  // has attempts left: once Linux is up and confirms the run stopped, whatever the policy; with
+  // Linux offline, "When Linux is offline" decides, as for any waiter. On its last attempt "If a
+  // Linux run fails" acts at once, before Linux can confirm, and Linux coming back undoes nothing.
   const BLIP: LinuxHealth = { ...ONLINE, okAt: NOW - 100 };
   const BACK: LinuxHealth = { ...BLIP, backOnlineAt: NOW - 100 };
   const PC = { "back before offline": BLIP, "still offline": OFFLINE, "back after offline": BACK };
+  const pcs = Object.keys(PC) as ReadonlyArray<keyof typeof PC>;
   it.each([
-    ["agent", "back before offline", "linux-wait", "linux-start"],
-    ["agent", "still offline", "cancel", "cancel"],
-    ["agent", "back after offline", "cancel", "cancel"],
-    ["ask", "back before offline", "linux-wait", "linux-start"],
-    ["ask", "still offline", "ask", "ask"],
-    ["ask", "back after offline", "ask", "ask"],
-    ["mac", "back before offline", "linux-wait", "linux-start"],
-    ["mac", "still offline", "mac-wait", "mac-start"],
-    ["mac", "back after offline", "mac-wait", "mac-start"],
+    [1, "agent", "back before offline", "linux-wait", "linux-start"],
+    [1, "agent", "back after offline", "linux-wait", "linux-start"],
+    [1, "agent", "still offline", "mac-wait", "mac-start"],
+    ...pcs.map((pc) => [3, "agent", pc, "cancel", "cancel"] as const),
+    ...pcs.map((pc) => [3, "ask", pc, "ask", "ask"] as const),
+    ...pcs.map((pc) => [3, "mac", pc, "mac-wait", "mac-start"] as const),
   ] as const)(
-    "dropped under %s, PC %s: %s until Linux confirms the run stopped, then %s",
-    (policy, pc, unconfirmed, confirmed) => {
+    "dropped on attempt %i under %s, PC %s: %s until Linux confirms the run stopped, then %s",
+    (linkFailures, policy, pc, unconfirmed, confirmed) => {
       for (const [hold, outcome] of [
         [true, unconfirmed],
         [false, confirmed],
@@ -1034,10 +1084,15 @@ describe("Linux unavailable, deadline and dropped policies", () => {
         const entry = job("a", "vp test run", {
           dropped: true,
           linuxFailedAt: NOW - 5000,
+          linkFailures,
           ...(hold ? { unconfirmed: true } : {}),
-        });
+        } as never);
         const plan = planRoutes(
-          input([entry], { runnerWhere: "linux", runnerDropped: policy }, { health: PC[pc] }),
+          input(
+            [entry],
+            { runnerWhere: "linux", runnerDropped: policy, runnerUnavailable: "mac" },
+            { health: PC[pc] },
+          ),
         );
         expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
         if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
@@ -1051,14 +1106,14 @@ describe("Linux unavailable, deadline and dropped policies", () => {
         }
         if (hold && outcome === "mac-wait") {
           expect(plan.reasons.a).toBe(
-            "Linux dropped it mid-run: running here once Linux confirms it stopped",
+            `${linkFailures === 3 ? "Linux dropped it mid-run" : "Linux is unavailable"}: running here once Linux confirms it stopped`,
           );
         }
       }
     },
   );
 
-  // A question asked while the PC was away is the one decision: no second question, and its
+  // A question asked on the last attempt is the one decision: no second question, and its
   // deadline action reruns only once Linux confirms the run stopped.
   it.each([
     ["open, PC back and confirmed", 60_000, "mac", BACK, false, "linux-wait"],
@@ -1071,9 +1126,10 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     const entry = job("a", "vp test run", {
       dropped: true,
       linuxFailedAt: NOW - 5000,
+      linkFailures: 3,
       ask: { reason: "dropped", deadlineAt: ago(-deadline) },
       ...(hold ? { unconfirmed: true } : {}),
-    });
+    } as never);
     const plan = planRoutes(
       input(
         [entry],
@@ -1896,6 +1952,15 @@ describe("Linux health", () => {
       totalMemoryBytes: 12_000_000_000,
       availableMemoryBytes: 8_500_000_000,
     });
+    // `/proc/uptime` comes last: seconds since boot, then idle time.
+    expect(parseHeartbeat(`${text}\n300.25 1650.10`)).toEqual({
+      cpuPercent: null,
+      load1: 1.25,
+      cpuCount: 6,
+      totalMemoryBytes: 12_000_000_000,
+      availableMemoryBytes: 8_500_000_000,
+      uptimeSeconds: 300.25,
+    });
     expect(parseHeartbeat("garbage")).toEqual({
       cpuPercent: null,
       load1: null,
@@ -1926,6 +1991,47 @@ describe("Linux health", () => {
       "pc",
       "true",
     ]);
+  });
+});
+
+describe("Linux runs a reading stops", () => {
+  const at = (id: string, startedAgo: number, extra: Partial<QueuedEntry> = {}) => ({
+    ...runningOn(id, "linux"),
+    startedAt: ago(startedAgo),
+    ...extra,
+  });
+  // Half the 20% floor: below 10% free the newest run stops.
+  const EVICT = (DEFAULT_MACHINE_CONFIG.runnerLinuxMemoryFloorPercent / 100) * LINUX_EVICT_SHARE;
+  const free = (share: number): LinuxHealth => ({
+    ...READ,
+    availableMemoryBytes: share * 12 * GIB,
+  });
+  const three = [at("old", 900_000), at("mid", 600_000), at("new", 300_000)];
+  it.each([
+    ["8% free beside two others", free(EVICT - 0.02), three, { new: "memory" }],
+    ["8% free with one run", free(EVICT - 0.02), [at("only", 300_000)], {}],
+    [
+      "8% free while one already stops for memory",
+      free(EVICT - 0.02),
+      [at("old", 900_000), at("mid", 600_000, { stop: "memory" }), at("new", 300_000)],
+      {},
+    ],
+    [
+      "8% free, with no reading since the last stop",
+      free(EVICT - 0.02),
+      [...three, job("gone", "vp test run", { evictedAt: NOW - 1000 } as never)],
+      {},
+    ],
+    ["15% free", free(EVICT + 0.05), three, {}],
+    // The reading is a second old: Linux booted 301 s ago.
+    [
+      "Linux booted 300 s before the reading",
+      { ...READ, uptimeSeconds: 300 },
+      [at("before", 601_000), at("after", 101_000)],
+      { before: "reboot" },
+    ],
+  ] as const)("%s", (_, health, entries, stops) => {
+    expect(linuxStops(health, entries, DEFAULT_MACHINE_CONFIG)).toEqual(stops);
   });
 });
 
@@ -2000,6 +2106,25 @@ describe("remoto markers", () => {
     expect(fold("phase=syncing id=$(rm -rf ~)").id).toBeNull();
   });
 
+  it("the stop script leaves alone a group that no longer works in the run's folder", () => {
+    // A restart reuses process numbers: the recorded group is now someone else's.
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "stop-home-"));
+    const stranger = NodeChildProcess.spawn("sleep", ["30"], { detached: true, cwd: home });
+    try {
+      const said = NodeChildProcess.spawnSync(
+        "bash",
+        ["-c", remoteStopScript("app-1a2b3c4d", stranger.pid!, 1, true)],
+        { cwd: home, env: { ...process.env, HOME: home }, encoding: "utf8" },
+      );
+      expect(said.stdout.trim()).toBe("gone");
+      expect(stranger.exitCode).toBeNull();
+      expect(() => process.kill(stranger.pid!, 0)).not.toThrow();
+    } finally {
+      process.kill(stranger.pid!, "SIGKILL");
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("the stop script refuses ids that could escape its quotes", () => {
     expect(() => remoteStopScript("a'; rm -rf ~; '", null, 5)).toThrow(/Unsafe/);
     const script = remoteStopScript("app-1a2b3c4d", 42, 5);
@@ -2009,7 +2134,7 @@ describe("remoto markers", () => {
     // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
     const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
     expect(group).toContain('kill -TERM -- "-$p"');
-    expect(group).not.toMatch(/pkill|pgrep|\.pgid/);
+    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid/);
     expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
     // `kill -- -1` would reach every process there.
     for (const pgid of [0, 1, -3, 1.5]) {

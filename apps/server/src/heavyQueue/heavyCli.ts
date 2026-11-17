@@ -830,10 +830,11 @@ const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
     });
 };
 
+const queuedOf = (dir: string, id: string): QueuedEntry | undefined =>
+  readDoc(dir).entries.find((entry) => entry.id === id);
+
 /** Its runs that lost the link so far, this one included. */
-const linkFailuresOf = (dir: string, id: string) =>
-  ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
-    ?.linkFailures ?? 0) + 1;
+const linkFailuresOf = (dir: string, id: string) => (queuedOf(dir, id)?.linkFailures ?? 0) + 1;
 
 /** Why this process's command could not start anywhere, once a check here found out. */
 let commandFailure: string | undefined;
@@ -841,8 +842,7 @@ let commandFailure: string | undefined;
 type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
 
-const requeueOf = (dir: string, id: string) =>
-  readDoc(dir).entries.find((entry) => entry.id === id)?.requeue;
+const requeueOf = (dir: string, id: string) => queuedOf(dir, id)?.requeue;
 
 const runMacAttempt = async (
   job: {
@@ -1011,10 +1011,14 @@ const runLinuxAttempt = async (
     });
   });
   let moved: "mac" | "linux" | undefined;
+  // Linux ran short of memory or restarted: the queue ends this attempt.
+  let ended = false;
   const watch = setInterval(() => {
-    const requeue = requeueOf(dir, id);
-    if (requeue === undefined || moved !== undefined || stopping) return;
-    moved = requeue;
+    if (moved !== undefined || ended || stopping) return;
+    const entry = queuedOf(dir, id);
+    if (entry?.stop !== undefined) ended = true;
+    else if (entry?.requeue !== undefined) moved = entry.requeue;
+    else return;
     signalGroup("SIGTERM");
   }, POLL_MS);
   const exit = await exited;
@@ -1023,6 +1027,32 @@ const runLinuxAttempt = async (
   const outcome = takeOutcome(dir, id);
   const remote = remoteOf(dir, id);
 
+  if (ended) {
+    // Read again: a restart seen since a memory stop outranks it.
+    const entry = queuedOf(dir, id);
+    if (entry?.stop === "reboot") {
+      // The boot ended the run: a process group from before it may be someone else's now.
+      requeue(dir, id, {
+        dropped: true,
+        linuxFailedAt: Date.now(),
+        linkFailures: linkFailuresOf(dir, id),
+      });
+      process.stderr.write(
+        "[t3 heavy] Linux restarted under this run; it goes back to the queue.\n",
+      );
+      return { kind: "requeued" };
+    }
+    const clean = await confirmGone();
+    requeue(dir, id, {
+      evictedAt: Date.now(),
+      evictions: (entry?.evictions ?? 0) + 1,
+      ...(clean ? {} : { unconfirmed: true }),
+    });
+    process.stderr.write(
+      "[t3 heavy] Linux ran short of memory: stopped this newest run there; it waits to run again.\n",
+    );
+    return { kind: "requeued" };
+  }
   if (moved !== undefined) {
     const clean = await confirmGone();
     process.stderr.write(`[t3 heavy] moved by the user; waiting to run on ${runnerName(moved)}.\n`);
