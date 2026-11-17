@@ -55,6 +55,7 @@ import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
   linkAttempts,
+  setupFailure,
   bodyVerdict,
   linkMachine,
   movedPart,
@@ -918,10 +919,18 @@ const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}
 
 /** Linux never ran a part or dropped it, couldn't run it, or it turned out to need this Mac. */
 type PartOutcome =
-  | RemoteOutcome
+  | (RemoteOutcome & { readonly error?: string })
   | { readonly kind: "mac"; readonly reason: string }
-  /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
-  | { readonly kind: "environment"; readonly reason: string; readonly code?: number };
+  /**
+   * `code`: Linux's own exit code for it, when it ran there (126, 127). `touched`: it failed after
+   * `remoto` began syncing, so a run may be left there to confirm.
+   */
+  | {
+      readonly kind: "environment";
+      readonly reason: string;
+      readonly code?: number;
+      readonly touched?: boolean;
+    };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1038,12 +1047,18 @@ const runLinuxAttempt = async (
     return { kind: "requeued" };
   }
   if (outcome.kind === "environment") {
-    // It ended there with its exit code, so nothing is left to confirm.
     process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
+    // One that failed after syncing began may have an install going there: confirm it ended.
+    const clean = outcome.touched !== true || (await confirmGone());
     if (configFor(readDoc(dir), process.cwd()).runnerDropped === "agent") {
       return { kind: "exit", code: outcome.code ?? LINUX_UNAVAILABLE_EXIT };
     }
-    requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
+    requeue(dir, id, {
+      dropped: true,
+      failure: outcome.reason,
+      linuxFailedAt: Date.now(),
+      ...(clean ? {} : { unconfirmed: true }),
+    });
     return { kind: "requeued" };
   }
   if (outcome.kind === "unavailable") {
@@ -1054,6 +1069,7 @@ const runLinuxAttempt = async (
     requeue(dir, id, {
       linuxFailedAt: Date.now(),
       linkFailures: linkFailuresOf(dir, id),
+      ...(outcome.error === undefined ? {} : { linkError: outcome.error }),
       ...(clean ? {} : { unconfirmed: true }),
     });
     return { kind: "requeued" };
@@ -1247,8 +1263,34 @@ const runLinuxPart = async (
     fault({ kind: "missing", tool: outcome.tool });
     return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
   }
+  const touched = progress.syncing || progress.phase !== null;
+  // The project's own failure there (a lockfile) follows "If a Linux run fails", never a retry.
+  if (outcome.kind === "setup") {
+    fault(
+      outcome.phase === "installing" ? { kind: "install", package: install } : { kind: "sync" },
+    );
+    return endLine(dir, id, {
+      kind: "environment",
+      reason: setupFailure(outcome.phase, lastError as string | null),
+      code: outcome.code,
+      touched,
+    });
+  }
+  const exhausted = linkFailuresOf(dir, id) >= linkAttempts(machine);
+  // Failing before it starts every time while heartbeats get through is not the link's doing.
+  if (outcome.kind === "unavailable" && exhausted && readDoc(dir).linux.online === true) {
+    fault(outcome.touched ? { kind: "sync" } : { kind: "unreachable" });
+    return endLine(dir, id, {
+      kind: "environment",
+      reason: setupFailure(
+        progress.phase ?? (outcome.touched ? "syncing" : null),
+        lastError as string | null,
+      ),
+      touched,
+    });
+  }
   // A lost link is retried: it's a fault only once this job has used up its attempts.
-  if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {
+  if (exhausted) {
     fault(
       outcome.kind === "dropped"
         ? { kind: "lost" }
@@ -1257,7 +1299,8 @@ const runLinuxPart = async (
           : { kind: "unreachable" },
     );
   }
-  endLine(dir, id, outcome);
+  const error = lastError as string | null;
+  endLine(dir, id, error === null ? outcome : { ...outcome, error });
 };
 
 /** The last line of Linux's output worth showing: not T3's own notes, not blank. */

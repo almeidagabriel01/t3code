@@ -1254,13 +1254,18 @@ export const recordFault = (dir: string, id: string, fault: Fault, now = Date.no
     dir,
     (doc) => {
       const entry = doc.entries.find((each) => each.id === id);
-      return {
-        doc:
-          entry === undefined
-            ? doc
-            : { ...doc, events: withRecord(doc.events, faultRecord(entry, fault, now)) },
-        result: undefined,
-      };
+      if (entry === undefined) return { doc, result: undefined };
+      // The same job failing the same way again counts on its one record, filed once.
+      const same = doc.events.findLast(
+        (event) => event.kind === "t3-fault" && event.job.id === id && event.cause === fault.cause,
+      );
+      const events =
+        same?.kind === "t3-fault"
+          ? doc.events.map((event) =>
+              event === same ? { ...same, at: now, count: (same.count ?? 1) + 1 } : event,
+            )
+          : withRecord(doc.events, faultRecord(entry, fault, now));
+      return { doc: { ...doc, events }, result: undefined };
     },
     now,
   );

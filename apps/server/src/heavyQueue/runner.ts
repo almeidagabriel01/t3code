@@ -167,6 +167,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly linkFailures?: number;
   /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
   readonly failure?: string;
+  /** The last line Linux printed when its link last failed, for the retry's reason. */
+  readonly linkError?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
   readonly held?: Pick<HeavyQueueEntry, "ask" | "route">;
 };
@@ -1093,6 +1095,14 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * "When Linux is offline" or "If a Linux run fails", with its question and deadline. A run Linux
    * hasn't confirmed stopped reruns nowhere yet, but every other choice acts now.
    */
+  /** Only an offline Linux "comes back"; online, the job is between attempts of its own. */
+  const linuxWait = (entry: HeavyQueueEntry) => {
+    const { linkFailures, linkError } = entry as QueuedEntry;
+    if (health.online === false) return "waiting for Linux to come back";
+    if (linkFailures === undefined) return "checking whether Linux is up";
+    const attempt = `retrying on Linux (attempt ${linkFailures} of ${linkAttempts(machine)})`;
+    return linkError === undefined ? attempt : `${attempt}: ${linkError}`;
+  };
   const follow = (entry: HeavyQueueEntry, config: RunnerProjectConfig) => {
     const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
@@ -1180,7 +1190,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     // A run that failed on Linux follows "If a Linux run fails" in every mode, below.
@@ -1257,7 +1267,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     // The user (or an expired question) already chose to wait.
     if (entry.route === "linux") {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     follow(entry, config);
@@ -1370,15 +1380,33 @@ export type RemoteOutcome =
   /** It started there and the connection ended without its exit code. */
   | { readonly kind: "dropped" }
   /** The pre-flight found its program missing there: nothing ran. */
-  | { readonly kind: "missing"; readonly tool: string };
+  | { readonly kind: "missing"; readonly tool: string }
+  /** `remoto` failed there before the command, for a reason of the project's (a lockfile). */
+  | { readonly kind: "setup"; readonly phase: RemoteProgress["phase"]; readonly code: number };
 
-/** The exit marker is the command's own code; without it, ssh's 255 is not the command's. */
-export const remoteOutcome = (progress: RemoteProgress): RemoteOutcome => {
+/** Exits that mean the link failed: ssh's own, `remoto`'s, and rsync's network and timeouts. */
+const LINK_EXITS = new Set([255, 75, 10, 12, 30, 35]);
+
+/**
+ * The exit marker is the command's own code; without it, ssh's 255 is not the command's. Before
+ * the command runs, only a link exit is Linux's; any other code is the project's.
+ */
+export const remoteOutcome = (
+  progress: RemoteProgress,
+  code: number | null = null,
+): RemoteOutcome => {
   if (progress.missing !== null) return { kind: "missing", tool: progress.missing };
   if (progress.exit !== null) return { kind: "finished", code: progress.exit };
+  if (!progress.running && code !== null && code !== 0 && !LINK_EXITS.has(code)) {
+    return { kind: "setup", phase: progress.phase, code };
+  }
   if (!progress.running) return { kind: "unavailable", touched: progress.syncing };
   return { kind: "dropped" };
 };
+
+/** Why a run failed there before its command: the phase it reached and Linux's last line. */
+export const setupFailure = (phase: RemoteProgress["phase"], line: string | null) =>
+  `${phase === "installing" ? INSTALL_FAILED : phase === "syncing" ? "Sync on Linux failed" : "Starting on Linux failed"}${line === null ? "" : `: ${line}`}`;
 
 /** Extra ssh options from `REMOTO_SSH_OPTS`, shared with `remoto` so both reach the same host. */
 const sshOptions = (environment: Readonly<Record<string, string | undefined>>) =>

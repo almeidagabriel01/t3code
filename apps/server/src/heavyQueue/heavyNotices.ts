@@ -45,7 +45,7 @@ export type HeavyEvent =
   /** Hybrid placed it on Linux: planned, shown only for every machine change. */
   | { readonly kind: "hybrid" }
   /** Linux couldn't run it for a reason of T3's or the PC's own; the problem detector files it and tells. */
-  | ({ readonly kind: "t3-fault" } & Fault);
+  | ({ readonly kind: "t3-fault"; readonly count?: number } & Fault);
 
 /** Each reason has an approved card label in the problem detector; a new one needs its label approved first. */
 export type FaultReason =

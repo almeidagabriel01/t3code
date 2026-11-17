@@ -31,6 +31,7 @@ import {
   planRoutes,
   platformFailures,
   remoteOutcome,
+  setupFailure,
   remotePgidScript,
   remoteStopScript,
   removeCopyScript,
@@ -794,6 +795,42 @@ describe("the Mac↔Linux link", () => {
         { health: { ...ONLINE, okAt: NOW - 60_000 } },
       ),
     ).toBe(outcome);
+  });
+
+  // 40, 42: only an offline Linux "comes back"; online, the row names its own attempts.
+  it.each([
+    [
+      {},
+      { okAt: NOW - 60_000 },
+      "linux-wait",
+      "retrying on Linux (attempt 1 of 3): connection lost",
+    ],
+    [{ route: "linux" }, { online: false }, "linux-wait", "waiting for Linux to come back"],
+    [
+      { route: "linux" },
+      { okAt: NOW - 60_000 },
+      "linux-wait",
+      "retrying on Linux (attempt 1 of 3): connection lost",
+    ],
+    // The first heartbeat through after the failure makes it eligible, with no restart.
+    [{ route: "linux" }, { okAt: NOW }, "linux-start", undefined],
+  ] as const)("a lost link, %j, Linux %j: %s, %j", (extra, linux, outcome, reason) => {
+    const plan = planRoutes(
+      input(
+        [
+          job("a", "vp test run", {
+            linuxFailedAt: NOW - 500,
+            linkFailures: 1,
+            linkError: "connection lost",
+            ...extra,
+          } as never),
+        ],
+        { runnerWhere: "linux" },
+        { health: { ...ONLINE, ...linux } },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    expect(plan.reasons.a).toBe(reason);
   });
 
   const expired = { reason: "unavailable" as const, deadlineAt: ago(1) };
@@ -1875,6 +1912,36 @@ describe("remoto markers", () => {
     [[], { kind: "unavailable", touched: false }],
   ] as const)("%j ends as %j", (lines, outcome) => {
     expect(remoteOutcome(fold(...lines))).toEqual(outcome);
+  });
+
+  // Before the command runs, only ssh's, remoto's and rsync's link exits are the link's.
+  it.each([
+    [
+      ["phase=syncing id=a-1", "phase=installing"],
+      1,
+      { kind: "setup", phase: "installing", code: 1 },
+    ],
+    [["phase=syncing id=a-1"], 23, { kind: "setup", phase: "syncing", code: 23 }],
+    [[], 2, { kind: "setup", phase: null, code: 2 }],
+    ...[255, 75, 10, 12, 30, 35].map(
+      (code) => [["phase=syncing id=a-1"], code, { kind: "unavailable", touched: true }] as const,
+    ),
+    [["phase=syncing id=a-1"], null, { kind: "unavailable", touched: true }],
+    [["phase=running pgid=42"], 1, { kind: "dropped" }],
+  ] as const)("%j with exit %j ends as %j", (lines, code, outcome) => {
+    expect(remoteOutcome(fold(...lines), code)).toEqual(outcome);
+  });
+
+  it.each([
+    [
+      "installing",
+      "help: Update your lockfile",
+      "Dependency install on Linux failed: help: Update your lockfile",
+    ],
+    ["syncing", "rsync error", "Sync on Linux failed: rsync error"],
+    [null, null, "Starting on Linux failed"],
+  ] as const)("a %s failure reads %j", (phase, line, reason) => {
+    expect(setupFailure(phase, line)).toBe(reason);
   });
 
   it("notes the package whose install the wrapper couldn't finish", () => {

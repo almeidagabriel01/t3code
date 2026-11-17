@@ -284,7 +284,11 @@ describe("t3 heavy", () => {
       return path;
     };
     /** Heartbeats read as online; a stop check answers `gone`. */
-    const setup = (remotoBody: string, config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => {
+    const setup = (
+      remotoBody: string,
+      config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {},
+      machine: Partial<typeof DEFAULT_MACHINE_CONFIG> = {},
+    ) => {
       const dir = tempDir();
       // A checkout, so work started in it may go to Linux.
       NodeFS.mkdirSync(NodePath.join(dir, ".git"));
@@ -292,7 +296,7 @@ describe("t3 heavy", () => {
       script(NodePath.join(dir, "bin"), "vp", 'echo "vp on mac: $*"');
       Queue.publishRunner(dir, {
         global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux", ...config },
-        machine: DEFAULT_MACHINE_CONFIG,
+        machine: { ...DEFAULT_MACHINE_CONFIG, ...machine },
         projects: [],
         publisher: { pid: process.pid, home: dir, primary: true },
       });
@@ -735,6 +739,39 @@ describe("t3 heavy", () => {
         expect(runs(dir)).toBe("2");
       },
     );
+
+    // 39: the project's own failure there is no lost link: the policy decides once, no retry loop.
+    it("runs a job whose install fails on Linux here once, naming Linux's last line", async () => {
+      const { dir, env } = setup(
+        failingOnce(
+          `printf '${M} phase=syncing id=app-1\\n${M} phase=installing\\n' >&2; echo 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"' >&2; exit 1`,
+        ),
+        { runnerDropped: "mac" },
+      );
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("ran on mac\n");
+      expect(run.stderr()).toContain(
+        'Linux couldn\'t run this: Dependency install on Linux failed: help: Update your lockfile using "pnpm install --no-frozen-lockfile"',
+      );
+      expect(runs(dir)).toBe("1");
+    });
+
+    // 41: failing before it starts every time while heartbeats get through is the environment's.
+    it("stops retrying a link that keeps failing while Linux answers, and follows the policy", async () => {
+      const { dir, env } = setup(
+        `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"\nprintf '${M} phase=syncing id=app-1\\n' >&2; echo 'rsync: connection unexpectedly closed' >&2; exit 255`,
+        { runnerDropped: "mac" },
+        { runnerSshTimeoutSeconds: 1 },
+      );
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("ran on mac\n");
+      expect(run.stderr()).toContain(
+        "Linux couldn't run this: Sync on Linux failed: rsync: connection unexpectedly closed",
+      );
+      expect(runs(dir)).toBe("3");
+    });
 
     it("reruns a dropped job on Linux once it confirms it stopped and the link is back", async () => {
       const { dir, env } = setup(

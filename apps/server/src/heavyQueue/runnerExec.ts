@@ -636,13 +636,13 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     install: string | null;
   }>((resolve) => {
     let settled = false;
-    const finish = () => {
+    const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
       out.end();
       err.end();
       resolve({
-        outcome: remoteOutcome(progress),
+        outcome: remoteOutcome(progress, code),
         progress,
         platform: [...platform],
         install: progress.install ?? install,
@@ -650,9 +650,9 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     };
     child.on("error", (error) => {
       options.stderr(`[t3 heavy] cannot run remoto: ${error.message}\n`);
-      finish();
+      finish(null);
     });
-    child.on("close", finish);
+    child.on("close", (code) => finish(code));
   });
   return {
     done,

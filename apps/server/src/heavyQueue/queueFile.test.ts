@@ -178,6 +178,31 @@ describe("heavy queue file", () => {
     });
   });
 
+  it("keeps one fault record per job and cause, counting repeats", () => {
+    const dir = tempDir();
+    Queue.enqueue(dir, entry("a"));
+    const fault = (cause: string) => ({
+      cause,
+      reason: "linux-sync" as const,
+      command: "vp test run",
+      error: "help: Update your lockfile",
+      projectFolder: null,
+    });
+    for (const cause of [
+      "linux-sync:unknown",
+      "linux-sync:unknown",
+      "linux-sync:rsync",
+      "linux-sync:unknown",
+    ]) {
+      Queue.recordFault(dir, "a", fault(cause), 1000);
+    }
+    const faults = Queue.readDoc(dir).events.filter((event) => event.kind === "t3-fault");
+    expect(faults.map((event) => [event.cause, event.count])).toEqual([
+      ["linux-sync:unknown", 3],
+      ["linux-sync:rsync", undefined],
+    ]);
+  });
+
   it("startNow lets every chosen waiter start past the pause and full slots", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));
