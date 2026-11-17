@@ -13,7 +13,7 @@ export interface Word {
   readonly value: string;
   /** Variables it expands by name; "" for a command substitution or arithmetic. */
   readonly vars: ReadonlyArray<string>;
-  /** Starts with an unquoted `~`. */
+  /** Starts with an unquoted `~`, or is an assignment whose value does. */
   readonly tilde: boolean;
 }
 
@@ -154,7 +154,8 @@ export const parseLine = (source: string): ParsedLine => {
 
   const readWord = (context: Context): Word => {
     const start = at;
-    const tilde = source[at] === "~";
+    // Bash expands an assignment's leading `~` too: `T=~/tool`.
+    const tilde = /^(?:[A-Za-z_]\w*\+?=)?~/.test(source.slice(at, at + 256));
     const vars: string[] = [];
     let value = "";
     while (at < source.length) {

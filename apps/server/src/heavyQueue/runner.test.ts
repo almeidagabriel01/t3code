@@ -1498,6 +1498,22 @@ describe("patterns and eligibility", () => {
           "Uses a program outside the project: /private/tmp/x/run-tests",
         ],
         ["../other/tool test", "mac-only", "Uses a program outside the project: /other/tool"],
+        // Home is outside the checkout however the line spells it.
+        ...[
+          "~/tool",
+          "$HOME/tool",
+          "${HOME}/tool",
+          '"$HOME"/tool',
+          "T=~/tool; $T",
+          "T=$HOME/tool; $T",
+        ].map(
+          (program) =>
+            [
+              `${program} test`,
+              "mac-only",
+              "Uses a program outside the project: /home/me/tool",
+            ] as const,
+        ),
         // A `.sh` whose shebang names another interpreter is no shell script: it can't go as text.
         [
           "remoto /private/tmp/x/run.sh",
