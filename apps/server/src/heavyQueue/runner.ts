@@ -1383,8 +1383,11 @@ export type RemoteOutcome =
   /** `remoto` failed there before the command, for a reason of the project's (a lockfile). */
   | { readonly kind: "setup"; readonly phase: RemoteProgress["phase"]; readonly code: number };
 
-/** Exits that mean the link failed: ssh's own, `remoto`'s, and rsync's network and timeouts. */
-const LINK_EXITS = new Set([255, 75, 10, 12, 30, 35]);
+/**
+ * Exits that mean the link failed or the sync was cut short: ssh's own, `remoto`'s, and rsync's
+ * network, timeout, signal (20) and vanished-file (24) codes. Any other is the project's.
+ */
+const LINK_EXITS = new Set([255, 75, 10, 12, 20, 24, 30, 35]);
 
 /**
  * The exit marker is the command's own code; without it, ssh's 255 is not the command's. Before

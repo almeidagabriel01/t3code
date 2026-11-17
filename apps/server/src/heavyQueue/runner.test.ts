@@ -1943,7 +1943,8 @@ describe("remoto markers", () => {
     ],
     [["phase=syncing id=a-1"], 23, { kind: "setup", phase: "syncing", code: 23 }],
     [[], 2, { kind: "setup", phase: null, code: 2 }],
-    ...[255, 75, 10, 12, 30, 35].map(
+    // rsync 20 (killed by a signal) and 24 (files vanished mid-sync, as a dev server writes) pass.
+    ...[255, 75, 10, 12, 20, 24, 30, 35].map(
       (code) => [["phase=syncing id=a-1"], code, { kind: "unavailable", touched: true }] as const,
     ),
     [["phase=syncing id=a-1"], null, { kind: "unavailable", touched: true }],
