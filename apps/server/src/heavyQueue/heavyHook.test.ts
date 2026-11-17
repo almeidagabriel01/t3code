@@ -244,7 +244,7 @@ describe("the PreToolUse answer", () => {
       { probe, inT3 },
     )!.hookSpecificOutput;
     expect(answer.updatedInput).toMatchObject({ description: "Build", timeout });
-    expect(answer.updatedInput.run_in_background === true).toBe(background);
+    expect("run_in_background" in answer.updatedInput).toBe(background);
     const context = (answer as { additionalContext?: string }).additionalContext;
     if (note === null) expect(context).toBeUndefined();
     else {

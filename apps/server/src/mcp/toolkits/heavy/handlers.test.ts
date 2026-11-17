@@ -377,6 +377,7 @@ const callTool = (
                     runsOn: "linux" as const,
                     reason: "Linux is unavailable: waiting for it",
                     startsNow: false,
+                    position: 1,
                     linuxFull: true,
                   };
                 }),
