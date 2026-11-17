@@ -282,12 +282,10 @@ describe("admission plan", () => {
       reason: { a: "the one slot is busy" },
     },
     {
-      name: "ramp-up: the last start has not settled",
+      name: "a job that just started counts its estimate, not a whole settle window",
       entries: [entry("r", "vp run build", 5_000), entry("a", "vp run typecheck")],
       change: { lastStartAt: NOW - 5_000 },
-      admit: null,
-      hold: "settling",
-      reason: { a: "letting the last one ramp up" },
+      admit: "a",
     },
     {
       name: "ramp-up over: admit again",
@@ -312,7 +310,7 @@ describe("admission plan", () => {
       },
       admit: null,
       hold: "job-memory",
-      reason: { a: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare" },
+      reason: { a: "memory floor: 2.6 GB room, needs 4.0 GB" },
     },
     {
       name: "memory below the floor holds whatever the job needs",
@@ -398,8 +396,8 @@ describe("admission plan", () => {
       admit: "small",
       hold: "job-memory",
       reason: {
-        head: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
-        mid: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
+        head: "memory floor: 2.6 GB room, needs 4.0 GB",
+        mid: "memory floor: 2.6 GB room, needs 4.0 GB",
       },
     },
     {
@@ -513,11 +511,12 @@ describe("admission plan", () => {
     entries: ReadonlyArray<HeavyQueueEntry>;
     change?: Partial<Omit<PlanInput, "entries">>;
     admit: string | null;
+    admits?: ReadonlyArray<string>;
     hold?: string;
     reason?: Record<string, string>;
-  }>)("$name", ({ entries, change, admit, hold, reason }) => {
+  }>)("$name", ({ entries, change, admit, admits, hold, reason }) => {
     const result = plan({ ...base, ...change, entries });
-    expect(result.admit).toBe(admit);
+    expect(result.admits).toEqual(admits ?? (admit === null ? [] : [admit]));
     // Every held case names its enumerable reason; an admitted head has none.
     expect(result.hold).toBe(hold ?? null);
     for (const [id, text] of Object.entries(reason ?? {})) expect(result.reasons[id]).toBe(text);
@@ -544,17 +543,18 @@ describe("admission plan", () => {
       change: {},
       entries: [entry("r1", "xcrun simctl boot x", 60_000)],
     },
-    {
-      name: "a start moments ago",
-      change: { lastStartAt: NOW - 1_000, holding: true },
-      entries: [entry("r1", "vp run build", 1_000)],
-    },
   ])("switched off, holds no waiter despite $name", ({ change, entries }) => {
     const waiters = [entry("a", "xcrun simctl boot y"), entry("b", "vp run build")];
     const off = plan({ ...base, ...change, enabled: false, entries: [...entries, ...waiters] });
-    expect(off).toEqual({ admit: "a", reasons: {}, room: true, holding: false, hold: null });
+    expect(off).toEqual({
+      admits: ["a", "b"],
+      reasons: {},
+      room: true,
+      holding: false,
+      hold: null,
+    });
     const on = plan({ ...base, ...change, entries: [...entries, ...waiters] });
-    expect(on.admit).toBeNull();
+    expect(on.admits).toEqual([]);
     expect(Object.keys(on.reasons)).toEqual(["a", "b"]);
   });
   it.each([
@@ -580,27 +580,21 @@ describe("admission plan", () => {
     ({ change, entries }) => {
       const waiters = [entry("n", "vp run build"), forced("f", "vp run build")];
       const result = plan({ ...base, ...change, entries: [...entries, ...waiters] });
-      expect(result.admit).toBe("f");
+      expect(result.admits).toEqual(["f"]);
       expect(result.reasons["n"]).toBeDefined();
       const held = plan({ ...base, ...change, entries: [...entries, entry("n", "vp run build")] });
-      expect(held.admit).toBeNull();
+      expect(held.admits).toEqual([]);
     },
   );
 
-  it("admits forced waiters one per plan call, in queue order", () => {
+  it("admits every forced waiter at once, in queue order", () => {
     const entries = [
       ...full,
       entry("n", "vp run build"),
       forced("f2", "vp run build"),
       forced("f1", "vp run build"),
     ];
-    expect(plan({ ...base, paused: true, entries }).admit).toBe("f2");
-    const afterFirst = entries.map((e) => (e.id === "f2" ? { ...e, startedAt: at(0) } : e));
-    const reordered = [
-      ...afterFirst.filter((e) => e.startedAt !== null),
-      ...afterFirst.filter((e) => e.startedAt === null),
-    ];
-    expect(plan({ ...base, paused: true, entries: reordered }).admit).toBe("f1");
+    expect(plan({ ...base, paused: true, entries }).admits).toEqual(["f2", "f1"]);
   });
 
   it("asks for a higher memory level to reopen after pressure, so admission does not flap", () => {
@@ -608,8 +602,10 @@ describe("admission plan", () => {
     const history = { "vp run build": [run(2, 4, 60_000)] };
     // 11.9 - 4 GiB sits above the 20% floor (6.4) but below the 25% reopen level (8).
     const tight = { ...calm, availableMemoryBytes: 11.9 * GIB };
-    expect(plan({ ...base, history, entries, sample: tight, holding: false }).admit).toBe("a");
-    expect(plan({ ...base, history, entries, sample: tight, holding: true }).admit).toBeNull();
+    expect(plan({ ...base, history, entries, sample: tight, holding: false }).admits).toEqual([
+      "a",
+    ]);
+    expect(plan({ ...base, history, entries, sample: tight, holding: true }).admits).toEqual([]);
     const pressed = plan({ ...base, history, entries, sample: { ...calm, pressureLevel: 2 } });
     expect(pressed).toMatchObject({ holding: true, room: false });
     // A job too big to fit raises nothing, so a small one behind it still passes next time.
@@ -630,11 +626,152 @@ describe("admission plan", () => {
     ];
     const history = { "vp run build": [run(2, 4, 60_000)] };
     const first = plan({ ...base, history, entries, sample: sixteen });
-    expect(first.admit).toBe("small");
+    expect(first.admits).toEqual(["small"]);
     // Each waiter plans again under the lock with what the last plan stored.
-    expect(plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admit).toBe(
-      "small",
-    );
+    expect(
+      plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admits,
+    ).toEqual(["small"]);
+  });
+});
+
+describe("admission by real capacity", () => {
+  /** The reading in the incident's screenshot: CPU 26%, 4.2 GB free of 16, pressure 1. */
+  const q2 = {
+    ...calm,
+    busyCores: 2.6,
+    availableMemoryBytes: 4.2 * GIB,
+    totalMemoryBytes: 16 * GIB,
+    pressureLevel: 1,
+  };
+  const sized = { ...base, sample: q2 };
+  const history = {
+    "vp run build": [run(2, 2.5, 300_000)],
+    "vp run bundle": [run(1, 0.8, 60_000)],
+    "vp run compile": [run(1, 0.6, 60_000)],
+    "vp run e2e": [run(1, 1, 600_000)],
+    "vp run docker": [run(0.5, 0.05, 600_000)],
+  };
+  const aged = 10 * 60_000;
+
+  it.each([
+    {
+      row: 33,
+      name: "the 5th waiter that fits starts; the four too big for the room wait",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        ...["w1", "w2", "w3", "w4"].map((id) => entry(id, "vp run build")),
+        entry("w5", "vp run bundle"),
+      ],
+      admits: ["w5"],
+      hold: "job-memory",
+      reasons: { w1: "memory floor: 1.0 GB room, needs 2.5 GB" },
+    },
+    {
+      row: 34,
+      name: "two that fit alone: the first starts, the second counts it",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("a", "vp run compile"),
+        entry("b", "vp run compile"),
+      ],
+      admits: ["a"],
+      reasons: { b: "waiting for room: a job just started" },
+    },
+    {
+      row: 35,
+      name: "an aged head that fits once the queue's jobs end keeps its room",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run bundle"),
+      ],
+      admits: [],
+      hold: "job-memory",
+      reasons: { w: "waiting for room for the head job" },
+    },
+    {
+      row: 48,
+      name: "an aged head short on room from load outside the queue blocks no one",
+      entries: [
+        entry("r", "vp run docker", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run bundle"),
+      ],
+      admits: ["w"],
+      hold: "job-memory",
+      reasons: { head: "memory floor: 1.0 GB room, needs 2.5 GB" },
+    },
+    {
+      row: 36,
+      name: "an exclusive head within its patience lets a job that fits start",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x"),
+        entry("w", "vp run compile"),
+      ],
+      admits: ["w"],
+      hold: "runs-alone",
+      reasons: { boot: "the next job runs alone" },
+    },
+    {
+      row: 37,
+      name: "an aged exclusive head drains: nothing new starts until it runs",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, aged),
+        entry("w", "vp run compile"),
+      ],
+      admits: [],
+      hold: "runs-alone",
+      reasons: { w: "waiting for the job that runs alone to start" },
+    },
+  ])("row $row: $name", ({ entries, admits, hold, reasons }) => {
+    const result = plan({ ...sized, history, entries });
+    expect(result.admits).toEqual(admits);
+    if (hold !== undefined) expect(result.hold).toBe(hold);
+    for (const [id, text] of Object.entries(reasons)) expect(result.reasons[id]).toBe(text);
+  });
+
+  it("starts the aged head as soon as its room appears", () => {
+    const entries = [
+      entry("r1", "vp run e2e", 60_000),
+      entry("head", "vp run build", null, aged),
+      entry("w", "vp run bundle"),
+    ];
+    const roomy = { ...q2, availableMemoryBytes: 6 * GIB };
+    expect(plan({ ...sized, history, entries, sample: roomy }).admits).toEqual(["head"]);
+  });
+
+  it("never admits past the room or the slots, whatever the order of waiters", () => {
+    const labels = Object.keys(history);
+    let seed = 7;
+    const next = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+    for (let round = 0; round < 300; round++) {
+      const running = Array.from({ length: Math.floor(next() * 3) }, (_, i) =>
+        entry(`r${i}`, labels[Math.floor(next() * labels.length)]!, 1_000 + next() * 60_000),
+      );
+      const waiters = Array.from({ length: 1 + Math.floor(next() * 6) }, (_, i) =>
+        entry(`w${i}`, labels[Math.floor(next() * labels.length)]!, null, next() * 2 * aged),
+      );
+      const sample = { ...q2, availableMemoryBytes: (3.5 + next() * 4) * GIB };
+      const input = { ...sized, history, sample, maxRunning: 3, entries: [...running, ...waiters] };
+      const result = plan(input);
+      if (running.length === 0) continue;
+      const room =
+        sample.availableMemoryBytes -
+        0.2 * sample.totalMemoryBytes -
+        running
+          .filter((job) => NOW - Date.parse(job.startedAt!) < 15_000)
+          .reduce((sum, job) => sum + estimate(history, job, 10, base).memoryBytes, 0);
+      const used = result.admits
+        .map((id) => waiters.find((waiter) => waiter.id === id)!)
+        .reduce((sum, waiter) => sum + estimate(history, waiter, 10, base).memoryBytes, 0);
+      expect(used).toBeLessThanOrEqual(Math.max(0, room) + 1);
+      expect(running.length + result.admits.length).toBeLessThanOrEqual(
+        Math.max(3, running.length),
+      );
+    }
   });
 });
 
@@ -668,7 +805,7 @@ describe("the Mac's limits are settings", () => {
       entries,
       sample: tight,
     };
-    expect(plan(floor).admit).toBe("a");
+    expect(plan(floor).admits).toEqual(["a"]);
     expect(plan({ ...floor, holding: true }).hold).toBe("job-memory");
     const busy = plan({
       ...base,

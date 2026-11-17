@@ -829,7 +829,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
   let changed = false;
   for (const gone of before.entries) {
     if (gone.startedAt === null || kept.has(gone.id)) continue;
-    const signature = signatureOf(gone.line ?? gone.label);
+    const signature = signatureOf((gone as QueuedEntry).line ?? gone.label);
     const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.

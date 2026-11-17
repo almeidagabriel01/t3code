@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  budgetOf,
   jobVerdict,
   machineHold,
   plan,
@@ -905,6 +906,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
   const reading = health.load1 !== null || health.availableMemoryBytes !== null;
+  /** The Mac's room this pass: jobs routed there spend it, so two that fit alone don't both go. */
+  let macBudget = fresh ? budgetOf(input, sample, macRunning) : null;
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -922,6 +925,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
+    if (macBudget !== null && sample !== null) {
+      const { cost } = jobVerdict(input, sample, entry, macBudget);
+      macBudget = {
+        memoryBytes: macBudget.memoryBytes - cost.memoryBytes,
+        cpu: macBudget.cpu - cost.cpu,
+      };
+    }
     if (queueOn) macWaiters.push(entry);
     else admits[entry.id] = { runner: "mac", ungated: true };
   };
@@ -945,9 +955,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     (!queueOn ||
       (macCount < Math.max(1, input.maxRunning) &&
         (macCount === 0 ||
-          !fresh ||
-          machineHold(sample, input) !== null ||
-          jobVerdict(input, sample, entry).hold === null)));
+          macBudget === null ||
+          machineHold(sample!, input) !== null ||
+          jobVerdict(input, sample!, entry, macBudget).hold === null)));
   /** Why Linux cannot take a job of `worktree` now, or null when it can. */
   const linuxBusy = (worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0) {
@@ -1154,7 +1164,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     };
   }
   const mac = plan({ ...input, entries: [...macRunning, ...macWaiters] });
-  if (mac.admit !== null) admits[mac.admit] = { runner: "mac", ungated: false };
+  for (const id of mac.admits) admits[id] = { runner: "mac", ungated: false };
   return {
     admits,
     routes,

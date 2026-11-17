@@ -122,7 +122,7 @@ describe("heavy queue file", () => {
     expect(Queue.isAlive(deadPid()!)).toBe(false);
   });
 
-  it("startNow lets a waiter start past the pause and full slots, in queue order", () => {
+  it("startNow lets every chosen waiter start past the pause and full slots", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));
     Queue.setMaxRunning(dir, 1);
@@ -133,9 +133,8 @@ describe("heavy queue file", () => {
     expect(Queue.startNow(dir, "a")).toBe("running");
     expect(Queue.startNow(dir, "nope")).toBe("not-found");
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", paused: true });
-    expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "waiting", position: 3 });
-    expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "started" });
     expect(Queue.read(dir).filter((e) => e.startedAt !== null)).toHaveLength(3);
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting" });
   });
@@ -440,7 +439,7 @@ describe("heavy queue file", () => {
     expect(Queue.cancel(dir, "srv")).toBe("running");
   });
 
-  it("runs several at once under the plan: settle window, slot cap, backfilled entries move up front", () => {
+  it("runs several at once under the plan: a fresh start counts its estimate, slots cap the rest", () => {
     const dir = tempDir();
     const now = Date.parse("2026-01-01T00:10:00.000Z");
     const GIB = 1024 ** 3;
@@ -452,35 +451,22 @@ describe("heavy queue file", () => {
       totalMemoryBytes: 32 * GIB,
     };
     Queue.setMaxRunning(dir, 2);
-    Queue.recordSample(dir, sample, {});
     for (const id of ["a", "b", "c"])
       Queue.enqueue(dir, { ...entry(id), label: "vp run typecheck" });
+    Queue.recordSample(dir, sample, {});
     expect(Queue.tryStart(dir, "a", now)).toMatchObject({ status: "started" });
-    expect(Queue.tryStart(dir, "b", now + 5_000)).toMatchObject({
-      status: "waiting",
-      position: 1,
-      reason: "letting the last one ramp up",
-    });
-    for (const offset of [8_000, 16_000, 20_000])
-      Queue.recordSample(dir, { ...sample, at: now + offset }, {});
-    expect(Queue.tryStart(dir, "c", now + 20_000)).toMatchObject({
+    Queue.recordSample(dir, { ...sample, at: now + 7_000 }, {});
+    expect(Queue.tryStart(dir, "c", now + 7_000)).toMatchObject({
       status: "waiting",
       position: 2,
     });
-    expect(Queue.tryStart(dir, "b", now + 20_000)).toMatchObject({ status: "started" });
-    expect(Queue.readDoc(dir).entries.map((e) => [e.id, e.startedAt !== null])).toEqual([
-      ["a", true],
-      ["b", true],
-      ["c", false],
-    ]);
-    for (const offset of [28_000, 36_000, 40_000])
-      Queue.recordSample(dir, { ...sample, at: now + offset }, {});
-    expect(Queue.tryStart(dir, "c", now + 40_000)).toMatchObject({
+    expect(Queue.tryStart(dir, "b", now + 7_000)).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "c", now + 7_000)).toMatchObject({
       status: "waiting",
       position: 1,
       reason: "all 2 slots busy",
     });
-    expect(Queue.readPlan(dir, now + 40_000).plan.room).toBe(true);
+    expect(Queue.readPlan(dir, now + 7_000).plan.room).toBe(true);
   });
 
   it("learns a command's cost from a finished run, whichever way it leaves the queue", () => {

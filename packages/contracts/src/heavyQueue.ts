@@ -201,6 +201,12 @@ export const HeavyQueueHold = Schema.Literals([
   "steadying",
   "job-memory",
   "job-cpu",
+  /** The head waited past its patience: its room is kept for it. */
+  "reserved",
+  /** The head runs alone and waited past its patience: nothing new joins what runs. */
+  "draining",
+  /** Room is there once the jobs that just started show their load. */
+  "committed",
 ]);
 export type HeavyQueueHold = typeof HeavyQueueHold.Type;
 
@@ -241,6 +247,12 @@ export const heavyHoldText = (
       return "CPU busy";
     case "steadying":
       return "making sure the room lasts";
+    case "reserved":
+      return "waiting for room for the head job";
+    case "draining":
+      return "waiting for the job that runs alone to start";
+    case "committed":
+      return "waiting for room: a job just started";
   }
 };
 

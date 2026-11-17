@@ -672,7 +672,7 @@ describe("Mac first, Hybrid and Everything", () => {
     };
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
-    expect(spans).toEqual({ mac: 19, linux: 20, hybrid: 12 });
+    expect(spans).toEqual({ mac: 19, linux: 20, hybrid: 13 });
   });
 });
 
@@ -1257,9 +1257,9 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
       commit: `${commits} · the one slot is busy`,
-      build: "Not on the Can run on Linux list: vp run build · waiting its turn",
-      moved: "Moved to this Mac · waiting its turn",
-      back: "Uses a file outside the project: /x · waiting its turn",
+      build: "Not on the Can run on Linux list: vp run build · the one slot is busy",
+      moved: "Moved to this Mac · the one slot is busy",
+      back: "Uses a file outside the project: /x · the one slot is busy",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
@@ -1269,10 +1269,10 @@ describe("runtime toggles", () => {
     const hook = "Commit hook runs checks";
     expect(at({}, { runnerEnabled: false })).toEqual({
       run: hook,
-      commit: `${hook} · next in line`,
-      build: "waiting its turn",
-      moved: "waiting its turn",
-      back: "waiting its turn",
+      commit: `${hook} · the one slot is busy`,
+      build: "the one slot is busy",
+      moved: "the one slot is busy",
+      back: "the one slot is busy",
     });
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
@@ -1981,7 +1981,7 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     );
     expect(plan.routes.a).toBe("mac");
     expect(plan.reasons.a).toBe(
-      "Hybrid: shorter queue here · needs ~1.5 GB; 4.2 GB free, 3.2 GB kept spare",
+      "Hybrid: shorter queue here · memory floor: 1.0 GB room, needs 1.5 GB",
     );
   });
 });
