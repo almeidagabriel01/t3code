@@ -767,10 +767,15 @@ describe("HeavyWorkSection", () => {
     expect(text).toContain("Waiting for the agent to ask again · 7 min left");
     // Only the waiter in line can start now; the orphan holds no place.
     expect(view.host.textContent?.match(/Start now/g)).toHaveLength(1);
-    // The running row's menu has its own Stop first.
-    await act(async () => view.button("Stop", 1).click());
-    alertButtons(0).find((b) => b.text === "Remove")!.onPress!();
-    expect(mocks.commands.cancel).toHaveBeenCalledWith({
+    // Stops in order: the running row's menu, the orphan's menu, then the orphan's own Stop row.
+    const stops = [...view.host.querySelectorAll("button")].filter((b) => b.textContent === "Stop");
+    expect(stops).toHaveLength(3);
+    for (const [press, stop] of [1, 2].entries()) {
+      await act(async () => view.button("Stop", stop).click());
+      alertButtons(press).find((b) => b.text === "Remove")!.onPress!();
+    }
+    expect(mocks.commands.cancel).toHaveBeenCalledTimes(2);
+    expect(mocks.commands.cancel).toHaveBeenLastCalledWith({
       environmentId: "env",
       input: { id: "o" },
     });
