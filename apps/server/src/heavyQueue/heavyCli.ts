@@ -17,12 +17,14 @@ import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
 import {
   HEAVY_JOB_ENV,
   heavyRoute,
+  isQueued,
   lineParts,
   readLine,
   rewriteLine,
   scriptOf,
   shellQuote,
   UNREADABLE_SCRIPT,
+  type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
@@ -228,12 +230,17 @@ export const heavyLaunch = (
   home: string,
   modeAt: (cwd: string) => { readonly enabled: boolean; readonly runner: boolean },
   inJob: boolean,
+  readAt?: (cwd: string) => ReadScript,
 ): HeavyLaunch => {
   // Inside a queue job the slot is already held; queuing again would wait on itself.
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
   const mode = modeAt(job.cwd);
   if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
+  // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
+  if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
+    return { kind: "direct" };
+  }
   const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
   if (commit === "direct") return { kind: "direct" };
   return {
@@ -636,6 +643,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     NodeOS.homedir(),
     (cwd) => modeFor(readDoc(dir), cwd),
     process.env[HEAVY_JOB_ENV] === "1",
+    scriptReader,
   );
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
     // The shell reports a folder it cannot enter itself, as it would without T3.

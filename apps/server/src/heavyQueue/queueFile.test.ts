@@ -1471,6 +1471,12 @@ describe("Runner in the queue file", () => {
       over: { runnerWhere: "linux" as const, runnerUnavailable: "mac" as const },
       expected: { runsOn: "mac", reason: "Linux is unavailable: running here" },
     },
+    {
+      name: "its heavy work already goes to remoto inside: runs as written",
+      line: "sh -c 'remoto vp test run'",
+      over: { runnerWhere: "linux" as const },
+      expected: { runsOn: "direct", reason: Queue.HANDED_OFF_RUNS_DIRECT, startsNow: true },
+    },
   ])("probe: $name, queuing nothing", ({ line, from, online, over, expected }) => {
     const dir = queueWith(block(config(over)), online ?? true);
     const root = checkout("probe");

@@ -157,6 +157,23 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   };
 };
 
+const FORMAT = /^(fmt|format)([:._-].*)?$/;
+/** A file argument: a name with an extension, or an expansion that lists them (`$f`, `"${files[@]}"`). */
+const FILE_ARG = /(^|\/)[^/]*[^/.]\.[A-Za-z0-9]+$|\$/;
+
+/**
+ * Whether the script `words[at]` names is heavy. A formatter given its files one by one (or one
+ * file on stdin) touches only those, so it is light; without them it walks the whole tree.
+ */
+const heavyScript = (words: ReadonlyArray<string>, at: number, flags: ReadonlyArray<string>) => {
+  const script = words[at];
+  if (script === undefined || !SCRIPT.test(script)) return false;
+  if (!FORMAT.test(script)) return true;
+  const files = words.slice(at + 1);
+  const stdin = flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag));
+  return !(stdin || (files.length > 0 && files.every((file) => FILE_ARG.test(file))));
+};
+
 const heavyWords = (
   program: string,
   words: ReadonlyArray<string>,
@@ -174,17 +191,17 @@ const heavyWords = (
     return first === "commit" && !flags.some((flag) => flag === "--no-verify" || flag === "-n");
   }
   if (program === "vpr" || program === "make" || program === "just") {
-    return first !== undefined && SCRIPT.test(first);
+    return heavyScript(words, 0, flags);
   }
   if (!RUNNERS.has(program) || first === undefined) return false;
   if (first === "exec" || first === "dlx" || first === "x") {
     return second !== undefined && heavyWords(base(second), words.slice(2), flags);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
-  if (first === "t" || SCRIPT.test(first)) return true;
+  if (first === "t" || heavyScript(words, 0, flags)) return true;
   // `pnpm --filter web run build`: a flag's value can sit before `run`.
   const runAt = words.findIndex((word) => word === "run" || word === "run-script");
-  return runAt >= 0 && SCRIPT.test(words[runAt + 1] ?? "");
+  return runAt >= 0 && heavyScript(words, runAt + 1, flags);
 };
 
 // `case` patterns, so the filter runs on shell builtins alone. A word starts after a non-name
@@ -260,9 +277,15 @@ export interface Part {
   readonly heavy: boolean;
   /** The agent's own `remoto` in front of it. */
   readonly remoto: Word | null;
-  /** Its nested `sh -c` line or its script calls `remoto` itself: T3 never wraps it in another. */
-  readonly remotoInside: boolean;
-  /** All its heavy work goes through `remoto`, its own or inside it: nothing of it holds this Mac. */
+  /**
+   * Its nested `sh -c` line or its script hands work off itself, to `remoto` or `t3 heavy`: T3
+   * never wraps it in another `remoto`, and Linux, which has no `t3`, never runs it.
+   */
+  readonly handsOffInside: boolean;
+  /**
+   * All its heavy work goes through `remoto` or `t3 heavy`, its own or inside it: nothing of it
+   * holds this Mac.
+   */
   readonly remote: boolean;
   /** It is `t3 heavy …`, or the T3 executable's `heavy` subcommand as `selfPrefix` writes it. */
   readonly queued: boolean;
@@ -287,6 +310,8 @@ const scriptWord = (values: ReadonlyArray<string>, at: number): string | null =>
     if (rest.some((value) => /^-[a-z]*[cs][a-z]*$/.test(value))) return null;
     return rest.find((value) => !value.startsWith("-")) ?? null;
   }
+  // A package's bin (`node_modules/.bin/vp`) is a launcher: the program it starts decides.
+  if (/(^|\/)node_modules\//.test(program)) return null;
   return program.endsWith(".sh") || program.includes("/") ? program : null;
 };
 
@@ -306,15 +331,20 @@ export const scriptOf = (
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
-/** `bash -c '<line>'`: the line's parts. */
-const nestedParts = (program: string, values: ReadonlyArray<string>, at: number) => {
+/** `bash -c '<line>'`: the line's parts, its scripts read like the line's own. */
+const nestedParts = (
+  program: string,
+  values: ReadonlyArray<string>,
+  at: number,
+  read: ReadScript | undefined,
+) => {
   if (!SHELLS.has(program)) return [];
   const flag = values.findIndex((value, index) => index > at && /^-[a-z]*c[a-z]*$/.test(value));
   const line = flag < 0 ? undefined : values[flag + 1];
-  return line === undefined ? [] : readLine(line).parts;
+  return line === undefined ? [] : readLine(line, read).parts;
 };
 
-const callsRemoto = (part: Part) => part.remoto !== null || part.remotoInside;
+const handsOff = (part: Part) => part.remoto !== null || part.queued || part.handsOffInside;
 
 const isHeavyCall = (values: ReadonlyArray<string>) => {
   let at = 1;
@@ -335,7 +365,7 @@ const partOf = (command: Command, read?: ReadScript): Part => {
     remoteAt = programAt(values, remoteAt + 1, true);
   }
   const { at, program, words, flags } = wordsAt(values, remoteAt);
-  const inner = nestedParts(program, values, at);
+  const inner = nestedParts(program, values, at, read);
   const nested = inner.find((part) => part.heavy) ?? null;
   const script = scriptOf(values, at, read);
   // A script's own scripts are not followed: one level is what an agent's scratch script needs.
@@ -343,7 +373,7 @@ const partOf = (command: Command, read?: ReadScript): Part => {
   const scriptParts = script?.body == null ? [] : readLine(script.body).parts;
   const scriptHeavy = scriptParts.some((part) => part.heavy);
   const insideParts = [...inner, ...scriptParts];
-  const remotoInside = insideParts.some(callsRemoto);
+  const handsOffInside = insideParts.some(handsOff);
   const ownHeavy = unreadable || (program !== "" && heavyWords(program, words, flags));
   return {
     command,
@@ -355,10 +385,10 @@ const partOf = (command: Command, read?: ReadScript): Part => {
     flags,
     heavy: nested !== null || scriptHeavy || ownHeavy,
     remoto,
-    remotoInside,
+    handsOffInside,
     remote:
       remoto !== null ||
-      (remotoInside && !ownHeavy && insideParts.every((part) => !part.heavy || part.remote)),
+      (handsOffInside && !ownHeavy && insideParts.every((part) => !part.heavy || part.remote)),
     queued: isHeavyCall(values.slice(at)),
     nested,
     script,
@@ -410,10 +440,10 @@ const BUILTINS = new Set([
 
 /**
  * The parts that are the work: heavy ones and `remoto` calls, else every program a queued job runs.
- * A part that calls `remoto` inside itself already runs remotely, so it is never work.
+ * A part that hands work off inside itself (`remoto`, `t3 heavy`) is never work: Linux has no `t3`.
  */
 export const workParts = (parts: ReadonlyArray<Part>) => {
-  const own = parts.filter((part) => !part.remotoInside);
+  const own = parts.filter((part) => !part.handsOffInside);
   const work = own.filter((part) => part.heavy || part.remoto !== null);
   return work.length > 0
     ? work

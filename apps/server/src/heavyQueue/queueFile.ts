@@ -37,7 +37,13 @@ import {
 } from "./admission.ts";
 import { sourceCheckout } from "./claudeSettingsHook.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
-import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from "./heavyHook.ts";
+import {
+  interceptBashCall,
+  isQueued,
+  lineParts,
+  SCRIPT_MAX_BYTES,
+  type ReadScript,
+} from "./heavyHook.ts";
 import {
   deadlineRecord,
   endedRecord,
@@ -899,6 +905,9 @@ export const readPlan = (dir: string, now = Date.now()) => {
   return { doc, plan: planOf(doc, now) };
 };
 
+export const HANDED_OFF_RUNS_DIRECT =
+  "Its heavy work already goes through t3 heavy or remoto: runs directly";
+
 /**
  * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
  * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
@@ -909,10 +918,11 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   const parts = lineParts(line);
   const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
   const commit = commitRoute(parts.command, at);
-  if (commit === "direct") {
+  const handedOff = !parts.remoto && isQueued(parts.command, scriptReader(at));
+  if (commit === "direct" || handedOff) {
     return {
       runsOn: "direct" as const,
-      reason: COMMIT_RUNS_DIRECT,
+      reason: handedOff ? HANDED_OFF_RUNS_DIRECT : COMMIT_RUNS_DIRECT,
       startsNow: true,
       linuxFull: false,
     };

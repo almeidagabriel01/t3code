@@ -134,9 +134,12 @@ const patternRegex = (pattern: string) =>
   );
 
 /** A list entry naming a kind of work stands for its tools, so a saved list keeps up with them. */
+// ponytail: a formatter's check flag right after its script; `fmt -- --check` reads as unlisted.
 const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
   typecheck: TYPE_CHECKERS,
   tsc: TYPE_CHECKERS,
+  // A formatter that only checks writes nothing, so it is a check like any other.
+  check: ["fmt --check", "format --check"],
 };
 
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
@@ -454,9 +457,15 @@ export const bodyVerdict = (
   root: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
   where?: RunnerWhere,
+  scripts?: QueuedEntry["scripts"],
 ): Verdict => {
   const verdict = eligibilityOf(
-    { label: body, cwd, ...(where === undefined ? {} : { where }) },
+    {
+      label: body,
+      cwd,
+      ...(where === undefined ? {} : { where }),
+      ...(scripts === undefined ? {} : { scripts }),
+    },
     { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
   );
   if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") return verdict;
@@ -560,6 +569,8 @@ export const eligibilityOf = (
           at === null ? null : rootOf(at),
           context,
           entry.where,
+          // A script inside a `sh -c` text was read with the job: judged by its text, not its name.
+          part.script === null ? scripts : undefined,
         );
         if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;

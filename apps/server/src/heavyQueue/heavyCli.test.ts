@@ -1045,6 +1045,53 @@ describe("t3 heavy", () => {
       });
     });
 
+    // A job whose heavy work already queues or goes to `remoto` inside would hold a Mac slot only to
+    // wait for its own inner ones. Run as written, it keeps no job env, so those still queue.
+    it.each([
+      ["a `sh -c` that calls remoto", [SH, "-c", "sh -c 'remoto vp test run'"], {}],
+      [
+        "a script whose work is t3 heavy and remoto",
+        ["./gate.sh"],
+        {
+          "./gate.sh": "t3 heavy -- vp lint\nremoto vp test run\n",
+        },
+      ],
+      [
+        "a script calling the queue by the prefix agents copy",
+        [SH, "-c", "./gate.sh"],
+        {
+          "./gate.sh": `ELECTRON_RUN_AS_NODE=1 '/App/T3 Code' '/App/bin.mjs' heavy --queue-dir '/q' --name lint -- vp lint\n`,
+        },
+      ],
+    ] as const)("runs %s as written in every mode", (_name, [program, ...args], scripts) => {
+      const read = () => (word: string) => (scripts as Record<string, string>)[word] ?? null;
+      for (const runner of [true, false]) {
+        const launch = heavyLaunch(
+          { program, args, where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner }),
+          false,
+          read,
+        );
+        expect(launch).toEqual({ kind: "direct" });
+      }
+    });
+
+    it("still queues a script with heavy work of its own beside the hand-off", () => {
+      const read = () => () => "vp lint\nt3 heavy -- vp test run\n";
+      expect(
+        heavyLaunch(
+          { program: "./gate.sh", args: [], where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner: true }),
+          false,
+          read,
+        ),
+      ).toMatchObject({ kind: "queue" });
+    });
+
     it("runs a commit with no hook as written, and queues a hooked one first", () => {
       const parent = tempDir();
       const root = NodePath.join(parent, "repo");

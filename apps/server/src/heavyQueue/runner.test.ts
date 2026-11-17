@@ -146,8 +146,9 @@ describe("routing matrix", () => {
     "offline",
     "unknown",
   ] as const;
-  // "spike": the latest reading is over the limits, but not for the whole window.
-  const macStates = ["room", "full", "over", "spike"] as const;
+  // "spike": the latest reading is over the limits, but not for the whole window. "holding": a
+  // spike while admission already holds the Mac back (`holding`), which moves nothing by itself.
+  const macStates = ["room", "full", "over", "spike", "holding"] as const;
   const kinds = {
     eligible: "vp test run",
     exclusive: "xcrun simctl boot iPhone",
@@ -200,7 +201,7 @@ describe("routing matrix", () => {
     if (here && mac === "over") here = false;
     else if (!here && linux === "overloaded") here = true;
     // A machine that can start it now takes it from one that can't.
-    const macRoom = off ? mac !== "over" : mac === "room" || mac === "spike";
+    const macRoom = off ? mac !== "over" : mac === "room" || mac === "spike" || mac === "holding";
     if (here && linuxRoom && !macRoom) here = false;
     else if (!here && !linuxRoom && macRoom) here = true;
     return here ? onMac : linuxStart;
@@ -234,7 +235,7 @@ describe("routing matrix", () => {
               : []),
         job("w", kinds[kind]),
       ];
-      const over = mac === "over" || mac === "spike";
+      const over = mac === "over" || mac === "spike" || mac === "holding";
       const plan = planRoutes(
         input(
           entries,
@@ -242,6 +243,7 @@ describe("routing matrix", () => {
           {
             enabled: queue === "on" || queue === "paused",
             paused: queue === "paused" || queue === "off-paused",
+            holding: mac === "holding",
             sample: {
               ...CALM,
               ...(over ? { busyCores: 9, headroomSince: null } : {}),
@@ -261,6 +263,44 @@ describe("routing matrix", () => {
       expect(outcomeOf(plan, "w")).toBe(expected(queue, runner, where, linux, mac, kind));
     },
   );
+
+  it("a Mac over its ceiling holds back none of the incident's jobs while Linux is up", () => {
+    const shapes = [
+      "vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx",
+      'vp fmt "${f[@]}" && vp test run src/a.test.ts',
+      "pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
+      "vp run fmt src/a.ts; vp run typecheck",
+      "vp fmt --check && vp test run",
+      "./node_modules/.bin/vp lint --no-ignore a.tsx",
+      "sh -c './gate.sh'",
+    ];
+    const scripts = {
+      "./node_modules/.bin/vp": "case x in\n*) ;;\nesac\n",
+      "./gate.sh": "vp test run\n",
+    };
+    const entries = [
+      runningOn("release", "mac"),
+      ...shapes.map((label, at) => ({ ...job(`w${at}`, label), scripts }) as QueuedEntry),
+    ];
+    const strained = (health: LinuxHealth) =>
+      planRoutes(
+        input(
+          entries,
+          { runnerWhere: "linux", runnerUnavailable: "mac" },
+          {
+            holding: true,
+            sample: { ...CALM, busyCores: 9.8, headroomSince: null, overLimit: true },
+            health,
+            machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxSlots: 5 },
+          },
+        ),
+      );
+    const up = strained(READ);
+    expect(shapes.map((_, at) => up.routes[`w${at}`])).toEqual(shapes.map(() => "linux"));
+    expect(up.admits.w0).toEqual({ runner: "linux", ungated: false });
+    const down = strained(OFFLINE);
+    expect(shapes.map((_, at) => outcomeOf(down, `w${at}`))).toEqual(shapes.map(() => "mac-wait"));
+  });
 
   it("Hybrid with three Mac slots and five agents splits them by backlog per slot", () => {
     const entries = ["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run"));
@@ -1480,6 +1520,62 @@ describe("patterns and eligibility", () => {
       const scripts = { "/tmp/s/v.sh": body };
       expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
     }
+  });
+
+  // Shapes of the eight jobs a strained Mac held while Linux idled, and their counter-cases.
+  const SHIM =
+    '#!/bin/sh\ncase `uname -a` in\n  *CYGWIN*) exe=".exe" ;;\nesac\nexec node "$basedir/vp" "$@"\n';
+  const GATE =
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\nif [ -n "${CI:-}" ]; then echo ci; fi\nvp lint --no-ignore src/a.ts\nfor p in apps/server apps/web; do (cd $p && vp test run); done\n';
+  it.each([
+    ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", {}, "linux", null],
+    ['vp fmt "${f[@]}" && vp test run src/a.test.ts', {}, "linux", null],
+    [
+      "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
+      {},
+      "linux",
+      null,
+    ],
+    ["vp run fmt src/a.ts; vp run typecheck", {}, "linux", null],
+    [
+      'for f in $(git diff --name-only HEAD); do vp fmt --stdin-filepath=$f < $f | cmp -s - $f || echo "fmt diff $f"; done; vp lint --no-ignore a.ts',
+      {},
+      "linux",
+      null,
+    ],
+    // A formatter that only checks the whole tree writes nothing: a check like any other.
+    ["vp fmt --check && vp test run", {}, "linux", null],
+    // A package's bin is a launcher, judged by the program it starts.
+    [
+      "./node_modules/.bin/vp lint --no-ignore apps/web/src/a.tsx",
+      { "./node_modules/.bin/vp": SHIM },
+      "linux",
+      null,
+    ],
+    // A script inside a `sh -c` text is judged by the text the job carries, not its name.
+    ["sh -c 'cd apps/web && ./gate.sh'", { "./gate.sh": GATE }, "linux", null],
+    // A formatter writing the whole tree stays here, as before.
+    ["vp fmt && vp lint", {}, "not-listed", "Not on the Can run on Linux list: vp fmt"],
+    [
+      "sh -c './gate.sh'",
+      { "./gate.sh": "vp lint\nvp run build\n" },
+      "not-listed",
+      "Not on the Can run on Linux list: vp run build",
+    ],
+    ["sh -c './gate.sh'", {}, "mac-only", "Couldn't read this script"],
+  ] as const)("%s is %s", (label, scripts, eligibility, reason) => {
+    expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+  });
+
+  it("a formatter check is listed only where the list allows checks", () => {
+    const testsOnly = {
+      ...at,
+      config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxCommands: ["test"] },
+    };
+    expect(eligibilityOf({ label: "vp fmt --check", cwd: "/w" }, testsOnly)).toEqual({
+      eligibility: "not-listed",
+      reason: "Not on the Can run on Linux list: vp fmt",
+    });
   });
 
   it("a job the hook queued on this Mac shows why", () => {
