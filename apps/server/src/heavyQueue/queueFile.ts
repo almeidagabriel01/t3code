@@ -8,6 +8,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as Schema from "effect/Schema";
 import {
   HEAVY_QUEUE_DEFAULTS,
   heavyQueueLimitError,
@@ -105,10 +106,54 @@ export const isAlive = (pid: number) => {
   }
 };
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path loads this without an Effect runtime.
+const LINUX = NodeOS.platform() === "linux";
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** Who holds a lock: its pid, plus a random part so a reused pid never passes for the owner. */
-const lockToken = () => `${process.pid} ${NodeCrypto.randomBytes(6).toString("hex")}`;
+/**
+ * When a process started, as this platform tells it: clock ticks after boot on Linux, which a
+ * clock step never moves, else `ps` wall-clock seconds. Null when it can't be read.
+ */
+const readStart = (pid: number): number | null => {
+  try {
+    if (LINUX) {
+      const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+      return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]) || null;
+    }
+    const started = NodeChildProcess.execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    });
+    return Math.floor(Date.parse(`${started.trim()} UTC`) / 1000) || null;
+  } catch {
+    return null;
+  }
+};
+let lastStart: { readonly pid: number; readonly at: number; readonly start: number | null } | null =
+  null;
+/** `readStart`, asked again at most once a second while a waiter retries every 25 ms. */
+const processStart = (pid: number) => {
+  if (lastStart?.pid !== pid || Date.now() - lastStart.at > 1_000) {
+    lastStart = { pid, at: Date.now(), start: readStart(pid) };
+  }
+  return lastStart.start;
+};
+let ownStart: number | null | undefined;
+/** Ours in `processStart`'s terms, without a `ps` per process on macOS. */
+const ownStartOf = () =>
+  (ownStart ??= LINUX ? readStart(process.pid) : Math.floor(performance.timeOrigin / 1000));
+/** `ps` gives whole seconds and our own start comes from the clock, so a second either way is us. */
+const sameStart = (recorded: number, current: number) =>
+  LINUX ? current === recorded : current <= recorded + 1;
+
+/** Who holds a lock: its pid, a random part, and when it started, so a reused pid never owns it. */
+export const lockToken = () => {
+  const start = ownStartOf();
+  const random = NodeCrypto.randomBytes(6).toString("hex");
+  return `${process.pid} ${random}${start === null ? "" : ` ${start}`}`;
+};
 const readToken = (lock: string) => {
   try {
     return NodeFS.readFileSync(NodePath.join(lock, "owner"), "utf8");
@@ -120,67 +165,104 @@ const readToken = (lock: string) => {
 /**
  * A lock is stale when its owner is dead, or when it names no owner (one died between taking it
  * and writing its token) and is older than `LOCK_STALE_MS`. A live owner keeps it however long it
- * pauses: a swapped-out process resuming must find its lock still its own.
+ * pauses: a swapped-out process resuming must find its lock still its own. Past that age, a live
+ * pid that started after the owner did is another process that reused it.
  */
 export const lockIsStale = (
   token: string | null,
   ageMs: number,
   alive: (pid: number) => boolean,
+  startOf: (pid: number) => number | null = processStart,
 ) => {
-  const pid = Number(token?.split(" ")[0]);
-  if (token !== null && Number.isInteger(pid) && pid > 0) return !alive(pid);
-  return ageMs > LOCK_STALE_MS;
+  const [pidText, , startText] = token?.split(" ") ?? [];
+  const pid = Number(pidText);
+  if (token === null || !Number.isInteger(pid) || pid <= 0) return ageMs > LOCK_STALE_MS;
+  if (!alive(pid)) return true;
+  const recorded = Number(startText);
+  if (ageMs <= LOCK_STALE_MS || startText === undefined || !(recorded > 0)) return false;
+  const current = startOf(pid);
+  return current !== null && !sameStart(recorded, current);
 };
 
 const ageOf = (path: string) => Date.now() - NodeFS.statSync(path).mtimeMs;
 
-/** Clears a stale lock unless someone else is: one breaker at a time, re-checking under `breaking`. */
-const breakIfStale = (lock: string) => {
+/**
+ * Clears a stale lock unless someone else is: one breaker at a time, re-checking under `breaking`.
+ * True when the lock is gone, so the caller retries at once instead of waiting.
+ */
+const breakIfStale = (lock: string): boolean => {
   const breaking = `${lock}.breaking`;
   try {
     NodeFS.mkdirSync(breaking);
+    NodeFS.writeFileSync(NodePath.join(breaking, "owner"), lockToken());
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    // A breaker that died mid-break leaves this behind; it only ever lives for a few calls.
+    // A breaker that died mid-break leaves this behind: judged like the lock itself.
+    // ponytail: two waiters clearing one dead marker can race a third breaker; rare, heals next try.
     try {
-      if (ageOf(breaking) > LOCK_STALE_MS)
+      if (lockIsStale(readToken(breaking), ageOf(breaking), isAlive)) {
         NodeFS.rmSync(breaking, { recursive: true, force: true });
+      }
     } catch {}
-    return;
+    return false;
   }
   try {
     const token = readToken(lock);
     if (lockIsStale(token, ageOf(lock), isAlive)) {
       NodeFS.rmSync(lock, { recursive: true, force: true });
     }
+    return true;
   } catch {
     // The lock went away meanwhile: nothing to break.
+    return true;
   } finally {
     NodeFS.rmSync(breaking, { recursive: true, force: true });
   }
+};
+
+const LOCK_BUSY = "The heavy queue is busy";
+const lockBusy = (holder: string | null) =>
+  new HeavyQueueError({
+    reason: "unavailable",
+    message: `${LOCK_BUSY}: process ${holder?.split(" ")[0] ?? "unknown"} holds its lock.`,
+  });
+/** A bounded wait that ran out: worth trying again, unlike other failures. */
+const isHeavyQueueError = Schema.is(HeavyQueueError);
+export const isLockBusy = (error: unknown) =>
+  isHeavyQueueError(error) && error.message.startsWith(LOCK_BUSY);
+
+/** How long a caller waits for the lock before failing; the CLI's waiters wait on. */
+let lockWaitMs = Number.POSITIVE_INFINITY;
+/** A server can't block its event loop on a stuck owner: it bounds the wait and reports busy. */
+export const boundLockWait = (ms: number) => {
+  lockWaitMs = ms;
 };
 
 const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
   const token = lockToken();
   NodeFS.mkdirSync(dir, { recursive: true });
-  while (true) {
+  const deadline = Date.now() + lockWaitMs;
+  for (let first = true; ; first = false) {
+    if (!first && Date.now() >= deadline) throw lockBusy(readToken(lock));
     try {
       NodeFS.mkdirSync(lock);
       NodeFS.writeFileSync(NodePath.join(lock, "owner"), token);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (lockIsStale(readToken(lock), ageOf(lock), isAlive)) {
-          breakIfStale(lock);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      pause(LOCK_RETRY_MS);
     }
+    const holder = readToken(lock);
+    let stale: boolean;
+    try {
+      stale = lockIsStale(holder, ageOf(lock), isAlive);
+    } catch {
+      continue; // The lock went away between the two calls.
+    }
+    if (stale && breakIfStale(lock)) continue;
+    const left = deadline - Date.now();
+    if (left <= 0) throw lockBusy(holder);
+    pause(Math.min(LOCK_RETRY_MS, left));
   }
   try {
     return run();
@@ -841,6 +923,16 @@ const insertNew = (doc: QueueDoc, entry: HeavyQueueEntry): QueueDoc => {
   return { ...doc, entries: [...entries.slice(0, at), entry, ...entries.slice(at)] };
 };
 
+/** An orphan waits for its agent to ask again: only Stop or that retry ends it. */
+const refuseOrphan = (entry: HeavyQueueEntry | undefined) => {
+  if (entry === undefined || !isOrphan(entry)) return;
+  throw new HeavyQueueError({
+    reason: "not-allowed",
+    message:
+      "This command stopped while waiting; it keeps its place until its agent asks again. Stop removes it.",
+  });
+};
+
 /** Puts waiter `id` before waiter `beforeId`, or last when null; the running entry never moves or gets passed. */
 const decideMove = (
   doc: QueueDoc,
@@ -851,6 +943,7 @@ const decideMove = (
   const { entries } = doc;
   const target = entries.find((entry) => entry.id === id);
   const anchor = beforeId === null ? undefined : entries.find((entry) => entry.id === beforeId);
+  refuseOrphan(target);
   if (target === undefined || (beforeId !== null && anchor === undefined)) {
     return { doc, result: "not-found" };
   }
@@ -943,18 +1036,38 @@ export const usualMs = (
   runner: HeavyRunner,
 ) => medianDuration(runsOf(runner === "linux" ? doc.linuxHistory : doc.history, entry));
 
+/**
+ * The doc without dead processes. A Linux run whose process died keeps running there with nothing
+ * to stop it: it becomes a lost run, which holds its folder until a heartbeat confirms it stopped.
+ */
+const pruned = (doc: QueueDoc, now: number): QueueDoc => {
+  const entries = prune(doc, now);
+  const lost = doc.entries.flatMap((entry): ReadonlyArray<LostRun> => {
+    if (entry.runner !== "linux" || entry.startedAt === null) return [];
+    if (entries.some((each) => each.id === entry.id)) return [];
+    // Stable, so this view and the write that follows name the same record.
+    const key = `died:${entry.id}:${entry.startedAt}`;
+    if (doc.lostRuns.some((each) => each.key === key)) return [];
+    return [{ key, entryId: entry.id, cwd: entry.cwd, remote: lostRemoteOf(entry) }];
+  });
+  return {
+    ...doc,
+    entries,
+    lostRuns: lost.length === 0 ? doc.lostRuns : [...doc.lostRuns, ...lost],
+  };
+};
+
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
     const loaded = loadDoc(dir);
-    const decided = decide({ ...loaded, entries: prune(loaded, now) });
+    const decided = decide(pruned(loaded, now));
     save(dir, withFinishedRuns(loaded, decided.doc, now));
     return decided.result;
   });
 
 /** Pruned view; never writes, tolerates a missing or corrupt file. */
 export const readDoc = (dir: string, now = Date.now()): QueueDoc => {
-  const doc = loadDoc(dir);
-  return { ...doc, entries: prune(doc, now) };
+  return pruned(loadDoc(dir), now);
 };
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
@@ -1307,6 +1420,7 @@ export const promote = (dir: string, id: string, note?: string) =>
 export const startNow = (dir: string, id: string) =>
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
+    refuseOrphan(target);
     if (target === undefined) return { doc, result: "not-found" };
     if (target.startedAt !== null) return { doc, result: "running" };
     return {
@@ -1325,6 +1439,7 @@ export const startNow = (dir: string, id: string) =>
 export const setPriority = (dir: string, id: string, priority: "low" | "high") =>
   mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
     const target = doc.entries.find((entry) => entry.id === id);
+    refuseOrphan(target);
     if (target === undefined) return { doc, result: { result: "not-found" } };
     if (target.startedAt !== null) {
       // The user's choice for a running job stands: T3 stops slowing or restoring it on its own.

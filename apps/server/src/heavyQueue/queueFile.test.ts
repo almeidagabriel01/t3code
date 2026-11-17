@@ -175,6 +175,25 @@ describe("heavy queue file", () => {
       expect(ids(dir)).toEqual(["run", "next"]);
     });
 
+    // Every caller (RPC, MCP, the web and mobile menus) goes through these: the refusal is here.
+    it.each([
+      ["start now", (dir: string) => Queue.startNow(dir, "a")],
+      ["high priority", (dir: string) => Queue.setPriority(dir, "a", "high")],
+      ["a move", (dir: string) => Queue.move(dir, "a", null)],
+      ["a promote", (dir: string) => Queue.promote(dir, "a")],
+    ])("refuses %s for an orphan, which only Stop or its agent's retry ends", (_name, act) => {
+      const dir = tempDir();
+      Queue.setPaused(dir, true);
+      Queue.enqueue(dir, entry("next"));
+      Queue.enqueue(dir, agent("a"));
+      Queue.orphan(dir, "a");
+      expect(() => act(dir)).toThrow(/stopped while waiting/);
+      expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("forced");
+      // Placing another waiter before it still works, and so does Stop.
+      expect(Queue.move(dir, "next", "a")).toBe("ok");
+      expect(Queue.cancel(dir, "a")).toBe("ok");
+    });
+
     it("never orphans a running job, and a retry of the same id adopts its orphan", () => {
       const dir = lined(agent("a"));
       expect(Queue.orphan(dir, "run", NOW)).toBeNull();
@@ -1338,6 +1357,24 @@ describe("Runner in the queue file", () => {
     ]);
   });
 
+  // Its process gone, nothing stops the run on Linux: the record holds the folder until one does.
+  it("a Linux run whose process died leaves a lost run to stop, and its folder waits", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    const a = test("a");
+    Queue.enqueue(dir, a);
+    Queue.tryStart(dir, "a", NOW);
+    Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    const path = NodePath.join(dir, "queue.json");
+    const raw = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+    raw.entries[0].pid = deadPid();
+    NodeFS.writeFileSync(path, JSON.stringify(raw));
+    Queue.enqueue(dir, test("b"));
+    expect(Queue.read(dir).map((each) => each.id)).toEqual(["b"]);
+    expect(Queue.readDoc(dir).lostRuns).toEqual([
+      { key: expect.any(String), entryId: "a", cwd: a.cwd, remote: { id: "w-1", pgid: 7 } },
+    ]);
+  });
+
   it("Move all routes the waiters that can run there, never running, Mac-only or unconfirmed ones", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })));
     Queue.enqueue(dir, test("r"));
@@ -1936,13 +1973,56 @@ describe("the lock across processes", () => {
     );
 
   it.each([
-    ["a dead owner", `${deadPid()} x`, 0, true],
-    ["a live owner paused far past the stale age", `${process.pid} x`, 3_600_000, false],
-    ["no token yet, just taken", null, 100, false],
-    ["no token, older than the stale age", null, 3_600_000, true],
-    ["an older build's lock, recent", null, 1_000, false],
-  ] as const)("a lock with %s is stale: %s", (_name, token, ageMs, stale) => {
-    expect(Queue.lockIsStale(token, ageMs, Queue.isAlive)).toBe(stale);
+    ["a dead owner", `${deadPid()} x`, 0, true, null],
+    ["a live owner paused far past the stale age", `${process.pid} x`, 3_600_000, false, null],
+    ["no token yet, just taken", null, 100, false, null],
+    ["no token, older than the stale age", null, 3_600_000, true, null],
+    ["an older build's lock, recent", null, 1_000, false, null],
+    // A live pid is the owner only while it is the same process: its start time says so.
+    ["its owner's start time, past the stale age", `${process.pid} x 100`, 3_600_000, false, 100],
+    ["a reused pid, past the stale age", `${process.pid} x 100`, 3_600_000, true, 500],
+    ["a reused pid, just taken", `${process.pid} x 100`, 100, false, 500],
+    ["an unreadable start time", `${process.pid} x 100`, 3_600_000, false, null],
+    ["an older build's token without a start time", `${process.pid} x`, 3_600_000, false, 500],
+  ] as const)("a lock with %s is stale: %s", (_name, token, ageMs, stale, current) => {
+    expect(Queue.lockIsStale(token, ageMs, Queue.isAlive, () => current)).toBe(stale);
+  });
+
+  it("reads this process's own lock as its own with the real start-time reader", () => {
+    expect(Queue.lockIsStale(Queue.lockToken(), 3_600_000, Queue.isAlive)).toBe(false);
+  });
+
+  it("gives up on a live owner's lock after its wait, with an error naming the owner", () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    Queue.boundLockWait(0);
+    try {
+      expect(() => Queue.setPaused(dir, true)).toThrow(`process ${process.pid}`);
+    } finally {
+      Queue.boundLockWait(Number.POSITIVE_INFINITY);
+    }
+    NodeFS.rmSync(lock, { recursive: true });
+    Queue.setPaused(dir, true);
+    expect(Queue.readDoc(dir).paused).toBe(true);
+  });
+
+  it("clears a breaker's marker its dead owner left, then breaks the stale lock", () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    for (const path of [lock, `${lock}.breaking`]) {
+      NodeFS.mkdirSync(path, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(path, "owner"), `${deadPid()} gone`);
+    }
+    Queue.boundLockWait(1_000);
+    try {
+      Queue.setPaused(dir, true);
+    } finally {
+      Queue.boundLockWait(Number.POSITIVE_INFINITY);
+    }
+    expect(Queue.readDoc(dir).paused).toBe(true);
+    expect(NodeFS.existsSync(`${lock}.breaking`)).toBe(false);
   });
 
   it("8 processes starting at once never pass the slots", async () => {

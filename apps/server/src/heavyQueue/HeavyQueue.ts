@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -40,6 +41,7 @@ import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
+const SERVER_LOCK_WAIT_MS = 2_000;
 
 const failure = (reason: HeavyQueueError["reason"], message: string) =>
   new HeavyQueueError({ reason, message });
@@ -208,6 +210,8 @@ export const bashHook =
     QueueFile.answerBashCall(dir, hookInput, prefix, {}, true);
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
+  // A stuck lock owner must not block this server's event loop; the CLI's waiters wait on.
+  QueueFile.boundLockWait(SERVER_LOCK_WAIT_MS);
   const command = `${yield* queuePrefix(dir)} --`;
   const hookCommand = yield* queuePrefix(dir, ["hook"]);
   const settingsPath =
@@ -375,7 +379,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
             const start = yield* Effect.try({
               try: () => QueueFile.tryStart(dir, id),
               catch: unavailable,
-            });
+            }).pipe(
+              // A busy lock is one more poll, not a failed wait.
+              Effect.catchIf(QueueFile.isLockBusy, () =>
+                Effect.succeed({ status: "busy" as const }),
+              ),
+            );
             if (start.status === "started") break;
             if (start.status === "removed") {
               return yield* failure("not-found", "The user removed this from the heavy queue.");
@@ -384,7 +393,16 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
           return yield* effect;
         }),
-      () => Effect.sync(() => QueueFile.remove(dir, id)).pipe(Effect.ignore),
+      () =>
+        // A server-held entry outlives no one but this server: a busy lock must not leave it behind.
+        Effect.try({ try: () => QueueFile.remove(dir, id), catch: unavailable }).pipe(
+          Effect.retry({
+            while: QueueFile.isLockBusy,
+            times: 10,
+            schedule: Schedule.spaced(POLL_INTERVAL),
+          }),
+          Effect.ignore({ log: true }),
+        ),
     );
   });
 

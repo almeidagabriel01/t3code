@@ -132,7 +132,10 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
         const text = fingerprint(block);
         // Unchanged settings never touch the file; ownership is re-checked on each write.
         if (text === lastPublished && owner) return;
-        owner = QueueFile.publishRunner(dir, block);
+        owner = yield* Effect.try({
+          try: () => QueueFile.publishRunner(dir, block),
+          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        });
         if (owner) lastPublished = text;
       });
 

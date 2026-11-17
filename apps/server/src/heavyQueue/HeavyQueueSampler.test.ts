@@ -8,6 +8,7 @@ import type { HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contrac
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
@@ -311,6 +312,27 @@ describe("HeavyQueueSampler", () => {
           expect(registered).toEqual([[{ pid: process.pid, startTimeMs: 0 }]]);
         }),
       ),
+  );
+
+  // The server bounds its wait for the lock: a busy one costs a reading, never the loop.
+  it.effect("keeps sampling after a reading the busy lock turned away", () =>
+    withRunning((dir) =>
+      Effect.gen(function* () {
+        const lock = NodePath.join(dir, "lock");
+        NodeFS.mkdirSync(lock, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+        Queue.boundLockWait(0);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => Queue.boundLockWait(Number.POSITIVE_INFINITY)),
+        );
+        yield* runSampler(dir, "linux");
+        yield* Effect.yieldNow;
+        expect(Queue.readDoc(dir).sample).toBeNull();
+        NodeFS.rmSync(lock, { recursive: true });
+        yield* TestClock.adjust("2 seconds");
+        expect(Queue.readDoc(dir).sample).toMatchObject({ cpuCount: 8 });
+      }),
+    ),
   );
 
   it.effect("on macOS measures a job's tree by physical footprint; elsewhere it leaves RSS", () =>

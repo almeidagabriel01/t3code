@@ -4,7 +4,11 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
-import type { HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
+import {
+  HeavyQueueError,
+  type HeavyQueueEntry,
+  type ResourceTelemetryProcess,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -272,36 +276,47 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           daemons,
         );
         const at = yield* Clock.currentTimeMillis;
-        const written = QueueFile.recordSample(
-          dir,
-          {
-            at,
-            // The host reading's short-window utilisation tracks load now; the load average lags a minute.
-            busyCores:
-              reading.cpuUtilization === null
-                ? (NodeOS.loadavg()[0] ?? 0)
-                : reading.cpuUtilization * reading.cpuCount,
-            cpuCount: reading.cpuCount,
-            availableMemoryBytes: Math.max(
-              0,
-              reading.availableMemoryBytes - deviceReserve(devices, footprints.byPid),
+        const buildDaemonsAlive =
+          processes.some(isBuildDaemon) ||
+          (entries.some((entry) => entry.startedAt === null) && (yield* daemonsAnywhere));
+        // A lock held past the server's wait fails this reading only: the next tick writes again.
+        const written = yield* Effect.try({
+          try: () =>
+            QueueFile.recordSample(
+              dir,
+              {
+                at,
+                // The host reading's short-window utilisation tracks load now; the load average lags a minute.
+                busyCores:
+                  reading.cpuUtilization === null
+                    ? (NodeOS.loadavg()[0] ?? 0)
+                    : reading.cpuUtilization * reading.cpuCount,
+                cpuCount: reading.cpuCount,
+                availableMemoryBytes: Math.max(
+                  0,
+                  reading.availableMemoryBytes - deviceReserve(devices, footprints.byPid),
+                ),
+                totalMemoryBytes: reading.totalMemoryBytes,
+                pressureLevel: reading.memoryPressureLevel ?? null,
+                swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
+                buildDaemonsAlive: buildDaemonsAlive,
+              },
+              running
+                ? peaksOf(entries, processes, footprints.jobs, daemons, footprints.trees)
+                : {},
             ),
-            totalMemoryBytes: reading.totalMemoryBytes,
-            pressureLevel: reading.memoryPressureLevel ?? null,
-            swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
-            buildDaemonsAlive:
-              processes.some(isBuildDaemon) ||
-              (entries.some((entry) => entry.startedAt === null) && (yield* daemonsAnywhere)),
-          },
-          running ? peaksOf(entries, processes, footprints.jobs, daemons, footprints.trees) : {},
-        );
+          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        });
         // Only the primary writer slows jobs down, so two servers never fight over one job's QoS.
         if (platform !== "darwin" || written === null || !written.primary) return;
         const { doc } = written;
         const step = slowdownStep(doc, processes, at);
         if (isNoop(step, doc.slowedDaemons)) return;
         yield* applySlowdown(step);
-        QueueFile.recordSlowdown(dir, step);
+        yield* Effect.try({
+          try: () => QueueFile.recordSlowdown(dir, step),
+          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        });
       }).pipe(Effect.ignore);
       yield* tick.pipe(
         Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),
