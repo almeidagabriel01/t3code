@@ -30,7 +30,10 @@ export const runTarget = (
 export const isDevServer = (program: string, words: ReadonlyArray<string>) => {
   const target = runTarget(program, words);
   const [first = "", second = ""] = target.words;
-  if (DEV_PROGRAMS[target.program]?.test(first) === true) return true;
+  // A program can be named like an object key (`__proto__`): only the table's own entries count.
+  if (Object.hasOwn(DEV_PROGRAMS, target.program) && DEV_PROGRAMS[target.program]!.test(first)) {
+    return true;
+  }
   if (!PACKAGE_MANAGERS.has(target.program)) return false;
   return DEV_SERVER.test(first === "run" || first === "run-script" ? second : first);
 };
