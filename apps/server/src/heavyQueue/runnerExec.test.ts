@@ -220,6 +220,26 @@ describe("running on Linux through remoto", () => {
     expect(out()).toBe(`${NodeFS.realpathSync(NodePath.join(dir, "apps", "server"))}\n`);
   });
 
+  // The job is on Linux already: a script that calls `remoto` itself runs that part there too.
+  it("a remoto the command calls inside runs in place there", async () => {
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      remoto: fake('exec "$@"'),
+      program: "/bin/zsh",
+      args: ["-c", "remoto echo nested && sh -c 'remoto echo deep' && remoto"],
+      cwd: dir,
+      root: dir,
+      environment: { ...process.env, PATH: "/usr/bin:/bin" },
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    await run.done;
+    expect(Buffer.concat(stdout).toString("utf8")).toBe("nested\ndeep\n");
+  });
+
   // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.
   it.each([
     ["no Electron", null, "", "ran\n", { kind: "finished", code: 0 }, null],
