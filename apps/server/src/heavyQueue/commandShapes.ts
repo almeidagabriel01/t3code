@@ -63,6 +63,8 @@ export type Kind = "exclusive" | "heavy" | "medium";
 const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev app/i;
 const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
 const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i;
+/** The folders of a word naming a file (`a/b/x.ts` keeps `x.ts`). */
+const FILE_FOLDERS = /(?<=^|[\s=])(?:[^\s/]*\/)+(?=[^\s/]+\.\w+(?=\s|$))/g;
 const FILE_ARG = /\S+\.(test|spec)\.\w+|\S+\.(ts|tsx|js|jsx|mjs)\b/;
 
 /**
@@ -74,9 +76,95 @@ export const kindOf = (
 ): Kind => {
   const line = entry.line ?? entry.label;
   if (entry.server === true || EXCLUSIVE.test(line)) return "exclusive";
-  if (HEAVY.test(line)) return "heavy";
-  if (MEDIUM.test(line) || (/\btest\b/.test(line) && FILE_ARG.test(line))) {
+  // A file is judged by its own name: `src/build/x.ts` builds nothing.
+  const named = line.replace(FILE_FOLDERS, "");
+  if (HEAVY.test(named)) return "heavy";
+  if (MEDIUM.test(named) || (/\btest\b/.test(named) && FILE_ARG.test(line))) {
     return "medium";
   }
   return "heavy";
+};
+
+const OP = /^(;;&|;;|;&|\n|[ \t\r]+|[;&|()<>])/;
+const SEPARATORS = new Set([";", "&", "|", "(", "\n", ";;", ";&", ";;&"]);
+const OPENERS = new Set(["then", "do", "else", "elif", "{", "!", "if", "while", "until"]);
+
+/** One shell word at `at`, quotes, `$(…)` and backticks included whole. */
+const wordAt = (text: string, at: number) => {
+  let end = at;
+  while (end < text.length && !OP.test(text.slice(end, end + 1))) {
+    const char = text[end]!;
+    if (char === "\\") end += 2;
+    else if (char === "'") end = text.indexOf("'", end + 1) + 1 || text.length;
+    else if (char === "`") end = text.indexOf("`", end + 1) + 1 || text.length;
+    else if (char === '"') {
+      end += 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      end += 1;
+    } else if (text.startsWith("$(", end)) {
+      let depth = 0;
+      do {
+        if (text[end] === "(") depth += 1;
+        else if (text[end] === ")") depth -= 1;
+        end += 1;
+      } while (end < text.length && depth > 0);
+    } else end += 1;
+  }
+  return text.slice(at, Math.min(end, text.length));
+};
+
+/**
+ * Shell text with what never runs blanked: comments, `case` patterns and the words `echo` and
+ * `printf` print. Words that run something (`$(…)`, backticks) and redirect targets stay.
+ */
+export const runnableText = (text: string): string => {
+  let out = "";
+  let at = 0;
+  let commandStart = true;
+  let printing = false;
+  let redirect = false;
+  const cases: Array<"subject" | "in" | "pattern" | "body"> = [];
+  while (at < text.length) {
+    const op = OP.exec(text.slice(at))?.[0];
+    const state = cases.at(-1);
+    if (op !== undefined) {
+      at += op.length;
+      out += op;
+      if (op === "<" || op === ">") redirect = true;
+      else if (SEPARATORS.has(op) && !(op === "&" && redirect)) {
+        printing = false;
+        commandStart = true;
+      }
+      if (op === ")" && state === "pattern") {
+        cases[cases.length - 1] = "body";
+        commandStart = true;
+      } else if (op.startsWith(";;") || op === ";&") {
+        if (state === "body") cases[cases.length - 1] = "pattern";
+      }
+      continue;
+    }
+    if (text[at] === "#" && !/[^\s;&|()<>]/.test(text[at - 1] ?? " ")) {
+      const end = text.indexOf("\n", at);
+      at = end === -1 ? text.length : end;
+      continue;
+    }
+    const word = wordAt(text, at);
+    at += word.length;
+    const runs = /\$\(|`/.test(word);
+    let keep = true;
+    // A `case` word not followed by its subject and `in` was no `case` statement.
+    if (state === "in" && word !== "in") cases.pop();
+    if (state === "subject") cases[cases.length - 1] = "in";
+    else if (state === "in" && word === "in") cases[cases.length - 1] = "pattern";
+    else if (state === "pattern" || (state === "body" && commandStart && word === "esac")) {
+      if (word === "esac") cases.pop();
+      keep = false;
+    } else if (redirect) redirect = false;
+    else if (printing) keep = runs;
+    else if (commandStart && word === "case") cases.push("subject");
+    else if (commandStart && (word === "echo" || word === "printf")) printing = true;
+    commandStart = commandStart && OPENERS.has(word);
+    out += keep ? word : " ";
+  }
+  return out;
 };

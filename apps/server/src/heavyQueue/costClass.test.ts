@@ -52,6 +52,16 @@ describe("cost class", () => {
       "quick",
       "2 files",
     ],
+    // A folder's name is no kind of work; a test file's own name still is.
+    ["path", "vp lint src/build/x.ts", null, "quick", "1 file"],
+    ["path", "vp fmt apps/web/src/browser/Foo.tsx", null, "quick", "1 file"],
+    ["path", "vp fmt --stdin-filepath=src/build/x.ts < src/build/x.ts", null, "quick", "1 file"],
+    ["path", "vp lint scripts/build.ts playwright.config.ts", null, "quick", "2 files"],
+    ["path", "tsc --noEmit src/compile/a.ts", null, "quick", "1 file"],
+    ["path", "vp test run src/build/x.test.ts", null, "quick", "1 file"],
+    ["path", "vp test run src/a/Foo.browser.test.tsx", null, "standard", "first run"],
+    ["path", "vp test run e2e.test.ts", null, "standard", "first run"],
+    ["path", "vp run build src/a.ts", null, "standard", "first run"],
     ["dir", "vp lint apps/web", null, "standard", "first run"],
     ["glob", "vp fmt 'src/**/*.ts'", null, "standard", "first run"],
     // A config or project file names how to check, not what: the check is the whole project.

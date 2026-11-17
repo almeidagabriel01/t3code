@@ -31,10 +31,23 @@ const workOf = (part: Part): ReadonlyArray<Part> => {
   return text === undefined ? [part] : workPartsOf(text);
 };
 
+/** A path as its own name: folder names (`src/build/`) say nothing about the work. */
+const nameOf = (value: string) => value.replace(/^(-[^=]*=)?.*\//, "$1");
+
+/**
+ * Whether a part checks (A3), judged by its words: a lint, format or typecheck whatever files it
+ * names, and a test run by its files' own names (`x.browser.test.tsx` runs a browser).
+ */
+const checks = (part: Part) => {
+  const values = part.values.slice(part.remoteAt);
+  const own = values.filter((value) => !isTarget(value.replace(/^-[^=]*=/, "")));
+  if (kindOf({ label: own.join(" ") }) === "medium") return true;
+  return kindOf({ label: values.map(nameOf).join(" ") }) === "medium";
+};
+
 /** The files a checking part works on, or null when it has no file scope (A3). */
 export const filesOf = (part: Part): ReadonlyArray<string> | null => {
-  const text = part.values.slice(part.remoteAt).join(" ");
-  if (part.script !== null || kindOf({ label: text }) !== "medium") return null;
+  if (part.script !== null || !checks(part)) return null;
   const configs = new Set(
     part.values.filter((_, index) => CONFIG_FLAG.test(part.values[index - 1] ?? "")),
   );

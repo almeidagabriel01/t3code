@@ -167,6 +167,18 @@ describe("build daemons anywhere", () => {
       "java -cp k.jar org.jetbrains.kotlin.daemon.KotlinCompileDaemon --daemon-runFilesPath x",
       true,
     ],
+    // A JDK under a folder with a space in its name.
+    [
+      "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java -cp g.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.10",
+      true,
+    ],
+    [
+      "/Library/Java/JavaVirtualMachines/Zulu 17/Contents/Home/bin/java -cp k.jar org.jetbrains.kotlin.daemon.KotlinCompileDaemon",
+      true,
+    ],
+    ["/bin/zsh -c /usr/bin/java -cp g.jar GradleDaemon", false],
+    ["jdk/bin/java -cp g.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.10", true],
+    ["node agent.js find /x/java GradleDaemon", false],
     ["/bin/zsh\nnode vite.js\n", false],
     // Only a JVM running the daemon class counts, not a line that mentions it.
     ["grep GradleDaemon\n/bin/zsh -c echo KotlinCompileDaemon", false],
