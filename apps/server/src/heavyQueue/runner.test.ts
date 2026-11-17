@@ -1541,6 +1541,26 @@ describe("patterns and eligibility", () => {
     ).toEqual({ eligibility, reason });
   });
 
+  // A body the parser can't follow ties exactly where a plain one does.
+  it.each([
+    "vp test run --changed",
+    "vp run dev",
+    "npx expo run:ios",
+    "source .venv/bin/activate && vp test run",
+    ".venv/bin/pytest -q",
+    "vp test run a & vp test run b",
+    "vp test run --outputFile=/private/tmp/r.json",
+    "vp test run > $TMPDIR/r.txt",
+    "vp i && vp test run",
+    "xcodebuild -scheme App test",
+  ])("%s ties a body whether or not the parser follows it", (inside) => {
+    const verdict = (body: string) =>
+      eligibilityOf({ label: "remoto ./gate.sh", cwd: "/w", scripts: { "./gate.sh": body } }, copy);
+    const plain = verdict(inside);
+    expect(plain.eligibility).not.toBe("linux");
+    expect(verdict(`check() { :; }\n${inside}`)).toEqual(plain);
+  });
+
   // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
   const open = {
     ...at,

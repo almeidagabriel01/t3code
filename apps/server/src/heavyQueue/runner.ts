@@ -559,14 +559,10 @@ export const eligibilityOf = (
   const read: ReadScript | undefined =
     scripts === undefined ? undefined : (word) => scripts[word] ?? null;
   const { unsafe, parts } = readLine(line, read);
-  if (unsafe !== null && context.inText === true && CONSTRUCTS.has(unsafe)) {
-    const tie = textTie(line, entry.cwd, rootOf(entry.cwd), config);
-    if (tie !== null) return { eligibility: "mac-only", reason: tie };
-    return config.runnerLinuxEverything || matchesAny(line, config.runnerLinuxCommands)
-      ? { eligibility: "linux", reason: null }
-      : { eligibility: "not-listed", reason: `Not on the Can run on Linux list: ${nameOf(line)}` };
-  }
-  if (unsafe !== null) {
+  // A body that runs there whole is judged by the parts the parser still read, and by its text
+  // for any tie inside what it could not follow.
+  const unfollowed = unsafe !== null && context.inText === true && CONSTRUCTS.has(unsafe);
+  if (unsafe !== null && !unfollowed) {
     return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
   }
   const work = new Set(workParts(parts));
@@ -580,7 +576,11 @@ export const eligibilityOf = (
     };
   }
   const cwds = new Map<string, string | null>([["", entry.cwd]]);
-  const vars = new Map<string, string | null>([["HOME", home]]);
+  // Its temp folder is never inside a checkout, on either machine.
+  const vars = new Map<string, string | null>([
+    ["HOME", home],
+    ["TMPDIR", "/tmp"],
+  ]);
   const cwdAt = (scope: ReadonlyArray<number>): string | null => {
     const key = scope.join("/");
     if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
@@ -670,6 +670,8 @@ export const eligibilityOf = (
       vars.set(name, command.conditional ? null : value);
     }
   }
+  const textual = unfollowed ? textTie(line, entry.cwd, rootOf(entry.cwd), config) : null;
+  if (textual !== null) return { eligibility: "mac-only", reason: textual };
   return notListed === null
     ? { eligibility: "linux", reason: null }
     : { eligibility: "not-listed", reason: notListed };
