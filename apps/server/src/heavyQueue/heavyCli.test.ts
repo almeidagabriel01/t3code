@@ -689,6 +689,30 @@ describe("t3 heavy", () => {
       },
     );
 
+    // An install the worktree's own state breaks fails everywhere: the job ends with the fix,
+    // never reruns, and files no problem card.
+    it("ends a job whose worktree needs a fix, telling the agent what to fix", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=syncing\\n${M} phase=installing\\n' >&2`,
+          `echo 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"' >&2`,
+          "exit 1",
+        ].join("\n"),
+        { runnerDropped: "mac", runnerUnavailable: "mac" },
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
+      expect(await run.exited).toBe(1);
+      expect(run.stdout()).toBe("");
+      expect(run.stderr()).toContain(
+        "[t3 heavy] pnpm-lock.yaml is out of date in this worktree: run `vp i` (or `pnpm install`) on this Mac, then `git add pnpm-lock.yaml`\n",
+      );
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
+      expect(faults(dir)).toEqual([]);
+      expect(Queue.read(dir)).toEqual([]);
+      expect(Queue.readDoc(dir).events.map((event) => event.kind)).toEqual(["ended"]);
+    });
+
     // Linux has no Mac home: `~`, `$HOME` and absolute paths into the checkout point at its copy.
     it.each([
       ["cd ~/W/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
@@ -814,10 +838,11 @@ describe("t3 heavy", () => {
     );
 
     // 39: the project's own failure there is no lost link: the policy decides once, no retry loop.
+    // A stale lockfile is the worktree's instead, and ends with its fix (below).
     it("runs a job whose install fails on Linux here once, naming Linux's last line", async () => {
       const { dir, env } = setup(
         failingOnce(
-          `printf '${M} phase=syncing id=app-1\\n${M} phase=installing\\n' >&2; echo 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"' >&2; exit 1`,
+          `printf '${M} phase=syncing id=app-1\\n${M} phase=installing\\n' >&2; echo 'ERR_PNPM_NO_MATCHING_VERSION  No matching version found for left-pad@9.9.9' >&2; exit 1`,
         ),
         { runnerDropped: "mac" },
       );
@@ -825,7 +850,7 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("ran on mac\n");
       expect(run.stderr()).toContain(
-        'Linux couldn\'t run this: Dependency install on Linux failed: help: Update your lockfile using "pnpm install --no-frozen-lockfile"',
+        "Linux couldn't run this: Dependency install on Linux failed: ERR_PNPM_NO_MATCHING_VERSION  No matching version found for left-pad@9.9.9",
       );
       expect(runs(dir)).toBe("1");
     });

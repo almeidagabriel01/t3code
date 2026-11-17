@@ -43,7 +43,7 @@ import {
   type Part,
   type ReadScript,
 } from "./heavyHook.ts";
-import type { Redirect, Word } from "./shellLine.ts";
+import { type Redirect, withHome, type Word, wordFrom } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
@@ -175,6 +175,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly failure?: string;
   /** The last line Linux printed when its link last failed, for the retry's reason. */
   readonly linkError?: string;
+  /** Its worktree broke the install on Linux (a stale lockfile): the fix, for its end notice. */
+  readonly worktree?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
   readonly held?: Pick<HeavyQueueEntry, "ask" | "route">;
 };
@@ -196,7 +198,7 @@ const expand = (
   vars: ReadonlyMap<string, string | null>,
   cwd: string,
 ): { readonly value: string } | { readonly unknown: string } => {
-  let value = word.tilde ? word.value.replace(/^~(?=\/|$)/, vars.get("HOME") ?? "~") : word.value;
+  let value = withHome(word, vars.get("HOME") ?? "~");
   for (const name of word.vars) {
     if (name === "") return { unknown: "$(…)" };
     const known = name === "PWD" ? cwd : vars.get(name);
@@ -713,11 +715,7 @@ export const eligibilityOf = (
           : [];
     for (const word of assignments) {
       const name = word.value.slice(0, word.value.indexOf("="));
-      const value = literalValue(
-        { ...word, value: word.value.slice(name.length + 1) },
-        vars,
-        cwd ?? "/",
-      );
+      const value = literalValue(wordFrom(word, name.length + 1), vars, cwd ?? "/");
       vars.set(name, command.conditional ? null : value);
     }
   }

@@ -686,6 +686,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantTaskColumns.some((column) => column.name === "auto_dismissed_run_id")) {
     yield* sql`ALTER TABLE assistant_tasks ADD COLUMN auto_dismissed_run_id TEXT`;
   }
+  if (!assistantTaskColumns.some((column) => column.name === "source_thread_id")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN source_thread_id TEXT`;
+  }
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_tasks_source_idx ON assistant_tasks(source_thread_id)`;
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {
@@ -900,6 +904,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
   // The message's model that switch applied: a thread off it was changed by the user since.
   yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
+  // When a delivered request left this conversation active because its work still ran.
+  yield* addColumns("assistant_group_request_threads", [["settle_held_at", "TEXT"]]);
   // A team with its chat counters, recreated on every start after every column it reads. A tab
   // reads from its own cursor, else the group's read_seq; it is listed while it has unread, a wait
   // on the user, its own cursor, working or stopped tasks (so an end reads apart from a move), and

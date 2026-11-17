@@ -133,6 +133,8 @@ describe("heavy Bash commands", () => {
     ],
     ["remoto vp test run", true],
     ["cd apps/web && remoto pnpm test", true],
+    [`cd "/a b" && remoto vp test`, true],
+    ["cd '/a b' && remoto vp test", true],
     ["vp test run heavyQueue", false],
     ["rg heavy apps", false],
     ["echo remoto && vp test run", false],

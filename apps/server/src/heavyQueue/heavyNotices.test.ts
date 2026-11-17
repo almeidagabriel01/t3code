@@ -23,6 +23,7 @@ import {
   STUCK_NO_HISTORY_MS,
   stuckJobs,
   withRecord,
+  worktreeProblemOf,
 } from "./heavyNotices.ts";
 
 const NOW = Date.parse("2026-11-12T12:00:00.000Z");
@@ -350,6 +351,53 @@ describe("faults T3 records for the problem detector", () => {
   });
 });
 
+const PNPM =
+  "pnpm-lock.yaml is out of date in this worktree: run `vp i` (or `pnpm install`) on this Mac, then `git add pnpm-lock.yaml`";
+const JSON_BROKEN =
+  "A package.json in this worktree is not valid JSON (an unresolved merge conflict?): fix it on this Mac";
+
+describe("install failures that are the worktree's, not Linux's", () => {
+  it.each([
+    [
+      ' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with <ROOT>/package.json',
+      PNPM,
+    ],
+    ['help: Update your lockfile using "pnpm install --no-frozen-lockfile"', PNPM],
+    [
+      ' ERR_PNPM_LOCKFILE_CONFIG_MISMATCH  Cannot proceed with the frozen installation. The current "overrides" configuration doesn\'t match the value found in the lockfile',
+      PNPM,
+    ],
+    [
+      "npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.",
+      "package-lock.json is out of date in this worktree: run `npm install` on this Mac, then `git add package-lock.json`",
+    ],
+    [
+      "error Your lockfile needs to be updated, but yarn was run with `--frozen-lockfile`.",
+      "yarn.lock is out of date in this worktree: run `yarn install` on this Mac, then `git add yarn.lock`",
+    ],
+    [
+      "➤ YN0028: │ The lockfile would have been modified by this install, which is explicitly forbidden.",
+      "yarn.lock is out of date in this worktree: run `yarn install` on this Mac, then `git add yarn.lock`",
+    ],
+    [
+      "error: lockfile had changes, but lockfile is frozen",
+      "The bun lockfile is out of date in this worktree: run `bun install` on this Mac, then `git add` it",
+    ],
+    [
+      " ERROR  Expected property name or '}' in JSON at position 2 (line 2 column 1) while parsing '{<<<<<<< HEAD\"name\":\"b\",' in /w/package.json",
+      JSON_BROKEN,
+    ],
+    ["npm error code EJSONPARSE", JSON_BROKEN],
+    // Linux's own failures, and a command's: not the worktree's.
+    ["rsync error: timeout in data send/receive (code 30) at io.c(201)", null],
+    ["ENOSPC: no space left on device, write", null],
+    ["Error: Electron failed to install correctly", null],
+    ["src/a.test.ts > parses package.json", null],
+  ])("%j is %j", (line, problem) => {
+    expect(worktreeProblemOf(line)).toBe(problem);
+  });
+});
+
 describe("notices for each problem", () => {
   it.each([
     [
@@ -378,6 +426,13 @@ describe("notices for each problem", () => {
       endedRecord({ ...linux, phase: "installing" }, 1, NOW),
       "Dependency install on Linux failed for pnpm test",
       "Exit code 1",
+      "linux",
+    ],
+    [
+      "install failed on the worktree's state",
+      endedRecord({ ...linux, phase: "installing", worktree: PNPM }, 1, NOW),
+      "pnpm test needs a fix in its worktree to run on Linux",
+      PNPM,
       "linux",
     ],
     [

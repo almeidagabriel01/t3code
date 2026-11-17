@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
+import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
 import {
   claimLostRun,
@@ -42,35 +43,70 @@ type Env = Readonly<Record<string, string | undefined>>;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
 /** The Mac path a word names (`~/…`, `$HOME/…` or absolute), or null for anything else. */
-const macPath = (word: Word, value: string, home: string) => {
-  if (word.tilde && /^~(\/|$)/.test(value)) return home + value.slice(1);
+const macPath = (word: Word, value: string, home: string, tilde: boolean) => {
+  if (tilde && /^~(\/|$)/.test(value)) return home + value.slice(1);
   const homeVar = /^\$(HOME|\{HOME\})(?=\/|$)/.exec(value);
   if (homeVar !== null && word.vars.length === 1) return home + value.slice(homeVar[0].length);
   return value.startsWith("/") && word.vars.length === 0 ? value : null;
 };
 
 /**
- * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` value or a
- * redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper sets there.
+ * One `:`-separated part of an unquoted `NAME=` value as a Mac path, or null when it is not one.
+ * `tilde`: the shell expands its leading `~`.
+ */
+const listPath = (part: string, home: string, tilde: boolean) => {
+  const fromHome =
+    (tilde ? /^~(?=\/|$)/.exec(part) : null) ?? /^\$(?:HOME|\{HOME\})(?=\/|$)/.exec(part);
+  const rest = fromHome === null ? part : part.slice(fromHome[0].length);
+  if (rest.includes("$")) return null;
+  if (fromHome !== null) return home + rest;
+  return part.startsWith("/") ? part : null;
+};
+
+/**
+ * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` or `NAME=`
+ * value, or a redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper
+ * sets there.
  * Linux has no Mac home, so `cd ~/<checkout>/sub` would land in a folder that doesn't exist.
  */
 const shellTextInCopy = (text: string, root: string, home: string) => {
   const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
+  const inCopy = (path: string) => {
+    const relative = NodePath.relative(root, NodePath.normalize(path));
+    if (relative.startsWith("..") || NodePath.isAbsolute(relative)) return null;
+    return `"$T3_COPY"${relative === "" ? "" : shellQuote(`/${relative}`)}`;
+  };
   for (const command of parseLine(text).commands) {
     const targets = command.redirects.flatMap((redirect) =>
       redirect.target === null ? [] : [redirect.target],
     );
-    for (const word of [...command.words, ...targets]) {
-      const flag = /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
-      const path = macPath(word, word.value.slice(flag.length), home);
-      if (path === null) continue;
-      const relative = NodePath.relative(root, NodePath.normalize(path));
-      if (relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
-      const copy = `"$T3_COPY"${relative === "" ? "" : shellQuote(`/${relative}`)}`;
+    for (const word of [...command.assigns, ...command.words, ...targets]) {
+      const name = /^[A-Za-z_]\w*=/.exec(word.value)?.[0];
+      const raw = text.slice(word.start, word.end);
+      // Unquoted, its text is its value, so each `:` part is rewritten in place.
+      if (name !== undefined && raw.startsWith(name) && !/['"\\`]/.test(raw)) {
+        const parts = raw.slice(name.length).split(":");
+        let at = name.length;
+        const moved = parts.map((part) => {
+          const path = listPath(part, home, word.tildes.includes(at));
+          at += part.length + 1;
+          return (path === null ? null : inCopy(path)) ?? part;
+        });
+        if (moved.some((part, at) => part !== parts[at])) {
+          edits.push({ start: word.start, end: word.end, text: name + moved.join(":") });
+        }
+        continue;
+      }
+      const flag = name ?? /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
+      const tilde = word.tildes.includes(flag.length);
+      const path = macPath(word, word.value.slice(flag.length), home, tilde);
+      const copy = path === null ? null : inCopy(path);
+      if (copy === null) continue;
       edits.push({
         start: word.start,
         end: word.end,
-        text: `${flag === "" ? "" : shellQuote(flag)}${copy}`,
+        // A quoted name would stop being an assignment.
+        text: `${name ?? (flag === "" ? "" : shellQuote(flag))}${copy}`,
       });
     }
   }
@@ -161,13 +197,15 @@ export const withProjectBins = (
   const settle = `for e in ${electrons.join(" ")}; do [ -f "$e/install.js" ] || continue; [ -f "$e/path.txt" ] && [ -e "$e/dist/$(cat "$e/path.txt")" ] && continue; printf '\\036remoto phase=installing\\n' >&2; (cd "$e" && node install.js) >&2 || { printf '\\036remoto install=electron\\n' >&2; exit 1; }; printf '\\036remoto phase=running\\n' >&2; done`;
   // The pre-flight: a program Linux can't find never starts, and says which one it was.
   const program = shellQuote(command[0] ?? "");
+  // The job holds Linux already: a `remoto` it calls inside runs in place. Shared by every copy.
+  const passthrough = `b="\${T3_COPY%/*}/.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
   // Bring results back: what the command writes after this is newer than the marker.
   const mark =
     startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
   return [
     "bash",
     "-c",
-    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle};${mark} exec "$@"`,
+    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} exec "$@"`,
     "t3",
     ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,
@@ -559,6 +597,8 @@ export interface LinuxRun {
     readonly platform: ReadonlyArray<string>;
     /** A package whose install was unfinished there, from the wrapper or the output. */
     readonly install: string | null;
+    /** The fix for a dependency install the worktree's own files broke, before the command ran. */
+    readonly worktree: string | null;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -613,9 +653,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
   let install: string | null = null;
+  let worktree: string | null = null;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
     install ??= installFailure(line);
+    // The command's own output may quote the same errors.
+    if (!progress.running) worktree ??= worktreeProblemOf(line);
   };
   const out = lineSplitter(scan);
   const err = lineSplitter((line, newline) => {
@@ -640,6 +683,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     progress: RemoteProgress;
     platform: ReadonlyArray<string>;
     install: string | null;
+    worktree: string | null;
   }>((resolve) => {
     let settled = false;
     const finish = (code: number | null) => {
@@ -652,6 +696,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         progress,
         platform: [...platform],
         install: progress.install ?? install,
+        worktree,
       });
     };
     child.on("error", (error) => {

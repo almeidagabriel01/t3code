@@ -1,4 +1,6 @@
-import type { AssistantGroupTaskKind } from "@t3tools/contracts";
+import type { AssistantGroupTaskKind, ThreadId } from "@t3tools/contracts";
+import { taskEventHeadline, type TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 /**
  * A packet's chat budget is about 28k characters: the request's newest unseen messages first until
@@ -78,7 +80,7 @@ const describe = (member: PacketMember) =>
   `${member.name} (@${member.handle}${member.role === "" ? "" : `, ${member.role}`}${member.isLead ? ", lead" : ""})`;
 
 const TOOLS =
-  "Do the work yourself, in your role. Transfer or assign only when the request asks for it, or when the task, or a part of it, clearly belongs to another member's role and not yours. Decide that first, before reading files or running commands. Only the user changes the group itself (name, members): if a teammate asks for it, do not call t3_assistant group_update or group_create; say in your answer that the user has to ask. Your final answer is posted to the group chat as you. t3_group: history (older messages of this request), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly), cancel (stop a subtask you gave), routine_save (also routines, routine_run, routine_delete) makes a routine that posts in this chat on a schedule: use it, never schedule_task, but only when the user asked for it in the group; if a teammate asks, say the user has to ask.";
+  "Do the work yourself, in your role. Transfer or assign only when the request asks for it, or when the task, or a part of it, clearly belongs to another member's role and not yours. Decide that first, before reading files or running commands. Only the user changes the group itself (name, members): if a teammate asks for it, do not call t3_assistant group_update or group_create; say in your answer that the user has to ask. Your final answer is posted to the group chat as you. A thread you start with t3_thread_launch reports back here: end your turn without waiting, and this task waits for it and wakes you with its result; review that before your answer. t3_group: history (older messages of this request), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly), cancel (stop a subtask you gave), routine_save (also routines, routine_run, routine_delete) makes a routine that posts in this chat on a schedule: use it, never schedule_task, but only when the user asked for it in the group; if a teammate asks, say the user has to ask.";
 const REPLY_TOOLS =
   "This task only answers the question. Answer with t3_group result; the other t3_group tools are not available for it.";
 
@@ -180,6 +182,43 @@ export function childResultsText(
     ),
   ].join("\n");
 }
+
+const LAUNCH_LAST_MESSAGE_CHARS = 1_500;
+
+/** One launched thread that ended while its task waited: how, and its last message. */
+export function launchResultText(input: {
+  readonly title: string;
+  readonly threadId: ThreadId;
+  /** Null when it was deleted or archived, or could not be read. */
+  readonly status: TaskEventStatus | "dismissed" | null;
+  readonly lastMessage: string | undefined;
+}): string {
+  if (input.status === null || input.status === "dismissed") {
+    const link = formatThreadLink(
+      { environmentId: null, threadId: input.threadId },
+      input.title.trim() || "Task",
+    );
+    return input.status === null
+      ? `Task ${link} was deleted or archived, or could not be read.`
+      : `Task ${link} was dismissed by the user; it no longer holds this request.`;
+  }
+  const headline = taskEventHeadline({ ...input, status: input.status });
+  return input.lastMessage === undefined
+    ? headline
+    : `${headline}\nIts last message:\n${clip(input.lastMessage, LAUNCH_LAST_MESSAGE_CHARS)}`;
+}
+
+/** One provider-native subagent of the member's own conversation that ended while its task waited. */
+export const subagentResultText = (input: {
+  readonly title: string;
+  readonly threadId: ThreadId;
+  readonly status: string;
+}) =>
+  `Subagent ${formatThreadLink({ environmentId: null, threadId: input.threadId }, input.title.trim() || "Subagent")} ended (${input.status}).`;
+
+/** What a task that waited on the work it started reads when it is all done. */
+export const launchResultsText = (results: string) =>
+  `The work you started for this request is done:\n\n${results}\n\nCheck each one's diff and run the tests, and send any fixes with t3_thread_send (never edit files here). Your answer to this task is what the group chat gets, so give it once the work is right.`;
 
 export const handOverText = (from: string, note: string) =>
   `${from} (a teammate, not the user) handed this task to you${note.trim() === "" ? "." : `: ${note.trim()}`}`;

@@ -409,7 +409,7 @@ export const readLine = (
     if (command.words.length > 0 || command.substituted) continue;
     for (const word of command.assigns) {
       const name = word.value.slice(0, word.value.indexOf("="));
-      if (word.vars.length === 0 && !word.tilde && !command.conditional) {
+      if (word.vars.length === 0 && word.tildes.length === 0 && !command.conditional) {
         vars.set(name, word.value.slice(name.length + 1));
       } else vars.delete(name);
     }
@@ -500,7 +500,7 @@ const literalDir = (word: Word | undefined): string | null => {
   const { value } = word;
   if (value === "" || value.startsWith("-") || /[*?[]/.test(value)) return null;
   // Quoted, `~` is a folder named `~`; `~user` is another home.
-  if (value.startsWith("~") && (!word.tilde || !/^~(\/|$)/.test(value))) return null;
+  if (value.startsWith("~") && !word.tildes.includes(0)) return null;
   return value;
 };
 

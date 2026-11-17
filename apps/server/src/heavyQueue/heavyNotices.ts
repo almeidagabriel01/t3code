@@ -25,6 +25,8 @@ export type HeavyEvent =
       readonly kind: "ended";
       readonly code: number;
       readonly phase?: HeavyRunnerPhase;
+      /** What in its worktree kept Linux from installing it, and the fix. */
+      readonly worktree?: string;
     }
   /** Its Linux question went unanswered and the deadline action is Cancel. */
   | { readonly kind: "deadline"; readonly dropped: boolean }
@@ -103,6 +105,39 @@ export const unreachableLine = (text: string) =>
   /^(?:ssh: (?:connect to host|Could not resolve hostname) .*|\[remoto\] PC indisponível.*)$/m.exec(
     text.replace(/\r/g, ""),
   )?.[0] ?? null;
+const lockfile = (file: string, install: string) =>
+  `${file} is out of date in this worktree: run \`${install}\` on this Mac, then \`git add ${file}\``;
+/**
+ * Install failures the worktree's own files cause: Linux is fine and any machine fails the same,
+ * so the job ends with the fix instead of a problem card or a rerun.
+ */
+const WORKTREE_PROBLEMS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /ERR_PNPM_(?:OUTDATED_LOCKFILE|LOCKFILE_CONFIG_MISMATCH)|pnpm install --no-frozen-lockfile/,
+    "pnpm-lock.yaml is out of date in this worktree: run `vp i` (or `pnpm install`) on this Mac, then `git add pnpm-lock.yaml`",
+  ],
+  [
+    /`npm ci` can only install packages when your package\.json and package-lock\.json/,
+    lockfile("package-lock.json", "npm install"),
+  ],
+  [
+    /yarn was run with `--frozen-lockfile`|YN0028|lockfile would have been modified by this install/,
+    lockfile("yarn.lock", "yarn install"),
+  ],
+  [
+    /lockfile had changes, but lockfile is frozen/,
+    "The bun lockfile is out of date in this worktree: run `bun install` on this Mac, then `git add` it",
+  ],
+  [
+    /ERR_PNPM_JSON_PARSE|EJSONPARSE|while parsing .* in \S*package\.json/,
+    "A package.json in this worktree is not valid JSON (an unresolved merge conflict?): fix it on this Mac",
+  ],
+];
+
+/** The fix for an install output line that is the worktree's failure, or null. */
+export const worktreeProblemOf = (line: string) =>
+  WORKTREE_PROBLEMS.find(([pattern]) => pattern.test(line))?.[1] ?? null;
+
 /** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
 const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
 
@@ -160,6 +195,8 @@ export type HeavyEventRecord = HeavyEvent & {
   readonly job: {
     readonly id: string;
     readonly name: string;
+    /** The command it ran; absent in records written before it was kept. */
+    readonly label?: string;
     readonly threadId: string | null;
     readonly runner: HeavyRunner;
   };
@@ -181,6 +218,8 @@ const recordOf = (
   job: {
     id: entry.id,
     name: entry.name ?? entry.label,
+    // `name` is already the command unless --name gave it another.
+    ...(entry.name === undefined ? {} : { label: entry.label }),
     threadId: entry.threadId,
     runner: entry.runner ?? "mac",
   },
@@ -188,7 +227,7 @@ const recordOf = (
 
 /** A job's own process ending; null for success, a stop, or an entry already gone. */
 export const endedRecord = (
-  entry: HeavyQueueEntry | undefined,
+  entry: (HeavyQueueEntry & { readonly worktree?: string }) | undefined,
   code: number,
   now: number,
 ): HeavyEventRecord | null =>
@@ -200,6 +239,9 @@ export const endedRecord = (
           kind: "ended",
           code,
           ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
+          ...(entry.runner === "linux" && entry.worktree !== undefined
+            ? { worktree: entry.worktree }
+            : {}),
         },
         now,
       );
@@ -407,6 +449,17 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
   });
   switch (record.kind) {
     case "ended": {
+      if (record.worktree !== undefined) {
+        return notice({
+          group: `worktree:${record.worktree}`,
+          category: "problem",
+          tone: "warning",
+          machine: "linux",
+          one: `${name} needs a fix in its worktree to run on Linux`,
+          many: (n) => `${jobs(n)} need a fix in their worktree to run on Linux`,
+          description: record.worktree,
+        });
+      }
       if (record.code === 126 || record.code === 127) {
         return notice({
           group: `start-failed:${job.runner}`,

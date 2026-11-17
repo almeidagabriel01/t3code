@@ -879,7 +879,9 @@ type PartOutcome =
       readonly reason: string;
       readonly code?: number;
       readonly touched?: boolean;
-    };
+    }
+  /** The worktree's own files broke the install there; `reason` is the fix. */
+  | { readonly kind: "worktree"; readonly reason: string };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -994,6 +996,11 @@ const runLinuxAttempt = async (
     process.stderr.write(`[t3 heavy] ${outcome.reason}; running the line on this Mac.\n`);
     requeue(dir, id, { route: "mac", routeReason: outcome.reason });
     return { kind: "requeued" };
+  }
+  if (outcome.kind === "worktree") {
+    process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
+    setProgress(dir, id, { worktree: outcome.reason });
+    return { kind: "exit", code: 1 };
   }
   if (outcome.kind === "environment") {
     process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
@@ -1181,19 +1188,23 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install } = await run.done;
+  let { outcome, progress, platform, install, worktree } = await run.done;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
     recorded = null;
     run = start();
-    ({ outcome, progress, platform, install } = await run.done);
+    ({ outcome, progress, platform, install, worktree } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
     }
   }
   if (stopped) process.exit(143);
+  // Rerunning anywhere fails the same way until the worktree is fixed.
+  if (outcome.kind !== "finished" && worktree !== null) {
+    return endLine(dir, id, { kind: "worktree", reason: worktree });
+  }
   if (outcome.kind === "finished") {
     if (bringsBack && progress.id !== null) {
       const back = await bringBack({

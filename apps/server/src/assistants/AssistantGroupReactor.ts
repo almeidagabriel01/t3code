@@ -31,7 +31,11 @@ const make = Effect.gen(function* () {
       Effect.andThen(
         forkParked(
           Stream.runForEach(
-            engine.streamDomainEvents.pipe(Stream.retry(RESUBSCRIBE)),
+            // Subscribed before the waiting tasks are checked, on every resubscribe, so a
+            // subagent end missed in between is caught up.
+            Stream.unwrap(
+              engine.subscribeDomainEvents.pipe(Effect.tap(() => groups.settleWaiting)),
+            ).pipe(Stream.retry(RESUBSCRIBE)),
             groups.handleRunEvent,
           ).pipe(
             Effect.catchCause((cause) =>

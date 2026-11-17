@@ -54,6 +54,7 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as Gate from "./AssistantGroupGate.ts";
 import * as Directory from "./AssistantDirectory.ts";
 import * as Groups from "./AssistantGroups.ts";
+import * as Tasks from "./AssistantTasks.ts";
 import {
   groupThreadId,
   HANDOFF_PAUSES,
@@ -141,6 +142,10 @@ const harness = (options: Options = {}) => {
   const fakeThreads = new Map<string, FakeThread>();
   const runs = new Map<string, FakeRun[]>();
   const answers = new Map<string, string>();
+  /** Background work a thread's shell reports, by thread. */
+  const background = new Map<string, ReadonlyArray<Record<string, unknown>>>();
+  /** Threads the user settled by hand. */
+  const settled = new Set<string>();
   /** Runs that failed on a usage limit, with the limit's reset time. */
   const limits = new Map<string, string>();
   const sent: Array<{
@@ -155,8 +160,13 @@ const harness = (options: Options = {}) => {
     attachments: ReadonlyArray<{ id: string; type: string; name: string }>;
   }> = [];
   const cleaned: string[] = [];
-  const dispatched: Array<{ type: string; threadId: string; commandId: string; runId?: string }> =
-    [];
+  const dispatched: Array<{
+    type: string;
+    threadId: string;
+    commandId: string;
+    runId?: string;
+    stopDelegatedTasks?: boolean;
+  }> = [];
   const launched: Array<{
     commandId: string;
     threadId: string;
@@ -168,6 +178,16 @@ const harness = (options: Options = {}) => {
     createdBy: string;
   }> = [];
   const deletedTeams: string[] = [];
+  /** Each thread's shell as the engine reads it; a thread with none reads as never run. */
+  const shells = new Map<
+    string,
+    {
+      status: string;
+      activityRunStatus: string | null;
+      pendingRuntimeRequest: null;
+      pendingBackgroundTasks: ReadonlyArray<{ taskId: string; kind: string; awaited?: boolean }>;
+    }
+  >();
   /** What the projection answers for a runtime request, by id. */
   const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
@@ -205,6 +225,26 @@ const harness = (options: Options = {}) => {
   const mocks = Layer.mergeAll(
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.empty,
+      // A shell a test set wins; a thread no fake knows is another environment's: unreadable.
+      getThreadShell: ((threadId: string) => {
+        const shell = shells.get(threadId);
+        if (shell !== undefined) return Effect.succeed(shell);
+        const thread = fakeThreads.get(threadId);
+        if (thread === undefined) return Effect.fail(new Boom());
+        return Effect.succeed(
+          thread.deletedAt === null
+            ? {
+                title: thread.title,
+                status: "idle",
+                activityRunStatus: null,
+                pendingRuntimeRequest: null,
+                archivedAt: thread.archivedAt,
+                pendingBackgroundTasks: background.get(threadId) ?? [],
+                settledOverride: settled.has(threadId) ? "settled" : null,
+              }
+            : null,
+        );
+      }) as never,
       getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const statuses = filter?.runStatuses as ReadonlyArray<string> | undefined;
         const runIds = filter?.messageRunIds as ReadonlyArray<string> | undefined;
@@ -279,9 +319,16 @@ const harness = (options: Options = {}) => {
         })) as never,
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadRecords: ((threadId: string) => {
+      // A message the test names `user:…` is the user's own; any other is the agent's.
+      getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const thread = fakeThreads.get(threadId);
-        return thread === undefined ? Effect.fail(new Boom()) : Effect.succeed({ thread });
+        const messages = ((filter?.messageIds ?? []) as ReadonlyArray<string>).map((id) => ({
+          id,
+          createdBy: id.startsWith("user:") ? "user" : "agent",
+        }));
+        return thread === undefined
+          ? Effect.fail(new Boom())
+          : Effect.succeed({ thread, messages });
       }) as never,
       // Like the Orchestrator: a thread with a live run refuses to settle.
       settleThread: ((input: { threadId: string; commandId: string }) => {
@@ -385,6 +432,7 @@ const harness = (options: Options = {}) => {
     }),
     Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
     Directory.layer,
+    Tasks.layer,
     Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
@@ -538,6 +586,30 @@ const harness = (options: Options = {}) => {
       );
     });
 
+  /**
+   * A thread launched with t3_thread_launch from `from`, its first run in `status`; it ends with
+   * `endLaunch`, which feeds its end the way the task reactor does.
+   */
+  const launch = (threadId: string, from: string, status = "running", createdAt = "2026-02-01") =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO assistant_tasks
+          (thread_id, assistant_id, project_id, title, created_at, source_thread_id)
+        VALUES (${threadId}, 'ada', 'p1', ${`Brief ${threadId}`}, ${createdAt}, ${from})`;
+      addThread(threadId, "p1", selection(codex), `Work ${threadId}`);
+      runs.set(threadId, [
+        { id: `run:${threadId}`, userMessageId: `m:${threadId}`, status, ordinal: 1 },
+      ]);
+    });
+  const endLaunch = (threadId: string, status = "completed", answer?: string) =>
+    Effect.gen(function* () {
+      const run = runs.get(threadId)!.at(-1)!;
+      run.status = status;
+      if (answer !== undefined) answers.set(run.id, answer);
+      return yield* (yield* Groups.AssistantGroups).settleLaunch(ThreadId.make(threadId));
+    });
+
   /** The thread a member's newest task was sent to: the member tools' caller. */
   const threadOf = (member: string) =>
     ThreadId.make(
@@ -554,6 +626,7 @@ const harness = (options: Options = {}) => {
     dispatched,
     launched,
     fakeThreads,
+    shells,
     runs,
     limits,
     answers,
@@ -568,6 +641,10 @@ const harness = (options: Options = {}) => {
     state,
     finish,
     finishTask,
+    background,
+    settled,
+    launch,
+    endLaunch,
     tasks,
     messages,
     sqlRows,
@@ -2622,6 +2699,450 @@ it.effect("a task waits for what it assigned, then runs again with the results",
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect("a task waits for the threads it launched, then runs again with their results", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const ada = h.threadOf("ada");
+    yield* h.launch("thread:api", ada);
+    // Launched from a thread Ada launched: it holds the request too.
+    yield* h.launch("thread:api-tests", "thread:api");
+    yield* h.launch("thread:docs", ada);
+    yield* h.launch("thread:gone", ada);
+    yield* h.endLaunch("thread:gone", "completed");
+
+    yield* h.finish(0, "completed", "Started the threads.");
+    const [waiting] = yield* h.tasks;
+    assert.deepInclude(waiting, {
+      status: "waiting",
+      reason: "threads:thread:api,thread:api-tests,thread:docs",
+    });
+    assert.isFalse((yield* h.messages).some((row) => row.author === "assistant"));
+
+    assert.isTrue(yield* h.endLaunch("thread:api", "completed", "API fixed."));
+    assert.isTrue(yield* h.endLaunch("thread:docs", "failed", "No docs folder."));
+    // The same end seen again changes nothing.
+    yield* h.endLaunch("thread:docs", "failed");
+    const [stillWaiting] = yield* h.tasks;
+    assert.deepInclude(stillWaiting, { status: "waiting", reason: "threads:thread:api-tests" });
+    assert.lengthOf(h.sent, 1);
+
+    yield* h.endLaunch("thread:api-tests", "completed", "Tests added.");
+    yield* h.endLaunch("thread:api-tests", "completed");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    assert.lengthOf(h.sent, 2);
+    const woken = h.sent[1]!;
+    assert.equal(woken.threadId, ada);
+    assert.include(woken.text, "The work you started for this request is done:");
+    assert.match(woken.text, /\[Work thread:api\]\([^)\n]+\) finished\./);
+    assert.include(woken.text, "API fixed.");
+    assert.match(woken.text, /\[Work thread:docs\]\([^)\n]+\) failed\./);
+    assert.include(woken.text, "No docs folder.");
+    assert.include(woken.text, "Tests added.");
+    // One that ended before the turn did was seen there.
+    assert.notInclude(woken.text, "thread:gone");
+
+    // A fix sent to a thread runs it again: the next turn waits for it in turn.
+    h.runs.get("thread:api")!.push({
+      id: "run:api-2",
+      userMessageId: "m:api-2",
+      status: "running",
+      ordinal: 2,
+    });
+    yield* h.finish(1, "completed", "Sent a fix.");
+    assert.deepInclude((yield* h.tasks)[0], { status: "waiting", reason: "threads:thread:api" });
+    yield* h.endLaunch("thread:api", "completed", "Fix in.");
+    yield* h.finish(2, "completed", "Build fixed and reviewed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+    // A follow-up after the request is done has nobody waiting: it reports the usual way.
+    h.runs.get("thread:api")!.push({
+      id: "run:api-3",
+      userMessageId: "m:api-3",
+      status: "running",
+      ordinal: 3,
+    });
+    assert.isFalse(yield* h.endLaunch("thread:api", "completed", "Follow-up done."));
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+    assert.deepEqual(
+      (yield* h.messages).flatMap((row) => (row.author === "assistant" ? [row.text] : [])),
+      ["Build fixed and reviewed."],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each<{
+  readonly way: string;
+  readonly release: (
+    h: ReturnType<typeof harness>,
+  ) => Effect.Effect<unknown, never, SqlClient.SqlClient>;
+  /** Gone without an event: only the sweep sees it, and the task reads that it is gone. */
+  readonly gone?: true;
+}>([
+  {
+    way: "dismissed",
+    release: (h) =>
+      h
+        .sqlRows("UPDATE assistant_tasks SET dismissed_at = '2026-03-01' RETURNING thread_id")
+        .pipe(Effect.orDie),
+  },
+  {
+    way: "deleted",
+    release: (h) => Effect.sync(() => void (h.fakeThreads.get("thread:api")!.deletedAt = "now")),
+  },
+  {
+    way: "archived",
+    release: (h) => Effect.sync(() => void (h.fakeThreads.get("thread:api")!.archivedAt = "now")),
+  },
+  {
+    way: "unreadable (another environment's)",
+    release: (h) => Effect.sync(() => void h.fakeThreads.delete("thread:api")),
+  },
+  {
+    way: "removed from the task list",
+    release: (h) => h.sqlRows("DELETE FROM assistant_tasks RETURNING thread_id").pipe(Effect.orDie),
+    gone: true,
+  },
+])("a launched thread $way stops holding the task", ({ release, gone }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Started.");
+    assert.equal((yield* h.tasks)[0]!.status, "waiting");
+    yield* release(h);
+    yield* gone ? groups.settleWaiting : groups.settleLaunch(ThreadId.make("thread:api"));
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    assert.include(h.sent[1]!.text, "The work you started for this request is done:");
+    if (gone) assert.include(h.sent[1]!.text, "What you waited on can no longer be found.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { end: "a usage limit it continues after", autoResume: true, status: "waiting" },
+  { end: "a usage limit nothing continues", autoResume: false, status: "failed" },
+])("a launched thread stopped by $end leaves the task $status", ({ autoResume, status }) => {
+  const h = harness({ autoResume });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Started.");
+    Object.assign(h.runs.get("thread:api")![0]!, { completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set("run:thread:api", "2026-01-01T12:00:00.000Z");
+    yield* h.endLaunch("thread:api", "failed");
+    const [task] = yield* h.tasks;
+    assert.equal(task!.status, status);
+    if (status === "failed") {
+      assert.equal(task!.reason, "thread_usage_limit");
+      assert.include(task!.followup!, "failed.");
+    }
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a thread that ends while the member still works holds nothing: the turn closes the task",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      yield* h.launch("thread:fast", h.threadOf("ada"));
+      // Ends while Ada still works: nothing waits on it, so it reports the usual way.
+      assert.isFalse(yield* h.endLaunch("thread:fast", "completed", "Done fast."));
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+      yield* h.finish(0, "completed", "Fixed.");
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+      // A thread no request launched is not the group's.
+      assert.isFalse(yield* groups.settleLaunch(ThreadId.make("thread:outside")));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+/** A provider-native subagent of `threadId`, as the projection stores it. */
+const nativeSubagent = (threadId: string, child: string, status: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status,
+          started_at, updated_at, payload_json)
+      VALUES (${`subagent:${child}`}, ${threadId}, 'node:parent', 'claudeAgent', ${child},
+        'provider_native', ${status}, '2026-02-01', '2026-02-01', ${JSON.stringify({ title: `Agent ${child}` })})
+      ON CONFLICT (subagent_id) DO UPDATE SET status = excluded.status`;
+  });
+const subagentEvent = (threadId: string, origin = "provider_native") =>
+  ({
+    type: "subagent.updated",
+    threadId,
+    payload: { origin },
+  }) as never as OrchestrationV2DomainEvent;
+
+it.effect(
+  "a conversation's live native subagent keeps its request open, and its end runs the task again",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      const ada = h.threadOf("ada");
+      yield* nativeSubagent(ada, "thread:sub", "running");
+      // One that already ended holds nothing.
+      yield* nativeSubagent(ada, "thread:done", "completed");
+      yield* h.launch("thread:api", ada);
+      yield* h.finish(0, "completed", "Started.");
+      assert.deepInclude((yield* h.tasks)[0], {
+        status: "waiting",
+        reason: "threads:thread:api;subagents:thread:sub",
+      });
+      yield* h.endLaunch("thread:api", "completed", "API fixed.");
+      assert.deepInclude((yield* h.tasks)[0], {
+        status: "waiting",
+        reason: "subagents:thread:sub",
+      });
+      // Not delivered, so nothing settles its conversation.
+      assert.isFalse(h.dispatched.some((command) => command.type === "thread.settle"));
+      // Another subagent's progress, or one that is not native, changes nothing.
+      yield* groups.handleRunEvent(subagentEvent(ada, "app_owned"));
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      assert.lengthOf(h.sent, 1);
+
+      yield* nativeSubagent(ada, "thread:sub", "completed");
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      yield* groups.handleRunEvent(subagentEvent(ada));
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+      assert.lengthOf(h.sent, 2);
+      assert.include(h.sent[1]!.text, "API fixed.");
+      assert.match(
+        h.sent[1]!.text,
+        /Subagent \[Agent thread:sub\]\([^)\n]+\) ended \(completed\)\./,
+      );
+      assert.notInclude(h.sent[1]!.text, "thread:done");
+      yield* h.finish(1, "completed", "Fixed and reviewed.");
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+      assert.isTrue(h.dispatched.some((command) => command.type === "thread.settle"));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { kept: "brought back to active", thread: { settledOverride: "active" } },
+  { kept: "pinned", thread: { settledOverride: null, pinnedAt: "now" } },
+  { kept: "written in by the user", thread: { settledOverride: null } },
+])("after its request closes, a conversation $kept is never settled again", ({ thread }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const ada = h.threadOf("ada");
+    yield* h.finish(0, "completed", "Fixed.");
+    const settles = () => h.dispatched.filter((command) => command.type === "thread.settle");
+    assert.lengthOf(settles(), 1);
+    Object.assign(h.fakeThreads.get(ada)!, thread);
+    // The user's own turn, a background wake and a subagent ending in it all end there.
+    for (const [index, messageId] of ["m:user", "wake:subagent"].entries()) {
+      const run = { id: `run:${messageId}`, userMessageId: messageId, status: "completed" };
+      h.runs.get(ada)!.push({ ...run, ordinal: index + 2 });
+      yield* groups.handleRunEvent({
+        type: "run.updated",
+        payload: { ...run, threadId: ada },
+      } as never as OrchestrationV2DomainEvent);
+    }
+    yield* nativeSubagent(ada, "thread:sub", "completed");
+    yield* groups.handleRunEvent(subagentEvent(ada));
+    assert.lengthOf(settles(), 1);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { work: "a dismissed thread", holds: false, dismissed: true, background: [] },
+  {
+    work: "a thread with only a PR watch",
+    holds: false,
+    dismissed: false,
+    background: [{ taskId: "pull-request-watch:1", kind: "background_task" }],
+  },
+  {
+    work: "a thread parked on background work that wakes it",
+    holds: true,
+    dismissed: false,
+    background: [{ taskId: "bg-1", kind: "background_task" }],
+  },
+])("$work at the turn's end holds the task: $holds", ({ holds, dismissed, background }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"), "completed");
+    h.background.set("thread:api", background);
+    if (dismissed) {
+      h.runs.get("thread:api")![0]!.status = "queued";
+      yield* h.sqlRows(
+        "UPDATE assistant_tasks SET dismissed_at = '2026-03-01' RETURNING thread_id",
+      );
+    }
+    yield* h.finish(0, "completed", "Fixed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), [holds ? "ada:waiting" : "ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each<{
+  readonly end: string;
+  readonly status: string;
+  readonly autoResume?: boolean;
+  readonly hold: (h: ReturnType<typeof harness>) => void;
+  readonly release: (h: ReturnType<typeof harness>) => void;
+}>([
+  {
+    end: "ended its run",
+    status: "ada:running",
+    hold: () => {},
+    release: (h) => void (h.runs.get("thread:api")![0]!.status = "completed"),
+  },
+  {
+    end: "had its background task cancelled",
+    status: "ada:running",
+    hold: (h) => {
+      h.runs.get("thread:api")![0]!.status = "completed";
+      h.background.set("thread:api", [{ taskId: "bg-1", kind: "background_task" }]);
+    },
+    release: (h) => void h.background.set("thread:api", []),
+  },
+  {
+    end: "was settled by hand at a usage limit it would continue after",
+    status: "ada:failed",
+    autoResume: true,
+    hold: (h) => {
+      Object.assign(h.runs.get("thread:api")![0]!, {
+        status: "failed",
+        completedAt: DateTime.makeUnsafe(0),
+      });
+      h.limits.set("run:thread:api", "2026-01-01T12:00:00.000Z");
+    },
+    release: (h) => void h.settled.add("thread:api"),
+  },
+])(
+  "a launched thread that $end with no event reaching the group is caught up at reconcile",
+  ({ status, autoResume, hold, release }) => {
+    const h = harness(autoResume === undefined ? {} : { autoResume });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      yield* h.launch("thread:api", h.threadOf("ada"));
+      hold(h);
+      yield* h.finish(0, "completed", "Started.");
+      assert.equal((yield* h.tasks)[0]!.status, "waiting");
+      release(h);
+      yield* groups.reconcile;
+      assert.deepEqual(statusesOf(yield* h.tasks), [status]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a thread dismissed while another ends is named in what the task reads", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* h.launch("thread:docs", h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Started.");
+    yield* h.sqlRows(
+      "UPDATE assistant_tasks SET dismissed_at = '2026-03-01' WHERE thread_id = 'thread:docs' RETURNING thread_id",
+    );
+    // The request no longer follows it: its waits go to the direct conversation.
+    assert.isFalse(yield* groups.syncWaitingThread(ThreadId.make("thread:docs")));
+    yield* h.endLaunch("thread:api", "completed", "API fixed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    const woken = h.sent.at(-1)!.text;
+    assert.include(woken, "API fixed.");
+    assert.match(woken, /\[Brief thread:docs\]\([^)\n]+\) was dismissed by the user/);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a task waits for both what it assigned and what it launched", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Check the build",
+    });
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Waiting.");
+    assert.deepInclude((yield* h.tasks)[0], { status: "waiting", reason: "threads:thread:api" });
+    yield* h.endLaunch("thread:api", "completed", "API fixed.");
+    // Only the subtask holds it now.
+    assert.deepInclude((yield* h.tasks)[0], { status: "waiting", reason: null });
+    yield* h.finish(1, "completed", "Build is green.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:completed"]);
+    const woken = h.sent.at(-1)!.text;
+    assert.include(woken, "API fixed.");
+    assert.include(woken, "- Beto (completed): Build is green.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a task handed over with a thread still running waits for it with its new owner", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* groups.member.transfer({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      note: "API thread is running",
+    });
+    yield* h.finish(0, "completed", "Handed over.", 1_000);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["beto:running"]);
+    yield* h.finish(1, "completed", "Looked.");
+    assert.deepInclude((yield* h.tasks)[0], { status: "waiting", reason: "threads:thread:api" });
+    yield* h.endLaunch("thread:api", "completed", "API fixed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["beto:running"]);
+    assert.equal(h.sent.at(-1)!.threadId, h.threadOf("beto"));
+    assert.include(h.sent.at(-1)!.text, "API fixed.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { subagent: "a live native subagent", live: true },
+  { subagent: "no native subagent", live: false },
+])(
+  "stop and cancel with $subagent take a task out of its wait, its threads running",
+  ({ live }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      const ada = h.threadOf("ada");
+      yield* h.launch("thread:api", ada);
+      if (live) yield* nativeSubagent(ada, "thread:sub", "running");
+      yield* h.finish(0, "completed", "Started.");
+      const [task] = yield* h.tasks;
+      yield* groups.taskAction({ taskId: task!.task_id as never, action: "stop" });
+      assert.deepInclude((yield* h.tasks)[0], { status: "paused", reason: "stopped" });
+      // Ada's conversation stops only for native subagents to end; what she launched keeps running.
+      assert.deepEqual(
+        h.dispatched.flatMap((command) =>
+          command.type === "thread.stop" ? [[command.threadId, command.stopDelegatedTasks]] : [],
+        ),
+        live ? [[ada, false]] : [],
+      );
+      // Its end reports the usual way (false) and never reopens the stopped task.
+      assert.isFalse(yield* h.endLaunch("thread:api", "completed", "API fixed."));
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:paused"]);
+      yield* groups.taskAction({ taskId: task!.task_id as never, action: "cancel" });
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:cancelled"]);
+      assert.isFalse(h.dispatched.some((command) => command.threadId === "thread:api"));
+      assert.lengthOf(h.sent, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 // A usage limit nothing will continue on its own (auto-resume off) fails the task as before.
 it.effect.each([
@@ -5890,8 +6411,45 @@ it.effect(
       yield* h.finish(0, "completed", "Ada's part");
       // Beto still works on it: nothing settles yet.
       assert.deepEqual(commands("thread.settle"), []);
+      // Delivered is not finished: Ada's subagent and the thread Beto launched still run.
+      const working = { activityRunStatus: null, pendingRuntimeRequest: null } as const;
+      h.shells.set(ada, {
+        ...working,
+        status: "idle",
+        pendingBackgroundTasks: [{ taskId: "sub", kind: "subagent" }],
+      });
+      const launched = ThreadId.make("thread:launched");
+      yield* (yield* Tasks.AssistantTasks).link({
+        threadId: launched,
+        assistantId: "beto" as AssistantId,
+        projectId: p1,
+        title: "Build it",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceThreadId: ThreadId.make(beto),
+      });
+      h.shells.set(launched, { ...working, status: "running", pendingBackgroundTasks: [] });
       yield* h.finish(1, "completed", "Beto's part");
-      assert.deepEqual(commands("thread.settle"), [ada, beto]);
+      assert.deepEqual(commands("thread.settle"), []);
+      // The launched thread's own run end settles Beto: the owner's wake goes to his direct
+      // conversation, not this one. A pull request watch left behind holds nothing.
+      h.shells.set(launched, {
+        ...working,
+        status: "idle",
+        pendingBackgroundTasks: [
+          { taskId: "pull-request-watch:x", kind: "monitor", awaited: true },
+        ],
+      });
+      const runEnd = (threadId: string, userMessageId: string) =>
+        groups.handleRunEvent({
+          type: "run.updated",
+          payload: { id: `run:${userMessageId}`, threadId, userMessageId, status: "completed" },
+        } as never as OrchestrationV2DomainEvent);
+      yield* runEnd(launched, "launched-message");
+      assert.deepEqual(commands("thread.settle"), [beto]);
+      // Ada's subagent ends in a wake run of her own conversation, which settles her.
+      h.shells.delete(ada);
+      yield* runEnd(ada, "subagent-wake");
+      assert.deepEqual(commands("thread.settle"), [beto, ada]);
       assert.equal(h.fakeThreads.get(beto)!.settledOverride, "settled");
       // Settling again is a no-op: settled threads are skipped.
       const before = commands("thread.settle").length;
@@ -5906,7 +6464,7 @@ it.effect(
       assert.deepEqual(commands("thread.unsettle"), [ada, beto]);
       assert.isNull(h.fakeThreads.get(beto)!.settledOverride);
       yield* h.finish(2, "completed", "Done too");
-      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto]);
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto]);
       const answer = (yield* h.messages).findLast((row) => row.assistant_id === "ada")!;
       yield* groups.post(
         { teamId: TEAM, text: "continue", replyToMessageId: answer.message_id as never },
@@ -5952,7 +6510,70 @@ it.effect(
       yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
         WHERE task_id = ${paused.tasks[0]!.id}`;
       yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
-      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      const betoThread = requestThreadId("beto", TEAM, paused.message.id);
+      assert.include(settled(), betoThread);
+
+      // Only a held conversation settles on a later run end: a user's turn in a closed request,
+      // or a background wake in one marked active, leaves the thread as it is.
+      const laterRunEnd = (threadId: string) =>
+        groups.handleRunEvent({
+          type: "run.updated",
+          payload: {
+            id: `run:later:${threadId}`,
+            threadId,
+            userMessageId: "later",
+            status: "completed",
+          },
+        } as never as OrchestrationV2DomainEvent);
+      const before = settled().length;
+      h.fakeThreads.get(cyThread)!.settledOverride = null;
+      yield* laterRunEnd(cyThread);
+      assert.isNull(h.fakeThreads.get(cyThread)!.settledOverride);
+      h.fakeThreads.get(betoThread)!.settledOverride = "active" as never;
+      yield* laterRunEnd(betoThread);
+      assert.equal(h.fakeThreads.get(betoThread)!.settledOverride, "active");
+      assert.lengthOf(settled(), before);
+
+      // A conversation held by a thread it launched: the user writing in it brings it back, so the
+      // end of that turn leaves it active though the launched work is done by then.
+      const fourth = yield* groups.post({ teamId: TEAM, text: "@ada four" }, h.user);
+      const adaThread = requestThreadId("ada", TEAM, fourth.message.id);
+      const launched = ThreadId.make("thread:held");
+      yield* (yield* Tasks.AssistantTasks).link({
+        threadId: launched,
+        assistantId: "ada" as AssistantId,
+        projectId: p1,
+        title: "Held",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceThreadId: ThreadId.make(adaThread),
+      });
+      h.shells.set(launched, {
+        status: "running",
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [],
+      });
+      yield* h.finish(
+        h.sent.findIndex((send) => send.threadId === adaThread),
+        "completed",
+        "On it",
+      );
+      assert.notInclude(settled(), adaThread);
+      const userTurn = (type: "run.created" | "run.updated", status: string) =>
+        groups.handleRunEvent({
+          type,
+          payload: {
+            id: "run:user:direct",
+            threadId: adaThread,
+            userMessageId: "user:direct",
+            status,
+          },
+        } as never as OrchestrationV2DomainEvent);
+      yield* userTurn("run.created", "queued");
+      h.shells.delete(launched);
+      yield* userTurn("run.updated", "completed");
+      assert.notInclude(settled(), adaThread);
+      assert.isNull(h.fakeThreads.get(adaThread)!.settledOverride);
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -6088,8 +6709,26 @@ it.effect(
         [true, true],
       );
       // A thread that is no request's is left alone.
-      yield* groups.syncWaitingThread(ThreadId.make("thread:outside"));
+      assert.isFalse(yield* groups.syncWaitingThread(ThreadId.make("thread:outside")));
       assert.lengthOf(yield* notices(), 2);
+
+      // A thread Ada launched for the request (here, two links down) waits in its block too.
+      yield* h.launch("thread:fix", thread);
+      yield* h.launch("thread:fix-tests", "thread:fix");
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+        (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+        VALUES ('rr-2', 'thread:fix-tests', 'n', 'command', 'pending', '2026-01-03', '{}')`;
+      h.runtimeRequests.set("rr-2", {
+        request: { kind: "command", status: "pending", responseCapability: { type: "live" } },
+        item: { type: "approval_request", prompt: "pnpm publish", reason: null },
+      });
+      assert.isTrue(yield* groups.syncWaitingThread(ThreadId.make("thread:fix-tests")));
+      const launched = (yield* notices()).at(-1)!;
+      assert.deepEqual(
+        [launched.assistantId, launched.requestId, launched.waiting],
+        ["ada", deploy.message.id, { threadId: "thread:fix-tests", resolved: false }],
+      );
+      assert.include(launched.text, "pnpm publish");
     }).pipe(Effect.provide(h.layer));
   },
 );

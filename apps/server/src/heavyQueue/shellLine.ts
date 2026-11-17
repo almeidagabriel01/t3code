@@ -13,9 +13,26 @@ export interface Word {
   readonly value: string;
   /** Variables it expands by name; "" for a command substitution or arithmetic. */
   readonly vars: ReadonlyArray<string>;
-  /** Starts with an unquoted `~`, or is an assignment whose value does. */
-  readonly tilde: boolean;
+  /**
+   * Where in `value` a `~` stands that the shell expands to the home: unquoted at the start, and in
+   * a `NAME=` word right after the `=` and after each unquoted `:`. Ascending.
+   */
+  readonly tildes: ReadonlyArray<number>;
 }
+
+/** `value` with each `~` the shell expands replaced by `home`. */
+export const withHome = (word: Pick<Word, "value" | "tildes">, home: string) =>
+  word.tildes.reduceRight(
+    (value, at) => value.slice(0, at) + home + value.slice(at + 1),
+    word.value,
+  );
+
+/** The word from offset `from` of its value on, e.g. a `NAME=` word's value. */
+export const wordFrom = (word: Word, from: number): Word => ({
+  ...word,
+  value: word.value.slice(from),
+  tildes: word.tildes.filter((at) => at >= from).map((at) => at - from),
+});
 
 export interface Redirect {
   readonly op: string;
@@ -154,12 +171,15 @@ export const parseLine = (source: string): ParsedLine => {
 
   const readWord = (context: Context): Word => {
     const start = at;
-    // Bash expands an assignment's leading `~` too: `T=~/tool`.
-    const tilde = /^(?:[A-Za-z_]\w*\+?=)?~/.test(source.slice(at, at + 256));
+    const assignAt = /^[A-Za-z_]\w*\+?=/.exec(source.slice(at, at + 256))?.[0].length ?? -1;
+    const tildes: number[] = [];
+    let afterColon = false;
     const vars: string[] = [];
     let value = "";
     while (at < source.length) {
       const c = source[at]!;
+      const colon = afterColon;
+      afterColon = false;
       if (META.has(c)) break;
       if (c === "`") {
         if (context.until === "`") break;
@@ -208,11 +228,17 @@ export const parseLine = (source: string): ParsedLine => {
         vars.push("");
         value += source.slice(start + value.length, at);
       } else {
+        const next = source[at + 1];
+        const homeEnds =
+          next === undefined || next === "/" || META.has(next) || (assignAt >= 0 && next === ":");
+        const prefix = value.length === 0 || value.length === assignAt || colon;
+        if (c === "~" && prefix && homeEnds) tildes.push(value.length);
+        afterColon = c === ":" && assignAt >= 0 && value.length >= assignAt;
         value += c;
         at++;
       }
     }
-    return { start, end: Math.min(at, source.length), value, vars, tilde };
+    return { start, end: Math.min(at, source.length), value, vars, tildes };
   };
 
   const parseList = (context: Context): void => {

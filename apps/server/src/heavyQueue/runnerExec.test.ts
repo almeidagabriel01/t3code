@@ -142,7 +142,25 @@ describe("running on Linux through remoto", () => {
       `vp test '--root='"$T3_COPY"'/apps/web' > "$T3_COPY"'/out.txt'`,
     ],
     ["echo $(cat /Users/me/wt/list)", `echo $(cat "$T3_COPY"'/list')`],
+    [
+      "[[ $x =~ ^a ]] && cat <~/wt/a >~/wt/b",
+      `[[ $x =~ ^a ]] && cat <"$T3_COPY"'/a' >"$T3_COPY"'/b'`,
+    ],
+    // Bash expands `~` after an identifier's `=`, in an assignment or an argument alike.
+    [
+      "FOO=~/wt/x BAR=/Users/me/wt/y env BAZ=$HOME/wt vp test",
+      `FOO="$T3_COPY"'/x' BAR="$T3_COPY"'/y' env BAZ="$T3_COPY" vp test`,
+    ],
+    // And after each `:` of that value: a PATH-like list.
+    [
+      "PATH=/x:~/wt/bin:$PATH env P=/Users/me/wt/a:$HOME/wt/b:~other:~/wt vp test",
+      `PATH=/x:"$T3_COPY"'/bin':$PATH env P="$T3_COPY"'/a':"$T3_COPY"'/b':~other:"$T3_COPY" vp test`,
+    ],
     // Not the checkout, a quoted `~`, another home or variable: left as written.
+    [
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+    ],
     ["cd /Users/me/other && vp test", "cd /Users/me/other && vp test"],
     ["cd /Users/me/wt-2 && vp test", "cd /Users/me/wt-2 && vp test"],
     ["echo '~/wt' $WT/x ~other/wt", "echo '~/wt' $WT/x ~other/wt"],
@@ -172,12 +190,22 @@ describe("running on Linux through remoto", () => {
     ["the repo root", "", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test`],
     ["a subfolder", "", "/apps/web", "'/apps'", `cd "$T3_COPY"'/apps' && vp test`],
     ["a folder outside git", "plain", "", "/a.ts", `vp test "$T3_COPY"'/a.ts' /etc/x`],
-  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, sent) => {
+    // A git worktree's `.git` is a file; its main checkout is another folder, left as written.
+    ["a git worktree", "worktree", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test MAIN/a`],
+  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, given) => {
     const repo = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(dir, "t3-repo-")));
+    const main = `${repo}.main`;
+    const sent = given.replace("MAIN", main);
     if (kind === "") NodeFS.mkdirSync(NodePath.join(repo, ".git"));
+    if (kind === "worktree") {
+      NodeFS.writeFileSync(NodePath.join(repo, ".git"), `gitdir: ${main}/.git/worktrees/w\n`);
+    }
     NodeFS.mkdirSync(NodePath.join(repo, "apps", "web"), { recursive: true });
     const quoted = path.startsWith("'") ? `'${repo}${path.slice(1)}` : `${repo}${path}`;
-    const line = kind === "" ? `cd ${quoted} && vp test` : `vp test ${quoted} /etc/x`;
+    const line =
+      kind === "plain"
+        ? `vp test ${quoted} /etc/x`
+        : `cd ${quoted} && vp test${kind === "worktree" ? ` ${main}/a` : ""}`;
     const stdout: Buffer[] = [];
     const run = startLinuxRun({
       // Past the PATH wrapper, to the command it runs.
@@ -205,6 +233,39 @@ describe("running on Linux through remoto", () => {
     const { run, out } = runWith(fake('exec "$@"'), `cd ${dir}/apps/server && pwd -P`, web);
     await run.done;
     expect(out()).toBe(`${NodeFS.realpathSync(NodePath.join(dir, "apps", "server"))}\n`);
+  });
+
+  // The job is on Linux already: a script that calls `remoto` itself runs that part there too.
+  it("a remoto the command calls inside runs in place there", async () => {
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      remoto: fake('exec "$@"'),
+      program: "/bin/zsh",
+      args: ["-c", "remoto echo nested && sh -c 'remoto echo deep' && remoto"],
+      cwd: dir,
+      root: dir,
+      environment: { ...process.env, PATH: "/usr/bin:/bin" },
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    await run.done;
+    expect(Buffer.concat(stdout).toString("utf8")).toBe("nested\ndeep\n");
+  });
+
+  // Only the install before the command is the worktree's: the command may print the same text.
+  it.each([
+    ["installing", "pnpm-lock.yaml is out of date in this worktree"],
+    ["running", null],
+  ])("an outdated lockfile while %s tells the worktree's fix: %j", async (phase, fix) => {
+    const lockfile = 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"';
+    const { run } = runWith(
+      fake(`printf '${M} phase=${phase}\\n' >&2; echo '${lockfile}' >&2; exit 1`),
+    );
+    const { worktree } = await run.done;
+    expect(worktree === null ? null : worktree.slice(0, fix?.length)).toBe(fix);
   });
 
   // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.

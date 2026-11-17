@@ -22,6 +22,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { AssistantGroups } from "./AssistantGroups.ts";
 import * as Reactor from "./AssistantTaskReactor.ts";
 import * as Tasks from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
@@ -120,6 +121,8 @@ const harness = (
     readonly runs?: ReadonlyArray<Record<string, unknown>>;
     readonly pendingBackgroundTasks?: ReadonlyArray<Record<string, unknown>>;
     readonly changes?: ReadonlyArray<NeedsUser.UserWaitChange>;
+    /** Threads a group request launched: the group takes their events. */
+    readonly requestLaunches?: ReadonlyArray<string>;
     /** The assistant conversation's own runs. */
     readonly ownerRuns?: ReadonlyArray<Record<string, unknown>>;
     readonly shell?: Record<string, unknown>;
@@ -129,6 +132,8 @@ const harness = (
     readonly whileTold?: () => Effect.Effect<void>;
   } = {},
 ) => {
+  /** What the group was handed, as `settle:<thread>` or `wait:<thread>`. */
+  const toGroup: Array<string> = [];
   /** Wait wakes, sent straight to the conversation. */
   const sends: Array<Record<string, unknown>> = [];
   /** Run ends, offered to the notices door. */
@@ -194,6 +199,7 @@ const harness = (
         SqlitePersistence.layerMemory,
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           getThreadShell: () =>
             Effect.succeed({
               title: "Add retry",
@@ -214,6 +220,20 @@ const harness = (
                   Effect.andThen(onSend.current(input)),
                   Effect.as({} as never),
                 ),
+        }),
+        Layer.mock(AssistantGroups)({
+          member: {} as never,
+          settleLaunch: (threadId) =>
+            Effect.sync(() => {
+              toGroup.push(`settle:${threadId}`);
+              return options.requestLaunches?.includes(threadId) === true;
+            }),
+          settleWaiting: Effect.void,
+          syncWaitingThread: (threadId) =>
+            Effect.sync(() => {
+              toGroup.push(`wait:${threadId}`);
+              return options.requestLaunches?.includes(threadId) === true;
+            }),
         }),
         Layer.mock(TaskEventNotices)({
           send: (notice) =>
@@ -236,7 +256,7 @@ const harness = (
       ),
     ),
   );
-  return { sends, notices, folded, allFolded, dispatched, onSend, layer };
+  return { sends, notices, folded, allFolded, dispatched, onSend, toGroup, layer };
 };
 
 const insertAssistant = (id: string, archived = false) =>
@@ -266,7 +286,7 @@ const setupAda = (archived = false) =>
     });
   });
 
-const setup = (archived = false) =>
+const setup = (archived = false, sourceThreadId?: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -280,8 +300,40 @@ const setup = (archived = false) =>
       projectId: ProjectId.make("p1"),
       title: "Add retry",
       createdAt: "2026-01-02T00:00:00.000Z",
+      ...(sourceThreadId === undefined ? {} : { sourceThreadId: ThreadId.make(sourceThreadId) }),
     });
   });
+
+it.effect.each([
+  { from: "a group request's conversation", forRequest: true },
+  { from: "the assistant's own conversation", forRequest: false },
+])("a task launched from $from reports where it was launched from", ({ forRequest }) => {
+  const { notices, sends, toGroup, layer } = harness({
+    requestLaunches: forRequest ? [taskThread] : [],
+  });
+  return Effect.gen(function* () {
+    yield* setup(false, forRequest ? "assistant:jarvis:g-0123456789abcdef" : "assistant:jarvis:1");
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* reactor.handle(runEvent(taskThread, "completed"));
+    yield* reactor.handleWait(requestChange(taskThread, "command")!);
+    yield* reactor.handle({ type: "thread.deleted", threadId: taskThread } as never);
+    // Background work ending with no run after it is asked too, and never wakes anyone itself.
+    yield* reactor.handle({
+      type: "provider-thread.updated",
+      threadId: taskThread,
+      payload: { pendingBackgroundTasks: [] },
+    } as never);
+    // The group is always asked; only a request's thread keeps the direct conversation out of it.
+    assert.deepEqual(toGroup, [
+      `settle:${taskThread}`,
+      `wait:${taskThread}`,
+      `settle:${taskThread}`,
+      `settle:${taskThread}`,
+    ]);
+    assert.lengthOf(notices, forRequest ? 0 : 1);
+    assert.lengthOf(sends, forRequest ? 0 : 1);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect(
   "a task run that ends is offered to its assistant through the notices door, with its last message",
