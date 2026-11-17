@@ -1057,6 +1057,31 @@ describe("group chat feed", () => {
     mocks.waiting = new Set();
   });
 
+  it("links a waiting task's threads, then its subagents, by title", async () => {
+    mocks.shells = new Map([
+      ["w1", "Build the site"],
+      ["s1", "Lint pass"],
+    ]);
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
+      [task("t1", "waiting", "ada", { reason: "subagents:s1;threads:w1, w2" })],
+    );
+    render();
+    const waiting = container.querySelector('[data-testid="group-task-waiting-threads"]')!;
+    expect(waiting.textContent).toContain("Waiting on 2 threads and 1 subagent");
+    expect(
+      Array.from(
+        waiting.querySelectorAll('[data-testid="group-task-waiting-link"]'),
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Build the site", "Untitled thread", "Lint pass"]);
+    await click("Open Lint pass");
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "s1" },
+    });
+  });
+
   it("says what to do in an empty chat, and nothing before the first snapshot", () => {
     mocks.live = null;
     render();

@@ -3,6 +3,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupTaskReasonLabel,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
   assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
@@ -11,14 +13,15 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 export type GroupStatusTone = "quiet" | "active" | "attention" | "done" | "failed";
@@ -77,6 +80,7 @@ export function GroupTaskCard(props: {
   readonly canAct: boolean;
   readonly onAction: (action: AssistantGroupTaskAction, ownerId?: Assistant["id"]) => void;
   readonly onOpenConversation: () => void;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { task } = props;
   // A running member that waits on an approval or a question is answered in its own thread.
@@ -89,6 +93,7 @@ export function GroupTaskCard(props: {
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
+  const waitingOn = assistantGroupWaitingOn(task);
   return (
     <View
       testID="group-task-card"
@@ -134,6 +139,25 @@ export function GroupTaskCard(props: {
         <Text testID="group-task-waiting" className="text-xs text-adaptive-amber-700-300">
           {waiting}
         </Text>
+      )}
+      {waitingOn === null ? null : (
+        <View testID="group-task-waiting-threads" className="gap-1">
+          <Text className="text-xs text-adaptive-amber-700-300">
+            {assistantGroupWaitingOnLabel(waitingOn)}
+          </Text>
+          <View className="flex-row flex-wrap gap-1.5">
+            {(["threads", "subagents"] as const).flatMap((kind) =>
+              waitingOn[kind].map((threadId) => (
+                <WaitingThreadLink
+                  key={`${kind}:${threadId}`}
+                  environmentId={props.environmentId}
+                  threadId={threadId}
+                  onOpen={() => props.onOpenThread(threadId)}
+                />
+              )),
+            )}
+          </View>
+        </View>
       )}
       {needs === null ? null : (
         <Text
@@ -186,5 +210,32 @@ export function GroupTaskCard(props: {
         />
       </View>
     </View>
+  );
+}
+
+function WaitingThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly onOpen: () => void;
+}) {
+  const title =
+    useQuietThreadShell(scopeThreadRef(props.environmentId, props.threadId))?.title.trim() ||
+    "Untitled thread";
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${title}`}
+      onPress={props.onOpen}
+      hitSlop={4}
+      className="max-w-full rounded-full bg-foreground/6 px-2.5 py-1 active:bg-foreground/12"
+    >
+      <Text
+        testID="group-task-waiting-link"
+        className="text-xs font-t3-medium text-foreground"
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </Pressable>
   );
 }
