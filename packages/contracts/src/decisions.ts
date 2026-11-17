@@ -5,6 +5,7 @@ import {
   ChatImageAttachment,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "./chatAttachment.ts";
+import { AssistantTeamId } from "./assistants.ts";
 import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
@@ -85,6 +86,10 @@ export const Decision = Schema.Struct({
   approvalRequestId: Schema.optional(Schema.String),
   /** Set on an assistant's notice: it only informs, so the user acknowledges it instead of answering. */
   notice: Schema.optional(Schema.Literal(true)),
+  /** Asked from a member's hidden thread for a group request: open the group there, not the thread. */
+  group: Schema.optional(
+    Schema.Struct({ teamId: AssistantTeamId, requestId: TrimmedNonEmptyString }),
+  ),
   createdAt: IsoDateTime,
 });
 export type Decision = typeof Decision.Type;

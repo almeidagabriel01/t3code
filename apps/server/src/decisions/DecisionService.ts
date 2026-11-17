@@ -1,4 +1,5 @@
 import {
+  AssistantTeamId,
   CommandId,
   DECISION_CONTEXT_MAX_LENGTH,
   DECISION_MAX_OPTIONS,
@@ -68,6 +69,8 @@ interface DecisionRow {
   readonly kind: string | null;
   readonly steps_json: string | null;
   readonly created_at: string;
+  readonly group_team_id?: string | null;
+  readonly group_request_id?: string | null;
 }
 
 export interface DecisionRequestInput {
@@ -122,6 +125,14 @@ const toDecision = (row: DecisionRow): Decision => ({
   ...(row.delivered_at === null ? {} : { deliveredAt: row.delivered_at }),
   ...(row.approval_request_id === null ? {} : { approvalRequestId: row.approval_request_id }),
   ...(row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX) ? { notice: true as const } : {}),
+  ...(row.group_team_id == null || row.group_request_id == null
+    ? {}
+    : {
+        group: {
+          teamId: AssistantTeamId.make(row.group_team_id),
+          requestId: row.group_request_id,
+        },
+      }),
   createdAt: row.created_at,
 });
 
@@ -210,8 +221,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  // Each row with the group request its thread works for, when it is a member's request thread.
+  const selectRows = sql`
+    SELECT decisions.*, g.team_id AS group_team_id, g.request_id AS group_request_id
+    FROM decisions LEFT JOIN assistant_group_request_threads g
+      ON g.thread_id = decisions.from_thread_id`;
+
   const findRow = Effect.fn("DecisionService.findRow")(function* (decisionId: string) {
-    const rows = yield* sql<DecisionRow>`SELECT * FROM decisions WHERE decision_id = ${decisionId}`;
+    const rows = yield* sql<DecisionRow>`${selectRows} WHERE decision_id = ${decisionId}`;
     return rows[0] ?? (yield* decisionError("not_found", "Decision not found."));
   });
 
@@ -262,7 +279,7 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const existing = yield* sql<DecisionRow>`
-            SELECT * FROM decisions
+            ${selectRows}
             WHERE from_thread_id = ${input.fromThreadId} AND client_request_id = ${clientRequestId}`;
           if (existing[0] !== undefined) return toDecision(existing[0]);
           const now = yield* DateTime.now;
@@ -294,9 +311,9 @@ const make = Effect.gen(function* () {
     const scope =
       input.threadId === undefined ? sql`` : sql`AND from_thread_id = ${input.threadId}`;
     const open = yield* sql<DecisionRow>`
-      SELECT * FROM decisions WHERE status = 'open' ${scope} ORDER BY created_at ASC`;
+      ${selectRows} WHERE status = 'open' ${scope} ORDER BY created_at ASC`;
     const settled = yield* sql<DecisionRow>`
-      SELECT * FROM decisions WHERE status <> 'open' ${scope}
+      ${selectRows} WHERE status <> 'open' ${scope}
       ORDER BY COALESCE(answered_at, created_at) DESC LIMIT ${RECENT_SETTLED_LIMIT}`;
     return [...open, ...settled].map(toDecision);
   }, storage);
