@@ -392,6 +392,8 @@ export const AssistantTeamChat = Schema.Struct({
   working: Schema.Boolean,
   /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
   runningCount: Schema.optionalKey(Schema.Int),
+  /** Members with a task running now; absent from older servers. */
+  runningMemberIds: Schema.optionalKey(Schema.Array(AssistantId)),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
   /**
