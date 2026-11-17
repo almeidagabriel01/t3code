@@ -2019,6 +2019,15 @@ function shellFromState(input: {
   };
 }
 
+/**
+ * A provider-native subagent still at work, as a condition on the `orchestration_v2_projection_subagents`
+ * row named `alias`. Its child thread has no runs of its own, so this row is the child's activity.
+ */
+export const liveNativeSubagent = (sql: SqlClient.SqlClient, alias: string) => {
+  const row = sql.literal(alias);
+  return sql`(${row}.origin = 'provider_native' AND ${row}.status IN ('pending', 'running', 'waiting'))`;
+};
+
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
@@ -6422,8 +6431,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT CASE native.status WHEN 'pending' THEN 'starting' ELSE native.status END
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6447,8 +6455,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT native.started_at
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6823,8 +6830,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_subagents native
                 WHERE native.child_thread_id = t.thread_id
-                  AND native.origin = 'provider_native'
-                  AND native.status IN ('pending', 'running', 'waiting')
+                  AND ${liveNativeSubagent(sql, "native")}
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
