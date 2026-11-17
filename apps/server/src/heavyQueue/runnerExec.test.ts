@@ -240,6 +240,19 @@ describe("running on Linux through remoto", () => {
     expect(Buffer.concat(stdout).toString("utf8")).toBe("nested\ndeep\n");
   });
 
+  // Only the install before the command is the worktree's: the command may print the same text.
+  it.each([
+    ["installing", "pnpm-lock.yaml is out of date in this worktree"],
+    ["running", null],
+  ])("an outdated lockfile while %s tells the worktree's fix: %j", async (phase, fix) => {
+    const lockfile = 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"';
+    const { run } = runWith(
+      fake(`printf '${M} phase=${phase}\\n' >&2; echo '${lockfile}' >&2; exit 1`),
+    );
+    const { worktree } = await run.done;
+    expect(worktree === null ? null : worktree.slice(0, fix?.length)).toBe(fix);
+  });
+
   // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.
   it.each([
     ["no Electron", null, "", "ran\n", { kind: "finished", code: 0 }, null],

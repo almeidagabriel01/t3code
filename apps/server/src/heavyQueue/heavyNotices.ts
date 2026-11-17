@@ -218,7 +218,8 @@ const recordOf = (
   job: {
     id: entry.id,
     name: entry.name ?? entry.label,
-    label: entry.label,
+    // `name` is already the command unless --name gave it another.
+    ...(entry.name === undefined ? {} : { label: entry.label }),
     threadId: entry.threadId,
     runner: entry.runner ?? "mac",
   },

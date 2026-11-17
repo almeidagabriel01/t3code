@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
+import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
 import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
 import {
@@ -160,8 +161,8 @@ export const withProjectBins = (
   const settle = `for e in ${electrons.join(" ")}; do [ -f "$e/install.js" ] || continue; [ -f "$e/path.txt" ] && [ -e "$e/dist/$(cat "$e/path.txt")" ] && continue; printf '\\036remoto phase=installing\\n' >&2; (cd "$e" && node install.js) >&2 || { printf '\\036remoto install=electron\\n' >&2; exit 1; }; printf '\\036remoto phase=running\\n' >&2; done`;
   // The pre-flight: a program Linux can't find never starts, and says which one it was.
   const program = shellQuote(command[0] ?? "");
-  // The job holds Linux already: a `remoto` it calls inside runs in place, beside the copy.
-  const passthrough = `b="$T3_COPY.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
+  // The job holds Linux already: a `remoto` it calls inside runs in place. Shared by every copy.
+  const passthrough = `b="\${T3_COPY%/*}/.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
   // Bring results back: what the command writes after this is newer than the marker.
   const mark =
     startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
@@ -560,6 +561,8 @@ export interface LinuxRun {
     readonly platform: ReadonlyArray<string>;
     /** A package whose install was unfinished there, from the wrapper or the output. */
     readonly install: string | null;
+    /** The fix for a dependency install the worktree's own files broke, before the command ran. */
+    readonly worktree: string | null;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -614,9 +617,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
   let install: string | null = null;
+  let worktree: string | null = null;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
     install ??= installFailure(line);
+    // The command's own output may quote the same errors.
+    if (!progress.running) worktree ??= worktreeProblemOf(line);
   };
   const out = lineSplitter(scan);
   const err = lineSplitter((line, newline) => {
@@ -641,6 +647,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     progress: RemoteProgress;
     platform: ReadonlyArray<string>;
     install: string | null;
+    worktree: string | null;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -653,6 +660,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         progress,
         platform: [...platform],
         install: progress.install ?? install,
+        worktree,
       });
     };
     child.on("error", (error) => {

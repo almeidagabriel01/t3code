@@ -25,7 +25,7 @@ import {
   UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
-import { faultOf, type FaultSeen, unreachableLine, worktreeProblemOf } from "./heavyNotices.ts";
+import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -1116,7 +1116,6 @@ const runLinuxPart = async (
   let recorded: string | null = null;
   let lastError: string | null = null;
   let unreachable: string | null = null;
-  let worktree = null as string | null;
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
@@ -1147,7 +1146,6 @@ const runLinuxPart = async (
         process.stderr.write(text);
         lastError = lastLineOf(text) ?? lastError;
         unreachable ??= unreachableLine(text);
-        for (const line of text.split("\n")) worktree ??= worktreeProblemOf(line);
       },
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;
@@ -1176,13 +1174,13 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install } = await run.done;
+  let { outcome, progress, platform, install, worktree } = await run.done;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
     recorded = null;
     run = start();
-    ({ outcome, progress, platform, install } = await run.done);
+    ({ outcome, progress, platform, install, worktree } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
