@@ -35,6 +35,7 @@ import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
+import { migratePersistedAssistantGroupDraftKey } from "./assistant-group-draft-key";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -645,6 +646,11 @@ export function getComposerDraftSnapshot(draftKey: string): ComposerDraft {
   return normalizeDraft(appAtomRegistry.get(composerDraftsAtom)[draftKey]);
 }
 
+/** What the user wrote or attached; settings alone (model, mode) are not a draft. */
+export function composerDraftHasUserContent(draft: ComposerDraft): boolean {
+  return draft.text.trim().length > 0 || draft.attachments.length > 0;
+}
+
 export function isComposerDraftEmpty(draft: ComposerDraft): boolean {
   return isEmptyDraft(draft);
 }
@@ -703,6 +709,15 @@ export function migrateLegacyNewTaskDraft(
   ];
 }
 
+function withCurrentGroupDraftKeys(
+  drafts: Readonly<Record<string, ComposerDraft>>,
+): Array<[string, ComposerDraft]> {
+  return Object.entries(drafts).flatMap(([key, draft]): Array<[string, ComposerDraft]> => {
+    const current = migratePersistedAssistantGroupDraftKey(key);
+    return current === null ? [] : [[current, draft]];
+  });
+}
+
 export function decodePersistedComposerState(value: unknown): {
   readonly drafts: Record<string, ComposerDraft>;
   readonly stickyModelSelection: ModelSelection | null;
@@ -713,7 +728,7 @@ export function decodePersistedComposerState(value: unknown): {
   const now = new Date().toISOString();
   return {
     drafts: Object.fromEntries(
-      Object.entries(parsed.drafts)
+      withCurrentGroupDraftKeys(parsed.drafts)
         .map(([key, draft]) =>
           migrateLegacyNewTaskDraft(
             key,
@@ -743,7 +758,7 @@ export function decodePersistedComposerState(value: unknown): {
           id,
           {
             drafts: Object.fromEntries(
-              Object.entries(saved.drafts).map(([key, draft]) =>
+              withCurrentGroupDraftKeys(saved.drafts).map(([key, draft]) =>
                 migrateLegacyNewTaskDraft(key, draft, now),
               ),
             ),
@@ -2050,6 +2065,11 @@ const composerDraftAtom = Atom.family((draftKey: string) =>
   Atom.make((get) => get(composerDraftsAtom)[draftKey] ?? EMPTY_DRAFT),
 );
 const EMPTY_DRAFT_ATOM = Atom.make(EMPTY_DRAFT);
+// A boolean per key, so a list row redraws when its draft appears or goes, not on every keystroke.
+const composerDraftHasContentAtom = Atom.family((draftKey: string) =>
+  Atom.make((get) => composerDraftHasUserContent(get(composerDraftAtom(draftKey)))),
+);
+const NO_DRAFT_CONTENT_ATOM = Atom.make(false);
 
 type ComposerDraftsByKey = Readonly<Record<string, ComposerDraft>>;
 const EMPTY_DRAFTS: ComposerDraftsByKey = {};
@@ -2130,6 +2150,18 @@ export function useComposerDraftSettings(draftKey: string | null): ComposerDraft
     ensureComposerDraftsLoaded();
   }, []);
   return settings;
+}
+
+/** Whether a thread, assistant or group conversation holds an unsent draft. */
+export function useComposerDraftHasContent(draftKey: string | null): boolean {
+  const hasContent = useAtomValue(
+    draftKey ? composerDraftHasContentAtom(draftKey) : NO_DRAFT_CONTENT_ATOM,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts loading persisted composer drafts from native storage on first use
+  useEffect(() => {
+    ensureComposerDraftsLoaded();
+  }, []);
+  return hasContent;
 }
 
 export function useComposerDraft(draftKey: string | null): ComposerDraft {

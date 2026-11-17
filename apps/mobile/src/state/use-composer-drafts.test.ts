@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  AssistantTeamId,
   CommandId,
   ComposerContextId,
   EnvironmentId,
@@ -181,6 +182,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  composerDraftHasUserContent,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -217,6 +219,10 @@ import {
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
+import {
+  assistantGroupDraftKey,
+  assistantGroupOutgoingDraftKey,
+} from "./assistant-group-draft-key";
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -2281,6 +2287,71 @@ describe("mobile composer drafts", () => {
     ).toEqual({});
   });
 
+  it.each([
+    ["a thread", "environment-1:thread-1"],
+    ["an assistant's conversation", "environment-1:assistant:a1:1"],
+    ["a group, a reply to a request included", "group"],
+  ])("tells when %s holds an unsent draft, until it is sent or emptied", (_, rawKey) => {
+    const key =
+      rawKey === "group"
+        ? assistantGroupDraftKey(EnvironmentId.make("environment-1"), AssistantTeamId.make("t1"))
+        : rawKey;
+    const has = () => composerDraftHasUserContent(getComposerDraftSnapshot(key));
+    appAtomRegistry.set(composerDraftsAtom, {});
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "   ");
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "half a thought");
+    expect(has()).toBe(true);
+    // Sending clears the content and keeps the settings, which alone are no draft.
+    updateComposerDraftSettings(key, { runtimeMode: "full-access" });
+    clearComposerDraftContent(key);
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "again");
+    setComposerDraftText(key, "");
+    expect(has()).toBe(false);
+    appAtomRegistry.set(composerDraftsAtom, {
+      [key]: {
+        text: "",
+        attachments: [
+          {
+            id: "image-1",
+            type: "image",
+            name: "photo.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            fileUri: "file:///photo.png",
+            previewUri: "file:///photo.png",
+          },
+        ],
+      },
+    });
+    expect(has()).toBe(true);
+    appAtomRegistry.set(composerDraftsAtom, {});
+  });
+
+  it("moves group drafts saved under the old key and drops text of sends that were on their way", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const groupKey = assistantGroupDraftKey(environmentId, AssistantTeamId.make("team-1"));
+    const decoded = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        "assistant-group:environment-1:team-1": { text: "keep me", attachments: [] },
+        "assistant-group:environment-1:team-1:outgoing:": { text: "was sending", attachments: [] },
+        [assistantGroupOutgoingDraftKey(groupKey, "project:p1")]: {
+          text: "was sending too",
+          attachments: [],
+        },
+        "environment-1:thread-1": DRAFT,
+      },
+    }).drafts;
+    expect(decoded).toEqual({
+      [groupKey]: { text: "keep me", attachments: [] },
+      "environment-1:thread-1": DRAFT,
+    });
+    expect(groupKey).toBe("environment-1:assistant-group:team-1");
+  });
+
   it("removes only drafts owned by the selected environment", () => {
     const environmentId = EnvironmentId.make("environment-cloud");
     const retainedEnvironmentId = EnvironmentId.make("environment-local");
@@ -2306,6 +2377,7 @@ describe("mobile composer drafts", () => {
       removeComposerDraftsForEnvironment(
         {
           [`${environmentId}:thread-cloud`]: DRAFT,
+          [assistantGroupDraftKey(environmentId, AssistantTeamId.make("team-cloud"))]: DRAFT,
           "new-task:cloud-draft": cloudDraft,
           [`${retainedEnvironmentId}:thread-local`]: DRAFT,
           "new-task:local-draft": localDraft,
