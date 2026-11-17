@@ -168,6 +168,9 @@ describe("build daemons anywhere", () => {
       true,
     ],
     ["/bin/zsh\nnode vite.js\n", false],
+    // Only a JVM running the daemon class counts, not a line that mentions it.
+    ["grep GradleDaemon\n/bin/zsh -c echo KotlinCompileDaemon", false],
+    ["node agent.js --prompt find the GradleDaemon", false],
   ])("%s → %s", (commands, alive) => {
     expect(hasBuildDaemon(commands)).toBe(alive);
   });

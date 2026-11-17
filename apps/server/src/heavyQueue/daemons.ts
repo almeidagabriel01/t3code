@@ -22,7 +22,8 @@ export interface DaemonClues {
 
 export const NO_CLUES: DaemonClues = { links: [], cwds: new Map(), names: new Map() };
 
-const BUILD_DAEMON = /\b(?:GradleDaemon|KotlinCompileDaemon)\b/;
+/** A JVM (`java`, by path or not) whose line runs the daemon class; a line that only mentions it is not. */
+const BUILD_DAEMON = /^\S*\bjava\s.*\b(?:GradleDaemon|KotlinCompileDaemon)\b/m;
 
 /** A Gradle or Kotlin compile daemon, by its command line; their workers come with their trees. */
 export const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>

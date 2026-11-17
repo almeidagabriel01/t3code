@@ -242,6 +242,8 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
       const host = yield* HostResources;
       const telemetry = yield* ResourceTelemetry;
       const platform = yield* HostProcess.Platform;
+      // A whole-table `ps` while jobs wait; daemons live for minutes, so one look per 30 s is enough.
+      const daemonsAnywhere = yield* Effect.cachedWithTTL(anyBuildDaemon(), "30 seconds");
       const tick = Effect.gen(function* () {
         const { entries, slowedDaemons } = QueueFile.readDoc(dir);
         // Daemons left lowered after their job ended are restored even with the queue empty.
@@ -289,7 +291,7 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
             buildDaemonsAlive:
               processes.some(isBuildDaemon) ||
-              (entries.some((entry) => entry.startedAt === null) && (yield* anyBuildDaemon())),
+              (entries.some((entry) => entry.startedAt === null) && (yield* daemonsAnywhere)),
           },
           running ? peaksOf(entries, processes, footprints.jobs, daemons, footprints.trees) : {},
         );
