@@ -399,6 +399,7 @@ const make = Effect.gen(function* () {
           decisionId: row.decision_id,
           threadId: row.from_thread_id,
           text: deliveryText(row),
+          attachments: toDecision(row).answer?.attachments ?? [],
         });
 
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {

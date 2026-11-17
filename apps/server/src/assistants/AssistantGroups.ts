@@ -366,6 +366,8 @@ interface TaskRow {
   /** Root only: hand-offs since a task of the request last delivered a result. */
   readonly undelivered_hops: number;
   readonly followup: string | null;
+  /** Files that go with `followup` on the task's next turn; a write of `followup` alone clears them. */
+  readonly followup_attachments_json: string | null;
   /** Decision outcomes that reached the task while it ran or waited; its next turn takes them. */
   readonly pending_followup_json: string | null;
   readonly expected_result: string | null;
@@ -396,6 +398,10 @@ const decodeAttachments = Schema.decodeUnknownOption(AttachmentsJson);
 const encodeAttachments = Schema.encodeSync(AttachmentsJson);
 const attachmentsOf = (row: MessageRow): ReadonlyArray<ChatAttachment> =>
   Option.getOrElse(decodeAttachments(row.attachments_json), () => []);
+const followupAttachmentsOf = (row: TaskRow): ReadonlyArray<ChatAttachment> =>
+  row.followup_attachments_json === null
+    ? []
+    : Option.getOrElse(decodeAttachments(row.followup_attachments_json), () => []);
 
 const toMessage = (row: MessageRow): AssistantGroupMessage => ({
   id: row.message_id as AssistantGroupMessageId,
@@ -454,7 +460,13 @@ const sourceSeqsOf = (row: TaskRow) =>
   Option.getOrElse(decodeNumbers(row.source_seqs_json), () => []);
 const resourcesOf = (row: TaskRow) => Option.getOrElse(decodeStrings(row.resources_json), () => []);
 const PendingFollowupsJson = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ decisionId: Schema.String, text: Schema.String })),
+  Schema.Array(
+    Schema.Struct({
+      decisionId: Schema.String,
+      text: Schema.String,
+      attachments: Schema.optionalKey(Schema.Array(ChatAttachment)),
+    }),
+  ),
 );
 const decodePendingFollowups = Schema.decodeUnknownOption(PendingFollowupsJson);
 const encodePendingFollowups = Schema.encodeSync(PendingFollowupsJson);
@@ -462,6 +474,25 @@ const pendingFollowupsOf = (row: TaskRow) =>
   row.pending_followup_json === null
     ? []
     : Option.getOrElse(decodePendingFollowups(row.pending_followup_json), () => []);
+/** The patch that hands decision outcomes to the task's next turn, with their files. */
+const followupOfDecisions = (
+  outcomes: ReturnType<typeof pendingFollowupsOf>,
+  before: ReadonlyArray<string>,
+  after: ReadonlyArray<string>,
+) => {
+  const files = outcomes.flatMap((outcome) => outcome.attachments ?? []);
+  return {
+    followup: [
+      ...before,
+      ...(outcomes.length === 0
+        ? []
+        : [decisionResultsText(outcomes.map((outcome) => outcome.text))]),
+      ...after,
+    ].join("\n\n"),
+    followup_attachments_json: files.length === 0 ? null : encodeAttachments(files),
+    pending_followup_json: null,
+  };
+};
 
 const toTask = (row: TaskRow, threadId: ThreadId): AssistantGroupTask => ({
   id: row.task_id as AssistantGroupTaskId,
@@ -1060,6 +1091,7 @@ const make = Effect.gen(function* () {
       | "owner_id"
       | "result_text"
       | "followup"
+      | "followup_attachments_json"
       | "pending_followup_json"
     >
   >;
@@ -1067,11 +1099,16 @@ const make = Effect.gen(function* () {
     task: TaskRow,
     patch: TaskPatch,
   ) {
-    const next = { ...task, ...patch };
+    const next = {
+      ...task,
+      ...("followup" in patch ? { followup_attachments_json: null } : {}),
+      ...patch,
+    };
     const rows = yield* sql<TaskRow>`
       UPDATE assistant_group_tasks SET status = ${next.status}, reason = ${next.reason},
         revision = ${next.revision}, owner_id = ${next.owner_id}, result_text = ${next.result_text},
-        followup = ${next.followup}, pending_followup_json = ${next.pending_followup_json},
+        followup = ${next.followup}, followup_attachments_json = ${next.followup_attachments_json},
+        pending_followup_json = ${next.pending_followup_json},
         updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
@@ -1814,10 +1851,10 @@ const make = Effect.gen(function* () {
       memories: team.memories ?? [],
     });
     const messageId = taskMessageId(task.task_id, task.revision);
-    const attachments = yield* copyForThread(
-      exec.success.threadId,
-      attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
-    );
+    const attachments = yield* copyForThread(exec.success.threadId, [
+      ...attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
+      ...followupAttachmentsOf(task),
+    ]);
     const sent = yield* threads
       .sendToThread({
         projectId: exec.success.projectId,
@@ -2210,19 +2247,16 @@ const make = Effect.gen(function* () {
       reason: null,
       revision: task.revision + 1,
       result_text: null,
-      followup: [
-        ...(followup !== null
+      ...followupOfDecisions(
+        answered,
+        followup !== null
           ? [launchResultsText(followup)]
           : workReason({ ...waitedOn, decisions: [] }) !== null
             ? // A thread or subagent it named is gone without a trace (its rows were removed).
               [launchResultsText("What you waited on can no longer be found.")]
-            : []),
-        ...(answered.length === 0
-          ? []
-          : [decisionResultsText(answered.map((outcome) => outcome.text))]),
-        ...(results.length === 0 ? [] : [childResultsText(results)]),
-      ].join("\n\n"),
-      pending_followup_json: null,
+            : [],
+        results.length === 0 ? [] : [childResultsText(results)],
+      ),
     });
   });
 
@@ -3193,8 +3227,7 @@ const make = Effect.gen(function* () {
           reason: null,
           revision: task.revision + 1,
           result_text: null,
-          followup: decisionResultsText(answered.map((outcome) => outcome.text)),
-          pending_followup_json: null,
+          ...followupOfDecisions(answered, [], []),
         });
         return;
       }
@@ -3367,7 +3400,11 @@ const make = Effect.gen(function* () {
           if (!pending.some((outcome) => outcome.decisionId === input.decisionId)) {
             const next = encodePendingFollowups([
               ...pending,
-              { decisionId: input.decisionId, text: input.text },
+              {
+                decisionId: input.decisionId,
+                text: input.text,
+                ...(input.attachments.length === 0 ? {} : { attachments: input.attachments }),
+              },
             ]);
             yield* sql`
               UPDATE assistant_group_tasks SET pending_followup_json = ${next}

@@ -1,4 +1,4 @@
-import { AssistantError } from "@t3tools/contracts";
+import { AssistantError, type ChatAttachment } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,6 +34,8 @@ export interface GroupDecisionOutcome {
   readonly threadId: string;
   /** What the agent is told: the answer, a dismissal or the expiry. */
   readonly text: string;
+  /** Files the user attached to the answer, already claimed to that conversation. */
+  readonly attachments: ReadonlyArray<ChatAttachment>;
 }
 
 /** True when a group task takes the outcome over, so nothing is sent to the thread directly. */

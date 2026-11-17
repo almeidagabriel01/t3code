@@ -805,8 +805,12 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
-  // Decision outcomes that reached a task while it ran, consumed when its run ends.
-  yield* addColumns("assistant_group_tasks", [["pending_followup_json", "TEXT"]]);
+  // Decision outcomes that reached a task while it ran, consumed when its run ends, and the
+  // answer files its next turn carries.
+  yield* addColumns("assistant_group_tasks", [
+    ["pending_followup_json", "TEXT"],
+    ["followup_attachments_json", "TEXT"],
+  ]);
   // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
   // pages its own lines. Filled once below, in the start that adds the column; after that only
   // the rows the repair gives a request take its project, so General is never swept again.

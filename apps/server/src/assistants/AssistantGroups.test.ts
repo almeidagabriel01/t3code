@@ -6943,6 +6943,19 @@ it.effect.each([
         yield* decisions.answer({ decisionId: id as never, optionId: "no" });
       }),
     told: "The user answered the decision",
+    files: [],
+  },
+  {
+    way: "answered with a file",
+    expiresInMinutes: undefined,
+    settle: (id: string) =>
+      Effect.gen(function* () {
+        yield* storeUploads;
+        const decisions = yield* Decisions.DecisionService;
+        yield* decisions.answer({ decisionId: id as never, attachments: [fileUpload] });
+      }),
+    told: "Attached: sheet.pdf",
+    files: ["sheet.pdf"],
   },
   {
     way: "dismissed",
@@ -6953,6 +6966,7 @@ it.effect.each([
         yield* decisions.dismiss(id as never);
       }),
     told: "The user dismissed this decision",
+    files: [],
   },
   {
     way: "left to expire",
@@ -6965,10 +6979,11 @@ it.effect.each([
         yield* decisions.deliverPending;
       }),
     told: "expired at",
+    files: [],
   },
 ])(
   "a member's decision $way runs its task again in the request",
-  ({ expiresInMinutes, settle, told }) => {
+  ({ expiresInMinutes, settle, told, files }) => {
     const h = harness();
     return Effect.gen(function* () {
       const groups = yield* h.setup;
@@ -6985,6 +7000,10 @@ it.effect.each([
       noDecisionAnswer(h);
       assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
       assert.include(h.sent[1]!.text, told);
+      assert.deepEqual(
+        h.sent[1]!.attachments.map((file) => file.name),
+        files,
+      );
       assert.notInclude(h.sent[1]!.text, "can no longer be found");
       // A repeat, as a restart's sweep, starts nothing more.
       yield* groups.settleDecision(h.threadOf("ada"));
