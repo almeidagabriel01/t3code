@@ -88,6 +88,12 @@ import {
   resolveThreadListV2SwipeActions,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { DraftMark } from "./draft-mark";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import {
+  clearComposerDraftContent,
+  useComposerDraftHasContent,
+} from "../../state/use-composer-drafts";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -499,31 +505,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         >
           {pendingTask.title}
         </Text>
-        {isDraft ? (
-          <View className="flex-row items-center gap-1" style={{ minHeight: titleLineHeight }}>
-            <SymbolView
-              name="square.and.pencil"
-              size={13}
-              tintColorClassName={
-                selected
-                  ? selectedThreadRowColors.iconTintClassName
-                  : "accent-adaptive-amber-700-300"
-              }
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text
-              className={cn(
-                "text-xs font-t3-bold",
-                selected
-                  ? selectedThreadRowColors.foregroundClassName
-                  : "text-adaptive-amber-700-300",
-              )}
-            >
-              Draft
-            </Text>
-          </View>
-        ) : null}
+        {isDraft ? <DraftMark selected={selected} style={{ minHeight: titleLineHeight }} /> : null}
       </View>
       {!isDraft ? (
         <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
@@ -790,7 +772,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const draftKey = scopedThreadKey(thread.environmentId, thread.id);
+  const hasDraft = useComposerDraftHasContent(draftKey);
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${hasDraft ? ", draft" : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -912,8 +896,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           : null,
         snoozePresetActions,
         assistantTask: taskMenu,
+        discardDraft: hasDraft,
       }),
     [
+      hasDraft,
       menuKind,
       taskMenu,
       thread,
@@ -937,6 +923,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           newThreadOnBranch: () => onNewThreadOnBranch(thread),
           copyThread: () => copyThreadMenuReference(thread),
           copyThreadId: () => copyTextWithHaptic(thread.id, { target: "thread-id" }),
+          discardDraft: () => clearComposerDraftContent(draftKey),
           settle: handleSettle,
           unsettle: handleUnsettle,
           unsnooze: handleUnsnooze,
@@ -967,6 +954,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [
       onNewThreadOnBranch,
       thread,
+      draftKey,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
@@ -1096,6 +1084,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+          {hasDraft ? <DraftMark selected={selected} /> : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1428,6 +1417,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {hasDraft ? <DraftMark selected={selected} /> : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
