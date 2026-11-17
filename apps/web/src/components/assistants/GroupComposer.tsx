@@ -23,6 +23,7 @@ import {
   insertAssistantGroupMention,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
+  assistantGroupDraftThreadId,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   describeCatalogEntry,
@@ -80,6 +81,7 @@ import { searchProviderSkills } from "~/providerSkillSearch";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
 import { useProject, useQuietThreadShell } from "~/state/entities";
+import { useComposerDraftStore, useComposerThreadDraft } from "~/composerDraftStore";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePrimaryEnvironmentId } from "~/state/environments";
@@ -194,12 +196,13 @@ const GROUP_INTAKE_THREAD_ID = ThreadId.make("group-composer");
 const NO_INLINE_FILES: ReadonlySet<string> = new Set();
 const NO_IDS: ReadonlyArray<never> = [];
 
-/** Unsent text per group, so leaving the chat and coming back keeps it. */
-const drafts = new Map<string, string>();
-
 /** For tests: each starts with empty drafts. */
 export const clearGroupDrafts = () => {
-  drafts.clear();
+  useComposerDraftStore.setState((state) => ({
+    draftsByThreadKey: Object.fromEntries(
+      Object.entries(state.draftsByThreadKey).filter(([key]) => !key.includes(":assistant-group:")),
+    ),
+  }));
   outgoings.clear();
   clearGroupAttachments();
 };
@@ -563,18 +566,25 @@ export function GroupComposer(props: {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
-  const [draft, setDraftState] = useState<PromptState>(() => {
-    const value = drafts.get(props.draftKey) ?? "";
-    return {
-      value,
-      cursor: collapseExpandedComposerCursor(value, value.length),
-      expanded: value.length,
-    };
-  });
+  // Unsent text lives in the thread draft store, so it survives a reload and lights the sidebar row.
+  const draftRef = scopeThreadRef(
+    props.environmentId,
+    assistantGroupDraftThreadId(props.chat.teamId),
+  );
+  const storedDraft = useComposerThreadDraft(draftRef).prompt;
+  const [caret, setCaret] = useState<PromptState | null>(null);
+  // The caret holds only while it matches the stored text; a discard elsewhere moves it to the end.
+  const draft: PromptState =
+    caret !== null && caret.value === storedDraft
+      ? caret
+      : {
+          value: storedDraft,
+          cursor: collapseExpandedComposerCursor(storedDraft, storedDraft.length),
+          expanded: storedDraft.length,
+        };
   const setDraft = (value: string, cursor: number, expanded: number) => {
-    if (value === "") drafts.delete(props.draftKey);
-    else drafts.set(props.draftKey, value);
-    setDraftState({ value, cursor, expanded });
+    useComposerDraftStore.getState().setPrompt(draftRef, value);
+    setCaret({ value, cursor, expanded });
   };
   // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(props.draftKey));
