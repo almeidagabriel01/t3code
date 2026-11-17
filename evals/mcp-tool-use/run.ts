@@ -69,7 +69,7 @@ import {
   taskWakeText,
   waitWakeText,
 } from "../../apps/server/src/assistants/AssistantTaskReactor.ts";
-import { defaultNoticeText } from "../../apps/server/src/autonomy/needsYou.ts";
+import { defaultNoticeText, settledWaitsNote } from "../../apps/server/src/autonomy/needsYou.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
@@ -431,6 +431,23 @@ export const McpToolUseCase = Schema.Struct({
         threadId: Schema.String,
         threadTitle: Schema.String,
         source: Schema.Literals(["request", "decision"]),
+      }),
+    ),
+    /**
+     * History before `prompt`: the default assistant's notice of a wait and its reply. With
+     * `settled`, the wait ended since, so T3's note of it rides with `prompt`.
+     */
+    settledWait: Schema.optional(
+      Schema.Struct({
+        notice: Schema.Struct({
+          title: Schema.String,
+          origin: Schema.String,
+          threadId: Schema.String,
+          threadTitle: Schema.String,
+          source: Schema.Literals(["request", "decision"]),
+        }),
+        reply: Schema.String,
+        settled: Schema.optional(Schema.Struct({ requestKind: Schema.String })),
       }),
     ),
     /** A task in an assistant group: `prompt` is its instruction, wrapped as T3 sends it. */
@@ -1259,6 +1276,15 @@ export const buildMessages = (sample: Sample) => {
     push("user", text(wake(problemWake.evidence ?? "")));
     push("assistant", text(problemWake.answer));
   }
+  const settledWait = testCase.setup.settledWait;
+  if (settledWait !== undefined) {
+    const link = formatThreadLink(
+      { environmentId: null, threadId: ThreadId.make(settledWait.notice.threadId) },
+      settledWait.notice.threadTitle,
+    );
+    push("user", text(defaultNoticeText({ ...settledWait.notice, link })));
+    push("assistant", text(settledWait.reply));
+  }
   const taskWake = testCase.setup.taskWake;
   const waitNotice = testCase.setup.waitNotice;
   const waitWake = testCase.setup.waitWake;
@@ -1355,8 +1381,22 @@ export const buildMessages = (sample: Sample) => {
           assistant.projectTitles,
         );
   const notedText = note === "" ? userText : `${note}\n\n${userText}`;
-  const prompt =
-    sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);
+  const settled = settledWait?.settled;
+  const settledNote =
+    settled === undefined
+      ? ""
+      : settledWaitsNote([
+          {
+            key: "request:r1",
+            threadId: ThreadId.make(settledWait!.notice.threadId),
+            threadTitle: settledWait!.notice.threadTitle,
+            what: settled,
+          },
+        ]);
+  const turnContext = [sideChatContext ?? "", settledNote]
+    .filter((part) => part !== "")
+    .join("\n\n");
+  const prompt = turnContext === "" ? notedText : withInlineContext(turnContext, notedText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (
     testCase.prompt !== "" ||
