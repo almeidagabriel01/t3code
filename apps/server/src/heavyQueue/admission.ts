@@ -319,12 +319,16 @@ const floorBytes = (
   ((input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0)) / 100) *
   sample.totalMemoryBytes;
 
-/** What a light job may use past the floor, which short memory lets it pass; none under critical pressure. */
+/** The kernel says memory is short: pressure or swapping holds every job, light or not. */
+const memoryStrained = (sample: Reading) =>
+  (sample.pressureLevel ?? 0) >= 2 || (sample.swapInBytesPerSecond ?? 0) > SWAP_IN_LIMIT;
+
+/** What a light job may use past the floor, which short memory alone lets it pass. */
 const lightAllowance = (
   input: Pick<PlanInput, "history" | "holding" | "macMemoryFloorPercent" | keyof SizingLimits>,
   sample: Sample,
   entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
-) => ((sample.pressureLevel ?? 0) < 4 && isLight(input, entry) ? floorBytes(input, sample) : 0);
+) => (!memoryStrained(sample) && isLight(input, entry) ? floorBytes(input, sample) : 0);
 
 export const budgetOf = (
   input: BudgetInput,
@@ -653,10 +657,11 @@ const standardPass = (
   const limit = machineHold(sample, input);
   const steady = sample.headroomSince !== null && now - sample.headroomSince >= HEADROOM_MS;
   const machine = limit ?? (steady ? null : ("steadying" as const));
-  // Short memory holds back only what would add to it; a busy CPU or critical pressure, everyone.
-  const critical = (sample.pressureLevel ?? 0) >= 4;
+  // Short memory, or memory settling after it, holds back only what would add to it; a busy CPU,
+  // pressure or swapping, everyone.
   const passesMachine = (entry: HeavyQueueEntry) =>
-    machine === null || (machine !== "cpu" && !critical && isLight(input, entry));
+    machine === null ||
+    ((machine === "memory-floor" || machine === "steadying") && isLight(input, entry));
 
   const plain = { ...input, holding: pass.holding };
   const cost = (entry: HeavyQueueEntry) =>

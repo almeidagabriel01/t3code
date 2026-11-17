@@ -492,6 +492,36 @@ describe("admission plan", () => {
       },
       admit: "a",
     },
+    // Pressure and swapping hold every job: the floor is all a light job may pass.
+    ...(
+      [
+        ["memory pressure", { pressureLevel: 2 }, "pressure"],
+        ["swapping", { swapInBytesPerSecond: 512 * 1024 ** 2 }, "swap-in"],
+      ] as const
+    ).flatMap(([why, signal, hold]) => [
+      {
+        name: `${why} holds a light job with room to spare`,
+        entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+        change: {
+          sample: { ...calm, ...signal },
+          history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+        },
+        admit: null,
+        hold,
+        holding: true,
+      },
+      {
+        name: `${why} gives a light quick job nothing past the floor`,
+        entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+        change: {
+          sample: { ...calm, ...signal, availableMemoryBytes: 0.18 * 32 * GIB },
+          history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+        },
+        admit: null,
+        hold: "job-memory",
+        holding: true,
+      },
+    ]),
     {
       name: "a light job past the floor still needs the memory it uses",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
