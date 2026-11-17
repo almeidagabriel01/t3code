@@ -1076,7 +1076,14 @@ export const remove = (dir: string, id: string) =>
   }));
 
 /** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
-export const finish = (dir: string, id: string, code: number, now = Date.now(), error?: string) =>
+export const finish = (
+  dir: string,
+  id: string,
+  code: number,
+  now = Date.now(),
+  error?: string,
+  decided?: string,
+) =>
   mutate(
     dir,
     (doc) => {
@@ -1084,8 +1091,10 @@ export const finish = (dir: string, id: string, code: number, now = Date.now(), 
         (each) => each.id === id,
       );
       const line = entry === undefined ? undefined : lineOf(entry);
-      // The CLI checked the files on this Mac: a Linux run's 127 is Linux's to explain.
-      const reason = (entry?.runner ?? "mac") === "mac" ? error : undefined;
+      // Checked on this Mac: a 127 from a run that reached Linux is Linux's to explain.
+      // `decided` was established for both machines, so it stands either way.
+      const reason =
+        decided ?? (entry?.runner !== "linux" || entry.phase === undefined ? error : undefined);
       const result: JobResult = {
         id,
         code,

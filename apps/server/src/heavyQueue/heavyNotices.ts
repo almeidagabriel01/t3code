@@ -4,6 +4,7 @@
  * requeue, an admission, a deadline cancel), because the state alone loses why it happened. This
  * module turns those records, plus Linux health and long waits, into grouped toasts.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -232,9 +233,60 @@ export const startFailureOf = (
     ...scripts.map((each) => NodePath.resolve(cwd, each)),
   ];
   const missing = files.find((file) => !exists(file));
-  if (missing !== undefined) return `script not found: ${missing}`;
-  return code === 126 && own !== null ? `not executable: ${own}` : undefined;
+  if (missing === undefined)
+    return code === 126 && own !== null ? `not executable: ${own}` : undefined;
+  const bin = /\/node_modules\/\.bin\/([^/]+)$/.exec(missing)?.[1];
+  return (bin === undefined ? null : binHint(bin, cwd, exists)) ?? `script not found: ${missing}`;
 };
+
+/**
+ * For a project bin this Mac lacks: where the checkout has it after all, or that its dependencies
+ * aren't installed (a `package.json` with no `node_modules` from `cwd` up). Null when neither.
+ */
+const binHint = (name: string, cwd: string, exists: (path: string) => boolean) => {
+  let modules = false;
+  let project = false;
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    const bin = NodePath.join(dir, "node_modules", ".bin", name);
+    if (exists(bin)) return `${name} not found from ${cwd}; it is at ${bin}`;
+    modules ||= exists(NodePath.join(dir, "node_modules"));
+    project ||= exists(NodePath.join(dir, "package.json"));
+    if (dir === NodePath.dirname(dir)) break;
+  }
+  return project && !modules
+    ? `${name} not found in ${cwd}: its dependencies aren't installed; run \`vp i\``
+    : null;
+};
+
+/**
+ * Why this Mac can't find `program` where Linux's pre-flight looks (the project's bins from `cwd`
+ * up to `root`, then PATH, builtins included), or undefined when it can. Missing here too, the
+ * command is wrong, not Linux.
+ */
+export const notFoundHere = (
+  program: string,
+  cwd: string,
+  root: string,
+  path = process.env.PATH ?? "",
+) => {
+  const bins: string[] = [];
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    bins.push(NodePath.join(dir, "node_modules", ".bin"));
+    if (dir === root || dir === NodePath.dirname(dir)) break;
+  }
+  const found = NodeChildProcess.spawnSync("bash", ["-c", 'command -v -- "$1"', "t3", program], {
+    cwd,
+    env: { ...process.env, PATH: [...bins, path].join(":") },
+    stdio: "ignore",
+  });
+  // Only bash's own "not found" counts: a shell that failed to start judges nothing.
+  if (found.status !== 1) return undefined;
+  return missingProgramOf(program, cwd) ?? `command not found on this Mac either: ${program}`;
+};
+
+/** What a program this Mac can't start lacks: its file, or the dependencies its project bin needs. */
+export const missingProgramOf = (program: string, cwd: string) =>
+  startFailureOf(program, [], cwd, 127) ?? binHint(program, cwd, NodeFS.existsSync) ?? undefined;
 
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 /** Decoration only: rules and counters such as vitest's `⎯⎯⎯[50/62]⎯`. */

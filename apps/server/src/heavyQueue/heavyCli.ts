@@ -31,6 +31,8 @@ import {
   errorLineOf,
   faultOf,
   type FaultSeen,
+  missingProgramOf,
+  notFoundHere,
   startFailureOf,
   unreachableLine,
 } from "./heavyNotices.ts";
@@ -602,7 +604,9 @@ const runHook = async (dir: string) => {
 const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) => {
   const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
   child.on("error", (error) => {
-    process.stderr.write(`[t3 heavy] cannot run ${program}: ${error.message}\n`);
+    process.stderr.write(
+      `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
+    );
     process.exit(127);
   });
   child.on("exit", (code, signal) => {
@@ -700,6 +704,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       code,
       Date.now(),
       startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
+      commandFailure,
     ),
   );
 
@@ -830,6 +835,9 @@ const linkFailuresOf = (dir: string, id: string) =>
   ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
     ?.linkFailures ?? 0) + 1;
 
+/** Why this process's command could not start anywhere, once a check here found out. */
+let commandFailure: string | undefined;
+
 type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
 
@@ -880,7 +888,9 @@ const runMacAttempt = async (
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
       child.on("error", (error) => {
-        process.stderr.write(`[t3 heavy] cannot run ${job.program}: ${error.message}\n`);
+        process.stderr.write(
+          `[t3 heavy] cannot run ${job.program}: ${missingProgramOf(job.program, process.cwd()) ?? error.message}\n`,
+        );
         resolve({ code: 127, signal: null });
       });
       child.on("exit", (code, signal) => resolve({ code, signal }));
@@ -909,7 +919,9 @@ type PartOutcome =
   /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
   | { readonly kind: "environment"; readonly reason: string; readonly code?: number }
   /** The worktree's own files broke the install there; `reason` is the fix. */
-  | { readonly kind: "worktree"; readonly reason: string };
+  | { readonly kind: "worktree"; readonly reason: string }
+  /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
+  | { readonly kind: "command"; readonly reason: string };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1025,6 +1037,11 @@ const runLinuxAttempt = async (
     requeue(dir, id, { route: "mac", routeReason: outcome.reason });
     return { kind: "requeued" };
   }
+  if (outcome.kind === "command") {
+    commandFailure = outcome.reason;
+    process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
+    return { kind: "exit", code: 127 };
+  }
   if (outcome.kind === "worktree") {
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
     setProgress(dir, id, { worktree: outcome.reason });
@@ -1103,6 +1120,9 @@ const runLinuxPart = async (
   if (root === null || program === undefined) {
     return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
   }
+  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
+  const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
+  if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
   const local = programTie([program, ...args], cwd, root, syncedInCopy, scriptReader(cwd));
@@ -1254,6 +1274,9 @@ const runLinuxPart = async (
     process.exit(outcome.code);
   }
   if (outcome.kind === "missing") {
+    // Missing on both machines is the command's own fault, not Linux's.
+    const nowhere = notFoundHere(outcome.tool, cwd, root);
+    if (nowhere !== undefined) return endLine(dir, id, { kind: "command", reason: nowhere });
     fault({ kind: "missing", tool: outcome.tool });
     return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
   }

@@ -111,9 +111,23 @@ describe("heavy queue file", () => {
   it("a Linux run's 127 keeps its line but not a reason checked on this Mac", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");
-    Queue.enqueue(dir, { ...entry("r1"), runner: "linux" }, at);
+    Queue.enqueue(dir, { ...entry("r1"), runner: "linux", phase: "running" }, at);
     Queue.finish(dir, "r1", 127, at, "script not found: /s/fmt.sh");
     expect(Queue.readDoc(dir).results).toEqual([{ id: "r1", code: 127, at, line: "r1" }]);
+    // Stopped by this Mac's own check before reaching Linux: the reason is this Mac's.
+    Queue.enqueue(dir, { ...entry("r2"), runner: "linux" }, at);
+    Queue.finish(dir, "r2", 127, at, "script not found: /s/fmt.sh");
+    expect(Queue.readDoc(dir).results[1]).toMatchObject({
+      id: "r2",
+      error: "script not found: /s/fmt.sh",
+    });
+    // Linux's pre-flight lacked it and so does this Mac: the reason covers both.
+    Queue.enqueue(dir, { ...entry("r3"), runner: "linux", phase: "running" }, at);
+    Queue.finish(dir, "r3", 127, at, undefined, "command not found on this Mac either: x");
+    expect(Queue.readDoc(dir).results[2]).toMatchObject({
+      id: "r3",
+      error: "command not found on this Mac either: x",
+    });
   });
 
   it("keeps the last 200 results", () => {

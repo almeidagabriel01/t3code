@@ -1,4 +1,8 @@
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 import type { HeavyNoticesMode, HeavyQueueEntry } from "@t3tools/contracts";
 
@@ -12,6 +16,7 @@ import {
   faultRecord,
   type FaultSeen,
   groupNotices,
+  notFoundHere,
   type HeavyEventRecord,
   type LinuxView,
   type NoticeTick,
@@ -912,6 +917,72 @@ describe("startFailureOf", () => {
     ["/w/fmt.sh", [], 1, undefined],
   ] as const)("%s %j exiting %i", (program, scripts, code, reason) => {
     expect(startFailureOf(program, scripts, "/w", code, exists)).toBe(reason);
+  });
+});
+
+// A program Linux's pre-flight can't find is Linux's fault only when this Mac finds it.
+describe("notFoundHere", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-here-"));
+  const pkg = NodePath.join(root, "apps", "server");
+  NodeFS.mkdirSync(NodePath.join(root, "node_modules", ".bin"), { recursive: true });
+  NodeFS.mkdirSync(pkg, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, "node_modules", ".bin", "tool"), "#!/bin/sh\n", {
+    mode: 0o755,
+  });
+  it.each([
+    ["a bin of the checkout's root", "tool", undefined],
+    ["the same bin by its path from the root", "../../node_modules/.bin/tool", undefined],
+    ["a shell builtin", "cd", undefined],
+    ["a program on PATH", "sh", undefined],
+    [
+      "a bin path relative to a package that has none",
+      "./node_modules/.bin/tool",
+      `tool not found from ${pkg}; it is at ${NodePath.join(root, "node_modules", ".bin", "tool")}`,
+    ],
+    [
+      "a name found nowhere",
+      "t3-no-such-tool",
+      "command not found on this Mac either: t3-no-such-tool",
+    ],
+  ])("%s", (_, program, reason) => {
+    expect(notFoundHere(program, pkg, root, "/usr/bin:/bin")).toBe(reason);
+  });
+  // A checkout whose dependencies were never installed here.
+  it.each(["./node_modules/.bin/effect-tsgo", "effect-tsgo"])(
+    "%s in a project with no node_modules says to install them",
+    (program) => {
+      const bare = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bare-"));
+      NodeFS.writeFileSync(NodePath.join(bare, "package.json"), "{}");
+      expect(notFoundHere(program, bare, bare, "/usr/bin:/bin")).toBe(
+        `effect-tsgo not found in ${bare}: its dependencies aren't installed; run \`vp i\``,
+      );
+    },
+  );
+});
+
+// A project bin's path: where it really is, or that nothing was installed.
+describe("startFailureOf for a project bin", () => {
+  it.each([
+    [
+      "not installed",
+      ["/w/package.json"],
+      "effect-tsgo not found in /w/apps/server: its dependencies aren't installed; run `vp i`",
+    ],
+    [
+      "installed at the root",
+      ["/w/package.json", "/w/node_modules", "/w/node_modules/.bin/effect-tsgo"],
+      "effect-tsgo not found from /w/apps/server; it is at /w/node_modules/.bin/effect-tsgo",
+    ],
+    [
+      "installed without it",
+      ["/w/package.json", "/w/node_modules"],
+      "script not found: /w/apps/server/node_modules/.bin/effect-tsgo",
+    ],
+  ])("%s", (_, files, reason) => {
+    const exists = (path: string) => files.includes(path);
+    expect(
+      startFailureOf("./node_modules/.bin/effect-tsgo", [], "/w/apps/server", 127, exists),
+    ).toBe(reason);
   });
 });
 

@@ -173,6 +173,24 @@ describe("t3 heavy", () => {
     ]);
   });
 
+  it("a project bin run where nothing is installed says to install, here and on its card", async () => {
+    const dir = tempDir();
+    NodeFS.writeFileSync(NodePath.join(dir, "package.json"), "{}");
+    const bin = "./node_modules/.bin/effect-tsgo";
+    const run = heavy(dir, [bin, "tsrs"], {}, ["--runner", "mac", "--now", "--"], dir);
+    expect(await run.exited).toBe(127);
+    const reason = "its dependencies aren't installed; run `vp i`";
+    expect(run.stderr()).toContain(`[t3 heavy] cannot run ${bin}: effect-tsgo not found in `);
+    expect(run.stderr()).toContain(reason);
+    expect(Queue.readDoc(dir).results).toEqual([
+      expect.objectContaining({
+        code: 127,
+        line: `'${bin}' 'tsrs'`,
+        error: expect.stringContaining(reason),
+      }),
+    ]);
+  });
+
   it("frees the place of a killed waiter and exits 125 when the user removes one", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "marker.txt");
@@ -647,6 +665,43 @@ describe("t3 heavy", () => {
         expect(faults(dir).map((fault) => fault.cause)).toEqual(
           fails === 2 ? ["linux-install:electron"] : [],
         );
+      },
+    );
+
+    // `./node_modules/.bin/effect-tsgo` from a package whose bins live at the root. A bare name
+    // may exist on Linux alone, so it goes there and only Linux's own pre-flight can refuse it.
+    const missingThere = (tool: string) =>
+      `touch "$0.ran"; printf '${M} phase=running pgid=4\\n${M} missing=${tool}\\n${M} exit=127\\n' >&2; exit 127`;
+    it.each([
+      ["a bin path", "./node_modules/.bin/effect-tsgo", false, false, "script not found: "],
+      ["an uninstalled bin", "./node_modules/.bin/effect-tsgo", true, false, "run `vp i`"],
+      [
+        "a bare name",
+        "t3-no-such-tool",
+        false,
+        true,
+        "command not found on this Mac either: t3-no-such-tool",
+      ],
+    ])(
+      "a program neither machine can run (%s) ends 127 saying why, with no Linux fault",
+      async (_, program, project, reaches, reason) => {
+        const { dir, env } = setup(missingThere(program), { runnerDropped: "mac" });
+        if (project) NodeFS.writeFileSync(NodePath.join(dir, "package.json"), "{}");
+        const run = heavyHere(
+          dir,
+          [program, "tsrs", "--noEmit"],
+          env,
+          ["--runner", "linux", "--"],
+          dir,
+        );
+        expect(await run.exited).toBe(127);
+        expect(run.stdout()).toBe("");
+        expect(run.stderr()).toContain(reason);
+        expect(NodeFS.existsSync(NodePath.join(dir, "remoto.ran"))).toBe(reaches);
+        expect(faults(dir)).toEqual([]);
+        expect(Queue.readDoc(dir).results).toEqual([
+          expect.objectContaining({ code: 127, error: expect.stringContaining(reason) }),
+        ]);
       },
     );
 
