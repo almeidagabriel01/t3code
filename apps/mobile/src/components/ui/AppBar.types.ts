@@ -74,8 +74,17 @@ export interface AppBarSearch {
   readonly onClose?: () => void;
 }
 
+export interface AppBarTitlePress {
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
+  /** Drawn before the title, such as the assistant's face. */
+  readonly leading?: ReactNode;
+}
+
 export interface AppBarProps {
   readonly title: string;
+  /** Makes the title a button, on both platforms. */
+  readonly titlePress?: AppBarTitlePress;
   /** Android: replaces the title text, such as the brand title. iOS ignores it. */
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;

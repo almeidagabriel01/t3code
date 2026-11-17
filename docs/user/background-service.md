@@ -1,5 +1,15 @@
 # Running T3 Code in the background
 
+## Desktop app at sign-in
+
+On macOS and Windows, the desktop app starts when you sign in, so agents, the
+Runner and channels come back after a restart without opening it. It starts
+without a window; click its Dock icon or open T3 Code again to show one. Turn this off in
+Settings → General → Open at login. If macOS shows the setting as turned off in
+System Settings → Login Items, turn T3 Code on there.
+
+## Service
+
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.
 
@@ -56,33 +66,64 @@ external display.
 ## Heavy work queue
 
 When several agents run tests, builds or simulators at once, they queue on the
-machine that hosts T3 Code. Agents put the command behind `t3 heavy`, and the
+Mac that hosts T3 Code (with the [Runner](#runner-heavy-work-on-a-linux-pc) on,
+listed commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
 commands (tests, builds, type checks, `git commit` with its hooks, simulators)
-go through the queue on their own, even when the agent forgets. Open the **Resource Manager** in the status bar to
-see each job with a short name (agents give one with `--name`; otherwise T3
-derives it from the command, which shows below it) and its project, the thread that queued it, how long it has run
-or waited, and why a waiting job has not started ("memory pressure high",
-"swapping 40 MB/s", "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare",
-"paused"); the summary line says the same beside the CPU and free memory it
-read. On mobile it is under Settings → Maintenance.
+go through the queue on their own, even when the agent forgets. A `git commit`
+waits only when the repository has a commit hook, and then goes ahead of other
+waiting jobs; without one it runs at once. Open the **Resource Manager** in the status bar:
+its top bar shows each machine's CPU, free memory and slots, and a gauge turns
+amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
+the reading). **Heavy work** lists each job once, by machine, running first and
+then waiting with its place in that machine's line, with a short name (agents
+give one with `--name`; otherwise T3 derives it from the command), its project
+and how long it has run or waited. A waiting job says why it has not started
+("swapping 40 MB/s", "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare"). Hover a
+job, or click it, for the rest: the full command, folder, thread, priority,
+usage and notes. On mobile, open Settings → Maintenance → **Resource Manager**
+and tap a row for the rest.
 
 To see only one project's jobs, open **Heavy work** from a thread's right panel
 (on mobile, **Project → Heavy work** in the thread menu). Waiting jobs keep their
 place in the whole queue.
 
-- **Slots.** Settings → Maintenance → **Heavy work** sets how many jobs run at
-  once (default 3; 1 is strictly one at a time). The next job starts only when
-  the machine has room for what that command used in its last runs, and a few
-  seconds after the previous start so its real load shows first. A later,
-  shorter job may go ahead of one that does not fit yet, but only if it will
-  finish before that one fits. Simulators, emulators and the dev app run alone.
+- **Slots.** Settings → Maintenance → **Heavy work** → **This Mac** sets how many
+  jobs run at once on this Mac (default 3; 1 is strictly one at a time). The next
+  job starts only when this Mac has room for what that command usually uses in
+  its runs here (the same test file counts as one command), and a few seconds
+  after the previous start so its real load shows first. A later job that fits
+  goes ahead of one that does not fit yet; after five minutes of waiting
+  (**Let smaller jobs pass for**), the job in front lets nothing pass until it starts. Simulators, emulators and the
+  dev app run alone.
   Running jobs are never stopped to relieve pressure.
 - **Memory pressure.** On macOS, a second job waits while the system reports
   memory pressure or is swapping heavily, whatever the free percentage says;
-  memory held by running simulators and emulators counts as used. A lone job
-  always starts. Each job's test runner gets as many workers as the machine has
-  free cores (`VITEST_MAX_WORKERS`, `T3_HEAVY_WORKERS`).
+  memory held by running simulators and emulators counts as used. Only a
+  light command (runs here stayed under 512 MB) still starts then, and not even
+  that while the pressure is critical. A lone job
+  always starts. Each job's test runners and build tools get as many workers as
+  the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
+  `node --test`, Gradle, xcodebuild, `swift build`, cargo and `cmake --build`.
+  The workers are a ceiling: a count the command sets is kept, and so is a lower
+  one from Gradle's or cargo's config; CMake is limited only with Ninja or Xcode.
+  `make` runs one job at a time unless you pass `-j`, so it is left as is.
+- **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
+  much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
+  while the CPU limit is crossed; below the memory floor only a light command starts. After memory pressure or swapping held the queue, memory must recover 5 points past the floor
+  before the next one starts. A job's usage includes the build daemons it uses,
+  such as Gradle's, so the queue learns what a build really costs.
+- **Job sizing.** The **Job sizing** group under **Heavy work** sets what counts
+  as light (default 512 MB), what a command with no runs here is taken to need
+  (1.5 GB for builds and suites, 0.5 GB for lint, typecheck and single test
+  files), how many commands keep their past runs (1000), and how long smaller
+  jobs may pass the first in line (5 minutes).
+- **Slow down agent jobs when the Mac is busy.** On macOS, once this Mac stays
+  over its CPU limit for **Over the limit for**, agents' running jobs and the
+  build daemons they use drop to background CPU priority. They return to normal
+  once the Mac would stay under the limit with them at full speed for that long.
+  Your own jobs, jobs whose priority you changed and jobs started with the queue
+  off keep their speed. It is on by default; turn it off under **This Mac**.
 - **Reorder.** Drag a waiting job, or use its **⋯** menu: **Run next**, **Move
   up**, **Move down**, **Move to end**, **Open thread**, **Remove**. A running
   job's menu has **Stop**, which ends its `t3 heavy` command.
@@ -91,8 +132,11 @@ place in the whole queue.
   normal ones; jobs already queued and jobs you moved by hand keep their place.
   Settings → Maintenance → **Heavy work** lists the rules so you can remove them.
 - **Priority per job.** Commands you run in T3 Code's terminal go ahead of the
-  ones agents queue. **High priority now** in a job's menu starts a waiting job
-  right away; agents can ask for it with `t3 heavy --priority high`. On macOS,
+  ones agents queue. **Start now** or **High priority now** in a job's menu
+  starts a waiting job right away on the machine it was headed for, this Mac or
+  Linux, skipping only that machine's wait; if Linux is offline, the job follows
+  **When Linux is offline**. Agents ask for it with `t3 heavy --priority high`,
+  or `t3 heavy --now`. On macOS,
   **Lower priority** moves a running job to background CPU priority and its row
   shows **Low priority** until **Normal priority** gives it back. macOS has no
   CPU priority above normal for a running job.
@@ -106,24 +150,27 @@ place in the whole queue.
   (Settings → Maintenance → **Heavy work** → **Power off idle simulators**;
   **Off** keeps them on). Opening it again boots it. Devices T3 Code has not
   opened since it started are left alone.
-- **Pause.** The **Pause** switch (also in Settings) stops anything new from
+- **Pause.** The pause button in the **Heavy work** header (also in Settings) stops anything new from
   starting while running jobs finish. A pause icon appears in the status bar.
 - **Off.** Settings → Maintenance → **Heavy work** → **Heavy work queue** turns
   the queue off. Every heavy job then starts right away, jobs that were waiting
-  included (unless the Runner sends it to Linux), and agents stop asking whether to run now or queue. Use it when the
+  included (unless the Runner sends it to Linux), and agents stop asking whether to run now or queue on this Mac; work bound for Linux still asks while Linux is offline or full. Use it when the
   machine has power to spare, or when you would rather have everything run at
   once than wait. The Resource Manager still lists what is running. The slot
   limit, the pause and the priority rules keep their values and apply again
   when you turn the queue back on; jobs already running are not stopped.
 
-**Heavy commands** in the Resource Manager (on mobile, Settings → Server
-controls) lists every heavy command running now, queued or not: tests, builds
-or bundlers an agent or terminal started directly show there too once their
-processes use at least half a core or 1 GB for a few seconds. Each row shows
-its thread and project, CPU (cores and share of the machine), memory, the peak
-seen since T3 started watching it, and how long it has run. **Stop** ends the
-command and everything it started. The section appears only while something
-heavy runs.
+**Heavy work** in the Resource Manager (on mobile, Settings → Server
+controls) also lists heavy commands an agent or terminal started directly,
+under This Mac, once their processes use at least half a core or 1 GB for a
+few seconds. Each shows its project, CPU (share of the machine) and memory;
+its details add its thread, cores, the peak seen since T3 started watching it,
+and how long it has run. **Stop** in its menu ends the command and everything
+it started. A heavy command no agent or terminal in T3 Code started, such as
+tests a script runs on its own, shows under **Outside T3** with that reason in
+its details: the queue cannot route it, and it has no **Stop**, since T3 Code
+cannot tell what else the script is doing. The section appears only while
+something heavy runs or the queue is paused or off.
 
 Agents never reorder the queue on their own. They may move a job up only when
 you ask them to in the conversation, and the job's note says an agent did it.
@@ -134,27 +181,96 @@ Settings → Maintenance → **Runner** sends heavy jobs to a Linux PC over SSH
 with `remoto` instead of this Mac. It switches on and off apart from the heavy
 work queue, and each section says what the two do together.
 
-- **Heavy work runs on.** **This Mac** keeps everything here. **Linux** sends
-  the commands in **Linux commands** (tests, lint, type checks; builds stay
-  here, since their output is needed on the Mac). **Automatic** keeps work here
-  until a number of heavy jobs are running or waiting on this Mac, then sends
-  the next listed command to Linux. **Mac only** commands (Xcode, Gradle,
-  simulators) never leave. All of these, and the policies below, can be set per
-  project; the PC's SSH host, slots and checks apply to the whole machine.
-- **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
-  for Linux** or **Ask me**. A question shows on the job in the Resource
-  Manager with a countdown; unanswered, it follows the deadline setting. An
-  agent's foreground command gives up after 10 minutes, so longer waits only
-  help background commands.
-- **Moving a job.** A job's **⋯** menu has **Run on this Mac** and **Run on
+- **Where heavy work runs.** Pick one:
+  - **This Mac** keeps everything here.
+  - **Mac first** fills this Mac, then sends the rest to Linux: a job goes to
+    Linux once this Mac has **Send to Linux after** jobs running or waiting
+    (default 4).
+  - **Hybrid** splits jobs between both: each goes to the machine with the
+    shorter queue per slot (this Mac on a tie), and neither starts a job past
+    its own limits. While Linux is offline everything stays here.
+  - **Linux** sends the commands in **Can run on Linux** (tests, lint, type
+    checks; builds stay here, since their output is needed on the Mac). Turn on
+    **Everything** to send every heavy command instead, except what has to stay
+    on this Mac: git commands that write, installs that change the lockfile,
+    **Always on this Mac** matches, simulator, emulator and Xcode tools, dev
+    servers, commands that touch Mac paths outside the project, Python (the
+    PC gets no Python environment), programs and scripts in files git ignores
+    (a `node_modules` with a lockfile is reinstalled there, so it goes), and
+    work after a `source` in the same line.
+
+  With the queue off, work starts here at once and Hybrid or Mac first send it
+  to Linux only while this Mac is over its limits. All of these, and the
+  policies below, can be set per project; the PC's SSH host, slots, limits and
+  checks apply to the whole machine.
+
+- **Linux limits.** Linux takes a job while a slot is free, no other job from
+  the same worktree runs there, and it stays under its own **Keep memory free**
+  (default 20%) and **CPU limit** (default 70%). The next job starts only after
+  a heartbeat that shows the last one's load. A busy Linux is not offline: jobs
+  wait for it and say why ("waiting for Linux: 1.8 GB free, keeping 20%").
+- **Over the limit for.** Either machine counts as over its limits, or back
+  under them, only once its readings stay there this long (default 20
+  seconds), so a short spike never moves work.
+- **What goes to Linux.** In a line such as
+  `cd apps/web && vp test run > out.log 2>&1; tail out.log`, only the listed
+  commands run on Linux, each from the folder the line is in at that point;
+  redirects, pipes and everything else run here, and the job holds one Linux
+  slot. A job stays on this Mac, and its row says why, when a command is not
+  listed, is on **Always on this Mac**, reads its input from this Mac
+  (`cat x | vp test run`), runs in the background (`vp test run &`), runs
+  outside a git checkout, names a file outside its checkout, is a git command
+  (commits run here, since the pre-commit hook edits this Mac's repository),
+  diffs against git (`vp staged`, `--changed`; the Linux copy has no git
+  history; `check:changed` still runs on Linux, with the changed files worked
+  out here), or uses shell syntax T3 Code cannot follow (`eval`, `case`,
+  functions). A path or flag that is only known when the line runs is checked
+  then: if it turns out to need this Mac, the job runs here instead. A script
+  that calls git inside cannot be seen from its line; add it to **Always on
+  this Mac**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
+  `node_modules/.bin` between the command's folder and the checkout.
+- **When Linux is offline.** A job headed for Linux that is still waiting
+  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A question
+  shows on the job in the Resource Manager with a countdown; unanswered, it
+  follows the deadline setting. An agent's foreground command gives up after 10
+  minutes, so longer waits only help background commands.
+- **If a Linux run fails.** When Linux couldn't run a job (the PC went away, or
+  a tool or folder is missing there), **Tell the agent** (the default) ends the
+  job with Linux's error and "Linux couldn't run this: <reason>", and nothing
+  reruns it. **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job
+  to this Mac, back to Linux, or to you instead. A command that fails on Linux
+  for its own reasons, such as a failing test, returns its exit code and output
+  unchanged and never reruns.
+- **Bring results back.** Off by default. When on, the files a Linux job
+  created or changed are copied back to this Mac when it ends, except
+  `node_modules` and `.git`. A file you changed here during the job is left
+  alone, and the job's output lists it as "Not copied back (changed on this
+  Mac)".
+- **Moving jobs.** A job's **⋯** menu has **Run on this Mac** and **Run on
   Linux**. Moving a running job stops it and starts it again on the other side.
   A job Linux dropped runs again only once Linux confirms the earlier run
   stopped; if the PC cannot be reached, the menu asks before running it twice.
+  **Move all to Linux** and **Move all to this Mac**, on each machine's header
+  in the Resource Manager (on mobile too, and for agents through the heavy-work
+  tool), move every waiting job there at once. Running jobs, jobs that must stay
+  on this Mac and jobs queued for this Mac by hand stay where they are. Each
+  shows only when at least one job would move, so Move all to Linux is hidden
+  while Linux is offline.
 - **Status.** The Resource Manager shows whether Linux is online, its jobs, load
   and free memory, and on each job where it runs and whether it is syncing,
   installing dependencies or running.
 - A job canceled because nobody answered in time exits with code 75, the code
   `remoto` uses when the PC is down.
+- **Notices.** T3 Code shows a toast when a heavy job fails (on this Mac or
+  Linux, including a failed sync or dependency install), cannot start, is
+  canceled by a deadline, waits far longer than usual because its machine stays
+  over its limits, or when Linux drops a job, goes offline or comes back. Jobs
+  that end up on another machine than the one they were bound for also show,
+  with the reason. Several jobs at once share one toast; tap it to open the
+  job's thread or the Resource Manager. Choose which ones show in Settings →
+  Maintenance → **Heavy job notices**: **Problems and unexpected moves** (the
+  default), **Every machine change** (adds Hybrid sending a job to Linux),
+  **Problems only** or **Off**.
 
 ## Local network access
 

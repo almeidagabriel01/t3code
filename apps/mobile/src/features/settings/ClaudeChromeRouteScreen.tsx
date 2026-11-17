@@ -27,6 +27,7 @@ import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { BLOCKED_REASON } from "../threads/ProviderSessionRestartNotice";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { CLAUDE_CHROME_COPY } from "./providerAccountsCopy";
 
 export type ClaudeChromeParams = {
   readonly environmentId: EnvironmentId;
@@ -35,9 +36,13 @@ export type ClaudeChromeParams = {
 };
 
 const LINKS = [
-  { key: "install", icon: "arrow.down.circle", label: "Install extension" },
-  { key: "reconnect", icon: "arrow.clockwise", label: "Reconnect extension" },
-  { key: "permissions", icon: { ios: "lock", android: "lock" }, label: "Manage site permissions" },
+  { key: "install", icon: "arrow.down.circle", label: CLAUDE_CHROME_COPY.links.install },
+  { key: "reconnect", icon: "arrow.clockwise", label: CLAUDE_CHROME_COPY.links.reconnect },
+  {
+    key: "permissions",
+    icon: { ios: "lock", android: "lock" },
+    label: CLAUDE_CHROME_COPY.links.permissions,
+  },
 ] as const;
 
 export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChromeParams>) {
@@ -74,7 +79,7 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-2 text-foreground-muted">
-          Lets Claude use your Chrome: open pages, click, fill forms, read the console and network.
+          {CLAUDE_CHROME_COPY.intro}
         </Text>
         {data === null ? (
           status.error !== null ? (
@@ -94,8 +99,8 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
             <SettingsSection>
               <ListToggleRow
                 icon="safari"
-                label="Enabled by default"
-                description="New Claude sessions for this account start with the browser tools."
+                label={CLAUDE_CHROME_COPY.enabledByDefault.title}
+                description={CLAUDE_CHROME_COPY.enabledByDefault.description}
                 value={data.enabledByDefault}
                 disabled={!canSet}
                 onValueChange={(enabled) =>
@@ -120,14 +125,14 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
               ) : null}
               {data.sharedConfig ? (
                 <Text textRole="footnote" className="px-4 pb-3 text-foreground-muted">
-                  Shared by every Claude account that has no Claude home of its own.
+                  {CLAUDE_CHROME_COPY.sharedConfig}
                 </Text>
               ) : null}
             </SettingsSection>
             <SettingsSection>
               <View className="gap-1 px-4 py-3">
                 <Text textRole="body" className="text-foreground">
-                  Extension
+                  {CLAUDE_CHROME_COPY.extension}
                 </Text>
                 <Text textRole="footnote" className="text-foreground-muted">
                   {data.extensionInstalled === null

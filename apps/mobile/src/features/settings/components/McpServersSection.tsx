@@ -22,10 +22,10 @@ import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { serverEnvironment } from "../../../state/server";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { ChoiceRow, FieldHeader, TextField } from "../../assistants/AssistantFormFields";
+import { MCP_SERVERS_COPY } from "../agentToolsCopy";
 
 const SECRET_MASK = "••••••";
 const INPUT_CLASS = "min-h-8 flex-1 font-sans text-base text-foreground";
-const NOT_SUPPORTED_NOTE = "OpenCode, Pi, and Muse do not support MCP servers added here.";
 
 function newEntryId() {
   return `entry-${Math.random().toString(36).slice(2)}`;
@@ -42,10 +42,7 @@ function EntriesEditor(props: {
     props.onChange(props.entries.map((entry, i) => (i === index ? { ...entry, ...next } : entry)));
   return (
     <View className="gap-2">
-      <FieldHeader
-        label={props.label}
-        description="Values are stored on the server and shown masked. Leave a saved value as it is to keep it."
-      />
+      <FieldHeader label={props.label} description={MCP_SERVERS_COPY.secretsDescription} />
       <ListSection>
         {props.entries.map((entry, index) => (
           <View key={entry.id} className="flex-row items-center gap-2 bg-grouped-card px-4">
@@ -111,11 +108,11 @@ function ServerForm(props: {
   return (
     <View className="gap-4 rounded-2xl border border-border p-3">
       <TextField
-        label="Server name"
+        label={MCP_SERVERS_COPY.serverName}
         description={
           props.isNew
             ? `Lowercase letters, numbers, or hyphens. Agents see it as ${t3McpProviderName(draft.name || "name")}.`
-            : "A name cannot change once saved, because saved values belong to it."
+            : MCP_SERVERS_COPY.serverNameLocked
         }
         value={draft.name}
         disabled={!props.isNew}
@@ -123,19 +120,22 @@ function ServerForm(props: {
         onChange={(name) => props.onChange({ name: name.toLowerCase() })}
       />
       <View className="gap-2">
-        <FieldHeader label="Type" description="Where the server runs." />
+        <FieldHeader
+          label={MCP_SERVERS_COPY.type.title}
+          description={MCP_SERVERS_COPY.type.description}
+        />
         <ListSection>
           <ChoiceRow
             role="radio"
             icon="terminal"
-            label="Command (stdio)"
+            label={MCP_SERVERS_COPY.stdio}
             selected={draft.transport === "stdio"}
             onPress={() => props.onChange({ transport: "stdio", entries: [] })}
           />
           <ChoiceRow
             role="radio"
             icon="globe"
-            label="HTTP server (URL)"
+            label={MCP_SERVERS_COPY.http}
             selected={draft.transport === "http"}
             onPress={() => props.onChange({ transport: "http", entries: [] })}
           />
@@ -144,15 +144,15 @@ function ServerForm(props: {
       {draft.transport === "stdio" ? (
         <>
           <TextField
-            label="Command"
-            description="The program that starts the MCP server."
+            label={MCP_SERVERS_COPY.command.title}
+            description={MCP_SERVERS_COPY.command.description}
             value={draft.command}
             autoCapitalize="none"
             onChange={(command) => props.onChange({ command })}
           />
           <TextField
-            label="Arguments"
-            description="One per line."
+            label={MCP_SERVERS_COPY.args.title}
+            description={MCP_SERVERS_COPY.args.description}
             value={draft.args}
             multiline
             autoCapitalize="none"
@@ -161,15 +161,19 @@ function ServerForm(props: {
         </>
       ) : (
         <TextField
-          label="URL"
-          description="The MCP endpoint over HTTPS. Put tokens in headers, not in the URL."
+          label={MCP_SERVERS_COPY.url.title}
+          description={MCP_SERVERS_COPY.url.description}
           value={draft.url}
           autoCapitalize="none"
           onChange={(url) => props.onChange({ url })}
         />
       )}
       <EntriesEditor
-        label={draft.transport === "stdio" ? "Environment variables" : "Headers"}
+        label={
+          draft.transport === "stdio"
+            ? MCP_SERVERS_COPY.environmentVariables
+            : MCP_SERVERS_COPY.headers
+        }
         addLabel={draft.transport === "stdio" ? "Add variable" : "Add header"}
         keyLabel={draft.transport === "stdio" ? "Variable" : "Header"}
         entries={draft.entries}
@@ -253,8 +257,8 @@ export function McpServersSection(props: {
   return (
     <View className="gap-2">
       <ListSection
-        title={props.title ? `MCP servers · ${props.title}` : "MCP servers"}
-        footer={`Every provider session on this environment gets the enabled servers. ${NOT_SUPPORTED_NOTE}`}
+        title={props.title ? `${MCP_SERVERS_COPY.title} · ${props.title}` : MCP_SERVERS_COPY.title}
+        footer={`${MCP_SERVERS_COPY.footer} ${MCP_SERVERS_COPY.notSupported}`}
       >
         {Object.entries(servers ?? {}).map(([name, server]) => (
           <View key={name} className="flex-row items-center bg-grouped-card">

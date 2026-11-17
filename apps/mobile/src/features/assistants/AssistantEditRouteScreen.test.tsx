@@ -19,10 +19,22 @@ const { mocks, Children } = vi.hoisted(() => ({
     upload: vi.fn(),
     teams: [] as unknown[],
     goBack: vi.fn(),
+    navigate: vi.fn(),
     entries: [] as unknown[],
     tasks: [] as Array<{ threadId: string | null; prompt: string }>,
     sandbox: null as unknown,
+    integrations: null as unknown,
+    providers: [] as unknown[],
+    modelSelection: null as unknown,
   },
+}));
+vi.mock("../../state/integrations", () => ({ useIntegrationsState: () => mocks.integrations }));
+vi.mock("../../state/entities", () => ({
+  useEnvironmentServerConfig: () => ({ providers: mocks.providers }),
+  useProjects: () => [
+    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
+    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
+  ],
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks } }),
@@ -61,7 +73,7 @@ vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: mocks.goBack, dispatch: vi.fn(), navigate: vi.fn() }),
+  useNavigation: () => ({ goBack: mocks.goBack, dispatch: vi.fn(), navigate: mocks.navigate }),
   usePreventRemove: () => undefined,
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
@@ -168,12 +180,6 @@ vi.mock("../../state/assistants", () => ({
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
-vi.mock("../../state/entities", () => ({
-  useProjects: () => [
-    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
-    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
-  ],
-}));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
@@ -234,7 +240,7 @@ vi.mock("./useAssistantEditor", async () => {
         ],
         effectiveProject: project,
         modelLabel: "GPT",
-        modelSelection: null,
+        modelSelection: mocks.modelSelection,
         supportsDefaultModel: stored !== undefined,
         defaultModelSelection,
         defaultModelLabel: defaultModelSelection === null ? null : "Claude Opus 5.5",
@@ -302,6 +308,9 @@ beforeEach(() => {
   mocks.tasks = [];
   mocks.sandbox = null;
   mocks.teams = [];
+  mocks.integrations = null;
+  mocks.providers = [];
+  mocks.modelSelection = null;
   for (const fn of [mocks.alert, mocks.goBack, mocks.upload]) fn.mockReset();
   mocks.update.mockReset().mockResolvedValue({ ok: true, value: { id: "a1" } });
   mocks.create.mockReset().mockResolvedValue({ ok: true, value: { id: "new1" } });
@@ -420,7 +429,7 @@ describe("assistant spending limit", () => {
 
 describe("basic fields and Advanced", () => {
   const advancedSummary =
-    "Edit files · This Mac · no spending limit · no connectors · asks before messaging other threads";
+    "Edit files · This Mac · no spending limit · no custom servers · asks before messaging other threads";
 
   it("shows the basics first and keeps everything else under a collapsed Advanced with a summary", () => {
     render(null, { advanced: false });
@@ -430,12 +439,24 @@ describe("basic fields and Advanced", () => {
     expect(container.textContent).toContain("Project");
     expect(container.textContent).toContain("All projects");
     expect(container.textContent).toContain(advancedSummary);
-    for (const hidden of ["Handle", "Tool access", "Workspace", "Spending limit", "Connectors"]) {
+    for (const hidden of [
+      "Handle",
+      "Tool access",
+      "Workspace",
+      "Spending limit",
+      "Custom servers",
+    ]) {
       expect(container.textContent).not.toContain(hidden);
     }
     pick("Advanced");
     expect(container.textContent).not.toContain(advancedSummary);
-    for (const shown of ["Handle", "Tool access", "Workspace", "Spending limit", "Connectors"]) {
+    for (const shown of [
+      "Handle",
+      "Tool access",
+      "Workspace",
+      "Spending limit",
+      "Custom servers",
+    ]) {
       expect(container.textContent).toContain(shown);
     }
     pick("Advanced");
@@ -618,16 +639,18 @@ describe("assistant connectors", () => {
 
   it("adds an HTTP connector with a header and refuses a bad URL before saving", async () => {
     render(assistant());
-    expect(container.textContent).toContain("Connectors work with Claude, Codex, Cursor");
-    pick("Add connector");
-    type("Connector name", "Docs");
-    expect(field("Connector name")?.value).toBe("docs");
+    expect(container.textContent).toContain("Custom servers work with Claude, Codex, Cursor");
+    pick("Add custom server");
+    type("Custom server name", "Docs");
+    expect(field("Custom server name")?.value).toBe("docs");
     type("URL", "nope");
     pick("Add header");
     type("Header 1", "Authorization");
     type("Header 1 value", "Bearer abc");
     pick("Add");
-    expect(container.textContent).toContain('"docs" needs an http or https URL.');
+    expect(container.textContent).toContain(
+      '"docs" needs an https URL (http only on localhost), without ? or #.',
+    );
     type("URL", "https://docs.example.test/mcp");
     pick("Add");
     expect(container.textContent).toContain("docs");
@@ -648,7 +671,7 @@ describe("assistant connectors", () => {
     pick("Remove files");
     toggle("docs enabled");
     pick("Edit docs");
-    expect(field("Connector name")?.disabled ?? false).toBe(false);
+    expect(field("Custom server name")?.disabled ?? false).toBe(false);
     type("URL", "https://docs.example.test/v2");
     pick("Done");
     await act(async () => pick("Save"));
@@ -665,17 +688,17 @@ describe("assistant connectors", () => {
 
   it("a command connector takes arguments and variables, and cancel discards the form", async () => {
     render(assistant());
-    pick("Add connector");
+    pick("Add custom server");
     pick("Command (runs on the server)");
-    type("Connector name", "files");
+    type("Custom server name", "files");
     type("Command", "npx");
     type("Arguments", "-y");
     pick("Add variable");
     type("Variable 1", "TOKEN");
     pick("Remove variable 1");
     pick("Add");
-    pick("Add connector");
-    type("Connector name", "other");
+    pick("Add custom server");
+    type("Custom server name", "other");
     pick("Cancel");
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].mcpServers).toEqual([
@@ -688,6 +711,113 @@ describe("assistant connectors", () => {
         enabled: true,
       },
     ]);
+  });
+});
+
+describe("assistant integrations", () => {
+  const view = (name: string, status = "connected", catalogId: string | null = name) => ({
+    name,
+    catalogId,
+    auth: "oauth",
+    status,
+    availability: "assistants",
+  });
+  const detected = (extra: object) => ({
+    id: "d1",
+    name: "linear",
+    origin: "claude-code",
+    scope: "user",
+    instanceId: "claude",
+    catalogId: "linear",
+    transport: "http",
+    loaded: "connected",
+    enabled: true,
+    copyable: true,
+    secretKeys: [],
+    needsValue: [],
+    ...extra,
+  });
+  const setup = (driver = "claudeAgent", instanceId = "claude") => {
+    mocks.integrations = {
+      catalog: [
+        { id: "linear", name: "Linear" },
+        { id: "notion", name: "Notion" },
+      ],
+      integrations: [view("notion"), view("linear"), view("gmail", "needs-sign-in", null)],
+      ownApps: [],
+      loopbackRedirectUri: "http://127.0.0.1:1/integrations/callback",
+      detected: [detected({}), detected({ id: "d2", name: "docs", origin: "t3", catalogId: null })],
+      detectionSources: [],
+    };
+    mocks.providers = [{ instanceId, driver, enabled: true }];
+    mocks.modelSelection = { instanceId, model: "m" };
+  };
+
+  it("hides without integrations and keeps All connected unless the user chooses", async () => {
+    render(assistant());
+    expect(container.textContent).not.toContain("All connected");
+    act(() => root.unmount());
+    root = createRoot(container);
+    setup();
+    render(assistant());
+    expect(container.textContent).toContain("All connected");
+    expect(container.textContent).not.toContain("Always on for Claude");
+    await act(async () => pick("Save"));
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("choosing starts from what all gave, greys native copies and saves the checklist", async () => {
+    setup();
+    render({ ...assistant(), integrations: { mode: "all" } } as unknown as Assistant);
+    pick("Choose…");
+    expect(container.textContent).toContain("Always on for Claude (set up in Claude Code)");
+    const linear = container.querySelector<HTMLButtonElement>('button[aria-label="Linear"]');
+    expect(linear?.disabled).toBe(true);
+    expect(container.textContent).toContain("Needs sign-in");
+    pick("Notion");
+    pick("docs");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].integrations).toEqual({
+      mode: "selected",
+      names: ["linear", "gmail"],
+    });
+  });
+
+  it("a new assistant sends a choice only when it is not the default", async () => {
+    setup();
+    render(null);
+    type("Name", "Ops");
+    pick("Choose…");
+    pick("All connected");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.create.mock.calls[0]?.[0]).not.toHaveProperty("integrations");
+  });
+
+  it("points to Settings → Integrations when Choose… has nothing to list", () => {
+    setup();
+    mocks.integrations = {
+      ...(mocks.integrations as object),
+      integrations: [],
+      detected: [],
+    };
+    render({
+      ...assistant(),
+      integrations: { mode: "selected", names: [] },
+    } as unknown as Assistant);
+    pick("No integrations to choose yet. Connect one in Settings → Integrations.");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsIntegrations");
+  });
+
+  it("names the provider that cannot use integrations", () => {
+    setup("opencode", "opencode");
+    render(assistant());
+    expect(container.textContent).toContain("Not available on OpenCode");
+  });
+
+  it("says integrations do not reach a sandboxed assistant", () => {
+    setup();
+    render({ ...assistant(), workspace: "sandbox" } as Assistant);
+    expect(container.textContent).toContain("Not available in the sandbox");
   });
 });
 
@@ -728,12 +858,18 @@ describe("assistant notifications", () => {
     );
     pick("Only on these");
     pick("Telegram");
+    // The problem level is offered whatever the mode, with Offer to fix chosen by default.
+    expect(container.textContent).toContain("When it finds a problem");
+    expect(checked("Offer to fix")).toBe("true");
+    pick("Fix small things");
+    expect(checked("Fix small things")).toBe("true");
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].autonomy).toEqual({
       mode: "reply-and-notify",
       rules: ["runFailed", "waitingTooLong", "stuck", "reviewIncomplete"],
       projectIds: [],
       channels: ["t3"],
+      onProblem: "fix-small",
     });
   });
 

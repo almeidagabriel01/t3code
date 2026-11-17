@@ -96,6 +96,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
+- Dev servers and homes inside a checkout never delete worktrees, their snapshots or Linux copies, and `migrate-dev-db` turns worktree cleanup off in the copied settings. To test cleanup, set `T3CODE_DEV_WORKTREE_CLEANUP=1` and use throwaway repositories only.
 
 ## Verifying
 
@@ -229,6 +230,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - CI does not run on this fork (every run is cancelled for lack of runners). `vp run check:changed` plus the test files you ran are the only gate before a release, so say exactly what you ran.
 - On a busy Mac, browser tests that boot the whole app (`AssistantDialog.browser.test.tsx`) time out in the full gate and every later test in the file fails with them. Rerun as `VITEST_MAX_WORKERS=2 vp run check:changed` before suspecting the code.
 - After an upstream merge, `check:changed` touches most of the repo and its default 900s budget kills the test step: pass `--timeout 3300`.
+- With the Linux Runner on, the heavy hook can send a Bash call that runs `check:changed` or a test-named commit to the PC, which has no `.git`: queue it as `t3 heavy --runner mac -- <command>`. Tests sent to the PC run as `pnpm exec vp …`; `vp` is not on its PATH.
 - In a worktree under `~/.t3`, the `.t3` gitignore entry makes `vp fmt` and `vp lint` skip every file and still exit 0: format with `vp fmt --stdin-filepath=<f> < <f>` and compare, and lint with `vp lint --no-ignore <files>`, passing the files as an array (`"${files[@]}"`): zsh keeps `$FILES` one argument, and the resulting "No files found" looks like a clean run.
 - `vp run mobile:install android` needs `ANDROID_HOME` (usually `~/Library/Android/sdk`) when the shell does not set it.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
@@ -237,6 +239,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Capture with short content as well as long. Sticky and floating chrome that looks right on a full page can float mid-screen on a near-empty one; its container must fill the pane.
 - On the mobile simulator, Expo's floating "Tools button" sits over the thread header's right button and swallows taps. Turn it off in the dev menu before driving the header.
 - The iOS simulator's Files picker is empty until you copy a file into `File Provider Storage/` under `xcrun simctl get_app_container <udid> com.apple.DocumentsApp groups` (the LocalStorage group); it then shows under Browse → On My iPhone.
+- Mobile react tests inline `Platform.OS` at build time (`T3_MOBILE_TEST_PLATFORM`, default iOS), so mocking it does nothing: cover both platforms through a pure function that takes the platform as an argument.
 - Never start Metro with `CI=1`: Expo then stops watching files, so edits never reach the device and every device test runs stale code. Prove a reload with a visible text change before trusting a result.
 - Pair a mobile dev client with `.agents/skills/test-t3-mobile/scripts/pair-client.sh`; it opens `t3code-dev://connections/new`, while `t3code-dev://pair` is "Route not found".
 - The Android Files picker ignores a scripted tap on a file row: long-press the row to select it, then tap "Select" in the top bar.
@@ -245,7 +248,8 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - An Android system dialog ("… isn't responding") refuses every tap: close it with `agent-device alert dismiss`. A popup menu closes with a tap outside it; `back` can leave the app instead.
 - The Devices panel in an isolated home needs `enableDeviceSupport` and `deviceOnboardingCompleted` in its `settings.json`, then a dev server restart: the device service reads them at startup.
 - Linked environments need no second machine: run `node apps/server/src/bin.ts serve --base-dir <worktree>/.t3/<name> --port <p>` beside dev, set `linkedEnvironmentsEnabled` in both homes' `settings.json`, then `environment link http://127.0.0.1:<p> --base-dir <worktree>/.t3 --pairing-code <Token from pair> --access full-access`. Unlink and delete that home after.
-- A dev server shares the machine-wide heavy queue (`~/.t3/heavy-queue`), so switching it off or pausing it there releases or holds every other project's jobs. Start dev with `T3CODE_HEAVY_QUEUE_DIR=<worktree>/.t3/heavy-queue-dev` before testing queue controls.
+- A T3 running from a checkout uses `<checkout>/.t3/heavy-queue-dev`, not the machine-wide `~/.t3/heavy-queue`, and never writes the installed hook script or Claude settings outside its checkout. Setting `T3CODE_HEAVY_QUEUE_DIR` to the real queue drives every project's jobs.
+- The Linux runner's copy of a worktree has no `.git` and no global `vp`: run `check:changed` and coverage scoring on the Mac (`t3 heavy --runner mac`), call `./node_modules/.bin/vp` there, and copy lcov files out of the synced folder in the same run (the next sync wipes them). A command line that mentions `vp test`/`vp run` is rerouted whole.
 - During an unfinished merge, `git add` the resolved files before starting `vp run dev`: git re-reads unmerged files on every status poll, and that makes the server's `node --watch` restart in a loop.
 
 ### Layout and design
@@ -274,6 +278,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 - A status label shown beside a live reading is derived from that same reading: "Mac has room" next to "CPU 100%" is a bug.
 - A list orders rows with the same function and inputs their labels use (local visits, open decisions), and never parks rows in a section whose header is not drawn: a hidden Working shelf sank running threads below finished ones three times.
+- Do not rely on the React Compiler to memoize a ref callback whose cleanup has side effects; wrap it in `useStableCallback`. The compiler left the sidebar list's ref unmemoized, so its cleanup ran on every render and cancelled every sidebar drag.
 - Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
 - One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
 - Compare versions as semver, not as strings. Validate every item before mutating any of them.
@@ -286,13 +291,14 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Every fork feature ships on web, desktop and mobile with equivalent flows. Mobile is not a reduced copy: when the web flow is simplified, simplify mobile the same way.
 - Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - On Android, `Menu shouldOpenOnLongPress` injects `onLongPress` into its direct child: that child must pass it to its `Pressable`, or a long press just taps.
-- The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`.
+- The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`. Android anchors the popup to the `Menu`'s own frame, so a `self-end` child of a full-width `Menu` opens its menu at the left edge.
+- An Android form sheet is a native dialog centered where layout cannot see it, so an overlay drawn at the app root lands off its anchor. Content inside a sheet goes under `OverlayPortalScope`; the routed sheet, `Sheet` and the inspector sheet already have one.
 - On iOS the `AppBar` header is transparent, so a row between it and the list is pinned at `useBarInset()` on a glass background, and the list's top inset grows by the row's height measured in `onLayout` (never a constant: Dynamic Type). Actions stay in the `AppBar` menu; Android workspace layouts draw only `menus[0]`, so add sections to the first menu.
 - A mobile multi-pick menu sets `keepsMenuPresented` on its items, and `inline` on its sections for iOS (a nested iOS submenu collapses after each pick). On Android a mounted Compose `DropdownMenuItem` keeps its old trailing slot, so its key includes the checked state.
 - On mobile, close the keyboard before showing a leave or discard prompt: a prompt over an open keyboard leaves a stale keyboard height on the next screen.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
-- A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only: `@vitest/coverage-v8` as a committed devDependency fails knip.
+- A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only, never through package.json or the lockfile, since a shared worktree's other agents then fail knip on commit: symlink `@vitest/coverage-v8` from the pnpm store into `node_modules` and remove the link after, or measure on the PC.
 
 ### Keeping these rules current
 
@@ -301,4 +307,5 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 ### Working with parallel agents in one worktree
 
+- The pre-commit runs `vp staged --no-stash`: a stash-and-restore on a failed hook would reset every other agent's unsaved edits. Never re-enable the stash.
 - Commit with `git commit <paths>` only. The pre-commit hook can sweep other agents' staged files into your commit, so stage only a new file of your own, right before committing it, with `git add <file>` (the hook refuses `git add -N` files). Never stash and never reset the index.

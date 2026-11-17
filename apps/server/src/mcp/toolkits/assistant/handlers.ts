@@ -55,11 +55,16 @@ const brief = (
   avatar: (assistant.avatar ?? null) as Schema.Json,
   scope: assistant.scope,
   notifications: assistant.autonomy.mode,
+  onProblem: assistant.autonomy.onProblem,
   connectors: assistant.mcpServers.map(({ name, transport, enabled }) => ({
     name,
     transport,
     enabled,
   })),
+  integrations:
+    assistant.integrations.mode === "all"
+      ? { mode: "all" }
+      : { mode: "selected", names: [...assistant.integrations.names] },
   role: assistant.role,
   defaultModel:
     assistant.defaultModelSelection == null
@@ -204,10 +209,15 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           model: input.defaultModel.model,
         };
 
+  if (input.integrations !== undefined)
+    return yield* invalid("Only the user can change which integrations an assistant uses");
   if (input.action === "group_create" || input.action === "group_update")
     yield* requireUserTurn(caller, "change a group");
   // Waking on its own spends the user's tokens, so only the user turns it on.
-  if (input.action === "update" && input.notifications !== undefined)
+  if (
+    input.action === "update" &&
+    (input.notifications !== undefined || input.onProblem !== undefined)
+  )
     yield* requireUserTurn(caller, "change when an assistant notifies them");
   // Projects bound a project assistant, so only the user moves that bound.
   if (
@@ -431,9 +441,15 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
         ...(avatar === undefined ? {} : { avatar }),
         ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
         // Only the mode changes; its rules, projects and channels stay as the user set them.
-        ...(input.notifications === undefined
+        ...(input.notifications === undefined && input.onProblem === undefined
           ? {}
-          : { autonomy: { ...target.autonomy, mode: input.notifications } }),
+          : {
+              autonomy: {
+                ...target.autonomy,
+                ...(input.notifications === undefined ? {} : { mode: input.notifications }),
+                ...(input.onProblem === undefined ? {} : { onProblem: input.onProblem }),
+              },
+            }),
       };
       return done("updated", yield* assistants.update(update).pipe(Effect.mapError(failure)));
     }

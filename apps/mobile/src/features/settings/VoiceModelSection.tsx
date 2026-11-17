@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { VOICE_COPY } from "./voiceCopy";
 import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
@@ -292,13 +293,13 @@ export function LocalModelChoice(props: {
   if (!voice.connection || !status || !status.supported)
     return (
       <ListChoiceRow
-        label="Local model"
+        label={VOICE_COPY.localModel.title}
         description={
           !voice.connection
-            ? "Not available on this environment"
+            ? VOICE_COPY.localModel.notAvailable
             : status?.supported === false
               ? status.reason
-              : "Checking…"
+              : VOICE_COPY.localModel.checking
         }
         selected={props.selected}
         disabled
@@ -312,7 +313,7 @@ export function LocalModelChoice(props: {
     pending?.downloaded === undefined ? undefined : pending.downloaded / pending.size;
   return (
     <ListRow
-      label={active?.model ?? "Local model"}
+      label={active?.model ?? VOICE_COPY.localModel.title}
       description={
         pending
           ? pending.state === "verifying"
@@ -320,7 +321,9 @@ export function LocalModelChoice(props: {
             : `Downloading ${pending.name} · ${Math.round((progress ?? 0) * 100)}%`
           : active
             ? `Local model · ${formatBytes(active.size)}`
-            : `No model installed · ${noModelHint(voice.access, props.label)}`
+            : voice.canManage
+              ? VOICE_COPY.localModel.noModelInstalled
+              : `No model installed · ${noModelHint(voice.access, props.label)}`
       }
       selected={props.selected}
       onPress={() => {

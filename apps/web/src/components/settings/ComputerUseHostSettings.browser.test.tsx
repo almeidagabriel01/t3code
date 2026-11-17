@@ -48,7 +48,7 @@ const NO_PERMISSIONS = {
 
 /** Where the sidebar and settings search list the page: its availability decides both. */
 function PageListing() {
-  const listed = useAvailableSettingsSearchItems().some((item) => item.id === "computer-use");
+  const listed = useAvailableSettingsSearchItems("").some((item) => item.id === "computer-use");
   return <output>{listed ? "Page listed" : "Page hidden"}</output>;
 }
 

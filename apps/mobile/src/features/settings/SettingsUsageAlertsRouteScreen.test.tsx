@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   windows: [] as Array<{ id: string; label: string }>,
   enabled: true,
   targets: [true] as boolean[],
+  connected: true,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -127,6 +128,7 @@ vi.mock("./components/SettingsSection", () => ({
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
+    availableTargets: mocks.connected ? [{ environmentId: env }] : [],
     selectedTargets: mocks.targets.map((usageLimitAlerts, index) => ({
       environmentId: index === 0 ? env : `env-${index}`,
       label: index === 0 ? "Mac" : `PC ${index}`,
@@ -146,6 +148,7 @@ async function mount(input: Partial<typeof mocks> = {}) {
     windows: [],
     enabled: true,
     targets: [true],
+    connected: true,
     ...input,
   });
   mocks.update.mockClear();
@@ -246,7 +249,12 @@ describe("SettingsUsageAlertsRouteScreen", () => {
   });
 
   it.each([
-    { targets: [], text: "Select a connected environment.", rows: false },
+    { targets: [], connected: false, text: "Connect an environment to see limits.", rows: false },
+    {
+      targets: [],
+      text: "No environments match this filter. Change the filter above.",
+      rows: false,
+    },
     {
       targets: [false],
       text: "Update this server. Limit alerts need a newer T3 Code server.",
@@ -255,11 +263,11 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     { targets: [true, false], text: "PC 1 needs a server update to use limit alerts.", rows: true },
   ])(
     "explains what an environment selection of $targets can show",
-    async ({ targets, text, rows }) => {
-      const { host, unmount } = await mount({ windows: [weekly], targets });
+    async ({ targets, connected = true, text, rows }) => {
+      const { host, unmount } = await mount({ windows: [weekly], targets, connected });
       expect(host.textContent).toContain(text);
       expect(host.querySelector("section") !== null).toBe(rows);
-      if (targets.length > 0) expect(host.textContent).not.toContain("Select a connected");
+      if (targets.length > 0) expect(host.textContent).not.toContain("Connect an environment");
       await unmount();
     },
   );

@@ -1,4 +1,5 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
+import { parseSettingsLinkHref } from "@t3tools/shared/settingsLinks";
 
 import {
   dispatchRootStackReset,
@@ -6,6 +7,7 @@ import {
   rootStackState,
   type RootStackNavigation,
 } from "../../lib/root-stack-reset";
+import { settingsLinkPageTarget } from "./components/settings-page-targets";
 
 type RootParams = ReactNavigation.RootParamList;
 
@@ -98,6 +100,19 @@ export function openSettings<Name extends SettingsPageName>(
   ...[params]: SettingsPageArgs<Name>
 ) {
   resetRootStack(navigation, (state) => settingsNavigationState(state, page, params));
+}
+
+/**
+ * Opens a `t3-settings://` link's page on its entry; a page this client lacks opens Settings.
+ * False when `href` is no settings link.
+ */
+export function openSettingsLink(navigation: RootStackNavigation, href: string): boolean {
+  const link = parseSettingsLinkHref(href);
+  if (link === null) return false;
+  const page = settingsLinkPageTarget(link.page) ?? undefined;
+  const params = page && link.entry ? { entry: link.entry } : undefined;
+  resetRootStack(navigation, (state) => settingsNavigationState(state, page, params));
+  return true;
 }
 
 /**

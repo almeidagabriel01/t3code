@@ -3,7 +3,6 @@ import {
   AuthSettingsWriteScope,
   isManagedSettingPath,
   type ServerSettingsPatch,
-  type SidebarThreadOrder,
 } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
@@ -25,6 +24,8 @@ import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoi
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { GENERAL_COPY, THREAD_ORDER_OPTIONS } from "./projectGroupingCopy";
+import { AUTO_SETTLE_COPY, LABS_COPY } from "./threadSettingsCopy";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
@@ -46,18 +47,18 @@ export function SettingsLabsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <MachineBetaSection
-          title="Linked environments"
+          title={LABS_COPY.linkedEnvironments.title}
           icon="link"
           capability="peerLinks"
           setting="linkedEnvironmentsEnabled"
-          description="Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish."
+          description={LABS_COPY.linkedEnvironments.description}
         />
         <MachineBetaSection
-          title="Fast worktree checkout"
+          title={LABS_COPY.fastWorktreeCheckout.title}
           icon="bolt.circle"
           capability="fastWorktreeCheckout"
           setting="fastWorktreeCheckout"
-          description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+          description={LABS_COPY.fastWorktreeCheckout.description}
         />
       </ScrollView>
     </SettingsScreen>
@@ -123,36 +124,36 @@ export function AutoSettleSettingsRows(props: {
   return (
     <View className="gap-6">
       {!projectSelected ? (
-        <SettingsSection title="Usage limits">
+        <SettingsSection title={AUTO_SETTLE_COPY.usageLimits.title}>
           <SettingsSwitchRow
             icon="clock"
-            label="Resume after usage limits"
-            subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
+            label={AUTO_SETTLE_COPY.resumeAfterLimits.title}
+            subtitle={AUTO_SETTLE_COPY.resumeAfterLimits.description}
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabledFor("autoResumeLimitedThreads")}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
             icon="clock"
-            label="Snooze until limits reset"
-            subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
+            label={AUTO_SETTLE_COPY.snoozeUntilReset.title}
+            subtitle={AUTO_SETTLE_COPY.snoozeUntilReset.description}
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
       ) : null}
-      <SettingsSection title="Auto-settle">
+      <SettingsSection title={AUTO_SETTLE_COPY.autoSettle.title}>
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
-          label="Auto-settle merged threads"
+          label={AUTO_SETTLE_COPY.merged.title}
           value={referenceSettings.sidebarAutoSettleOnMerge}
           disabled={disabledFor("sidebarAutoSettleOnMerge")}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
-          label="Auto-settle inactive threads"
+          label={AUTO_SETTLE_COPY.inactive.title}
           value={afterDays !== null}
           disabled={disabledFor("sidebarAutoSettleAfterDays")}
           onValueChange={(value) =>
@@ -162,7 +163,9 @@ export function AutoSettleSettingsRows(props: {
         {afterDays !== null ? (
           <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
             <View className="w-[22px] android:w-6" />
-            <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
+            <Text className="flex-1 text-foreground text-lg android:text-base">
+              {AUTO_SETTLE_COPY.inactiveDays.title}
+            </Text>
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabledFor("sidebarAutoSettleAfterDays")}
@@ -172,9 +175,11 @@ export function AutoSettleSettingsRows(props: {
         ) : null}
       </SettingsSection>
       {!props.pending && mismatches.length > 0 ? (
-        <SettingsSection title="Across environments">
+        <SettingsSection title={AUTO_SETTLE_COPY.acrossEnvironments.title}>
           <View className="gap-3 p-4">
-            <Text className="text-base text-foreground">Auto-settle defaults differ</Text>
+            <Text className="text-base text-foreground">
+              {AUTO_SETTLE_COPY.acrossEnvironments.description}
+            </Text>
             <Text className="text-sm text-foreground-muted">
               {mismatches.map((mismatch) => mismatch.label).join(", ")}
             </Text>
@@ -191,24 +196,6 @@ export function AutoSettleSettingsRows(props: {
   );
 }
 
-const THREAD_ORDER_OPTIONS: ReadonlyArray<{
-  readonly order: SidebarThreadOrder;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    order: "activity",
-    label: "Recent activity",
-    description:
-      "What needs you or finished unseen comes first, then running agents, then the rest.",
-  },
-  {
-    order: "fixed",
-    label: "Fixed",
-    description: "Threads stay where they are; move them to reorder.",
-  },
-];
-
 export function ThreadOrderSettings() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -216,7 +203,7 @@ export function ThreadOrderSettings() {
   const threadOrder = (loaded ? preferences.value.threadOrder : undefined) ?? "activity";
 
   return (
-    <SettingsSection title="Thread order">
+    <SettingsSection title={GENERAL_COPY.threadOrder.title}>
       {THREAD_ORDER_OPTIONS.map((option, index) => (
         <SettingsChoiceRow
           key={option.order}
@@ -239,11 +226,11 @@ export function NewThreadSettingsSection() {
     AsyncResult.isSuccess(preferences) && preferences.value.useLastProjectForNewThreads !== false;
 
   return (
-    <SettingsSection title="New threads">
+    <SettingsSection title={GENERAL_COPY.newThreads.title}>
       <SettingsSwitchRow
         icon="square.and.pencil"
-        label="Use last project"
-        subtitle="New threads still ask for the project, with the last one you used on this device first."
+        label={GENERAL_COPY.newThreads.lastProject}
+        subtitle={GENERAL_COPY.newThreads.lastProjectDescription}
         value={useLastProject}
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
       />
@@ -281,7 +268,7 @@ function MachineBetaSection({
   if (supported.length === 0) return null;
   return (
     <View className="gap-3">
-      <SettingsSection title={`Beta: ${title}`}>
+      <SettingsSection title={title}>
         {supported.map((environment) => {
           const policy = environment.serverConfig?.managedPolicy;
           const managed = isManagedSettingPath(policy, setting);

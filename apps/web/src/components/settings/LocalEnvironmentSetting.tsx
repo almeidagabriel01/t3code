@@ -15,6 +15,7 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { GENERAL_SETTINGS_COPY } from "./settingsSearchGeneralItems";
 
 // Toggling relaunches desktop; the switch reflects startup state.
 export function LocalEnvironmentSetting() {
@@ -42,8 +43,8 @@ export function LocalEnvironmentSetting() {
         {...searchableSetting("local-environment")}
         description={
           enabled
-            ? "Run agents on this computer. Turn off to use T3 Code only with remote environments."
-            : "Turned off. Agents only run in remote environments."
+            ? searchableSetting("local-environment").description
+            : GENERAL_SETTINGS_COPY.localEnvironmentOff
         }
         control={
           <Switch

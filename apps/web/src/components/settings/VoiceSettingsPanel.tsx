@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_VOICE_MODEL } from "@t3tools/client-runtime/settings-empty-selection";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -120,7 +121,8 @@ import {
   SettingsSearchTarget,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -443,16 +445,17 @@ function ProjectDictionaryRow() {
   const updateScopedSettings = useUpdateScopedSettings();
   if (scope === null) return null;
   const isProjectScope = scope.scope.kind === "project" || scope.scope.kind === "checkout";
+  const copy = settingCopy("speech-project-dictionary");
   return (
     <SettingsRow
       serverScoped
       settingKeys={["speechProjectCustomWords"]}
       {...searchableSetting("speech-project-dictionary")}
-      title={isProjectScope ? "Project dictionary" : "Shared dictionary"}
+      title={isProjectScope ? copy.title : MAINTENANCE_SETTINGS_COPY.sharedDictionaryTitle}
       description={
         isProjectScope
-          ? `Saved with ${scope.scope.label} on its environment. Everyone who dictates in this project gets these spellings, along with their own dictionary. Project spellings win when the two overlap.`
-          : "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project."
+          ? `${MAINTENANCE_SETTINGS_COPY.projectDictionaryBefore}${scope.scope.label}${MAINTENANCE_SETTINGS_COPY.projectDictionaryAfter}`
+          : copy.description
       }
       control={
         <span className="text-xs text-muted-foreground">
@@ -527,11 +530,11 @@ function CleanupModelRow() {
       serverScoped
       settingKeys={["speechPostProcessingModelSelection"]}
       {...searchableSetting("speech-post-processing-model")}
-      title="Cleanup model"
-      description="Model for transcript cleanup, such as a cheaper or faster one. When disabled, use the text generation model configured for this environment."
       control={
         connectedEnvironments.length === 0 ? (
-          <span className="text-sm text-muted-foreground">Connect an environment first.</span>
+          <span className="text-sm text-muted-foreground">
+            {CONNECT_ENVIRONMENT_FOR_VOICE_MODEL}
+          </span>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             {dedicated && (!hasProvider || !instanceEntry) ? (
@@ -707,11 +710,14 @@ function AdvancedSpeechSettings({
   if (!status?.supported) return null;
   const supported = status;
   return (
-    <AdvancedSettings targetIds={[searchableSetting("speech-hardware").id]}>
+    <AdvancedSettings
+      targetIds={[
+        searchableSetting("speech-hardware").id,
+        searchableSetting("speech-unload-model").id,
+      ]}
+    >
       <SettingsRow
         {...searchableSetting("speech-hardware")}
-        title="Hardware"
-        description="Auto uses the environment’s GPU when it has one."
         control={
           <Select
             value={supported.acceleration}
@@ -749,8 +755,7 @@ function AdvancedSpeechSettings({
         }
       />
       <SettingsRow
-        title="Unload model"
-        description="Release the model’s memory on the environment after it sits idle."
+        {...searchableSetting("speech-unload-model")}
         control={
           <Select
             value={supported.modelUnloadTimeout}
@@ -1259,6 +1264,11 @@ export function VoiceSettingsPanel() {
           model || destination.cloudProvider ? undefined : "voice-transcription-destination",
         "speech-models": prepared ? undefined : "voice-transcription-destination",
         "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
+        "speech-unload-model": prepared && model ? undefined : "voice-transcription-destination",
+        "speech-translate-english": model?.supportsTranslation
+          ? undefined
+          : "voice-transcription-destination",
+        "speech-cleanup-instructions": cleanupEnabled ? undefined : "speech-post-processing",
         "transcription-test": !prepared
           ? "voice-transcription-destination"
           : !model || model.state === "missing-model"
@@ -1269,11 +1279,9 @@ export function VoiceSettingsPanel() {
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
       }}
     >
-      <SettingsSection id="voice-input" title="Input">
+      <SettingsSection {...searchableSetting("voice-input")}>
         <SettingsRow
           {...searchableSetting("voice-microphone")}
-          title="Microphone"
-          description="System default follows your operating system. Record a ten-second test and play it back here. Test audio stays on this device and is never transcribed."
           control={
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               <SettingsSearchTarget {...searchableSetting("microphone-test")}>
@@ -1317,8 +1325,6 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          title="Dictation shortcut"
-          description="How the dictation shortcut starts and stops recording."
           control={
             <Select
               value={settings.voiceShortcutMode}
@@ -1342,7 +1348,7 @@ export function VoiceSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="voice-transcription" title="Transcription">
+      <SettingsSection {...searchableSetting("voice-transcription")}>
         <SettingsSearchTarget
           {...searchableSetting("voice-transcription-destination")}
           className="@container/destination px-3 py-3 sm:px-4"
@@ -1509,13 +1515,12 @@ export function VoiceSettingsPanel() {
         {(model || destination.cloudProvider) && (
           <SettingsRow
             {...searchableSetting("speech-language")}
-            title="Language"
             description={
               destination.cloudProvider
-                ? "The cloud provider can detect your language automatically."
+                ? MAINTENANCE_SETTINGS_COPY.languageCloud
                 : model
-                  ? `${model.model} ${model.supportsLanguageDetection ? "detects the language automatically" : "uses one fixed language"}.`
-                  : "Choose an environment above to see the languages its transcription model supports."
+                  ? `${model.model} ${model.supportsLanguageDetection ? MAINTENANCE_SETTINGS_COPY.languageDetects : MAINTENANCE_SETTINGS_COPY.languageFixed}.`
+                  : settingCopy("speech-language").description
             }
             control={
               <SpeechLanguageSelect
@@ -1526,8 +1531,7 @@ export function VoiceSettingsPanel() {
         )}
         {model?.supportsTranslation ? (
           <SettingsRow
-            title="Translate to English"
-            description="Speak any language and get English text."
+            {...searchableSetting("speech-translate-english")}
             control={
               <Switch
                 aria-label="Translate to English"
@@ -1553,14 +1557,13 @@ export function VoiceSettingsPanel() {
         ) : null}
         {prepared && <AdvancedSpeechSettings prepared={prepared} catalog={catalog} />}
       </SettingsSection>
-      <SettingsSection id="voice-recognition" title="Transcription options">
+      <SettingsSection {...searchableSetting("voice-recognition")}>
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
-          title="Silence filtering"
           description={
             destination.cloudProvider === "openai"
-              ? "OpenAI handles silence automatically."
-              : "Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
+              ? MAINTENANCE_SETTINGS_COPY.silenceOpenAi
+              : settingCopy("speech-silence-filtering").description
           }
           control={
             <Switch
@@ -1575,8 +1578,6 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
-          title="Remove filler words"
-          description="Remove filler words like “um” and “uh” from transcripts."
           control={
             <Switch
               aria-label="Remove filler words"
@@ -1589,8 +1590,6 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("speech-dictionary")}
-          title="Dictionary"
-          description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
           control={
             <span className="text-xs text-muted-foreground">
               {settings.speechCustomWords.length}{" "}
@@ -1609,10 +1608,12 @@ export function VoiceSettingsPanel() {
         <ProjectDictionaryRow />
       </SettingsSection>
 
-      <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
+      <SettingsSection
+        id={searchableSetting("speech-post-processing").id}
+        title={settingCopy("speech-cleanup").title}
+      >
         <SettingsRow
-          title="Clean up transcripts"
-          description="Fixes punctuation, numbers, and spoken corrections with the cleanup model on the draft’s environment. Sends the transcript and nearby draft text, never audio."
+          {...settingCopy("speech-post-processing")}
           control={
             <Switch
               aria-label="Clean up transcripts"
@@ -1623,8 +1624,7 @@ export function VoiceSettingsPanel() {
         />
         {cleanupEnabled ? (
           <SettingsRow
-            title="Cleanup instructions"
-            description="Use the built-in instructions or write your own."
+            {...searchableSetting("speech-cleanup-instructions")}
             control={
               <Select
                 value={settings.speechPostProcessingPrompt.mode}
@@ -1675,8 +1675,6 @@ export function VoiceSettingsPanel() {
         {cleanupEnabled ? (
           <SettingsRow
             {...searchableSetting("speech-correction-word")}
-            title="Correction cue"
-            description="The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint."
             control={
               <Input
                 key={settings.speechCorrectionWord}

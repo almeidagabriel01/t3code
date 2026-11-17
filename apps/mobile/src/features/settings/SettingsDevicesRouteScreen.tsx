@@ -42,6 +42,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { deviceIssueRows } from "../devices/threadDevicePreviews";
 import { IphoneSigningSection } from "./IphoneSigningSection";
 import { WifiPairingSection } from "./WifiPairingSection";
+import { DEVICES_COPY } from "./devicesCopy";
 
 const POLICIES = ["allow", "ask", "deny"] as const;
 
@@ -63,7 +64,7 @@ function DeviceEnvironment(props: {
   const suffix = props.title ? ` · ${props.title}` : "";
   if (state === null) {
     return (
-      <ListSection title={`Device access${suffix}`}>
+      <ListSection title={`${DEVICES_COPY.access}${suffix}`}>
         <ListRowLayout
           icon="arrow.clockwise"
           label={query.error === null ? "Finding devices..." : "Could not load the devices"}
@@ -87,7 +88,7 @@ function DeviceEnvironment(props: {
   if (state.supportsDeviceControl !== true || ownDevices.length === 0) {
     return (
       <View className="gap-5">
-        <ListSection title={`Device access${suffix}`}>
+        <ListSection title={`${DEVICES_COPY.access}${suffix}`}>
           <ListRowLayout
             icon="iphone"
             label={
@@ -122,7 +123,7 @@ function DeviceEnvironment(props: {
   };
   return (
     <View className="gap-5">
-      <ListSection title={`Device access${suffix}`}>
+      <ListSection title={`${DEVICES_COPY.access}${suffix}`}>
         {devices.map((device, index) => {
           const policy = deviceAccessPolicy(state.access, device);
           const stored = storedDeviceAccessPolicy(state.access, device) !== undefined;
@@ -257,7 +258,7 @@ function LinkedDeviceSections(props: {
   return (
     <>
       {requests.length > 0 ? (
-        <ListSection title={`Device requests${suffix}`}>
+        <ListSection title={`${DEVICES_COPY.requests}${suffix}`}>
           {requests.map((request) => (
             <View key={request.requestId}>
               <ListRowLayout
@@ -282,8 +283,8 @@ function LinkedDeviceSections(props: {
       ) : null}
       {clients.length > 0 ? (
         <ListSection
-          title={`Linked environments using devices here${suffix}`}
-          footer="A blocked environment cannot list, watch or drive any device here."
+          title={`${DEVICES_COPY.linkedClients}${suffix}`}
+          footer={DEVICES_COPY.linkedClientsFooter}
         >
           {clients.map((client) => (
             <SettingsActionRow
@@ -363,8 +364,7 @@ export function SettingsDevicesRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
-          Choose which simulators, emulators and physical devices agents may use. Simulators and
-          emulators are allowed by default; a physical device asks first.
+          {DEVICES_COPY.intro}
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

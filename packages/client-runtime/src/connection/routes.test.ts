@@ -17,6 +17,7 @@ import {
   insertRoute,
   entryWithRoutes,
   mergeLearnedRoutes,
+  pairAgainAddress,
   pendingRouteOrder,
   removedWithRelay,
   routesAfterRemoving,
@@ -106,6 +107,23 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+});
+
+describe("pairAgainAddress", () => {
+  it.each([
+    { name: "a direct route", routes: [LAN, TAILNET], expected: "http://192.168.1.10:3773/" },
+    { name: "T3 Connect first", routes: [RELAY, PUBLIC], expected: "https://desk.example.com/" },
+    {
+      name: "a learned route first",
+      routes: [learned("l", "http://10.0.0.2:3773/"), TAILNET],
+      expected: "https://desk.tail1234.ts.net/",
+    },
+    { name: "T3 Connect only", routes: [RELAY], expected: null },
+  ])("$name", ({ routes, expected }) => {
+    expect(pairAgainAddress(entryWithRoutes({ ...routes[0]!, enabled: true }, routes))).toBe(
+      expected,
+    );
   });
 });
 

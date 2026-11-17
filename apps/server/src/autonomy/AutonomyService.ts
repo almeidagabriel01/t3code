@@ -81,6 +81,7 @@ import {
   type AutonomyCandidate,
   type AutonomySignal,
 } from "./autonomyRules.ts";
+import { detectionEnabled } from "../problems/problemRules.ts";
 import { NeedsUser, type UserWait } from "./NeedsUser.ts";
 import { defaultNoticeText, needsYouText, waitWakeId } from "./needsYou.ts";
 
@@ -194,6 +195,16 @@ export class AutonomyService extends Context.Service<
       },
       AutonomyError
     >;
+    /**
+     * A notice from T3 Code itself, not from an assistant: Activity (when a thread can carry it)
+     * and the user's chat. The same `key` again sends nothing more.
+     */
+    readonly tellUser: (input: {
+      readonly key: string;
+      readonly text: string;
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId | null;
+    }) => Effect.Effect<void>;
     /**
      * `notifyUser` for a usage limit alert, which also reaches the user while Autonomy is paused
      * when `usageLimitAlerts.ignoreAutonomyPause` is on. No other message has this way through.
@@ -500,6 +511,12 @@ const make = Effect.gen(function* () {
               shell.delegatedFrom !== undefined ||
               isSideChatThread(shell));
           const scoped = { ...signal, projectId: signal.projectId ?? shell?.projectId ?? null };
+          // With "Detect problems" on, the problem's one owner handles failures instead of every assistant.
+          const full = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+          const replaced =
+            (signal.event === "run_failed" || signal.event === "pr_checks_failed") &&
+            full !== null &&
+            detectionEnabled(full, scoped.projectId);
           const assistants = (yield* sql<AssistantRow>`
             SELECT * FROM assistants WHERE archived_at IS NULL AND thread_id IS NOT NULL`).map(
             toAssistant,
@@ -511,7 +528,7 @@ const make = Effect.gen(function* () {
             watches: (yield* watchRows).map(toWatch),
             settings: config,
             nowMs,
-            watchesOnly: guarded,
+            watchesOnly: guarded || replaced,
           }).filter(
             (candidate) =>
               !guarded ||
@@ -666,9 +683,10 @@ const make = Effect.gen(function* () {
     const wakeKey = run.userMessageId.slice(WAKE_MESSAGE_PREFIX.length);
     const config = yield* settings;
     if (!config.enabled) return;
-    const wakes = yield* sql<{ readonly label: string }>`
-      SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
+    const wakes = yield* sql<{ readonly label: string; readonly source: string }>`
+      SELECT label, source FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
     if (wakes[0] === undefined) return;
+    if (wakes[0].source === "problem") return yield* deliverProblem(run, wakeKey, wakes[0].label);
     yield* deliverResult(run, wakes[0].label, config, "other");
   });
 
@@ -1457,6 +1475,98 @@ const make = Effect.gen(function* () {
     )
     .pipe(isolate("autonomy: the waiting notice failed"));
 
+  /**
+   * Activity plus the user's chat for a message whose `notify:` wake the caller already recorded;
+   * the chat it used. A message that never reached the queue drops that wake, so a retry sends it.
+   */
+  const sendUserMessage = Effect.fn("AutonomyService.sendUserMessage")(function* (input: {
+    readonly assistant: ReturnType<typeof toAssistant>;
+    readonly key: string;
+    readonly text: string;
+    readonly threadId: ThreadId | undefined;
+    readonly threadTitle: string | null;
+    readonly config: AutonomySettings;
+  }) {
+    const { assistant, text } = input;
+    const wakeKey = `notify:${input.key}`;
+    return yield* Effect.gen(function* () {
+      const link = input.threadId === undefined ? null : yield* linkTo(input.threadId);
+      const withLink = (language: ResolvedChannelLanguage) =>
+        link === null ? text : `${text}\n\n${channelStrings(language).openInT3} ${link}`;
+      yield* decisions
+        .request({
+          fromThreadId: assistant.threadId as ThreadId,
+          projectId: assistant.projectId,
+          threadTitle: input.threadTitle ?? assistant.name,
+          clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${wakeKey}`,
+          title: assistant.name.slice(0, 120),
+          context: withLink("en").slice(0, 4_000),
+          options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+        })
+        .pipe(
+          Effect.catchTags({
+            DecisionError: (error) => Effect.fail(autonomyError("storage", error.message)),
+          }),
+        );
+      const chat = yield* ownerChat(resolveChannels(assistant.autonomy, input.config));
+      if (chat !== undefined) {
+        const language = yield* channelLanguage.current;
+        yield* outbox.enqueue({
+          deliveryId: `autonomy-notify:${input.key}`,
+          destination: chat,
+          projectId: assistant.projectId as ProjectId,
+          senderName: assistant.name,
+          text: withLink(language),
+          markdown: true,
+          language,
+        });
+      }
+      return chat;
+    }).pipe(
+      // A message that never reached the queue must not count as sent, or a retry says already_sent.
+      Effect.onError(() =>
+        sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(Effect.ignore),
+      ),
+    );
+  });
+
+  /**
+   * A problem wake ended: the server's own line per card, then the owner's answer, reach the user
+   * through the notify path. An answer that looks like it holds a secret is left out.
+   */
+  const deliverProblem = Effect.fn("AutonomyService.deliverProblem")(function* (
+    run: FinishedRun,
+    wakeKey: string,
+    header: string,
+  ) {
+    const config = yield* settings;
+    const rows =
+      yield* sql<AssistantRow>`SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
+    if (rows[0] === undefined) return;
+    if (
+      (yield* sql`SELECT 1 FROM autonomy_wakes WHERE wake_key = ${`notify:${wakeKey}`}`).length > 0
+    )
+      return;
+    const answer = (yield* answerOf(run))("en")?.trim();
+    const text =
+      answer === undefined || answer === "" || containsSecret(answer)
+        ? header
+        : `${header}\n\n${answer}`;
+    const assistant = toAssistant(rows[0]);
+    yield* sql`
+      INSERT INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
+      VALUES (${`notify:${wakeKey}`}, ${assistant.id}, ${assistant.threadId}, 'notify', 'message',
+        ${iso(yield* Clock.currentTimeMillis)})`;
+    yield* sendUserMessage({
+      assistant,
+      key: wakeKey,
+      text: text.slice(0, 4_000),
+      threadId: undefined,
+      threadTitle: null,
+      config,
+    });
+  });
+
   // Untraced: notifyUser and notifyUsageLimitAlert below are its traced boundaries.
   const deliverToUser = Effect.fnUntraced(function* (
     input: Parameters<AutonomyService["Service"]["notifyUser"]>[0],
@@ -1525,51 +1635,51 @@ const make = Effect.gen(function* () {
         `You already sent the user ${config.maxUserMessagesPerDay} messages today, the most allowed. Tell them in your reply instead; do not retry.`,
       );
     }
-    const chat = yield* Effect.gen(function* () {
-      const link = input.threadId === undefined ? null : yield* linkTo(input.threadId);
-      const withLink = (language: ResolvedChannelLanguage) =>
-        link === null ? text : `${text}\n\n${channelStrings(language).openInT3} ${link}`;
-      yield* decisions
-        .request({
-          fromThreadId: assistant.threadId as ThreadId,
-          projectId: assistant.projectId,
-          threadTitle: shell?.title ?? assistant.name,
-          clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${wakeKey}`,
-          title: assistant.name.slice(0, 120),
-          context: withLink("en").slice(0, 4_000),
-          options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
-        })
-        .pipe(
-          Effect.catchTags({
-            DecisionError: (error) => Effect.fail(autonomyError("storage", error.message)),
-          }),
-        );
-      const chat = yield* ownerChat(resolveChannels(assistant.autonomy, config));
-      if (chat !== undefined) {
-        const language = yield* channelLanguage.current;
-        yield* outbox.enqueue({
-          deliveryId: `autonomy-notify:${input.key}`,
-          destination: chat,
-          projectId: assistant.projectId as ProjectId,
-          senderName: assistant.name,
-          text: withLink(language),
-          markdown: true,
-          language,
-        });
-      }
-      return chat;
-    }).pipe(
-      // A message that never reached the queue must not count as sent, or a retry says already_sent.
-      Effect.onError(() =>
-        sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(Effect.ignore),
-      ),
-    );
+    const chat = yield* sendUserMessage({
+      assistant,
+      key: input.key,
+      text,
+      threadId: input.threadId,
+      threadTitle: shell?.title ?? null,
+      config,
+    });
     return {
       status: "sent" as const,
       channels: ["activity", ...(chat === undefined ? [] : [chat.kind])],
       remainingToday: Math.max(0, config.maxUserMessagesPerDay - count),
     };
   }, storage);
+
+  const tellUser: AutonomyService["Service"]["tellUser"] = Effect.fn("AutonomyService.tellUser")(
+    function* (input) {
+      const config = yield* settings;
+      if (input.threadId !== null) {
+        yield* decisions.request({
+          fromThreadId: input.threadId,
+          projectId: input.projectId,
+          threadTitle: "T3 Code",
+          clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${input.key}`,
+          title: input.text.slice(0, 120),
+          context: input.text.slice(0, 4_000),
+          options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+        });
+      }
+      const chat = yield* ownerChat(config.channels);
+      if (chat === undefined) return;
+      const language = yield* channelLanguage.current;
+      yield* outbox.enqueue({
+        deliveryId: `autonomy-tell:${input.key}`,
+        destination: chat,
+        senderName: "T3 Code",
+        text: input.text,
+        language,
+      });
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause((cause) => Effect.logWarning("autonomy notice failed", { cause })),
+      ),
+  );
 
   const notifyUser: AutonomyService["Service"]["notifyUser"] = Effect.fn(
     "AutonomyService.notifyUser",
@@ -1618,6 +1728,7 @@ const make = Effect.gen(function* () {
     sweep,
     notifyWaiting,
     notifyUser,
+    tellUser,
     notifyUsageLimitAlert,
     listWatches,
     upsertWatch,

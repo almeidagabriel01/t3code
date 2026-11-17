@@ -191,7 +191,7 @@ describe("serverSettings helpers", () => {
 
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
+      storageCleanup: { worktreeAfterDays: 8, worktreeMerged: "off", logsAfterDays: 30 },
     });
     expect(
       applyServerSettingsPatch(enabled, {
@@ -201,9 +201,10 @@ describe("serverSettings helpers", () => {
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeSnapshotsAfterDays: 30,
-      worktreeOnMerge: true,
       worktreeOnDelete: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "off",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,

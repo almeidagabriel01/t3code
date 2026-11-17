@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/require-searchable-settings-copy -- add-account dialog, not a Settings page */
 import { AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";

@@ -2,9 +2,14 @@ import {
   heavyHoldText,
   type HeavyCommand,
   type HeavyQueueEntry,
+  type HeavyQueueHold,
   type HeavyQueueRule,
   type HeavyQueueState,
+  type HeavyRunner,
+  type HostResourcesSnapshot,
 } from "@t3tools/contracts";
+
+import { linuxLine, runnerBadge } from "./runnerModel.ts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -122,25 +127,53 @@ interface RunningUsage {
   readonly peakMemory?: number | undefined;
 }
 
-/** "Using 1.5 cores (9%) · 2.1 GB · peak 3.0 cores · 2.4 GB"; null when nothing was sampled yet. */
+/** Tooltip on a CPU cell whose reading is unknown: the monitor could not see the job's processes. */
+export const CPU_UNAVAILABLE = "CPU reading unavailable";
+
+/**
+ * A heavy row's usage columns: null before any sample, and a null CPU share when the sample read
+ * the job's memory but not its CPU, which is unknown rather than idle.
+ */
+export function heavyRowUsage(
+  usage: RunningUsage,
+  cpuCount: number,
+): { readonly cpuPercent: number | null; readonly rssBytes: number } | null {
+  if (usage.memory === undefined) return null;
+  return {
+    cpuPercent: usage.cpu === undefined ? null : (usage.cpu / Math.max(1, cpuCount)) * 100,
+    rssBytes: usage.memory,
+  };
+}
+
+/**
+ * "Using 1.5 cores (9%) · 2.1 GB · peak 3.0 cores · 2.4 GB", or "Using 2.1 GB · CPU unavailable"
+ * when the CPU was not read; null when nothing was sampled yet.
+ */
 export function runningUsageLine(usage: RunningUsage, cpuCount: number | null): string | null {
   const parts: string[] = [];
-  if (usage.cpu !== undefined && usage.memory !== undefined) {
-    const share =
-      cpuCount === null ? "" : ` (${Math.round((usage.cpu / Math.max(1, cpuCount)) * 100)}%)`;
-    parts.push(`Using ${cores(usage.cpu)}${share} · ${gb(usage.memory)}`);
+  if (usage.memory !== undefined) {
+    if (usage.cpu === undefined) {
+      parts.push(`Using ${gb(usage.memory)} · CPU unavailable`);
+    } else {
+      const share =
+        cpuCount === null ? "" : ` (${Math.round((usage.cpu / Math.max(1, cpuCount)) * 100)}%)`;
+      parts.push(`Using ${cores(usage.cpu)}${share} · ${gb(usage.memory)}`);
+    }
   }
-  if (usage.peakCpu !== undefined && usage.peakMemory !== undefined) {
-    parts.push(`peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`);
-  }
+  const peak = peakUsage(usage);
+  if (peak !== null) parts.push(`peak ${peak}`);
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-/** "Peak 3.0 cores · 2.4 GB"; null until a peak was sampled. */
-export function peakUsageLine(usage: RunningUsage): string | null {
-  return usage.peakCpu === undefined || usage.peakMemory === undefined
+const peakUsage = (usage: RunningUsage) =>
+  usage.peakMemory === undefined
     ? null
-    : `Peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`;
+    : `${usage.peakCpu === undefined ? "" : `${cores(usage.peakCpu)} · `}${gb(usage.peakMemory)}`;
+
+/** "Peak 3.0 cores · 2.4 GB", without cores when no sample read the CPU; null until a peak was sampled. */
+export function peakUsageLine(usage: RunningUsage): string | null {
+  const peak = peakUsage(usage);
+  return peak === null ? null : `Peak ${peak}`;
 }
 
 /** One muted line of usage: a running job's current and peak, or a waiter's usual cost. Null when unknown. */
@@ -152,7 +185,7 @@ export function usageLine(
     const usual = state.estimates?.[entry.id];
     return usual === undefined
       ? null
-      : `Usually ~${cores(usual.cpu)} · ${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
+      : `Usually ~${usual.cpu === undefined ? "" : `${cores(usual.cpu)} · `}${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
   }
   return runningUsageLine(entry, state.machine?.cpuCount ?? null);
 }
@@ -161,6 +194,7 @@ export const HEAVY_COMMAND_SOURCE_LABEL: Record<HeavyCommand["source"], string> 
   queue: "Queued",
   agent: "Agent",
   terminal: "Terminal",
+  detached: "Outside agents",
 };
 
 /** Stable across samples: the queue entry, else the root process's identity. */
@@ -200,39 +234,348 @@ export function heavyItemsInProject<
 
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
 
-/**
- * One line for the Mac's side of the queue: what holds its next job, in words drawn from the same
- * reading as the numbers beside them. Linux jobs and waiters have their own line.
- */
-export function queueSummary(
-  state: Pick<
-    HeavyQueueState,
-    "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
-  >,
-): string {
-  if (!state.enabled) return QUEUE_OFF_SUMMARY;
-  const running = state.entries.filter(
-    (entry) => entry.startedAt !== null && entry.runner !== "linux",
-  ).length;
-  const head = `${running} of ${state.maxRunning} running`;
+/** One machine's side of the queue: its slots, its latest reading, and a note when it is not simply working. */
+export interface MachineSummary {
+  readonly running: number;
+  readonly slots: number;
+  /** The Mac's busy share of its CPU; null on Linux or without a reading. */
+  readonly cpuPercent: number | null;
+  /** Linux's one-minute load; null on the Mac or without a reading. */
+  readonly load: number | null;
+  readonly cpuCount: number | null;
+  readonly freeBytes: number | null;
+  /** Null while Linux has not been checked yet; the Mac is always online. */
+  readonly online: boolean | null;
+  /** The pause, what holds the next job, the queue being off, or Linux's trouble; null when healthy. */
+  readonly note: string | null;
+}
+
+type SummaryState = Pick<
+  HeavyQueueState,
+  "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
+> &
+  Partial<Pick<HeavyQueueState, "linux">>;
+
+function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
-  const reading =
-    machine === null
-      ? ""
-      : ` · CPU ${Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100)}% · ${(machine.availableMemoryBytes / 1024 ** 3).toFixed(1)} GB free`;
-  if (state.paused) return `${head} · paused${reading}`;
   const next = state.entries.find(
     (entry) => entry.startedAt === null && state.routes[entry.id] !== "linux",
   );
-  const text =
+  const holdText =
     hold === null
       ? null
       : hold === "job-memory" || hold === "job-cpu"
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
         : heavyHoldText(hold, machine, state.maxRunning);
-  if (text !== null) return `${head} · ${next === undefined ? "" : "waiting: "}${text}${reading}`;
-  // Without a reading there is nothing to back a claim about the Mac.
-  return machine === null ? head : `${head} · Mac has room${reading}`;
+  return {
+    running: state.entries.filter((entry) => entry.startedAt !== null && entry.runner !== "linux")
+      .length,
+    slots: state.maxRunning,
+    cpuPercent:
+      machine === null
+        ? null
+        : Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100),
+    load: null,
+    cpuCount: machine?.cpuCount ?? null,
+    freeBytes: machine?.availableMemoryBytes ?? null,
+    online: true,
+    note: !state.enabled
+      ? QUEUE_OFF_SUMMARY
+      : state.paused
+        ? "paused"
+        : holdText === null
+          ? null
+          : `${next === undefined ? "" : "waiting: "}${holdText}`,
+  };
+}
+
+/** Both machines' summaries; `linux` is null while the Runner is off. */
+export function machineSummaries(state: SummaryState): {
+  readonly mac: MachineSummary;
+  readonly linux: MachineSummary | null;
+} {
+  const { linux } = state;
+  return {
+    mac: macSummary(state),
+    linux:
+      linux === null || linux === undefined
+        ? null
+        : {
+            running: linux.running,
+            slots: linux.slots,
+            cpuPercent: null,
+            load: linux.load1,
+            cpuCount: linux.cpuCount,
+            freeBytes: linux.availableMemoryBytes,
+            online: linux.online,
+            note:
+              linux.online !== true
+                ? linuxLine(linux)
+                : state.enabled && state.paused
+                  ? "paused"
+                  : null,
+          },
+  };
+}
+
+/** The Mac gauge a hold is about; the rest hold the slots, so they show on those. */
+const HOLD_GAUGE: Record<HeavyQueueHold, "cpu" | "memory" | null> = {
+  paused: null,
+  exclusive: null,
+  "runs-alone": null,
+  slots: null,
+  settling: null,
+  "no-reading": null,
+  steadying: null,
+  pressure: "memory",
+  "swap-in": "memory",
+  "memory-floor": "memory",
+  "job-memory": "memory",
+  cpu: "cpu",
+  "job-cpu": "cpu",
+};
+
+/** Which Mac gauge the Mac's note warns on, or null when the note (if any) is about its slots. */
+export function macNoteGauge(
+  state: Pick<HeavyQueueState, "enabled" | "paused" | "hold">,
+): "cpu" | "memory" | null {
+  return !state.enabled || state.paused || state.hold === null ? null : HOLD_GAUGE[state.hold];
+}
+
+/** One machine's share of the heavy work, running first and then waiting in its line's order. */
+export interface MachineWork {
+  readonly running: ReadonlyArray<HeavyQueueEntry>;
+  /** Heavy commands agents and terminals run directly, which no queue entry covers. */
+  readonly direct: ReadonlyArray<HeavyCommand>;
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+}
+
+/**
+ * The queue's entries and the heavy commands feed, merged with each job listed once. The feed
+ * repeats every started entry as a `queue` command and samples apart from the queue's own pushes,
+ * so the entries alone stand for queue jobs, and a direct command on a running entry's pid is that
+ * job seen before the queue claimed it. Detached commands run outside T3 and come back apart.
+ */
+export function heavyWork(
+  state: Pick<HeavyQueueState, "entries" | "linux" | "routes">,
+  commands: ReadonlyArray<HeavyCommand>,
+): {
+  readonly mac: MachineWork;
+  readonly linux: MachineWork;
+  readonly detached: ReadonlyArray<HeavyCommand>;
+} {
+  const machineOf = (entry: HeavyQueueEntry): HeavyRunner =>
+    runnerBadge(entry, state)?.runner ?? "mac";
+  const of = (runner: HeavyRunner, started: boolean) =>
+    state.entries.filter(
+      (entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner,
+    );
+  const jobPids = new Set(
+    state.entries.flatMap((entry) =>
+      entry.startedAt !== null && entry.server !== true ? [entry.pid] : [],
+    ),
+  );
+  return {
+    mac: {
+      running: of("mac", true),
+      direct: commands.filter(
+        (command) =>
+          (command.source === "agent" || command.source === "terminal") &&
+          !jobPids.has(command.pid),
+      ),
+      waiting: of("mac", false),
+    },
+    linux: { running: of("linux", true), direct: [], waiting: of("linux", false) },
+    detached: commands.filter((command) => command.source === "detached"),
+  };
+}
+
+/** Every row of the heavy work, both machines: what its count and a project's share count. */
+export const heavyWorkItems = (work: ReturnType<typeof heavyWork>) => [
+  ...work.mac.running,
+  ...work.mac.direct,
+  ...work.mac.waiting,
+  ...work.linux.running,
+  ...work.linux.waiting,
+];
+
+/** "3.4 GB", as the queue's lines print free memory; "420 MB" below a gigabyte, never "0.0 GB". */
+export const formatFreeMemory = gb;
+
+/** One gauge of a machine: how full it is, its value, and the exact words behind it. */
+export interface MachineGauge {
+  readonly share: number | null;
+  readonly value: string;
+  /** A condition holding the queue is about this gauge; `hint` then names it. */
+  readonly warn: boolean;
+  readonly hint: string;
+}
+
+/** One machine of the machine bar. */
+export interface MachineBarRow {
+  readonly runner: HeavyRunner;
+  /** Linux's connection, null while it is being checked; always true for the Mac. */
+  readonly online: boolean | null;
+  readonly statusHint: string | null;
+  /** Both null while Linux is not online; `offline` then says so. */
+  readonly cpu: MachineGauge | null;
+  readonly memory: MachineGauge | null;
+  readonly offline: { readonly text: string; readonly hint: string } | null;
+  /** Null on the Mac while the queue is off; `queueOff` then holds its note. */
+  readonly slots: {
+    readonly running: number;
+    readonly slots: number;
+    readonly hint: string;
+  } | null;
+  readonly queueOff: string | null;
+}
+
+const NO_GAUGE = (hint: string): MachineGauge => ({ share: null, value: "--", warn: false, hint });
+const withWarning = (text: string, warning: string | null) =>
+  warning === null ? text : `${text} · ${warning}`;
+
+/**
+ * This Mac's CPU (share of the machine, in percent) and used memory, as the machine bar shows them:
+ * the queue's own sample when it has one, `host` otherwise. Null where neither has a reading.
+ */
+export function macReading(
+  state: HeavyQueueState,
+  host: HostResourcesSnapshot | null | undefined,
+): { readonly cpuPercent: number | null; readonly usedBytes: number | null } {
+  const { machine } = state;
+  const memory = machine ?? host ?? null;
+  return {
+    cpuPercent:
+      machine !== null
+        ? (machine.busyCores / Math.max(1, machine.cpuCount)) * 100
+        : host?.cpuUtilization == null
+          ? null
+          : host.cpuUtilization * 100,
+    usedBytes:
+      memory === null || memory.totalMemoryBytes <= 0
+        ? null
+        : memory.totalMemoryBytes - memory.availableMemoryBytes,
+  };
+}
+
+/**
+ * This Mac and, while the Runner reports it, Linux. The Mac reads the queue's own sample when it
+ * has one, so a warning always matches the number beside it, and `host` otherwise. Running counts
+ * come from `heavyWork`, the same split the rows use. `hostFailed` marks a host read that failed
+ * with nothing earlier to show.
+ */
+export function machineBar(
+  state: HeavyQueueState,
+  host: HostResourcesSnapshot | null | undefined,
+  hostFailed = false,
+): { readonly mac: MachineBarRow; readonly linux: MachineBarRow | null } {
+  const { machine, linux } = state;
+  const cpuPercent = macReading(state, host).cpuPercent;
+  const cpu =
+    cpuPercent === null
+      ? null
+      : {
+          percent: cpuPercent,
+          detail:
+            machine !== null
+              ? `${machine.busyCores.toFixed(1)} of ${machine.cpuCount} cores busy`
+              : `${host?.cpuCount} cores`,
+        };
+  const memory = machine ?? host ?? null;
+  const work = heavyWork(state, []);
+  const note = machineSummaries(state).mac.note;
+  const gauge = macNoteGauge(state);
+  const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
+  const cpuWarning = warning("cpu");
+  const memoryWarning = warning("memory");
+  const macRunning = work.mac.running.length;
+  const mac: MachineBarRow = {
+    runner: "mac",
+    online: true,
+    statusHint: null,
+    cpu:
+      cpu === null
+        ? NO_GAUGE(hostFailed ? "CPU reading failed" : "No CPU reading yet")
+        : {
+            share: cpu.percent / 100,
+            value: `${Math.round(cpu.percent)}%`,
+            warn: cpuWarning !== null,
+            hint: withWarning(`CPU ${Math.round(cpu.percent)}% · ${cpu.detail}`, cpuWarning),
+          },
+    memory:
+      memory === null
+        ? NO_GAUGE(hostFailed ? "Memory reading failed" : "No memory reading yet")
+        : {
+            share:
+              memory.totalMemoryBytes <= 0
+                ? null
+                : 1 - memory.availableMemoryBytes / memory.totalMemoryBytes,
+            value: gb(memory.availableMemoryBytes),
+            warn: memoryWarning !== null,
+            hint: withWarning(
+              `${gb(memory.availableMemoryBytes)} free of ${gb(memory.totalMemoryBytes)}`,
+              memoryWarning,
+            ),
+          },
+    offline: null,
+    slots: state.enabled
+      ? {
+          running: macRunning,
+          slots: state.maxRunning,
+          hint: withWarning(
+            `${macRunning} of ${state.maxRunning} running on this Mac`,
+            gauge === null ? note : null,
+          ),
+        }
+      : null,
+    queueOff: state.enabled ? null : (note ?? ""),
+  };
+  if (linux === null) return { mac, linux: null };
+  const linuxRunning = work.linux.running.length;
+  const live = linux.online === true;
+  const cores = linux.cpuCount;
+  return {
+    mac,
+    linux: {
+      runner: "linux",
+      online: linux.online,
+      statusHint: live ? `${linux.host} · online` : linuxLine(linux),
+      cpu: !live
+        ? null
+        : linux.load1 === null || cores === null
+          ? NO_GAUGE(
+              linux.load1 === null ? "No load reading yet" : `Load ${linux.load1.toFixed(1)}`,
+            )
+          : {
+              share: linux.load1 / Math.max(1, cores),
+              value: `${Math.round((linux.load1 / Math.max(1, cores)) * 100)}%`,
+              warn: false,
+              hint: `Load ${linux.load1.toFixed(1)} on ${cores} cores`,
+            },
+      memory: !live
+        ? null
+        : linux.availableMemoryBytes === null
+          ? NO_GAUGE("No memory reading yet")
+          : {
+              share:
+                linux.totalMemoryBytes === null || linux.totalMemoryBytes <= 0
+                  ? null
+                  : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
+              value: gb(linux.availableMemoryBytes),
+              warn: false,
+              hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
+            },
+      offline: live
+        ? null
+        : { text: linux.online === false ? "Offline" : "Checking…", hint: linuxLine(linux) },
+      slots: {
+        running: linuxRunning,
+        slots: linux.slots,
+        hint: `${linuxRunning} of ${linux.slots} running on Linux${state.enabled && state.paused ? " · paused" : ""}`,
+      },
+      queueOff: null,
+    },
+  };
 }
 
 export function ordinal(n: number): string {

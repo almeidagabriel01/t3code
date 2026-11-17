@@ -1,10 +1,11 @@
+import { createAssistantGroupFileStore } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import {
   discardStandaloneAttachment,
@@ -35,34 +36,46 @@ function toChatAttachment(file: File, uploaded: { attachmentId: string; mimeType
   } as ChatAttachment;
 }
 
+const files = createAssistantGroupFileStore<GroupAttachmentItem>();
+
+/** For tests: each starts with no files. */
+export const clearGroupAttachments = () => files.clear();
+
 /**
  * Files the user attaches to one group message. Each uploads on its own as soon as it is added, so
  * one that fails keeps its chip (retry or remove) and never costs the others.
  */
 export function useGroupAttachments(
+  /** The group's composer: its files outlive this mount. */
+  group: string,
   environmentId: EnvironmentId,
   disabled: boolean,
   /** Files another message took: this composer neither shows nor sends them. */
   held: ReadonlySet<string>,
+  /** Files any message on its way or refused took: leaving the chat keeps them for its resend. */
+  pending: ReadonlySet<string>,
 ) {
-  const [all, setItems] = useState<ReadonlyArray<GroupAttachmentItem>>([]);
+  const all = useSyncExternalStore(files.subscribe, () => files.get(group));
+  const setItems = (
+    change: (list: ReadonlyArray<GroupAttachmentItem>) => ReadonlyArray<GroupAttachmentItem>,
+  ) => files.update(group, change);
   const items = all.filter((item) => !held.has(item.id));
-  const latest = useRef(all);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the unmount cleanup below reads the list as of the last commit
+  const latestPending = useRef(pending);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the unmount cleanup below reads the pending files as of the last commit
   useEffect(() => {
-    latest.current = all;
+    latestPending.current = pending;
   });
 
   // Leaving the chat drops what was never sent; the object URLs and pending uploads are ours.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases object URLs and pending uploads on unmount
   useEffect(
     () => () => {
-      for (const item of latest.current) {
+      for (const item of files.leave(group, latestPending.current)) {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
         if (item.attachment) discardStandaloneAttachment(environmentId, item.attachment.id);
       }
     },
-    [environmentId],
+    [group, environmentId],
   );
 
   const update = (id: string, change: Partial<GroupAttachmentItem>) =>
@@ -115,9 +128,9 @@ export function useGroupAttachments(
     void run(reset);
   };
 
-  /** After a send the server holds its own copies, so the ones it took can go. */
+  /** After a send the server holds its own copies, so the ones it took can go, even after leaving. */
   const clear = (ids: ReadonlyArray<string>) => {
-    for (const item of all) if (ids.includes(item.id)) release(item, true);
+    for (const item of files.get(group)) if (ids.includes(item.id)) release(item, true);
     setItems((list) => list.filter((item) => !ids.includes(item.id)));
   };
 

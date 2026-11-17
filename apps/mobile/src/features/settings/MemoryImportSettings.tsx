@@ -32,6 +32,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { nativeMemoryImportOutcomes } from "./SettingsMemoryRouteScreen.logic";
 import type { MemoryScreenParams } from "./SettingsMemoryRouteScreen.logic";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { MEMORY_COPY } from "./memoryCopy";
 
 type Discovery = Extract<MemoryImportProviderResult, { action: "discover" }>;
 type Preview = Extract<MemoryImportProviderResult, { action: "preview" }>;
@@ -268,10 +269,7 @@ export function MemoryImportSettings({
     error;
   return (
     <>
-      <SettingsSection
-        title="Import memories"
-        footer="Import from Codex or Claude. Other providers are not supported."
-      >
+      <SettingsSection title={MEMORY_COPY.import.title} footer={MEMORY_COPY.import.footer}>
         <Copy>
           Imports into{" "}
           {savedConnectionsById[params.environmentId]?.environmentLabel ??
@@ -323,7 +321,7 @@ export function MemoryImportSettings({
         ) : null}
       </SettingsSection>
       {sources && sources.sources.length > 0 ? (
-        <SettingsSection title="Project to import from">
+        <SettingsSection title={MEMORY_COPY.import.source}>
           {(preview && !choosingSource
             ? sources.sources.filter((source) => source.sourceId === preview.sourceId)
             : sources.sources
@@ -409,7 +407,7 @@ export function MemoryImportSettings({
         )
       ) : null}
       {hasStatus ? (
-        <SettingsSection title="Import result">
+        <SettingsSection title={MEMORY_COPY.import.result}>
           {state.phase === "recovery" ? (
             <Copy>Check the saved import result before continuing.</Copy>
           ) : null}

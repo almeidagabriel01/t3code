@@ -29,7 +29,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -114,14 +115,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       serverScoped
       settingKeys={["defaultModelSelection"]}
       mixed={mixedModel}
-      id="default-model"
-      title="Model"
+      {...searchableSetting("default-model")}
       description={
         isProjectScope
-          ? "Model for new threads in this project."
+          ? PROVIDER_SETTINGS_COPY.projectModel
           : !unavailable && modelSource !== "project" && automaticModel
-            ? "Default model for new threads, selected automatically. Projects can override it."
-            : "Default model for new threads. Projects can override it."
+            ? PROVIDER_SETTINGS_COPY.automaticModel
+            : settingCopy("default-model").description
       }
       status={
         mixedModel
@@ -187,11 +187,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["defaultThreadEnvMode"]}
       mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
-      title="Workspace"
+      title={settingCopy("default-workspace").title}
       description={
         isProjectScope
-          ? "Where new threads in this project start."
-          : "Where new threads start. Projects and their t3.json can override it."
+          ? PROVIDER_SETTINGS_COPY.projectWorkspace
+          : settingCopy("default-workspace").description
       }
       resetAction={
         !isProjectScope && settings.defaultThreadEnvMode !== null ? (
@@ -285,7 +285,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
-      title={category === "source-control" ? "Repositories" : "New threads"}
+      title={
+        category === "source-control"
+          ? settingCopy("source-control-repositories").title
+          : settingCopy("new-threads").title
+      }
     >
       {category === "project" ? (
         <>
@@ -308,8 +312,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("default-permissions")}
             description={
               isProjectScope
-                ? "Permissions for new threads in this project."
-                : "Default permissions for new threads. Projects can override them."
+                ? PROVIDER_SETTINGS_COPY.projectPermissions
+                : settingCopy("default-permissions").description
             }
             resetAction={
               settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
@@ -381,12 +385,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             serverScoped
             settingKeys={["defaultAutoPull"]}
             mixed={mixedAutoPull}
-            id="automatic-pull"
-            title="Automatically pull"
+            {...searchableSetting("automatic-pull")}
             description={
               isProjectScope
-                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+                ? PROVIDER_SETTINGS_COPY.projectAutomaticPull
+                : settingCopy("automatic-pull").description
             }
             resetAction={
               settings.defaultAutoPull ? (
@@ -411,7 +414,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["removeAgentCreditsOnMerge"]}
             mixed={mixedAgentCredits}
             {...searchableSetting("remove-agent-credits-on-merge")}
-            description="Remove recognized agent credit lines from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
             resetAction={
               settings.removeAgentCreditsOnMerge ? (
                 <SettingResetButton
@@ -439,8 +441,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("pull-request-merge-method")}
             description={
               isProjectScope
-                ? "Pull requests in this project start with this method."
-                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+                ? PROVIDER_SETTINGS_COPY.projectMergeMethod
+                : settingCopy("pull-request-merge-method").description
             }
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
@@ -505,8 +507,8 @@ export function WorktreeSubmodulesRow() {
       {...searchableSetting("worktree-submodules")}
       description={
         isProjectScope
-          ? "How new worktrees in this project populate git submodules."
-          : "How new worktrees populate git submodules. Projects and their t3.json can override it."
+          ? PROVIDER_SETTINGS_COPY.projectSubmodules
+          : settingCopy("worktree-submodules").description
       }
       resetAction={
         !isProjectScope && settings.worktreeSubmodules !== null ? (

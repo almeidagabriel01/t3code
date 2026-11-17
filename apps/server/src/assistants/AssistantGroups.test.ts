@@ -54,6 +54,7 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as Gate from "./AssistantGroupGate.ts";
 import * as Directory from "./AssistantDirectory.ts";
 import * as Groups from "./AssistantGroups.ts";
+import * as Tasks from "./AssistantTasks.ts";
 import {
   groupThreadId,
   HANDOFF_PAUSES,
@@ -177,6 +178,16 @@ const harness = (options: Options = {}) => {
     createdBy: string;
   }> = [];
   const deletedTeams: string[] = [];
+  /** Each thread's shell as the engine reads it; a thread with none reads as never run. */
+  const shells = new Map<
+    string,
+    {
+      status: string;
+      activityRunStatus: string | null;
+      pendingRuntimeRequest: null;
+      pendingBackgroundTasks: ReadonlyArray<{ taskId: string; kind: string; awaited?: boolean }>;
+    }
+  >();
   /** What the projection answers for a runtime request, by id. */
   const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
@@ -214,14 +225,19 @@ const harness = (options: Options = {}) => {
   const mocks = Layer.mergeAll(
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.empty,
-      // A thread no fake knows is another environment's: it cannot be read.
+      // A shell a test set wins; a thread no fake knows is another environment's: unreadable.
       getThreadShell: ((threadId: string) => {
+        const shell = shells.get(threadId);
+        if (shell !== undefined) return Effect.succeed(shell);
         const thread = fakeThreads.get(threadId);
         if (thread === undefined) return Effect.fail(new Boom());
         return Effect.succeed(
           thread.deletedAt === null
             ? {
                 title: thread.title,
+                status: "idle",
+                activityRunStatus: null,
+                pendingRuntimeRequest: null,
                 archivedAt: thread.archivedAt,
                 pendingBackgroundTasks: background.get(threadId) ?? [],
                 settledOverride: settled.has(threadId) ? "settled" : null,
@@ -303,9 +319,16 @@ const harness = (options: Options = {}) => {
         })) as never,
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadRecords: ((threadId: string) => {
+      // A message the test names `user:…` is the user's own; any other is the agent's.
+      getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const thread = fakeThreads.get(threadId);
-        return thread === undefined ? Effect.fail(new Boom()) : Effect.succeed({ thread });
+        const messages = ((filter?.messageIds ?? []) as ReadonlyArray<string>).map((id) => ({
+          id,
+          createdBy: id.startsWith("user:") ? "user" : "agent",
+        }));
+        return thread === undefined
+          ? Effect.fail(new Boom())
+          : Effect.succeed({ thread, messages });
       }) as never,
       // Like the Orchestrator: a thread with a live run refuses to settle.
       settleThread: ((input: { threadId: string; commandId: string }) => {
@@ -409,6 +432,7 @@ const harness = (options: Options = {}) => {
     }),
     Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
     Directory.layer,
+    Tasks.layer,
     Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
@@ -571,7 +595,7 @@ const harness = (options: Options = {}) => {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
         INSERT INTO assistant_tasks
-          (thread_id, assistant_id, project_id, title, created_at, launched_from_thread_id)
+          (thread_id, assistant_id, project_id, title, created_at, source_thread_id)
         VALUES (${threadId}, 'ada', 'p1', ${`Brief ${threadId}`}, ${createdAt}, ${from})`;
       addThread(threadId, "p1", selection(codex), `Work ${threadId}`);
       runs.set(threadId, [
@@ -602,6 +626,7 @@ const harness = (options: Options = {}) => {
     dispatched,
     launched,
     fakeThreads,
+    shells,
     runs,
     limits,
     answers,
@@ -4162,6 +4187,17 @@ it.effect("a queued run that has not started is cancelled instead of interrupted
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("cancelling a paused task republishes the team, whose counters it changes", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const root = yield* seedTask("paused");
+    h.refreshed.length = 0;
+    yield* groups.taskAction({ taskId: root as never, action: "cancel" });
+    assert.include(h.refreshed, TEAM);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("cancel ends every open task of the request", () => {
   const h = harness();
   return Effect.gen(function* () {
@@ -4864,11 +4900,15 @@ it.effect(
         (message_id, team_id, seq, author, kind, text, created_at)
         VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', ${`m${n}`}, '2026-01-01')`;
       }
+      yield* sql`UPDATE assistant_group_messages SET client_request_id = 'c1' WHERE message_id = 'gm:1'`;
       const pull = yield* Stream.toPull(groups.subscribe(TEAM));
       // The first chunk is the snapshot, which means the subscription is live for what follows.
       const [snapshot] = yield* pull;
       yield* groups.post({ teamId: OTHER_TEAM, text: "@ada elsewhere" }, h.user);
-      const posted = yield* groups.post({ teamId: TEAM, text: "@ada here" }, h.user);
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada here", clientRequestId: "c-here" },
+        h.user,
+      );
       const [message, task] = yield* pull;
       assert.equal(snapshot!.type, "snapshot");
       if (snapshot!.type === "snapshot") {
@@ -4877,10 +4917,24 @@ it.effect(
         assert.isTrue(snapshot.hasMore);
       }
       assert.equal(message!.type === "message" ? message.message.id : "", posted.message.id);
+      // The client's id comes back with its post, so a client whose reply was lost sees it landed.
+      assert.deepEqual(
+        [
+          posted.message.clientRequestId,
+          message!.type === "message" && message.message.clientRequestId,
+        ],
+        ["c-here", "c-here"],
+      );
       assert.equal(task?.type === "task" ? task.task.teamId : "", TEAM);
 
       const older = yield* groups.history({ teamId: TEAM, beforeSeq: 6 });
       assert.deepEqual([older.messages.length, older.hasMore], [5, false]);
+      assert.deepEqual(
+        older.messages
+          .slice(0, 2)
+          .map((entry) => "clientRequestId" in entry && entry.clientRequestId),
+        ["c1", false],
+      );
       assert.equal(
         (yield* groups.history({ teamId: AssistantTeamId.make("nope") }).pipe(Effect.flip)).reason,
         "not_found",
@@ -5190,6 +5244,36 @@ it.effect("a file that cannot be copied for the member leaves the others in the 
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "a resend under its id returns the post its files went with, and a gone upload is refused by name",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const dir = yield* storeUploads;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const input = {
+        teamId: TEAM,
+        text: "@ada look",
+        attachments: [imageUpload],
+        clientRequestId: "req-files",
+      };
+      const first = yield* groups.post(input, h.user);
+      // Its upload is gone, as after the 24h sweep: the id still finds the post it went with.
+      yield* fileSystem.remove(
+        resolveAttachmentPath({ attachmentsDir: dir, attachment: imageUpload })!,
+      );
+      const again = yield* groups.post(input, h.user);
+      const gone = yield* refusalError(
+        groups.post({ ...input, clientRequestId: "req-other" }, h.user),
+      );
+      assert.equal(again.message.id, first.message.id);
+      assert.include(gone.message, "Attachment 'shot.png' cannot be sent:");
+      assert.lengthOf(yield* h.messages, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("deleting a group removes the files its messages kept", () => {
   const h = harness();
@@ -6327,8 +6411,45 @@ it.effect(
       yield* h.finish(0, "completed", "Ada's part");
       // Beto still works on it: nothing settles yet.
       assert.deepEqual(commands("thread.settle"), []);
+      // Delivered is not finished: Ada's subagent and the thread Beto launched still run.
+      const working = { activityRunStatus: null, pendingRuntimeRequest: null } as const;
+      h.shells.set(ada, {
+        ...working,
+        status: "idle",
+        pendingBackgroundTasks: [{ taskId: "sub", kind: "subagent" }],
+      });
+      const launched = ThreadId.make("thread:launched");
+      yield* (yield* Tasks.AssistantTasks).link({
+        threadId: launched,
+        assistantId: "beto" as AssistantId,
+        projectId: p1,
+        title: "Build it",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceThreadId: ThreadId.make(beto),
+      });
+      h.shells.set(launched, { ...working, status: "running", pendingBackgroundTasks: [] });
       yield* h.finish(1, "completed", "Beto's part");
-      assert.deepEqual(commands("thread.settle"), [ada, beto]);
+      assert.deepEqual(commands("thread.settle"), []);
+      // The launched thread's own run end settles Beto: the owner's wake goes to his direct
+      // conversation, not this one. A pull request watch left behind holds nothing.
+      h.shells.set(launched, {
+        ...working,
+        status: "idle",
+        pendingBackgroundTasks: [
+          { taskId: "pull-request-watch:x", kind: "monitor", awaited: true },
+        ],
+      });
+      const runEnd = (threadId: string, userMessageId: string) =>
+        groups.handleRunEvent({
+          type: "run.updated",
+          payload: { id: `run:${userMessageId}`, threadId, userMessageId, status: "completed" },
+        } as never as OrchestrationV2DomainEvent);
+      yield* runEnd(launched, "launched-message");
+      assert.deepEqual(commands("thread.settle"), [beto]);
+      // Ada's subagent ends in a wake run of her own conversation, which settles her.
+      h.shells.delete(ada);
+      yield* runEnd(ada, "subagent-wake");
+      assert.deepEqual(commands("thread.settle"), [beto, ada]);
       assert.equal(h.fakeThreads.get(beto)!.settledOverride, "settled");
       // Settling again is a no-op: settled threads are skipped.
       const before = commands("thread.settle").length;
@@ -6343,7 +6464,7 @@ it.effect(
       assert.deepEqual(commands("thread.unsettle"), [ada, beto]);
       assert.isNull(h.fakeThreads.get(beto)!.settledOverride);
       yield* h.finish(2, "completed", "Done too");
-      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto]);
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto]);
       const answer = (yield* h.messages).findLast((row) => row.assistant_id === "ada")!;
       yield* groups.post(
         { teamId: TEAM, text: "continue", replyToMessageId: answer.message_id as never },
@@ -6389,7 +6510,70 @@ it.effect(
       yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
         WHERE task_id = ${paused.tasks[0]!.id}`;
       yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
-      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      const betoThread = requestThreadId("beto", TEAM, paused.message.id);
+      assert.include(settled(), betoThread);
+
+      // Only a held conversation settles on a later run end: a user's turn in a closed request,
+      // or a background wake in one marked active, leaves the thread as it is.
+      const laterRunEnd = (threadId: string) =>
+        groups.handleRunEvent({
+          type: "run.updated",
+          payload: {
+            id: `run:later:${threadId}`,
+            threadId,
+            userMessageId: "later",
+            status: "completed",
+          },
+        } as never as OrchestrationV2DomainEvent);
+      const before = settled().length;
+      h.fakeThreads.get(cyThread)!.settledOverride = null;
+      yield* laterRunEnd(cyThread);
+      assert.isNull(h.fakeThreads.get(cyThread)!.settledOverride);
+      h.fakeThreads.get(betoThread)!.settledOverride = "active" as never;
+      yield* laterRunEnd(betoThread);
+      assert.equal(h.fakeThreads.get(betoThread)!.settledOverride, "active");
+      assert.lengthOf(settled(), before);
+
+      // A conversation held by a thread it launched: the user writing in it brings it back, so the
+      // end of that turn leaves it active though the launched work is done by then.
+      const fourth = yield* groups.post({ teamId: TEAM, text: "@ada four" }, h.user);
+      const adaThread = requestThreadId("ada", TEAM, fourth.message.id);
+      const launched = ThreadId.make("thread:held");
+      yield* (yield* Tasks.AssistantTasks).link({
+        threadId: launched,
+        assistantId: "ada" as AssistantId,
+        projectId: p1,
+        title: "Held",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceThreadId: ThreadId.make(adaThread),
+      });
+      h.shells.set(launched, {
+        status: "running",
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [],
+      });
+      yield* h.finish(
+        h.sent.findIndex((send) => send.threadId === adaThread),
+        "completed",
+        "On it",
+      );
+      assert.notInclude(settled(), adaThread);
+      const userTurn = (type: "run.created" | "run.updated", status: string) =>
+        groups.handleRunEvent({
+          type,
+          payload: {
+            id: "run:user:direct",
+            threadId: adaThread,
+            userMessageId: "user:direct",
+            status,
+          },
+        } as never as OrchestrationV2DomainEvent);
+      yield* userTurn("run.created", "queued");
+      h.shells.delete(launched);
+      yield* userTurn("run.updated", "completed");
+      assert.notInclude(settled(), adaThread);
+      assert.isNull(h.fakeThreads.get(adaThread)!.settledOverride);
     }).pipe(Effect.provide(h.layer));
   },
 );

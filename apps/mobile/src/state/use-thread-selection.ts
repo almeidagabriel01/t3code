@@ -33,6 +33,7 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnection,
 } from "./use-remote-environment-registry";
+import { sideChatNotCreatedYet, startingSideChatsAtom } from "./starting-side-chats";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 type ThreadSelectionRouteParams = {
   readonly environmentId?: string | string[];
@@ -146,11 +147,15 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
+  const startingSideChats = useAtomValue(startingSideChatsAtom);
   const { pendingCreation, detailRef: selectedThreadDetailRef } = selectThreadCreationDetail({
     threadRef: selectedThreadRef,
     threadKey: selectedThreadKey,
     queuedMessagesByThreadKey,
     outcomes: creationOutcome,
+    startingSideChat:
+      selectedThreadRef !== null &&
+      sideChatNotCreatedYet(startingSideChats[selectedThreadRef.threadId]),
   });
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
   const needsDetail =

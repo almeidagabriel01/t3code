@@ -176,8 +176,11 @@ export interface Preferences {
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly homeAssistantsCollapsed?: boolean;
-  readonly homeAgentsDoneExpanded?: boolean;
   readonly homeAssistantsShowAll?: boolean;
+  /** `env:assistantId` of assistants whose task and subagent rows are folded on Home. */
+  readonly homeAssistantsFolded?: ReadonlyArray<string>;
+  /** Fold keys of the assistant groups left open on Home. */
+  readonly homeAssistantsExpandedGroups?: ReadonlyArray<string>;
   readonly kanbanPanel?: KanbanPanelPreferences;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
@@ -268,8 +271,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
     homeAssistantsCollapsed?: boolean;
-    homeAgentsDoneExpanded?: boolean;
     homeAssistantsShowAll?: boolean;
+    homeAssistantsFolded?: ReadonlyArray<string>;
+    homeAssistantsExpandedGroups?: ReadonlyArray<string>;
     kanbanPanel?: KanbanPanelPreferences;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
@@ -407,6 +411,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
   }
+  if (Array.isArray(parsed.homeAssistantsExpandedGroups)) {
+    preferences.homeAssistantsExpandedGroups = parsed.homeAssistantsExpandedGroups.filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
   if (
     parsed.usageResetDisplay === "day" ||
     parsed.usageResetDisplay === "countdown" ||
@@ -437,12 +446,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
     preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
   }
-  for (const key of [
-    "homeAssistantsCollapsed",
-    "homeAgentsDoneExpanded",
-    "homeAssistantsShowAll",
-  ] as const) {
+  for (const key of ["homeAssistantsCollapsed", "homeAssistantsShowAll"] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
+  if (Array.isArray(parsed.homeAssistantsFolded)) {
+    preferences.homeAssistantsFolded = parsed.homeAssistantsFolded.filter(
+      (key): key is string => typeof key === "string",
+    );
   }
   if (isRecord(parsed.assistantGroupTabs)) {
     preferences.assistantGroupTabs = Object.fromEntries(

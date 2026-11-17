@@ -1,11 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  assistantFace,
-  assistantGroupOwnerKey,
-  assistantGroupThreadsOf,
-  assistantPresence,
-  assistantQueuedLabel,
-} from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
   assistantSections,
@@ -26,15 +19,14 @@ import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
-import { cn } from "../../lib/utils";
 import {
   type AssistantEntry,
   type AssistantTeamEntry,
   useAssistantEntries,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
-import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { cn } from "../../lib/utils";
+import { useProjects } from "../../state/entities";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
@@ -43,19 +35,19 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
-import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import {
+  AssistantAttentionStatus,
+  AssistantAvatar,
+  assistantStatusText,
+  MOOD_TEXT,
+} from "./assistantPresentation";
+import { AssistantIntegrationChips } from "./AssistantIntegrationsField";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
-import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
-
-const MOOD_TEXT = {
-  idle: "text-muted-foreground",
-  working: "text-info-foreground",
-  needs: "text-warning-foreground",
-  limited: "text-warning-foreground",
-  failed: "text-destructive-foreground",
-} as const;
+import { useAssistantAttention, useGroupAttention } from "./useAssistantAttention";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -66,17 +58,9 @@ function AssistantCard(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const archived = assistant.archivedAt !== null;
-  const threadRef =
-    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
-  const thread = useThreadShell(threadRef);
-  const shells = useQuietThreadShells();
-  const limitLabel = useUsageLimitLabel();
-  const presence = assistantPresence(
-    thread,
-    assistantGroupThreadsOf(shells, props.entry.environmentId, props.entry.assistant.id),
-    limitLabel,
-  );
-  const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, props.nowMs);
+  const taskSections = useAssistantTaskSections(props.entry);
+  const { attention } = useAssistantAttention(props.entry);
+  const presence = useAssistantStatus().of(environmentId, assistant, useUsageLimitLabel());
   return (
     <article
       data-testid="assistant-card"
@@ -92,27 +76,40 @@ function AssistantCard(props: {
           className="size-12"
         />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex min-w-0 items-center gap-2">
-            <h3 className="min-w-0 truncate text-sm font-medium">{assistant.name}</h3>
-            {assistant.role === "" ? null : (
-              <Badge variant="info" size="sm">
-                {assistant.role}
-              </Badge>
+          <div className="flex min-w-0 items-start gap-2">
+            <h3 className="line-clamp-2 min-w-0 flex-1 text-sm font-medium break-words">
+              {assistant.name}
+            </h3>
+            {archived || attention === null ? null : (
+              <AssistantAttentionStatus attention={attention} />
             )}
           </div>
+          {assistant.role === "" ? null : (
+            <p
+              data-testid="assistant-card-role"
+              className="line-clamp-2 text-xs break-words text-foreground/80"
+            >
+              {assistant.role}
+            </p>
+          )}
           <p className="truncate text-xs text-muted-foreground">{props.projectLabel}</p>
           {archived ? (
             <p className="truncate text-xs text-muted-foreground">Archived</p>
           ) : (
             <p className={cn("truncate text-xs", MOOD_TEXT[presence.mood])}>
-              {[presence.detail, since, assistantQueuedLabel(presence.queued)]
-                .filter((part) => part !== "" && part !== null)
-                .join(" · ")}
+              {assistantStatusText(presence, props.nowMs)}
             </p>
           )}
         </div>
       </div>
-      {archived ? null : <AssistantTaskRows entry={props.entry} onOpen={flows.openThread} roomy />}
+      {archived ? null : (
+        <AssistantTaskRows
+          entry={props.entry}
+          sections={taskSections}
+          onOpen={flows.openThread}
+          roomy
+        />
+      )}
       {props.groupNames.length === 0 ? null : (
         <ul aria-label="Groups" className="flex flex-wrap gap-1">
           {props.groupNames.map((name) => (
@@ -123,6 +120,12 @@ function AssistantCard(props: {
             </li>
           ))}
         </ul>
+      )}
+      {archived ? null : (
+        <AssistantIntegrationChips
+          environmentId={environmentId}
+          selection={assistant.integrations}
+        />
       )}
       <div className="flex flex-wrap items-center gap-1.5">
         {archived ? (
@@ -211,19 +214,21 @@ function ArchivedGroupCard(props: { readonly entry: AssistantTeamEntry }) {
 function Section(props: {
   readonly title: string;
   readonly count?: number;
+  readonly status?: ReactNode;
   readonly actions?: ReactNode;
   readonly empty?: string;
   readonly children: ReactNode;
 }) {
   return (
     <section aria-label={props.title} className="flex min-w-0 flex-col gap-2">
-      <div className="flex min-h-7 items-center gap-2">
+      <div className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1">
         <h2 className="min-w-0 truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           {props.title}
         </h2>
         {props.count === undefined ? null : (
           <span className="text-xs text-muted-foreground tabular-nums">{props.count}</span>
         )}
+        {props.status}
         <span className="ms-auto flex items-center gap-1">{props.actions}</span>
       </div>
       {props.empty === undefined ? (
@@ -242,31 +247,32 @@ export function AssistantsPage() {
   const { active, archived, teams, activeTeams, archivedTeams } = useAssistantEntries();
   const environmentIds = useAssistantsEnvironmentIds();
   const projects = useProjects();
-  const shells = useQuietThreadShells();
+  const groupAttention = useGroupAttention();
+  const status = useAssistantStatus();
   const nowMs = useNowMinuteMs();
   const navigate = useNavigate();
 
-  const keyByThread = new Map(
-    active.flatMap((entry) =>
-      entry.assistant.threadId === null
-        ? []
-        : [
-            [
-              scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId)),
-              assistantEntryKey(entry),
-            ] as const,
-          ],
-    ),
+  const needsKeys = new Set(
+    active
+      .filter((entry) => status.of(entry.environmentId, entry.assistant).mood === "needs")
+      .map(assistantEntryKey),
   );
-  const needsKeys = new Set<string>();
-  for (const shell of shells) {
-    const key =
-      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
-      assistantGroupOwnerKey(shell);
-    if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
-  }
   const sections = assistantSections({ assistants: active, teams: activeTeams, needsKeys });
 
+  // Every member counts, also one listed under "Needs you" instead of its group.
+  const groupStatus = (entry: AssistantTeamEntry) => {
+    const attention = groupAttention(
+      entry,
+      active.filter(
+        (member) =>
+          member.environmentId === entry.environmentId &&
+          entry.team.memberIds.includes(member.assistant.id),
+      ),
+    );
+    return attention === null ? null : (
+      <AssistantAttentionStatus attention={attention} testId="group-status" />
+    );
+  };
   const projectName = (environmentId: string, projectId: string) =>
     projects.find((project) => project.environmentId === environmentId && project.id === projectId)
       ?.title ?? "Project";
@@ -365,6 +371,7 @@ export function AssistantsPage() {
                 key={`${entry.environmentId}:${entry.team.id}`}
                 title={entry.team.name}
                 count={members.length}
+                status={groupStatus(entry)}
                 {...(members.length === 0 ? { empty: "No members yet." } : {})}
                 actions={
                   <>

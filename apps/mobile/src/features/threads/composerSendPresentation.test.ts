@@ -18,6 +18,15 @@ describe("resolveComposerSendPresentation", () => {
     expect(resolveComposerSendPresentation(idle).icon).toBe("arrow.up");
   });
 
+  it("shows a /side draft as a side chat send, even while a turn runs", () => {
+    for (const state of [idle, { ...idle, running: true, canSteer: true }]) {
+      const presentation = resolveComposerSendPresentation({ ...state, sendsToSideChat: true });
+      expect(presentation.label).toBe("Send to side chat");
+      expect(presentation.icon).toBe("bubble.left.and.bubble.right");
+      expect(presentation.offersFollowUpChoice).toBe(false);
+    }
+  });
+
   it("never promises steering the provider cannot do", () => {
     const presentation = resolveComposerSendPresentation({
       ...idle,

@@ -3,6 +3,7 @@ import {
   isOverdue,
   kanbanColor,
   KANBAN_PRIORITY_LABELS,
+  problemBadge,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import type { KanbanCard } from "@t3tools/contracts";
@@ -43,11 +44,14 @@ export function KanbanCardTile(props: {
   );
   const progress = checklistProgress(card.checklist);
   const overdue = isOverdue(card, props.now);
+  const badge = problemBadge(card.problem);
   return (
     <View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`#${card.number} ${card.title}`}
+        accessibilityLabel={[`#${card.number} ${card.title}`, badge?.iconLabel, badge?.text]
+          .filter(Boolean)
+          .join(", ")}
         onPress={props.onPress}
         onLongPress={props.onLongPress}
         className="gap-2 rounded-2xl border border-border bg-card p-3 active:opacity-70"
@@ -71,6 +75,24 @@ export function KanbanCardTile(props: {
               <Text textRole="caption" className="text-foreground-muted">
                 Blocked
               </Text>
+            ) : null}
+            {badge ? (
+              <View
+                testID="kanban-problem-badge"
+                className="flex-row items-center gap-1 rounded-full bg-subtle px-1.5 py-0.5"
+              >
+                <SymbolView
+                  name={badge.ignored ? "bell.slash" : "exclamationmark.triangle"}
+                  size={12}
+                  tintColorClassName="accent-icon-muted"
+                  accessibilityLabel={badge.iconLabel ?? undefined}
+                />
+                {badge.text ? (
+                  <Text textRole="caption" className="text-foreground-muted">
+                    {badge.text}
+                  </Text>
+                ) : null}
+              </View>
             ) : null}
             {card.priority !== "none" ? (
               <Text

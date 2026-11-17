@@ -31,8 +31,7 @@ export const WAIT_WAKE_PREFIX = "assistant-task-waits:";
 export const waitWakeId = (targetThreadId: ThreadId, key: string) =>
   `${WAIT_WAKE_PREFIX}${targetThreadId}:${key}`;
 
-/** Kinds T3 answers itself; every other pending request waits on the user. */
-export const MACHINE_REQUEST_KINDS = ["dynamic_tool_call", "auth_refresh"] as const;
+export { MACHINE_REQUEST_KINDS } from "@t3tools/shared/needsUser";
 
 /** A user-input option id points back at the option by position: `option:<index>`. */
 const OPTION_PREFIX = "option:";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
+import { ComposerContextId, GuestMessageId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -198,6 +198,41 @@ describe("resolveUserMessagePresentation", () => {
         },
       }),
     ).toEqual({ text: "Why?", attribution: "guest", scheduledTaskId: undefined, guestName: "Sam" });
+  });
+
+  it("shows a teammate's words, not the envelope the agent reads", () => {
+    const text =
+      '<t3_reply from="Ada" handle="ada" threadId="assistant:ada:1" replyTo="m">\nA teammate answered.\n</t3_reply>\nStatus: done\nShipped.';
+    const teammate = {
+      entries: [
+        {
+          kind: "reply" as const,
+          name: "Ada",
+          handle: "ada",
+          threadId: ThreadId.make("assistant:ada:1"),
+          requestId: "m",
+          files: [],
+          bodyStart: text.indexOf("Status: done"),
+          bodyEnd: text.length,
+        },
+      ],
+    };
+    for (const creationSource of ["mcp", "server"] as const) {
+      expect(
+        resolveUserMessagePresentation({
+          role: "user",
+          createdBy: "agent",
+          creationSource,
+          senderThreadId: "assistant:ada:1",
+          text,
+          context: { teammate },
+        }),
+      ).toMatchObject({
+        text: "Shipped.",
+        attribution: creationSource === "mcp" ? "agent" : "t3code",
+        teammate: [{ name: "Ada", status: "done", text: "Shipped." }],
+      });
+    }
   });
 
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {

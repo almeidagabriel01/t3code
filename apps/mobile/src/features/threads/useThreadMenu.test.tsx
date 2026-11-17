@@ -105,6 +105,7 @@ const thread = {
   autoSettleDisabledAt: null,
   titleRegeneration: null,
   settledOverride: null,
+  lineage: { parentThreadId: null },
 } as never;
 
 let root: Root;

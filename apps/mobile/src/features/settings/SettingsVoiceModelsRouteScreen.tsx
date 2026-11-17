@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { VOICE_COPY } from "./voiceCopy";
 import type { StaticScreenProps } from "@react-navigation/native";
 import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -52,7 +53,7 @@ export function SettingsVoiceModelsRouteScreen({
     );
   return (
     <PullRequestSearchSheet
-      title="Transcription models"
+      title={VOICE_COPY.modelsPage.title}
       placeholder="Search models or languages"
       closeAccessibilityLabel="Close transcription models"
       clearAccessibilityLabel="Clear model search"

@@ -120,6 +120,7 @@ interface Entry {
 const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const hostname = yield* HostProcess.Hostname;
   const mac = yield* MacVideoCapture;
   const runner = yield* ProcessRunner.ProcessRunner;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -133,6 +134,8 @@ const make = Effect.gen(function* () {
   const label = yield* Effect.cached(
     resolveServerEnvironmentLabel({ cwdBaseName: path.basename(config.cwd).trim() }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provideService(HostProcess.Hostname, hostname),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.orElseSucceed(() => "This computer"),

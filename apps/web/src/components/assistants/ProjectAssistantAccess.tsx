@@ -1,6 +1,8 @@
 import {
   ownProjectsWith,
   projectAccess,
+  projectAccessBlocks,
+  type ProjectAccessBlockTitle,
   type ProjectAccessKind,
 } from "@t3tools/client-runtime/assistantProjectAccess";
 import type { Assistant, AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -17,8 +19,12 @@ import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { toastManager } from "../ui/toast";
+import { StartTruncatedPath } from "../StartTruncatedPath";
 import { AssistantAvatar } from "./assistantPresentation";
 import { SettingsSection } from "../settings/settingsLayout";
+import { searchableSetting } from "../settings/settingsSearch";
+import { settingsScopeEnvironmentAddress } from "../settings/settingsScopeAxis";
+import { useEnvironments } from "../../state/environments";
 
 function AccessRow(props: {
   readonly label: string;
@@ -67,18 +73,22 @@ const kindReason = (
         ? "Home project"
         : null;
 
+export const PROJECT_ASSISTANT_ACCESS_INTRO =
+  "A group gives every member access. An assistant can also have the project on its own list.";
+
+/** Who can work in `projectIds`, checkouts of one environment that grant the same access. */
 export function ProjectAssistantAccess(props: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
+  readonly projectIds: ReadonlyArray<ProjectId>;
 }) {
-  const { environmentId, projectId } = props;
+  const { environmentId, projectIds } = props;
   const { active, teams } = useAssistantEntries();
   const teamActions = useAssistantTeamActions(environmentId);
   const assistantActions = useAssistantActions(environmentId);
   const [busy, setBusy] = useState(false);
   const [individualOpen, setIndividualOpen] = useState(false);
   const access = projectAccess(
-    projectId,
+    projectIds[0]!,
     active.filter((entry) => entry.environmentId === environmentId).map((entry) => entry.assistant),
     teams.filter((entry) => entry.environmentId === environmentId).map((entry) => entry.team),
   );
@@ -98,20 +108,17 @@ export function ProjectAssistantAccess(props: {
   const toggleGroup = (teamId: AssistantTeamId, on: boolean) =>
     change(
       teamActions.update(
-        on ? { teamId, addProjectIds: [projectId] } : { teamId, removeProjectIds: [projectId] },
+        on ? { teamId, addProjectIds: projectIds } : { teamId, removeProjectIds: projectIds },
       ),
     );
   const toggleAssistant = (assistant: Assistant, on: boolean) => {
-    const projectIds = ownProjectsWith(assistant, projectId, on);
-    if (projectIds === null) return;
-    return change(assistantActions.update({ assistantId: assistant.id, projectIds }));
+    const next = ownProjectsWith(assistant, projectIds, on);
+    if (next === null) return;
+    return change(assistantActions.update({ assistantId: assistant.id, projectIds: next }));
   };
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-muted-foreground">
-        A group gives every member access. An assistant can also have the project on its own list.
-      </p>
       <fieldset className="flex min-w-0 flex-col gap-1">
         <legend className="text-sm font-medium">Groups</legend>
         {access.groups.length === 0 ? (
@@ -172,25 +179,81 @@ export function ProjectAssistantAccess(props: {
   );
 }
 
-/** The project's Settings section; hidden where no environment has assistants. */
+function AccessBlockTitle(props: {
+  readonly title: ProjectAccessBlockTitle;
+  readonly address: string;
+  readonly checkouts: ReadonlyArray<{
+    readonly environmentLabel: string | null;
+    readonly workspaceRoot: string;
+  }>;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {props.title.environment ? (
+        <h3 className="text-sm font-medium">
+          {props.checkouts[0]?.environmentLabel ?? "Environment"}
+        </h3>
+      ) : null}
+      {props.title.address ? (
+        <span className="truncate text-xs text-muted-foreground">{props.address}</span>
+      ) : null}
+      {props.title.path
+        ? props.checkouts.map((checkout) => (
+            <StartTruncatedPath
+              key={checkout.workspaceRoot}
+              path={checkout.workspaceRoot}
+              className={cn(
+                "block max-w-full",
+                props.title.environment ? "text-xs text-muted-foreground" : "text-sm font-medium",
+              )}
+            />
+          ))
+        : null}
+    </div>
+  );
+}
+
+/**
+ * The project's Settings section: one block per set of checkouts that grant the same access,
+ * named only when there are several. Hidden where no environment has assistants.
+ */
 export function ProjectAssistantAccessSettings(props: {
   readonly members: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly id: ProjectId;
+    readonly environmentLabel: string | null;
+    readonly workspaceRoot: string;
   }>;
 }) {
   const { active, teams } = useAssistantEntries();
-  const members = props.members.filter(
-    (member) =>
-      teams.some((entry) => entry.environmentId === member.environmentId) ||
-      active.some((entry) => entry.environmentId === member.environmentId),
-  );
-  if (members.length === 0) return null;
+  const { environments } = useEnvironments();
+  const blocks = projectAccessBlocks(props.members, active, teams);
+  if (blocks.length === 0) return null;
+  const addressOf = (environmentId: EnvironmentId) => {
+    const environment = environments.find((entry) => entry.environmentId === environmentId);
+    return environment ? settingsScopeEnvironmentAddress(environment) : environmentId;
+  };
   return (
-    <SettingsSection title="Assistants with access">
-      {members.map((member) => (
-        <div key={`${member.environmentId}:${member.id}`} className="px-3 py-3 sm:px-4">
-          <ProjectAssistantAccess environmentId={member.environmentId} projectId={member.id} />
+    <SettingsSection
+      {...searchableSetting("assistants-with-access")}
+      description={PROJECT_ASSISTANT_ACCESS_INTRO}
+    >
+      {blocks.map((block) => (
+        <div
+          key={`${block.environmentId}:${block.projectIds.join(",")}`}
+          className="flex flex-col gap-3 px-3 py-3 sm:px-4"
+        >
+          {block.title === null ? null : (
+            <AccessBlockTitle
+              title={block.title}
+              address={addressOf(block.environmentId)}
+              checkouts={block.checkouts}
+            />
+          )}
+          <ProjectAssistantAccess
+            environmentId={block.environmentId}
+            projectIds={block.projectIds}
+          />
         </div>
       ))}
     </SettingsSection>

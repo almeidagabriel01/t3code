@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { t3McpProviderName, type EnvironmentId, type T3McpServer } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { CONNECT_ENVIRONMENT_FOR_MCP_SERVERS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useState } from "react";
 import { randomUUID } from "~/lib/utils";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -31,7 +32,8 @@ import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   draftFor,
@@ -55,8 +57,8 @@ export function McpServersSettings() {
         />
       ) : (
         <SettingsRow
-          title="MCP servers"
-          description="Connect an environment to manage its MCP servers."
+          title={settingCopy("mcp-servers").title}
+          description={CONNECT_ENVIRONMENT_FOR_MCP_SERVERS}
         />
       )}
     </SettingsSection>
@@ -101,8 +103,7 @@ function ServerList({
         </p>
       ) : null}
       <SettingsRow
-        title="Manage servers"
-        description="Servers are available to agent sessions on this environment. OpenCode, Pi, and Muse do not support MCP servers added here."
+        {...settingCopy("mcp-servers-manage")}
         control={
           <Button
             size="sm"
@@ -123,7 +124,8 @@ function ServerList({
               {server.transport} ·{" "}
               {server.transport === "stdio" ? server.command : new URL(server.url).origin}
               <br />
-              Agents see it as {t3McpProviderName(name)} · {supportedProviders(server.transport)}
+              {PROVIDER_SETTINGS_COPY.mcpAgentsSeeItAs} {t3McpProviderName(name)} ·{" "}
+              {supportedProviders(server.transport)}
             </span>
           }
           control={

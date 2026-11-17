@@ -7,7 +7,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { SidebarDisplaySettingsRows } from "./SidebarDisplaySettings";
 
-it("switches the Agents section off", async () => {
+it("switches the Teams section off and offers no Agents section", async () => {
   const updateSettings = vi.fn();
   await using screen = await render(
     <SidebarDisplaySettingsRows
@@ -15,6 +15,7 @@ it("switches the Agents section off", async () => {
       updateSettings={updateSettings}
     />,
   );
-  await userEvent.click(screen.getByRole("switch", { name: "Show Agents section" }));
-  expect(updateSettings).toHaveBeenCalledWith({ sidebarShowAgentsSection: false });
+  await userEvent.click(screen.getByRole("switch", { name: "Show Teams section" }));
+  expect(updateSettings).toHaveBeenCalledWith({ sidebarShowAssistantsSection: false });
+  expect(screen.container.textContent).not.toContain("Agents section");
 });

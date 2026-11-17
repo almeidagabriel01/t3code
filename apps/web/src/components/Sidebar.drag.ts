@@ -13,6 +13,11 @@ const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
+type ProjectionLayout = Pick<Layout, "rects" | "activeIndex" | "overIndex">;
+/** A sorting strategy that also says how far its preview reaches past the list's last row. */
+export type SidebarSortingStrategy = SortingStrategy & {
+  readonly overflow: (layout: ProjectionLayout) => number;
+};
 const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" && (item.marker === "snoozed-header" || item.marker === "settled-header");
 
@@ -101,14 +106,16 @@ export function createSidebarSortingStrategy(input: {
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
-}): SortingStrategy {
-  if (input.enabled === false) return () => stationary;
+}): SidebarSortingStrategy {
+  if (input.enabled === false) return Object.assign(() => stationary, { overflow: () => 0 });
   const { items } = input;
   const indices = new Map(items.map((item, index) => [sidebarListItemId(item), index]));
-  let previous: Pick<Layout, "rects" | "activeIndex" | "overIndex"> | undefined;
+  let previous: ProjectionLayout | undefined;
   let transforms: ReturnType<SortingStrategy>[] | null = [];
+  let overflow = 0;
 
-  function project({ rects, activeIndex, overIndex }: Layout) {
+  function project({ rects, activeIndex, overIndex }: ProjectionLayout) {
+    overflow = 0;
     const active = items[activeIndex];
     const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
@@ -227,11 +234,13 @@ export function createSidebarSortingStrategy(input: {
       if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
       top += heights[projectedIndex]! + 1;
     }
+    // Labels and placeholders are zero-height in the DOM, so the preview can end below the list.
+    overflow = lastRect ? Math.max(0, top - 1 - lastRect.bottom) : 0;
     result[activeIndex] = stationary;
     return result;
   }
 
-  return (args) => {
+  const refresh = (args: ProjectionLayout) => {
     if (
       previous?.rects !== args.rects ||
       previous.activeIndex !== args.activeIndex ||
@@ -240,8 +249,17 @@ export function createSidebarSortingStrategy(input: {
       previous = args;
       transforms = project(args);
     }
+  };
+  const strategy: SortingStrategy = (args) => {
+    refresh(args);
     return transforms === null
       ? verticalListSortingStrategy(args)
       : (transforms[args.index] ?? stationary);
   };
+  return Object.assign(strategy, {
+    overflow: (layout: ProjectionLayout) => {
+      refresh(layout);
+      return overflow;
+    },
+  });
 }

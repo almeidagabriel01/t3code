@@ -22,6 +22,12 @@ export interface ThreadConnector {
   readonly args: ReadonlyArray<string>;
   readonly headers: Readonly<Record<string, string>>;
   readonly env: Readonly<Record<string, string>>;
+  /**
+   * An integration served by T3's proxy; `url` and `headers` carry the thread's T3 session token.
+   * `preApproved` when T3's gate is the only approval authority (assistant threads), so the
+   * provider must not ask again.
+   */
+  readonly proxy?: { readonly preApproved: boolean };
 }
 
 export function withAgentDeviceEnvironment(

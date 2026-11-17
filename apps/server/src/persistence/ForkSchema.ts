@@ -147,6 +147,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* addColumns("kanban_cards", [
     ["attachments_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["cover_attachment_id", "TEXT"],
+    // Set on cards the problem detector filed (see problems/ProblemDetector.ts).
+    ["problem_json", "TEXT"],
   ]);
   yield* sql`CREATE INDEX IF NOT EXISTS kanban_cards_parent_idx ON kanban_cards(parent_card_id)`;
   // Board snapshot and column neighbour lookups: live cards per column in order.
@@ -492,6 +494,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantColumns.some((column) => column.name === "mcp_servers_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN mcp_servers_json TEXT`;
   }
+  // Which T3 MCP servers its sessions get; NULL reads as all of them.
+  if (!assistantColumns.some((column) => column.name === "integrations_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN integrations_json TEXT`;
+  }
   // The project list of a project assistant; an existing single project becomes a list of one.
   if (!assistantColumns.some((column) => column.name === "project_ids_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN project_ids_json TEXT`;
@@ -539,6 +545,60 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       -- 'notify' rows are an assistant's messages to the user, counted against their own limit.
       source TEXT NOT NULL,
       label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
+  // Problem detection (problems/ProblemDetector.ts). One row per failure occurrence, keyed by what
+  // happened rather than by its delivery, so a replayed or retried event is stored once.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_occurrences (
+      event_key TEXT PRIMARY KEY,
+      fingerprint TEXT,
+      project_id TEXT NOT NULL,
+      -- Null when the occurrence is not a problem by itself; three in a day still make one.
+      kind TEXT,
+      reason TEXT,
+      report_json TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      processed_at TEXT,
+      skip_reason TEXT
+    )
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS problem_occurrences_pending_idx
+    ON problem_occurrences(occurred_at) WHERE processed_at IS NULL
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS problem_occurrences_fingerprint_idx
+    ON problem_occurrences(fingerprint, occurred_at)
+  `;
+  // One row per cause; `generation` counts its cards, so a cause that returns after its card was
+  // done gets a new card.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_causes (
+      fingerprint TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      card_id TEXT NOT NULL,
+      card_number INTEGER NOT NULL,
+      previous_card_number INTEGER,
+      kind TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      owner_id TEXT,
+      ignored INTEGER NOT NULL DEFAULT 0,
+      evidence_json TEXT NOT NULL,
+      last_comment_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE TABLE IF NOT EXISTS problem_cards (card_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL)`;
+  // A card whose owner has not been woken yet; held while autonomy is paused or at its limits.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_wakes (
+      card_id TEXT PRIMARY KEY,
+      owner_id TEXT,
+      project_id TEXT NOT NULL,
+      reassigned INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )
   `;
@@ -622,11 +682,14 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantTaskColumns.some((column) => column.name === "dismissed_at")) {
     yield* sql`ALTER TABLE assistant_tasks ADD COLUMN dismissed_at TEXT`;
   }
-  // The thread it was launched from: a group request's waits follow the chain down from it.
-  yield* addColumns("assistant_tasks", [["launched_from_thread_id", "TEXT"]]);
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS assistant_tasks_launched_from_idx
-    ON assistant_tasks(launched_from_thread_id)`;
+  // The run whose delivered result dismissed the task: a Restore is never undone for that run.
+  if (!assistantTaskColumns.some((column) => column.name === "auto_dismissed_run_id")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN auto_dismissed_run_id TEXT`;
+  }
+  if (!assistantTaskColumns.some((column) => column.name === "source_thread_id")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN source_thread_id TEXT`;
+  }
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_tasks_source_idx ON assistant_tasks(source_thread_id)`;
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {
@@ -819,6 +882,30 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       PRIMARY KEY (team_id, scope)
     )
   `;
+  // A member's hidden thread for one request, in the request's project. The per-group threads above
+  // stay for history and for runs that started before requests had their own.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_request_threads (
+      request_id TEXT NOT NULL,
+      assistant_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL UNIQUE,
+      seen_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (request_id, assistant_id)
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
+  // The model the project gave the thread, and one it moves to once its turn ends.
+  yield* addColumns("assistant_group_request_threads", [
+    ["followed_model_selection", "TEXT"],
+    ["pending_model_selection", "TEXT"],
+  ]);
+  // A model picked in the thread that a message's own model set aside until its task is done.
+  yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
+  // The message's model that switch applied: a thread off it was changed by the user since.
+  yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
+  // When a delivered request left this conversation active because its work still ran.
+  yield* addColumns("assistant_group_request_threads", [["settle_held_at", "TEXT"]]);
   // A team with its chat counters, recreated on every start after every column it reads. A tab
   // reads from its own cursor, else the group's read_seq; it is listed while it has unread, a wait
   // on the user, its own cursor, working or stopped tasks (so an end reads apart from a move), and
@@ -843,6 +930,24 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         (SELECT m.request_project_id FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
+        -- Paused requests and failed root tasks count only after the newest boundary, as the chat
+        -- offers their actions there. A failed child is reported to its parent, which goes on; a
+        -- task the user stopped, or one an archive paused, waits on nobody.
+        (SELECT COUNT(DISTINCT k.root_id) FROM assistant_group_tasks k
+          JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+          WHERE k.team_id = t.team_id AND k.kind <> 'reply' AND k.status = 'paused'
+            AND COALESCE(k.reason, '') NOT IN ('stopped', 'group_archived')
+            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
+              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS paused_tasks,
+        (SELECT COUNT(*) FROM assistant_group_tasks k
+          JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+          WHERE k.team_id = t.team_id AND k.kind = 'root' AND k.status = 'failed'
+            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
+              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS failed_tasks,
+        (SELECT json_group_array(g.thread_id) FROM (
+            SELECT thread_id FROM assistant_group_threads WHERE team_id = t.team_id
+            UNION ALL SELECT thread_id FROM assistant_group_request_threads
+              WHERE team_id = t.team_id) g) AS thread_ids_json,
         -- Each distinct request project is one scope_idx seek, not a walk of the chat.
         (WITH RECURSIVE r(id) AS (
             SELECT (SELECT MIN(m.request_project_id) FROM assistant_group_messages m
@@ -895,28 +1000,6 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       FROM assistant_teams t
     ) s
   `;
-  // A member's hidden thread for one request, in the request's project. The per-group threads above
-  // stay for history and for runs that started before requests had their own.
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS assistant_group_request_threads (
-      request_id TEXT NOT NULL,
-      assistant_id TEXT NOT NULL,
-      team_id TEXT NOT NULL,
-      thread_id TEXT NOT NULL UNIQUE,
-      seen_seq INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (request_id, assistant_id)
-    )
-  `;
-  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
-  // The model the project gave the thread, and one it moves to once its turn ends.
-  yield* addColumns("assistant_group_request_threads", [
-    ["followed_model_selection", "TEXT"],
-    ["pending_model_selection", "TEXT"],
-  ]);
-  // A model picked in the thread that a message's own model set aside until its task is done.
-  yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
-  // The message's model that switch applied: a thread off it was changed by the user since.
-  yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (

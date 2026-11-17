@@ -64,6 +64,27 @@ export function presentConnectionState(
   }
 }
 
+/** True when connected, false when known to be unreachable, null until the first attempt settles. */
+export function environmentReachable(
+  connection: Pick<EnvironmentConnectionPresentation, "phase"> | null | undefined,
+): boolean | null {
+  switch (connection?.phase) {
+    case "connected":
+      return true;
+    case "offline":
+    case "reconnecting":
+    case "error":
+    case "unsupported":
+      return false;
+    default:
+      return null;
+  }
+}
+
+/** The edge a query that failed or hung while unreachable retries on; never while it stays up. */
+export const environmentReconnected = (previous: boolean | null, current: boolean | null) =>
+  previous !== true && current === true;
+
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":

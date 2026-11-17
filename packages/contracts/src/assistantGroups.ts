@@ -53,6 +53,23 @@ export function splitAssistantTransferText(text: string): {
   return { body: text.slice(0, at).trimEnd(), files: text.slice(at + marker.length) };
 }
 
+/** The markdown list of copied files, each a link the clients open in the file viewer. */
+export function assistantTransferList(paths: ReadonlyArray<string>): string {
+  return paths.map((path) => `- [${path.split(/[\\/]/).pop() || path}](<${path}>)`).join("\n");
+}
+
+/** The paths of an {@link assistantTransferList}; read line by line, since a regex backtracks. */
+export function assistantTransferPaths(list: string): ReadonlyArray<string> {
+  const paths: Array<string> = [];
+  for (const line of list.split("\n")) {
+    const opens = line.indexOf("](<");
+    if (!line.startsWith("- [") || !line.endsWith(">)") || opens < 3) continue;
+    const path = line.slice(opens + 3, -2);
+    if (path !== "" && !path.includes(">")) paths.push(path);
+  }
+  return paths;
+}
+
 export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;
 /**
  * Hand-offs a request may make while none of its tasks delivers a new, non-empty answer: stops
@@ -142,6 +159,8 @@ export const AssistantGroupMessage = Schema.Struct({
   asksProject: Schema.optionalKey(Schema.Literal(true)),
   /** On a member's answer: how long its run worked; absent on older answers and servers. */
   workedMs: Schema.optionalKey(NonNegativeInt),
+  /** The `clientRequestId` it was posted under; absent when it had none and from older servers. */
+  clientRequestId: Schema.optionalKey(Schema.String),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;

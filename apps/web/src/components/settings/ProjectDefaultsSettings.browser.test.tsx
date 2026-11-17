@@ -1,5 +1,11 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import type { Assistant, AssistantId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_ASSISTANT_INTEGRATIONS,
+  type Assistant,
+  type AssistantId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -78,7 +84,8 @@ it("adds an assistant's model exception from the project's settings, sending onl
       avatar: null,
       scope: "all",
       mcpServers: [],
-      autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+      autonomy: DEFAULT_ASSISTANT_AUTONOMY,
+      integrations: DEFAULT_ASSISTANT_INTEGRATIONS,
       archivedAt: null,
       createdAt: "2026-03-17T19:00:00.000Z",
       updatedAt: "2026-03-17T19:00:00.000Z",

@@ -69,6 +69,7 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    lineage: { parentThreadId: null },
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));

@@ -835,19 +835,40 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+/** T3's own stdio→HTTP bridge, pointed at one MCP endpoint on this server. */
+const acpBridgeServer = (
+  self: SelfInvocation,
+  name: string,
+  endpoint: string,
+  authorization: string,
+): EffectAcpSchema.McpServer => ({
+  name,
+  command: self.command,
+  args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
+  env: [
+    { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+    { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
+    { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+  ],
+});
+
 /**
  * An assistant's connectors ride beside T3's server in whichever list the runtime picks. A stdio
  * connector is valid in every list; an http one only where the flavor trusts agents with http
- * servers, and it is dropped when the agent takes the acp list instead.
+ * servers, and it is dropped when the agent takes the acp list instead. A proxied integration
+ * reaches T3's own server, so the stdio lists carry it through the bridge, like `t3-code`.
  */
 function acpConnectorServers(
   connectors: ReadonlyArray<McpProviderSession.ThreadConnector>,
   mcpOverHttp: boolean | undefined,
+  self: SelfInvocation,
 ): {
+  /** For the stdio and acp lists. */
   readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /** For the http list: stdio connectors plus http ones. */
   readonly http: ReadonlyArray<EffectAcpSchema.McpServer>;
 } {
-  const stdio = connectors.flatMap((connector) =>
+  const commands = connectors.flatMap((connector) =>
     connector.transport === "stdio"
       ? [
           {
@@ -859,25 +880,34 @@ function acpConnectorServers(
         ]
       : [],
   );
-  const http =
-    mcpOverHttp === true
-      ? connectors.flatMap((connector) =>
-          connector.transport === "http"
-            ? [
-                {
-                  type: "http" as const,
-                  name: connector.name,
-                  url: connector.url ?? "",
-                  headers: Object.entries(connector.headers).map(([name, value]) => ({
-                    name,
-                    value,
-                  })),
-                },
-              ]
-            : [],
-        )
-      : [];
-  return { stdio, http };
+  const bridged = connectors.flatMap((connector) =>
+    connector.transport === "http" && connector.proxy !== undefined
+      ? [
+          acpBridgeServer(
+            self,
+            connector.name,
+            connector.url ?? "",
+            connector.headers.Authorization ?? "",
+          ),
+        ]
+      : [],
+  );
+  const http = connectors.flatMap((connector) =>
+    connector.transport === "http"
+      ? [
+          {
+            type: "http" as const,
+            name: connector.name,
+            url: connector.url ?? "",
+            headers: Object.entries(connector.headers).map(([name, value]) => ({ name, value })),
+          },
+        ]
+      : [],
+  );
+  return {
+    stdio: [...commands, ...bridged],
+    http: mcpOverHttp === true ? [...commands, ...http] : [],
+  };
 }
 
 export function acpMcpContext(
@@ -886,34 +916,24 @@ export function acpMcpContext(
   mcpOverHttp: boolean | undefined,
   connectors: ReadonlyArray<McpProviderSession.ThreadConnector> = [],
 ): AcpMcpContext {
-  const extra = acpConnectorServers(connectors, mcpOverHttp);
+  const extra = acpConnectorServers(connectors, mcpOverHttp, self);
   if (session === undefined) {
     return {
       servers: extra.stdio,
       acpServers: extra.stdio,
-      httpServers: [...extra.stdio, ...extra.http],
+      httpServers: mcpOverHttp === true ? extra.http : extra.stdio,
     };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
       ...extra.stdio,
-      {
-        name: "t3-code",
-        command: self.command,
-        args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
-        env: [
-          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-          { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
-          { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
-        ],
-      },
+      acpBridgeServer(self, "t3-code", session.endpoint, session.authorizationHeader),
     ],
     acpServers: [...extra.stdio, { type: "acp", name: "t3-code", serverId: "t3-code" }],
     httpServers:
       mcpOverHttp === true
         ? [
-            ...extra.stdio,
             ...extra.http,
             {
               type: "http",

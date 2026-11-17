@@ -6,6 +6,8 @@ import {
   AUTONOMY_RULE_OPTIONS,
   AUTONOMY_USER_MESSAGES_BOUNDS,
   AUTONOMY_WAKES_BOUNDS,
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_LABEL,
   parseBoundedInt,
   withAutonomyChannel,
   withAutonomyRule,
@@ -22,6 +24,7 @@ import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useAutonomySettings, useLimitAlertsWhilePaused } from "../../state/autonomy";
+import { AUTONOMY_COPY } from "./settingsAssistantsCopy";
 import { useTelegramChannel, useTelegramEnvironmentIds } from "../../state/telegramChannel";
 
 const RULE_ICONS: Record<AutonomyRule, AppSymbolName> = {
@@ -40,9 +43,9 @@ const CHANNEL_ROWS: ReadonlyArray<{
   {
     channel: "telegram",
     icon: "paperplane",
-    description: "Send the answer to the first allowed Telegram user.",
+    description: AUTONOMY_COPY.channelDescription.telegram,
   },
-  { channel: "t3", icon: "iphone", description: "Show the answer in Activity, on every device." },
+  { channel: "t3", icon: "iphone", description: AUTONOMY_COPY.channelDescription.t3 },
 ];
 
 /** Commits when editing ends on a whole number inside the schema's bounds; otherwise reverts. */
@@ -110,8 +113,8 @@ function TelegramNotice(props: { readonly environmentId: EnvironmentId }) {
   return (
     <ListRow
       icon="exclamationmark.circle"
-      label="Telegram is not set up"
-      description="Notifications cannot reach Telegram until a bot is connected. Open Telegram settings."
+      label={AUTONOMY_COPY.telegramNotSetUp.title}
+      description={AUTONOMY_COPY.telegramNotSetUp.description}
       onPress={() => navigation.navigate("SettingsTelegram")}
     />
   );
@@ -123,35 +126,40 @@ export function AutonomySettingsSection(props: {
   readonly suffix: string;
 }) {
   const { environmentId } = props;
-  const { autonomy, write } = useAutonomySettings(environmentId);
+  const { autonomy, write, detectProblems, writeDetectProblems } =
+    useAutonomySettings(environmentId);
   const limitAlerts = useLimitAlertsWhilePaused(environmentId);
   const telegramAvailable = useTelegramEnvironmentIds().includes(environmentId);
   const paused = !autonomy.enabled;
   return (
-    <ListSection
-      title={`Autonomy${props.suffix}`}
-      footer="Assistants set to notify wake on their own and tell you. Turn off the first switch to pause every rule and watch."
-    >
+    <ListSection title={`${AUTONOMY_COPY.title}${props.suffix}`} footer={AUTONOMY_COPY.footer}>
       <ListToggleRow
         icon="bell.badge"
-        label="Assistants can notify you"
-        description="The pause switch for all assistants on this server."
+        label={AUTONOMY_COPY.notifyEnabled.title}
+        description={AUTONOMY_COPY.notifyEnabled.description}
         value={autonomy.enabled}
         onValueChange={(enabled) => void write({ ...autonomy, enabled })}
       />
       {limitAlerts.value === null ? null : (
         <ListToggleRow
           icon="gauge.with.dots.needle.50percent"
-          label="Limit alerts while paused"
-          description="Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels in Limit alerts."
+          label={AUTONOMY_COPY.limitAlertsWhilePaused.title}
+          description={AUTONOMY_COPY.limitAlertsWhilePaused.description}
           value={limitAlerts.value}
           onValueChange={(value) => void limitAlerts.write(value)}
         />
       )}
       <ListToggleRow
+        icon="exclamationmark.shield"
+        label={DETECT_PROBLEMS_LABEL}
+        description={DETECT_PROBLEMS_DESCRIPTION}
+        value={detectProblems}
+        onValueChange={(on) => void writeDetectProblems(on)}
+      />
+      <ListToggleRow
         icon="envelope.badge"
-        label="Notify me when something is waiting for me"
-        description="Approvals, questions, open decisions and paused group tasks reach you directly, with no model and no daily limit. Works for every assistant and thread."
+        label={AUTONOMY_COPY.notifyWaiting.title}
+        description={AUTONOMY_COPY.notifyWaiting.description}
         value={autonomy.notifyWaiting}
         disabled={paused}
         onValueChange={(notifyWaiting) => void write({ ...autonomy, notifyWaiting })}
@@ -159,8 +167,8 @@ export function AutonomySettingsSection(props: {
       <BoundedNumberRow
         key={`notifyAfter:${autonomy.notifyWaitingAfterMinutes}`}
         icon="calendar.badge.clock"
-        label="Notify after"
-        description="Something answered sooner is not sent."
+        label={AUTONOMY_COPY.notifyAfter.title}
+        description={AUTONOMY_COPY.notifyAfter.description}
         unit="minutes"
         value={autonomy.notifyWaitingAfterMinutes}
         bounds={AUTONOMY_NOTIFY_AFTER_BOUNDS}
@@ -183,8 +191,8 @@ export function AutonomySettingsSection(props: {
       <BoundedNumberRow
         key={`waiting:${autonomy.waitingMinutes}`}
         icon="clock"
-        label="Waiting for you after"
-        description="How long a run may wait on your answer before an assistant wakes to look into it."
+        label={AUTONOMY_COPY.waitingAfter.title}
+        description={AUTONOMY_COPY.waitingAfter.description}
         unit="minutes"
         value={autonomy.waitingMinutes}
         bounds={AUTONOMY_MINUTES_BOUNDS}
@@ -194,8 +202,8 @@ export function AutonomySettingsSection(props: {
       <BoundedNumberRow
         key={`stuck:${autonomy.stuckMinutes}`}
         icon="timer"
-        label="Stuck after"
-        description="How long a run may show no activity before it looks stuck."
+        label={AUTONOMY_COPY.stuckAfter.title}
+        description={AUTONOMY_COPY.stuckAfter.description}
         unit="minutes"
         value={autonomy.stuckMinutes}
         bounds={AUTONOMY_MINUTES_BOUNDS}
@@ -205,8 +213,8 @@ export function AutonomySettingsSection(props: {
       <BoundedNumberRow
         key={`wakes:${autonomy.maxWakesPerDay}`}
         icon="calendar"
-        label="Notifications per day"
-        description="Assistants stop waking after this many in a day."
+        label={AUTONOMY_COPY.wakesPerDay.title}
+        description={AUTONOMY_COPY.wakesPerDay.description}
         unit="per day"
         value={autonomy.maxWakesPerDay}
         bounds={AUTONOMY_WAKES_BOUNDS}
@@ -216,8 +224,8 @@ export function AutonomySettingsSection(props: {
       <BoundedNumberRow
         key={`userMessages:${autonomy.maxUserMessagesPerDay}`}
         icon="bubble.left"
-        label="Messages from assistants per day"
-        description="How many short messages each assistant can send you on its own."
+        label={AUTONOMY_COPY.messagesPerDay.title}
+        description={AUTONOMY_COPY.messagesPerDay.description}
         unit="per day"
         value={autonomy.maxUserMessagesPerDay}
         bounds={AUTONOMY_USER_MESSAGES_BOUNDS}
@@ -242,8 +250,8 @@ export function AutonomySettingsSection(props: {
           <View className="bg-grouped-card">
             <ListRowLayout
               icon="exclamationmark.circle"
-              label="Telegram is not available"
-              description="This server does not support Telegram."
+              label={AUTONOMY_COPY.telegramUnavailable.title}
+              description={AUTONOMY_COPY.telegramUnavailable.description}
             />
           </View>
         )

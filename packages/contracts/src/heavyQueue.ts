@@ -3,6 +3,79 @@ import * as Schema from "effect/Schema";
 
 import { RunnerWhere } from "./runner.ts";
 
+/** Queue settings kept in the queue file, so a `t3 heavy` waiter reads them without a server. */
+export const HEAVY_QUEUE_LIMITS = {
+  macMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
+  macCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
+  heavyOverLimitSeconds: { min: 5, max: 300, unit: "seconds" },
+  lightJobMegabytes: { min: 64, max: 4096, unit: "MB" },
+  unseenHeavyMegabytes: { min: 256, max: 16384, unit: "MB" },
+  unseenMediumMegabytes: { min: 128, max: 8192, unit: "MB" },
+  historyCommands: { min: 50, max: 10000, unit: "commands" },
+  headPatienceMinutes: { min: 1, max: 60, unit: "minutes" },
+} as const;
+export type HeavyQueueLimitKey = keyof typeof HEAVY_QUEUE_LIMITS;
+
+export const HEAVY_QUEUE_DEFAULTS: Record<HeavyQueueLimitKey, number> = {
+  macMemoryFloorPercent: 20,
+  macCpuCeilingPercent: 70,
+  // Routing moves work only once a machine stays past (or back under) its limits this long.
+  heavyOverLimitSeconds: 20,
+  lightJobMegabytes: 512,
+  unseenHeavyMegabytes: 1536,
+  unseenMediumMegabytes: 512,
+  historyCommands: 1000,
+  headPatienceMinutes: 5,
+};
+
+/** How admission sizes jobs and lets them pass the head of the queue; set together in one call. */
+export const HEAVY_QUEUE_ADMISSION_KEYS = [
+  "lightJobMegabytes",
+  "unseenHeavyMegabytes",
+  "unseenMediumMegabytes",
+  "historyCommands",
+  "headPatienceMinutes",
+] as const satisfies ReadonlyArray<HeavyQueueLimitKey>;
+export type HeavyQueueAdmissionKey = (typeof HEAVY_QUEUE_ADMISSION_KEYS)[number];
+
+/** Why `value` is not a valid `key`, for people; null when it is. */
+export const heavyQueueLimitError = (key: HeavyQueueLimitKey, value: number): string | null => {
+  const { min, max, unit } = HEAVY_QUEUE_LIMITS[key];
+  if (!Number.isInteger(value)) return `Use a whole number of ${unit}.`;
+  if (value < min || value > max) return `Use ${min} to ${max} ${unit}.`;
+  return null;
+};
+
+/**
+ * A setting's range given the others, so an editor never offers a value the server refuses: a
+ * medium job's memory guess stays at or under a heavy job's.
+ */
+export const heavyQueueLimitRange = (
+  key: HeavyQueueLimitKey,
+  current: Readonly<Record<"unseenHeavyMegabytes" | "unseenMediumMegabytes", number>>,
+): { readonly min: number; readonly max: number } => {
+  const { min, max } = HEAVY_QUEUE_LIMITS[key];
+  if (key === "unseenMediumMegabytes") {
+    return { min, max: Math.max(min, Math.min(max, current.unseenHeavyMegabytes)) };
+  }
+  if (key === "unseenHeavyMegabytes") {
+    return { min: Math.min(max, Math.max(min, current.unseenMediumMegabytes)), max };
+  }
+  return { min, max };
+};
+
+/** The default a reset sends: as close to the shipped value as the other limits allow. */
+export const heavyQueueLimitDefault = (
+  key: HeavyQueueLimitKey,
+  current: Parameters<typeof heavyQueueLimitRange>[1],
+): number => {
+  const { min, max } = heavyQueueLimitRange(key, current);
+  return Math.min(max, Math.max(min, HEAVY_QUEUE_DEFAULTS[key]));
+};
+
+const limit = (key: HeavyQueueLimitKey) =>
+  Schema.Int.check(Schema.makeFilter((value: number) => heavyQueueLimitError(key, value) ?? true));
+
 export const HeavyRunner = Schema.Literals(["mac", "linux"]);
 export type HeavyRunner = typeof HeavyRunner.Type;
 export const HeavyRunnerPhase = Schema.Literals(["syncing", "installing", "running"]);
@@ -43,6 +116,10 @@ export const HeavyQueueEntry = Schema.Struct({
   /** Peak cores and resident bytes of its process tree so far, sampled while it runs. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Pids of build daemons outside its tree that work for it (Gradle's, Kotlin's), counted in its usage. */
+  daemons: Schema.optionalKey(Schema.Array(Schema.Int)),
+  /** T3 lowered it to background CPU priority while the Mac stayed over its CPU ceiling. */
+  slowed: Schema.optionalKey(Schema.Boolean),
   /** Where a running entry runs; absent means this Mac. */
   runner: Schema.optionalKey(HeavyRunner),
   /** Where the job itself asked to run (`t3 heavy --runner`), over the project's setting. */
@@ -170,7 +247,8 @@ export const heavyHoldText = (
 /** Machine-wide, in run order: the running entry (if any) first, then waiters. */
 /** What a command usually uses, from its finished runs; absent when it has no history. */
 export const HeavyQueueEstimate = Schema.Struct({
-  cpu: Schema.Number,
+  /** Absent when no run's CPU was read. */
+  cpu: Schema.optionalKey(Schema.Number),
   memoryBytes: Schema.Number,
   durationMs: Schema.Number,
 });
@@ -186,6 +264,32 @@ export const HeavyQueueState = Schema.Struct({
   rules: Schema.Array(HeavyQueueRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** How many entries may run at once. */
   maxRunning: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
+  /** The Mac counts as over its limits below this share of free memory or above this CPU use. */
+  macMemoryFloorPercent: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.macMemoryFloorPercent)),
+  ),
+  macCpuCeilingPercent: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.macCpuCeilingPercent)),
+  ),
+  /** How long readings must stay past a limit, or back under it, before routing follows. */
+  heavyOverLimitSeconds: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.heavyOverLimitSeconds)),
+  ),
+  lightJobMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.lightJobMegabytes)),
+  ),
+  unseenHeavyMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.unseenHeavyMegabytes)),
+  ),
+  unseenMediumMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.unseenMediumMegabytes)),
+  ),
+  historyCommands: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.historyCommands)),
+  ),
+  headPatienceMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
+  ),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -202,7 +306,7 @@ export const HeavyQueueState = Schema.Struct({
   deviceIdleMinutes: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(20))),
   /** Null while no project turns the Runner on. */
   linux: Schema.NullOr(HeavyRunnerLinux).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** Entries that never leave this Mac (exclusive, or on their project's Mac-only list). */
+  /** Entries that never leave this Mac (exclusive, on their project's Mac-only list, or Runner off there). */
   macOnly: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Where each waiter would go if a slot opened now, by entry id. */
   routes: Schema.Record(Schema.String, HeavyRunner).pipe(
@@ -229,6 +333,34 @@ export type HeavyQueueSetEnabledInput = typeof HeavyQueueSetEnabledInput.Type;
 
 export const HeavyQueueSetMaxRunningInput = Schema.Struct({ maxRunning: Schema.Int });
 export type HeavyQueueSetMaxRunningInput = typeof HeavyQueueSetMaxRunningInput.Type;
+
+export const HeavyQueueSetMacMemoryFloorPercentInput = Schema.Struct({
+  macMemoryFloorPercent: limit("macMemoryFloorPercent"),
+});
+export type HeavyQueueSetMacMemoryFloorPercentInput =
+  typeof HeavyQueueSetMacMemoryFloorPercentInput.Type;
+
+export const HeavyQueueSetMacCpuCeilingPercentInput = Schema.Struct({
+  macCpuCeilingPercent: limit("macCpuCeilingPercent"),
+});
+export type HeavyQueueSetMacCpuCeilingPercentInput =
+  typeof HeavyQueueSetMacCpuCeilingPercentInput.Type;
+
+export const HeavyQueueSetHeavyOverLimitSecondsInput = Schema.Struct({
+  heavyOverLimitSeconds: limit("heavyOverLimitSeconds"),
+});
+export type HeavyQueueSetHeavyOverLimitSecondsInput =
+  typeof HeavyQueueSetHeavyOverLimitSecondsInput.Type;
+
+/** Only the keys given change; each must be in its range. */
+export const HeavyQueueSetAdmissionLimitsInput = Schema.Struct({
+  lightJobMegabytes: Schema.optionalKey(limit("lightJobMegabytes")),
+  unseenHeavyMegabytes: Schema.optionalKey(limit("unseenHeavyMegabytes")),
+  unseenMediumMegabytes: Schema.optionalKey(limit("unseenMediumMegabytes")),
+  historyCommands: Schema.optionalKey(limit("historyCommands")),
+  headPatienceMinutes: Schema.optionalKey(limit("headPatienceMinutes")),
+});
+export type HeavyQueueSetAdmissionLimitsInput = typeof HeavyQueueSetAdmissionLimitsInput.Type;
 
 /** A null priority clears the rule. */
 /** "high" starts a waiter now and lifts a running job's processes out of background QoS; "low" puts them back. */
@@ -257,6 +389,12 @@ export const HeavyQueueRouteInput = Schema.Struct({
 });
 export type HeavyQueueRouteInput = typeof HeavyQueueRouteInput.Type;
 
+/** Move all: every waiting job that can run on `runner` goes there; running jobs stay. */
+export const HeavyQueueRouteAllInput = Schema.Struct({ runner: HeavyRunner });
+export type HeavyQueueRouteAllInput = typeof HeavyQueueRouteAllInput.Type;
+export const HeavyQueueRouteAllResult = Schema.Struct({ moved: Schema.Array(Schema.String) });
+export type HeavyQueueRouteAllResult = typeof HeavyQueueRouteAllResult.Type;
+
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,
   priority: Schema.NullOr(Schema.Literals(["first", "last"])),
@@ -264,11 +402,12 @@ export const HeavyQueueSetRuleInput = Schema.Struct({
 export type HeavyQueueSetRuleInput = typeof HeavyQueueSetRuleInput.Type;
 
 /**
- * A heavy command running now: a started queue entry, or a process tree an agent or terminal runs
- * directly. Cores and bytes sum its process tree.
+ * A heavy command running now: a started queue entry, a process tree an agent or terminal runs
+ * directly, or a detached one nothing in T3 started (a script's playwright). Cores and bytes sum
+ * its process tree.
  */
 export const HeavyCommand = Schema.Struct({
-  source: Schema.Literals(["queue", "agent", "terminal"]),
+  source: Schema.Literals(["queue", "agent", "terminal", "detached"]),
   /** The queue entry, for queue rows; Stop goes through the queue's cancel. */
   entryId: Schema.optionalKey(Schema.String),
   pid: Schema.Int,
@@ -287,6 +426,10 @@ export const HeavyCommand = Schema.Struct({
   /** Highest tree total seen so far. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Why the queue does not manage it, shown under the row. */
+  reason: Schema.optionalKey(Schema.String),
+  /** Where a queue row runs; absent means this Mac. A Linux row carries no usage. */
+  runner: Schema.optionalKey(HeavyRunner),
 });
 export type HeavyCommand = typeof HeavyCommand.Type;
 

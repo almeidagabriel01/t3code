@@ -1,6 +1,10 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import {
+  assistantJoins,
+  continuesAssistantSender,
+  messageAssistantIds,
+} from "@t3tools/client-runtime/assistantPresence";
 import { assistantReplyText, taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -606,7 +610,10 @@ type MessagesTimelineRowContent =
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
       /** The first message of an assistant in this thread; a "joined" divider leads it. */
-      assistantJoined?: boolean;
+      /** Assistants whose first words in the thread are in this message. */
+      assistantJoined?: ReadonlyArray<string>;
+      /** A lone teammate message right after another from the same teammate. */
+      continuesSender?: boolean;
     }
   | {
       kind: "assistant-meta";
@@ -2302,17 +2309,24 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  const joinedAssistantIds = new Set<string>();
+  const joins = assistantJoins(
+    result.flatMap((row) => (row.kind === "message" ? [row.message] : [])),
+  );
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
     }
     if (row.kind === "message" && row.message.role === "user") {
-      const assistantId = messageAssistantId(row.message);
-      if (assistantId !== null) {
-        if (joinedAssistantIds.has(assistantId)) return row;
-        joinedAssistantIds.add(assistantId);
-        return { ...row, assistantJoined: true };
+      if (messageAssistantIds(row.message).length > 0) {
+        const joined = joins.get(row.message.id);
+        if (joined !== undefined) return { ...row, assistantJoined: joined };
+        const previous = result[index - 1];
+        return continuesAssistantSender(
+          row.message,
+          previous?.kind === "message" ? previous.message : undefined,
+        )
+          ? { ...row, continuesSender: true }
+          : row;
       }
     }
     if (timelineRowIsTaskEvent(row)) {
@@ -2722,7 +2736,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
         a.continuesSteer === bm.continuesSteer &&
-        a.assistantJoined === bm.assistantJoined
+        a.assistantJoined?.join() === bm.assistantJoined?.join() &&
+        a.continuesSender === bm.continuesSender
       );
     }
   }

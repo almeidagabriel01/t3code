@@ -15,7 +15,6 @@ import { searchableSetting } from "./settingsSearch";
 type SidebarDisplayValues = Pick<
   ClientSettings,
   | "sidebarShowSubagents"
-  | "sidebarShowAgentsSection"
   | "sidebarShowAssistantsSection"
   | "sidebarAgentActivityDisplayMode"
   | "projectHoverCardProperties"
@@ -43,33 +42,18 @@ export function SidebarDisplaySettingsRows({
     <>
       <SettingsRow
         {...searchableSetting("sidebar-show-assistants-section")}
-        description="Pin your assistants above the agents and projects. Collapsed, they fit on one line."
         control={
           <Switch
             checked={settings.sidebarShowAssistantsSection}
             onCheckedChange={(checked) =>
               updateSettings({ sidebarShowAssistantsSection: Boolean(checked) })
             }
-            aria-label="Show Assistants section"
-          />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("sidebar-show-agents-section")}
-        description="Pin the agents that are working or just finished, from every project, above the project list."
-        control={
-          <Switch
-            checked={settings.sidebarShowAgentsSection}
-            onCheckedChange={(checked) =>
-              updateSettings({ sidebarShowAgentsSection: Boolean(checked) })
-            }
-            aria-label="Show Agents section"
+            aria-label="Show Teams section"
           />
         }
       />
       <SettingsRow
         {...searchableSetting("sidebar-show-subagents")}
-        description="List a thread's active subagents under it in the sidebar."
         control={
           <Switch
             checked={settings.sidebarShowSubagents}
@@ -82,7 +66,6 @@ export function SidebarDisplaySettingsRows({
       />
       <SettingsRow
         {...searchableSetting("sidebar-agent-activity")}
-        description="Compact folds several subagents into one summary row. Full lists every one."
         control={
           <Select
             value={settings.sidebarAgentActivityDisplayMode}
@@ -109,10 +92,7 @@ export function SidebarDisplaySettingsRows({
           </Select>
         }
       />
-      <SettingsRow
-        {...searchableSetting("project-hover-card")}
-        description="Choose what the card shows when you hover a project. Turn everything off to disable the card."
-      >
+      <SettingsRow {...searchableSetting("project-hover-card")}>
         <div className="flex flex-col gap-2 pt-2">
           {PROJECT_HOVER_CARD_PROPERTIES.map((property) => (
             <label key={property} className="flex items-center justify-between gap-3 text-sm">

@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  OrchestrationV2DispatchCommandError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -500,6 +501,32 @@ describe("queued task operation access", () => {
       expect(remaining()).toEqual([queued]);
     },
   );
+});
+
+describe("a mode change the server refuses", () => {
+  it("returns the message to the draft once, without retrying", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ runtimeMode: "approval-required" });
+    await state.manager.enqueue(queued);
+    state.runtime.mockResolvedValueOnce(
+      AsyncResult.failure(
+        Cause.fail(
+          new OrchestrationV2DispatchCommandError({
+            commandId: CommandId.make("command"),
+            commandType: "thread.runtime-mode.set",
+            message: "Can't switch mode while a command is running",
+            refusal: "session-busy",
+          }),
+        ),
+      ),
+    );
+    await runDrain();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([]);
+    expect(state.draftText).toBe("Keep this draft separate\nKeep this queued");
+    // Nothing stays queued, so no backoff can send it again.
+    expect(state.runtime).toHaveBeenCalledOnce();
+  });
 });
 
 describe("compaction before a queued send", () => {

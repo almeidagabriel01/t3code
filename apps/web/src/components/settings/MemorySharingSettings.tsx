@@ -26,6 +26,8 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MEMORY_SETTINGS_COPY } from "./settingsSearchMemoryItems";
 import { isMemoryEnvironmentAvailable, memoryOwnerDesiredIds } from "./MemorySettings.logic";
 import { memoryDeviceFlow } from "@t3tools/client-runtime/memory-device-flow";
 
@@ -402,27 +404,29 @@ export function MemoryAdministration({
   const blocked = busy || !canHub || pending !== null || recovery;
   return (
     <>
-      <SettingsSection title="Sharing" id="memory-sharing">
+      <SettingsSection {...searchableSetting("memory-sharing")}>
         <SettingsRow
           title={
             !hub
               ? error
-                ? "Sharing unavailable"
-                : "Loading sharing"
+                ? MEMORY_SETTINGS_COPY.sharingUnavailableTitle
+                : MEMORY_SETTINGS_COPY.sharingLoadingTitle
               : hub.settings.mode === "hub"
-                ? "This device is the hub"
+                ? MEMORY_SETTINGS_COPY.sharingHubTitle
                 : hub?.settings.mode === "member"
-                  ? "Memory sharing"
-                  : "Sharing off"
+                  ? MEMORY_SETTINGS_COPY.sharingMemberTitle
+                  : settingCopy("memory-sharing-mode").title
           }
           description={
             !hub
-              ? "Sharing settings are not loaded yet."
+              ? MEMORY_SETTINGS_COPY.sharingNotLoadedDescription
               : hub.settings.mode === "hub"
-                ? "Memory is on. Devices you add here share memory with it."
+                ? MEMORY_SETTINGS_COPY.sharingHubDescription
                 : hub?.settings.mode === "member"
-                  ? `Shares memory with ${name(hub.settings.hubEnvironmentId)}.`
-                  : "Sharing is off. Memory stays on this device. Make this device the hub, or add it from the hub's Memory settings."
+                  ? MEMORY_SETTINGS_COPY.sharingMemberDescription(
+                      name(hub.settings.hubEnvironmentId),
+                    )
+                  : settingCopy("memory-sharing-mode").description
           }
           status={
             sync && hub?.settings.mode !== "disabled" ? presentMemorySync(sync).label : undefined
@@ -460,7 +464,9 @@ export function MemoryAdministration({
         />
         {confirm === "disable" && hub ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
             title="Stop sharing on this device?"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
             description="Saved memories stay."
             control={
               <div className="flex gap-2">
@@ -492,6 +498,7 @@ export function MemoryAdministration({
         ) : null}
         {error ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
             title="Could not complete request"
             description={<span role="alert">{error}</span>}
             control={
@@ -541,7 +548,7 @@ export function MemoryAdministration({
         ) : null}
       </SettingsSection>
       {hub?.settings.mode === "hub" ? (
-        <SettingsSection title="Devices">
+        <SettingsSection {...settingCopy("memory-hub-devices")}>
           {members
             .filter((member) => member.environmentId !== environmentId)
             .map((member) => {
@@ -590,8 +597,7 @@ export function MemoryAdministration({
               );
             })}
           <SettingsRow
-            title="Add device"
-            description="Choose a connected device that supports memory."
+            {...settingCopy("memory-add-device")}
             control={
               <div className="flex flex-wrap gap-2">
                 {picker(
@@ -612,15 +618,19 @@ export function MemoryAdministration({
           />
           {device && writeMissing(device) ? (
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
               title="Settings write permission required on this device"
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
               description="Connect the device in Settings → Connections first, using an account with settings access."
             />
           ) : null}
           {(confirm === "add" || confirm === "rotate") && device ? (
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
               title={
                 confirm === "add" ? `Add ${name(device)}?` : `Replace key for ${name(device)}?`
               }
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
               description={
                 loopbackAddress(endpoint)
                   ? "Localhost points to the device itself. Enter an address reachable from the other device."
@@ -660,7 +670,9 @@ export function MemoryAdministration({
           ) : null}
           {confirm && confirm !== "disable" && confirm !== "add" && confirm !== "rotate" ? (
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
               title={`Remove ${name(confirm)}?`}
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- confirm prompt, not a setting
               description="This device will lose access to shared memory."
               control={
                 <div className="flex gap-2">
@@ -693,11 +705,8 @@ export function MemoryAdministration({
         </SettingsSection>
       ) : null}
       {hub && hub.settings.mode !== "disabled" ? (
-        <SettingsSection title="Original conversations" id="memory-owner-policy">
-          <SettingsRow
-            title="Conversation access"
-            description="When a memory points to a conversation on this device, these devices can open the original. Removing a device applies to later requests and to results still on the hub."
-          />
+        <SettingsSection {...settingCopy("memory-original-conversations")} id="memory-owner-policy">
+          <SettingsRow {...settingCopy("memory-conversation-access")} />
           {policy?.desiredRequesterEnvironmentIds.map((id) => (
             <SettingsRow
               key={id}
@@ -729,7 +738,8 @@ export function MemoryAdministration({
               />
             ))}
           <SettingsRow
-            title="Allow device"
+            {...settingCopy("memory-allow-device")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
             description={
               scopeAccessShowsBanner(ownerAccess)
                 ? "Settings write permission is required."

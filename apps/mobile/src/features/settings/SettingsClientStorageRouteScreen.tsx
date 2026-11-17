@@ -19,6 +19,7 @@ import {
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { CLIENT_STORAGE_COPY } from "./aboutCopy";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { formatBytes } from "../../lib/formatBytes";
@@ -77,7 +78,7 @@ export function SettingsClientStorageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title="Environment caches">
+        <SettingsSection title={CLIENT_STORAGE_COPY.environmentCaches}>
           {AsyncResult.isFailure(summaryResult) ? (
             <View className="items-center gap-2 px-6 py-8">
               <SymbolView
@@ -134,7 +135,7 @@ export function SettingsClientStorageRouteScreen() {
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title="Actions">
+          <SettingsSection title={CLIENT_STORAGE_COPY.actions}>
             <SettingsActionRow
               icon="trash"
               label={summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
@@ -145,8 +146,7 @@ export function SettingsClientStorageRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Clearing caches never removes environment connections, credentials, account data, or
-            appearance preferences.
+            {CLIENT_STORAGE_COPY.footer}
           </Text>
           {AsyncResult.isFailure(summaryResult) || AsyncResult.isFailure(clearResult) ? (
             <Text selectable className="px-2 text-sm text-danger-foreground">

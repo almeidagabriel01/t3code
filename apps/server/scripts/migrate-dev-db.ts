@@ -421,6 +421,47 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   };
 });
 
+const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * The seeded projects point at the developer's real repositories, and merged-worktree cleanup is
+ * on by default, so turn worktree cleanup off in the dev home, including any project override a
+ * copied settings file brought. The server's dev guard blocks it too; this keeps the UI honest.
+ */
+export const disableDevWorktreeCleanup = Effect.fn("disableDevWorktreeCleanup")(function* (
+  settingsPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = (yield* fs.exists(settingsPath)) ? yield* fs.readFileString(settingsPath) : "{}";
+  const parsed = Option.getOrNull(decodeJsonOption(text));
+  // A file the server cannot read either; leave it for the developer to repair.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  const settings = parsed as Record<string, unknown>;
+  const off = { mode: "off" };
+  const overrides = settings.projectSettingsOverrides;
+  const next = {
+    ...settings,
+    worktreeCleanup: off,
+    ...(overrides !== null && typeof overrides === "object" && !Array.isArray(overrides)
+      ? {
+          projectSettingsOverrides: Object.fromEntries(
+            Object.entries(overrides).map(([projectId, override]) => [
+              projectId,
+              override !== null && typeof override === "object" && "worktreeCleanup" in override
+                ? { ...override, worktreeCleanup: off }
+                : override,
+            ]),
+          ),
+        }
+      : {}),
+  };
+  yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+  yield* fs.writeFileString(settingsPath, `${yield* encodeJson(next)}\n`);
+  return true;
+});
+
 export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   input: RunMigrateDevDbInput,
   options: RunMigrateDevDbOptions = {},
@@ -538,6 +579,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     wrapPhase("compact", databasePath),
   );
 
+  yield* disableDevWorktreeCleanup(path.join(stateDir, "settings.json"));
   const size = (yield* fs.stat(databasePath)).size;
   return {
     databasePath,

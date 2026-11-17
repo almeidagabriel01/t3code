@@ -90,7 +90,13 @@ describe("autonomy helpers", () => {
 });
 
 describe("sameAssistantAutonomy", () => {
-  const base = { mode: "reply-only", rules: null, projectIds: null, channels: null } as const;
+  const base = {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  } as const;
   it("treats lists as sets and null as distinct from empty", () => {
     expect(sameAssistantAutonomy(base, { ...base })).toBe(true);
     expect(sameAssistantAutonomy(base, { ...base, rules: [] })).toBe(false);
@@ -101,6 +107,7 @@ describe("sameAssistantAutonomy", () => {
       ),
     ).toBe(true);
     expect(sameAssistantAutonomy(base, { ...base, mode: "reply-and-notify" })).toBe(false);
+    expect(sameAssistantAutonomy(base, { ...base, onProblem: "fix-small" })).toBe(false);
     expect(
       sameAssistantAutonomy({ ...base, channels: ["t3"] }, { ...base, channels: ["telegram"] }),
     ).toBe(false);

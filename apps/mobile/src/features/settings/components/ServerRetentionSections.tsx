@@ -9,6 +9,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../../components/ui/AppText";
 import { NumberField } from "../../../components/ui/NumberField";
+import { IDLE_AGENTS_COPY, TOOL_OUTPUT_HISTORY_COPY } from "./maintenanceSectionsCopy";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
@@ -30,24 +31,24 @@ export function ToolOutputHistorySection(props: {
 }) {
   return (
     <SettingsSection
-      title="Tool output history"
-      footer="Screenshots, file contents and command output in thread history are replaced by a short summary after this many days."
+      title={TOOL_OUTPUT_HISTORY_COPY.title}
+      footer={TOOL_OUTPUT_HISTORY_COPY.description}
     >
       <SettingsSwitchRow
         icon="clock"
-        label="Summarize old tool output"
+        label={TOOL_OUTPUT_HISTORY_COPY.summarize}
         value={props.days !== null}
         disabled={props.disabled}
         onValueChange={(value) => props.onChange(value ? SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS : null)}
       />
       {props.days !== null ? (
-        <NumberRow label="Days to keep">
+        <NumberRow label={TOOL_OUTPUT_HISTORY_COPY.daysToKeep}>
           <NumberField
             value={props.days}
             disabled={props.disabled}
             min={MIN_TOOL_OUTPUT_HISTORY_DAYS}
             max={MAX_TOOL_OUTPUT_HISTORY_DAYS}
-            label="Days to keep tool output"
+            label={TOOL_OUTPUT_HISTORY_COPY.daysSheet}
             formatValue={(value) => `${value} ${value === 1 ? "day" : "days"}`}
             onValueChange={props.onChange}
           />
@@ -63,17 +64,14 @@ export function ProviderIdleTimeoutSection(props: {
   readonly onChange: (minutes: number) => void;
 }) {
   return (
-    <SettingsSection
-      title="Idle agents"
-      footer="An idle Claude agent process is closed after this many minutes without activity. The conversation resumes on your next message."
-    >
-      <NumberRow label="Minutes before closing">
+    <SettingsSection title={IDLE_AGENTS_COPY.title} footer={IDLE_AGENTS_COPY.description}>
+      <NumberRow label={IDLE_AGENTS_COPY.minutes}>
         <NumberField
           value={props.minutes}
           disabled={props.disabled}
           min={MIN_PROVIDER_IDLE_TIMEOUT_MINUTES}
           max={MAX_PROVIDER_IDLE_TIMEOUT_MINUTES}
-          label="Minutes before an idle agent closes"
+          label={IDLE_AGENTS_COPY.minutesSheet}
           formatValue={(value) => `${value} min`}
           onValueChange={props.onChange}
         />

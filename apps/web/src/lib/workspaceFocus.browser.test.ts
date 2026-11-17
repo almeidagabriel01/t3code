@@ -236,6 +236,18 @@ describe("workspace area focus", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(composer.button));
   });
 
+  it("falls back to a file open in the main area before the side panel", async () => {
+    using fixture = setup();
+    const conversation = fixture.area("conversation", 1);
+    const composer = fixture.area("composer", 2);
+    fixture.area("panel", 4);
+    const file = fixture.area("file", 1);
+    conversation.button.focus();
+    conversation.element.inert = true;
+    composer.element.inert = true;
+    await vi.waitFor(() => expect(document.activeElement).toBe(file.button));
+  });
+
   it("keeps focus on the control a panel tab switch came from", () => {
     using fixture = setup();
     const panel = fixture.area("panel", 3);

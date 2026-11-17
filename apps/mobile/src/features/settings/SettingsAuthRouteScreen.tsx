@@ -9,12 +9,13 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { ACCOUNT_COPY } from "./accountCopy";
 import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
 
 const USER_PROFILE_CUSTOM_PAGES = [
   {
     path: "t3-connect",
-    label: "T3 Connect",
+    label: ACCOUNT_COPY.connectPage,
     icon: "globe",
     content: <T3ConnectProfilePage />,
   },

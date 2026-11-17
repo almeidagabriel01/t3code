@@ -30,6 +30,7 @@ const harness = (threadId: ThreadId, storageDown = false) =>
       sweep: Effect.void,
       notifyWaiting: Effect.void,
       notifyUser: () => Effect.die("unused"),
+      tellUser: () => Effect.die("unused"),
       notifyUsageLimitAlert: () => Effect.die("unused"),
       start: () => Effect.void,
       listWatches: storageDown

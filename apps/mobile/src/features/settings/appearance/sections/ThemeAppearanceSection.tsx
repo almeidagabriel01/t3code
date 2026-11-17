@@ -17,16 +17,8 @@ import {
 } from "../../../../lib/mobileTheme";
 import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
 import { cn } from "../../../../lib/cn";
+import { APPEARANCE_COPY, APPEARANCE_MODES } from "../appearanceCopy";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-
-const APPEARANCE_MODES: ReadonlyArray<{
-  readonly id: MobileThemeMode;
-  readonly label: string;
-}> = [
-  { id: "system", label: "System" },
-  { id: "light", label: "Light" },
-  { id: "dark", label: "Dark" },
-];
 
 const previewPercentage = (value: number) => `${value * 100}%`;
 
@@ -298,7 +290,7 @@ export function ThemeAppearanceSection() {
   return (
     <View className="gap-6">
       <View className="gap-2">
-        <SectionLabel>Color scheme</SectionLabel>
+        <SectionLabel>{APPEARANCE_COPY.theme.colorScheme}</SectionLabel>
         <View accessibilityRole="radiogroup" className="flex-row gap-2">
           {APPEARANCE_MODES.map((mode) => (
             <ModeCard
@@ -315,7 +307,7 @@ export function ThemeAppearanceSection() {
       </View>
 
       <View className="gap-3">
-        <SectionLabel>Themes</SectionLabel>
+        <SectionLabel>{APPEARANCE_COPY.theme.themes}</SectionLabel>
         <View className="flex-row flex-wrap gap-3">
           {MOBILE_THEME_OPTIONS.filter(
             (theme) => theme.id !== "material-you" || systemColorsAvailable,

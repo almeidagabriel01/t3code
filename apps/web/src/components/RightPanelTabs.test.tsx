@@ -1,7 +1,8 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { panelTabKeyAction, resolvePullRequestTabLink } from "./RightPanelTab";
+import { resolvePullRequestTabLink } from "./RightPanelTab";
+import { panelTabKeyAction } from "./tabKeyAction";
 import { surfaceShortcutActionForKey, surfaceShortcutTargetsTypingContext } from "./RightPanelTabs";
 
 function shortcutEvent(

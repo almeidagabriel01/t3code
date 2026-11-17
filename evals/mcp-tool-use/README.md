@@ -248,6 +248,10 @@ Passes per case, main's runtime text (3 samples) → this branch's "Link every o
 
 After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
+## Worktree cases
+
+`cases/worktrees.ndjson` checks that an agent hands its worktree to cleanup with `t3_worktree_finish` once its work is merged, instead of leaving it behind or deleting it by hand, and leaves it alone while the pull request is open (control). On Sonnet 5.5 at 3 samples, the instruction line took `worktree-merged-finish` from 0/3 to 3/3; the control passed 3/3 both times. The two runs cost $0.73.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`

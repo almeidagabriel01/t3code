@@ -7,7 +7,7 @@ and it can't be archived or deleted.
 
 ## Create and edit
 
-Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar. Each assistant has:
+Open **Settings → Assistants**, or use **+** next to Teams in the sidebar. Each assistant has:
 
 - **Name** and **handle**. The handle is a short lowercase name that agents use to find it.
 - **Avatar**. A robot in a color you pick, or your own PNG, JPEG or WebP image up to 2 MB. Until you
@@ -177,8 +177,8 @@ same goes for approvals and decisions in tasks it hands off with `delegate_task`
 such a task goes to the assistant first, which answers it only when the answer follows from the task
 or your instructions, and otherwise asks you.
 
-The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
-their state (running, waiting, done or failed). Open one to see the work; the thread shows the
+The threads an assistant launched are listed under it in the sidebar, instead of in their project's
+list, and on the Assistants page with their state (running, waiting, done or failed). Open one to see the work; the thread shows the
 assistant's face in the mood of the task, and tapping it returns to the assistant. A project assistant
 can only start tasks in its own project. You can dismiss a finished task from the list, and restore it later; an assistant does the same when you ask it to.
 
@@ -205,9 +205,24 @@ needs to be recreated to see the folder.
 ## Groups
 
 A group is a set of assistants that work together. Create one from the sidebar (**+** next to
-Groups) or under **Settings > Assistants > Groups**: give it a name, then add members now or later. A
-group can be empty or hold a single assistant. An assistant can be in several groups. The sidebar and
-Home list your groups under the assistants.
+Teams, then **New group**) or under **Settings > Assistants > Groups**: give it a name, then add members now or later. A
+group can be empty or hold a single assistant. An assistant can be in several groups.
+
+The sidebar and Home list the assistants that are in no group first, then each group, folded. An
+assistant in a group is listed only inside it, and one in several groups is listed once, in the first
+of them. Use the arrow beside a group's name to show or hide its members, and click the name to open
+its chat; each group stays open or closed the way you left it on that device.
+
+In the sidebar, each assistant and each group shows one mark: waiting on you, failed, paused, how many
+are running, or a group's unread messages, in that order. What waits on you is answered from
+**Needs you** at the top of the sidebar.
+
+On the Assistants page, each assistant and each group shows its status in the same words as a thread: Approval, Input,
+Request, Decision, Paused, Limited, Failed, Working or Done. A group shows the most urgent one across
+its members' conversations and its tasks, folded or open, so nothing waiting on you hides inside a
+closed group. **Paused** means a group task stopped on its own, for instance at the hand-off limit,
+and waits for you to resume it. A group's **Done** means its chat has messages you have not read; it
+clears when you open the chat.
 
 - Any assistant may message any other. Each member's instructions list its groupmates with their
   handle and role and tell it that it may hand work to them. Ask one to "check with the group" and it
@@ -400,6 +415,35 @@ setting for you; it can only do that in a message you sent.
 An assistant can also send you a short message of its own, with a link to a conversation when it
 has one. It reaches Activity and Telegram (or iMessage when Telegram is off), never carries files or
 secrets, and stops while autonomy is paused.
+
+### Problems
+
+T3 Code watches every project for failures: a command that is not installed, an expired sign-in, a
+network, disk or memory failure, a Linux Runner job that could not sync or install, a provider
+session that fails, failing checks on a pull request, a scheduled task that fails, an unreachable
+linked environment, and the same failure three times in 24 hours. Each cause gets **one card** on
+its project's board (or the No-project board), titled by its kind, with what happened, where, and
+the conversations it came from. A repeat updates that card and shows **Seen N times**; once the card
+is done, archived or deleted, the next failure files a new card that links the old one.
+
+One assistant handles each card: the project assistant that has the project, or else one that works
+on all projects. The card shows **Handled by** its name. If none can work on the project, you get a
+notice saying so. The assistant's **When it finds a problem** setting decides what it does:
+
+- **Tell me**: a notice, nothing started.
+- **Offer to fix** (the default): a notice with a proposed fix; it starts after you agree.
+- **Fix small things**: starts small fixes on its own, such as a re-run, a sign-in, a dependency
+  reinstall or a few-line change in a new worktree, and asks before anything bigger.
+
+At every level it never pushes, merges, deploys, deletes or opens a pull request without your OK.
+A started fix runs in its own conversation, linked to the card, and moves the card to review when
+it ends. While autonomy is paused or past its daily limit, cards are still filed and the assistant
+catches up later.
+
+**Ignore this problem** on a card stops new reports of that cause; **Stop ignoring** undoes it.
+Turn detection off with **Detect problems** in **Settings → Assistants → Autonomy**, or for one
+project with **Detect problems in this project** in that project's settings (**Maintenance →
+Diagnostics**). You can also ask an agent to do any of these for you.
 
 ### Reminders and watches
 

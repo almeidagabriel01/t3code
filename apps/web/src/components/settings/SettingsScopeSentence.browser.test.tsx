@@ -6,7 +6,11 @@ import { page, userEvent } from "vite-plus/test/browser";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { render } from "../../../test/render";
-import { EnvironmentScopeMenu, ProjectScopeMenu } from "./SettingsScopeSentence";
+import {
+  EnvironmentScopeMenu,
+  ProjectScopeMenu,
+  SETTINGS_SINGLE_ENVIRONMENT_PATHS,
+} from "./SettingsScopeSentence";
 import type { SettingsScopeSearch } from "./settingsScope";
 
 function group(name: string, hosts = ["laptop"], archived = false): SidebarProjectSnapshot {
@@ -124,4 +128,28 @@ it("marks archived projects in the project menu", async () => {
   );
   await page.getByLabelText("Project scope: All projects").click();
   await expect.element(page.getByText("Archived")).toBeVisible();
+});
+
+it.each([
+  "/settings/providers",
+  "/settings/secrets",
+  "/settings/memory",
+  "/settings/integrations",
+  "/settings/diagnostics",
+  "/settings/keybindings",
+  "/settings/scheduled-tasks",
+  "/settings/threads",
+  "/settings/worktrees",
+])("%s names the empty environment menu like every other page", async (path) => {
+  await using _screen = await render(
+    <EnvironmentScopeMenu
+      value={{}}
+      groups={[]}
+      environments={[]}
+      singleEnvironment={SETTINGS_SINGLE_ENVIRONMENT_PATHS.has(path)}
+      onChange={() => {}}
+    />,
+    { router: false },
+  );
+  await expect.element(page.getByLabelText("Environment scope: No environments")).toBeVisible();
 });

@@ -9,24 +9,30 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
+  assistantGroupFailedSendRouting,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendRouting,
+  type AssistantGroupTabPick,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
   type AssistantTeamId,
   type ChatAttachment,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -63,21 +69,32 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
-import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
+import {
+  clearGroupAttachments,
+  GroupAttachmentChips,
+  useGroupAttachments,
+} from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
 /** Its text waits in the draft store under its tab's `:outgoing:` key. */
 const outgoings = createAssistantGroupOutgoingStore<
-  AssistantGroupOutgoing & {
-    readonly projectId: ProjectId | null;
-    readonly error: string | null;
-    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
-    readonly requestId: string;
-    readonly sendKey: string;
-  }
+  AssistantGroupOutgoing &
+    GroupLandedSend & {
+      readonly error: string | null;
+      /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+      readonly requestId: string;
+      readonly sendKey: string;
+      /** The text it sent, trimmed; its draft key holds what the composer shows now. */
+      readonly text: string;
+    }
 >();
+/** For tests: each starts with no outgoing messages or files. */
+export const clearGroupOutgoings = () => {
+  outgoings.clear();
+  clearGroupAttachments();
+};
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
@@ -104,6 +121,20 @@ export type GroupReplyTarget = {
   readonly projectId: ProjectId | null;
   readonly excerpt: string;
 };
+
+/** A reply being written, with the message it answers. */
+export type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessageId };
+
+export type GroupSendRouting = AssistantGroupSendRouting<AssistantGroupTabPick<GroupReply>>;
+
+/** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
+export interface GroupLandedSend {
+  readonly tab: AssistantGroupTabKey | null;
+  /** The project it runs in; null lets the lead decide. */
+  readonly projectId: ProjectId | null;
+  /** What it went with; null once a landing let go of it. */
+  readonly routing: GroupSendRouting | null;
+}
 
 /** A labelled menu trigger in the composer's toolbar row. */
 function ToolbarChip(props: {
@@ -369,11 +400,18 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** The reply and picks the next send goes with, so a failed one keeps them for its resend. */
+  readonly routing: GroupSendRouting;
+  readonly onLanded: (sent: GroupLandedSend) => void;
+  /** A failed send came back into view: the chat takes back what it went with. */
+  readonly onRestore: (routing: GroupSendRouting) => void;
   /** The chat the recipients line reads what routes the draft from. */
   readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
+  /** The chat as loaded: a failed send whose post shows here landed. */
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -443,8 +481,10 @@ export function GroupComposer(props: {
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
   const attached = useGroupAttachments(
+    groupKey,
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),
+    new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
   );
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
   const canSend =
@@ -502,6 +542,40 @@ export function GroupComposer(props: {
     insertMember({ start, end: start, query: "" }, option, base);
   };
 
+  /** A post the server took: only its text and files go, so what was written meanwhile stays. */
+  const settle = (sent: (typeof outgoing)[number]) => {
+    clearComposerDraftContent(outgoingKey(sent.tab));
+    setOutgoing(sent.tab, null);
+    attached.clear(sent.attachmentIds);
+    props.onLanded(sent);
+  };
+  const seenSend = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send trades its routing with the chat's; the outgoing store is outside React
+  useLayoutEffect(() => {
+    const routing = assistantGroupFailedSendRouting(
+      seenSend.current,
+      shown,
+      props.tab,
+      props.routing,
+    );
+    seenSend.current = routing.seen;
+    if (routing.restore !== null) props.onRestore(routing.restore);
+    else if (shown !== null && routing.keep !== null) {
+      setOutgoing(shown.tab, { ...shown, routing: routing.keep });
+    }
+    if (props.messages === undefined) return;
+    for (const entry of outgoing) {
+      const live = getComposerDraftSnapshot(outgoingKey(entry.tab)).text;
+      const landed = assistantGroupLandedSend(entry, live, props.messages.values());
+      if (landed === "settle") settle(entry);
+      else if (landed === "clear-warning") {
+        // The post landed: what it went with goes, and the user's edit is a new message.
+        setOutgoing(entry.tab, { ...entry, error: null, routing: null });
+        props.onLanded(entry);
+      }
+    }
+  });
+
   const post = async () => {
     // An edit iOS has not delivered yet (an accepted autocorrection) belongs to this message.
     await editor.current?.flushPendingInput();
@@ -526,9 +600,11 @@ export function GroupComposer(props: {
       tab: props.tab,
       failed: false,
       requestId,
+      text: message,
       sendKey,
       attachmentIds,
       projectId: runProject,
+      routing: props.routing,
       error: null,
     };
     const sentKey = outgoingKey(sent.tab);
@@ -537,12 +613,12 @@ export function GroupComposer(props: {
     setOutgoing(sent.tab, sent);
     setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId, requestId);
-    if (result.ok) {
-      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      clearComposerDraftContent(sentKey);
-      setOutgoing(sent.tab, null);
-      attached.clear(sent.attachmentIds);
-    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    if (result.ok) settle(sent);
+    else {
+      // What the user changed while it was on its way is what its resend goes with.
+      const latest = outgoings.get(groupKey).find((entry) => entry.requestId === sent.requestId);
+      setOutgoing(sent.tab, { ...(latest ?? sent), failed: true, error: result.message });
+    }
   };
 
   const send = async () => {

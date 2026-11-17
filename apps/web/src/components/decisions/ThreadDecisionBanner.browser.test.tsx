@@ -76,7 +76,8 @@ it("shows a thread's decision as one row that expands to the card and back", asy
   await expect.element(banner).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Answer" })).not.toBeInTheDocument();
   await userEvent.click(page.getByRole("button", { name: "Review" }));
-  await userEvent.click(page.getByText("Online"));
+  // The sidebar's Needs you lists the same options as one-click answers.
+  await userEvent.click(page.getByRole("radiogroup", { name: "Options" }).getByText("Online"));
   await userEvent.click(page.getByRole("button", { name: "Dismiss" }));
   await vi.waitFor(() =>
     expect(fakeDecisions.calls).toEqual([

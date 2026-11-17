@@ -17,18 +17,21 @@ const ThemedMenuView = withUniwind(
   function NativeMenuView({
     iconColor,
     destructiveIconColor,
+    disabledIconColor,
     ...props
   }: ComponentProps<typeof MenuView> & {
     readonly iconColor?: ColorValue;
     readonly destructiveIconColor?: ColorValue;
+    readonly disabledIconColor?: ColorValue;
   }) {
     const actions = useMemo(
       () =>
         withMenuActionIconColors(props.actions, {
           icon: iconColor,
           destructiveIcon: destructiveIconColor,
+          disabledIcon: disabledIconColor,
         }),
-      [props.actions, iconColor, destructiveIconColor],
+      [props.actions, iconColor, destructiveIconColor, disabledIconColor],
     );
     return <MenuView {...props} actions={actions} />;
   },
@@ -36,6 +39,10 @@ const ThemedMenuView = withUniwind(
     iconColor: { fromClassName: "iconColorClassName", styleProperty: "accentColor" },
     destructiveIconColor: {
       fromClassName: "destructiveIconColorClassName",
+      styleProperty: "accentColor",
+    },
+    disabledIconColor: {
+      fromClassName: "disabledIconColorClassName",
       styleProperty: "accentColor",
     },
   },
@@ -114,6 +121,7 @@ export function Menu(props: MenuProps) {
       {...menuProps}
       iconColorClassName="accent-icon"
       destructiveIconColorClassName="accent-danger-foreground"
+      disabledIconColorClassName="accent-icon-subtle"
       themeVariant={isDarkMode ? "dark" : "light"}
     >
       {children}

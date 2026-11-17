@@ -5,7 +5,6 @@ import {
   connectionCatalogDisplayUrl,
   pullRequestRoutingConnectionKey,
   pullRequestRoutingPermissionFor,
-  type PullRequestRoutingPermission,
 } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
@@ -14,26 +13,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentCatalog } from "../../connection/catalog";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ENVIRONMENTS_COPY, PULL_REQUEST_ROUTING_OPTIONS } from "./environmentsCopy";
 import { SettingsSection } from "../settings/components/SettingsSection";
-
-const options: ReadonlyArray<{
-  value: PullRequestRoutingPermission;
-  label: string;
-  description: string;
-}> = [
-  { value: "off", label: "Off", description: "Keep source control requests on this environment." },
-  {
-    value: "read",
-    label: "Read PRs",
-    description: "Share PR data with other enabled environments.",
-  },
-  {
-    value: "read-write",
-    label: "Read and act",
-    description:
-      "Actions may use broader source control permissions than the original environment.",
-  },
-];
 
 export function PullRequestRoutingSettings() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -45,7 +26,7 @@ export function PullRequestRoutingSettings() {
 
   return (
     <View className="mt-5 gap-3">
-      <SettingsSection title="Pull request routing">
+      <SettingsSection title={ENVIRONMENTS_COPY.pullRequestRouting.title}>
         {[...catalog.entries.values()].map((entry) => {
           const environmentId = entry.target.environmentId;
           const selected = pullRequestRoutingPermissionFor(entry, permissions);
@@ -69,7 +50,7 @@ export function PullRequestRoutingSettings() {
                   </Text>
                 </View>
                 <Text className="text-sm text-foreground-muted">
-                  {options.find((option) => option.value === selected)?.label}
+                  {PULL_REQUEST_ROUTING_OPTIONS.find((option) => option.value === selected)?.label}
                 </Text>
                 <SymbolView
                   name={expanded === environmentId ? "chevron.up" : "chevron.down"}
@@ -78,7 +59,7 @@ export function PullRequestRoutingSettings() {
                 />
               </Pressable>
               {expanded === environmentId
-                ? options.map((option) => (
+                ? PULL_REQUEST_ROUTING_OPTIONS.map((option) => (
                     <ListChoiceRow
                       key={option.value}
                       label={option.label}
@@ -104,8 +85,7 @@ export function PullRequestRoutingSettings() {
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Choose environments you trust to share PR data and use each other's source control access.
-        Enable both environments. This applies only to this client.
+        {ENVIRONMENTS_COPY.pullRequestRouting.footer}
       </Text>
     </View>
   );

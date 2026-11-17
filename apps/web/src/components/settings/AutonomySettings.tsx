@@ -6,6 +6,7 @@ import {
   AUTONOMY_RULE_OPTIONS,
   AUTONOMY_USER_MESSAGES_BOUNDS,
   AUTONOMY_WAKES_BOUNDS,
+  DETECT_PROBLEMS_LABEL,
   parseBoundedInt,
   withAutonomyChannel,
   withAutonomyRule,
@@ -21,7 +22,7 @@ import { useTelegramEnvironmentIds, useTelegramSettings } from "../../state/tele
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 const ICON = "size-4 text-muted-foreground";
 
@@ -73,7 +74,9 @@ function TelegramNotice(props: { readonly environmentId: EnvironmentId }) {
     return null;
   return (
     <SettingsRow
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- notice, not a setting
       title="Telegram is not set up"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- notice, not a setting
       description={
         <>
           Notifications cannot reach Telegram until a bot is connected.{" "}
@@ -95,6 +98,10 @@ export function AutonomySection(props: {
 }) {
   const { environmentId } = props;
   const autonomy = useEnvironmentSettings(environmentId, (settings) => settings.autonomy);
+  const detectProblems = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.detectProblems,
+  );
   const update = useUpdateEnvironmentSettings(environmentId);
   const telegramIds = useTelegramEnvironmentIds();
   const write = (next: AutonomySettings) => update({ autonomy: next });
@@ -110,10 +117,12 @@ export function AutonomySection(props: {
   );
 
   return (
-    <SettingsSection title={`Autonomy${props.suffix}`} icon={<BellRingIcon className={ICON} />}>
+    <SettingsSection
+      title={`${settingCopy("autonomy").title}${props.suffix}`}
+      icon={<BellRingIcon className={ICON} />}
+    >
       <SettingsRow
-        title="Assistants can notify you"
-        description="Assistants set to notify wake on their own and tell you. Turn off to pause every rule and watch."
+        {...settingCopy("autonomy-notify")}
         control={
           <Switch
             checked={autonomy.enabled}
@@ -125,8 +134,6 @@ export function AutonomySection(props: {
       {hasLimitAlerts ? (
         <SettingsRow
           {...searchableSetting("usage-limit-alerts-while-paused")}
-          title="Limit alerts while paused"
-          description="Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels on each provider in Providers."
           control={
             <Switch
               checked={limitAlertsWhilePaused}
@@ -139,8 +146,17 @@ export function AutonomySection(props: {
         />
       ) : null}
       <SettingsRow
-        title="Notify me when something is waiting for me"
-        description="Approvals, questions, open decisions and paused group tasks reach you directly, with no model and no daily limit. Works for every assistant and thread."
+        {...settingCopy("autonomy-detect-problems")}
+        control={
+          <Switch
+            checked={detectProblems}
+            aria-label={DETECT_PROBLEMS_LABEL}
+            onCheckedChange={(on) => update({ detectProblems: on })}
+          />
+        }
+      />
+      <SettingsRow
+        {...settingCopy("autonomy-notify-waiting")}
         control={
           <Switch
             checked={autonomy.notifyWaiting}
@@ -151,8 +167,7 @@ export function AutonomySection(props: {
         }
       />
       <SettingsRow
-        title="Notify after"
-        description="Something answered sooner is not sent."
+        {...settingCopy("autonomy-notify-after")}
         control={
           <BoundedNumberField
             key={autonomy.notifyWaitingAfterMinutes}
@@ -183,8 +198,7 @@ export function AutonomySection(props: {
         />
       ))}
       <SettingsRow
-        title="Waiting for you after"
-        description="How long a run may wait on your answer before an assistant wakes to look into it."
+        {...settingCopy("autonomy-waiting-after")}
         control={
           <BoundedNumberField
             key={autonomy.waitingMinutes}
@@ -198,8 +212,7 @@ export function AutonomySection(props: {
         }
       />
       <SettingsRow
-        title="Stuck after"
-        description="How long a run may show no activity before it looks stuck."
+        {...settingCopy("autonomy-stuck-after")}
         control={
           <BoundedNumberField
             key={autonomy.stuckMinutes}
@@ -213,8 +226,7 @@ export function AutonomySection(props: {
         }
       />
       <SettingsRow
-        title="Notifications per day"
-        description="Assistants stop waking after this many in a day."
+        {...settingCopy("autonomy-wakes-per-day")}
         control={
           <BoundedNumberField
             key={autonomy.maxWakesPerDay}
@@ -228,8 +240,7 @@ export function AutonomySection(props: {
         }
       />
       <SettingsRow
-        title="Messages from assistants per day"
-        description="How many short messages each assistant can send you on its own."
+        {...settingCopy("autonomy-messages-per-day")}
         control={
           <BoundedNumberField
             key={autonomy.maxUserMessagesPerDay}
@@ -245,12 +256,7 @@ export function AutonomySection(props: {
       {(["telegram", "t3"] as const).map((channel) => (
         <SettingsRow
           key={channel}
-          title={`Notify on ${AUTONOMY_CHANNEL_LABELS[channel]}`}
-          description={
-            channel === "telegram"
-              ? "Send the answer to the first allowed Telegram user."
-              : "Show the answer in Activity, on every device."
-          }
+          {...settingCopy(`autonomy-notify-${channel}`)}
           control={
             <Switch
               checked={autonomy.channels.includes(channel)}
@@ -266,7 +272,9 @@ export function AutonomySection(props: {
           <TelegramNotice environmentId={environmentId} />
         ) : (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Telegram is not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="This server does not support Telegram."
           />
         )

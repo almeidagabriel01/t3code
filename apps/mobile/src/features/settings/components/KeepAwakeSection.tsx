@@ -2,16 +2,8 @@ import { KEEP_AWAKE_MODES, type EnvironmentId, type KeepAwakeMode } from "@t3too
 
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { useKeepAwakeStatus } from "../../../state/keepAwake";
+import { KEEP_AWAKE_COPY } from "./maintenanceSectionsCopy";
 import { SettingsSection } from "./SettingsSection";
-
-const LABELS: Record<KeepAwakeMode, string> = {
-  off: "Off",
-  "while-working": "While agents are working",
-  always: "Always",
-};
-
-const NOTE =
-  "Your computer can't run agents while it sleeps. Closing a laptop lid still puts it to sleep unless it is plugged in with an external display.";
 
 export function KeepAwakeSection(props: {
   readonly environmentId: EnvironmentId;
@@ -23,13 +15,17 @@ export function KeepAwakeSection(props: {
   const unsupported = useKeepAwakeStatus(props.environmentId)?.supported === false;
   return (
     <SettingsSection
-      title="Keep this computer awake"
-      footer={unsupported ? `${NOTE}\n\nNot available on this system` : NOTE}
+      title={KEEP_AWAKE_COPY.title}
+      footer={
+        unsupported
+          ? `${KEEP_AWAKE_COPY.note}\n\n${KEEP_AWAKE_COPY.unsupported}`
+          : KEEP_AWAKE_COPY.note
+      }
     >
       {KEEP_AWAKE_MODES.map((mode, index) => (
         <ListChoiceRow
           key={mode}
-          label={LABELS[mode]}
+          label={KEEP_AWAKE_COPY.modes[mode]}
           selected={props.value === mode}
           separated={index > 0}
           disabled={props.disabled || unsupported}

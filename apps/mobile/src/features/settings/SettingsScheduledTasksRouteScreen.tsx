@@ -1,4 +1,9 @@
 import {
+  CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+  CONNECT_ENVIRONMENT_TO_CREATE_SCHEDULED_TASK,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   isRoutineTarget,
   scheduledTaskWording,
 } from "@t3tools/client-runtime/scheduledTaskWording";
@@ -73,7 +78,9 @@ import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -96,6 +103,7 @@ import {
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskDestinationLabel, useScheduledTaskEditor } from "./scheduled-task-editor";
+import { SCHEDULED_TASKS_COPY } from "./scheduledTasksCopy";
 import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
@@ -408,7 +416,7 @@ export function SettingsScheduledTasksRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Scheduled tasks"
+      title={SCHEDULED_TASKS_COPY.title}
       actions={[
         {
           accessibilityLabel: "New task",
@@ -453,9 +461,10 @@ export function SettingsScheduledTasksRouteScreen() {
           ))
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
-            {availableTargets.length === 0
-              ? "Connect an environment to view and create scheduled tasks."
-              : "No environments match these filters. Change the filter above."}
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+              availableTargets.length > 0,
+            )}
           </Text>
         )}
       </ScrollView>
@@ -613,7 +622,7 @@ function SettingsScheduledTaskEditorScreen({ title: pageTitle }: { readonly titl
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
+              ? CONNECT_ENVIRONMENT_TO_CREATE_SCHEDULED_TASK
               : "No environments match the current filters. Change the filters to create a task."}
           </Text>
         )}
@@ -688,6 +697,11 @@ function TaskForm({
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
+  // Saving waits for the connection; the warning waits until it is known to be down, so a screen
+  // opened while the connection settles does not flash it.
+  const environmentDisconnected =
+    environmentReachable(useEnvironmentPresentation(environmentId).presentation?.connection) ===
+    false;
 
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -821,7 +835,7 @@ function TaskForm({
           <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
         ) : null}
 
-        {environmentUnavailable ? (
+        {environmentDisconnected ? (
           <Text className="px-1 text-base text-danger-foreground">
             This environment is disconnected. Reconnect before saving.
           </Text>

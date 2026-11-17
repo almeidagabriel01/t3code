@@ -3,6 +3,8 @@ import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import type { ProcessOwner } from "@t3tools/shared/ProcessOwners";
 import * as DateTime from "effect/DateTime";
 
+import { readLine } from "./heavyHook.ts";
+
 /** Summed over the tree: half a core, or 1 GiB resident, as the Resource Manager flags a process. */
 const HEAVY_CORES = 0.5;
 export const HEAVY_MEMORY_BYTES = 1024 ** 3;
@@ -84,6 +86,32 @@ const commandRoots = (
   return roots;
 };
 
+/** `node /x/.bin/vitest run` as `/x/.bin/vitest run`: a process line names its interpreter first. */
+const NODE_SCRIPT = /^(?:\S*\/)?node(?:\s+-\S+)*\s+(?=[^-\s])/;
+
+/** Parsing ~900 process lines costs ~40 ms a sample; the lines barely change between samples. */
+const heavyLines = new Map<string, boolean>();
+const HEAVY_LINES_MAX = 4096;
+
+/**
+ * Heavy by the hook's own rules, read from a process's command line. Only its program counts:
+ * argv loses its quotes, so `ssh host 'cd w && npm test'` reads as two commands.
+ */
+const isHeavyProcess = (process: ResourceTelemetryProcess) => {
+  if (isShell(process)) return false;
+  const line = process.command || process.name;
+  let heavy = heavyLines.get(line);
+  if (heavy === undefined) {
+    const first = (text: string) => readLine(text).parts[0]?.heavy === true;
+    heavy = first(line) || first(line.replace(NODE_SCRIPT, ""));
+    if (heavyLines.size >= HEAVY_LINES_MAX) heavyLines.clear();
+    heavyLines.set(line, heavy);
+  }
+  return heavy;
+};
+
+export const DETACHED_REASON = "Started outside an agent, so the queue can't route it";
+
 export interface Tracked {
   readonly peakCpu: number;
   readonly peakMemory: number;
@@ -108,31 +136,51 @@ const roundMemory = (bytes: number) => {
   return bytes > 0 ? Math.max(MIB, Math.round(bytes / step) * step) : 0;
 };
 
-const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => ({
-  source: "queue",
-  entryId: entry.id,
-  pid: entry.pid,
-  startTimeMs: Math.max(0, Date.parse(entry.startedAt) || 0),
-  threadId: entry.threadId,
-  cwd: entry.cwd,
-  label: entry.label,
-  name: heavyEntryName(entry),
-  startedAt: entry.startedAt,
-  stoppable: entry.server !== true,
-  ...(entry.cpu === undefined ? {} : { cpu: tenth(entry.cpu) }),
-  ...(entry.memory === undefined ? {} : { memory: roundMemory(entry.memory) }),
-  ...(entry.peakCpu === undefined ? {} : { peakCpu: tenth(entry.peakCpu) }),
-  ...(entry.peakMemory === undefined ? {} : { peakMemory: roundMemory(entry.peakMemory) }),
-});
+/**
+ * A Linux job's local tree is only the `remoto` wrapper, so its usage says nothing; files written
+ * by a version that sampled it still carry those numbers.
+ */
+export const withoutUsage = <E extends HeavyQueueEntry>({
+  cpu: _cpu,
+  memory: _memory,
+  peakCpu: _peakCpu,
+  peakMemory: _peakMemory,
+  ...entry
+}: E) => entry;
+
+const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => {
+  const usage: Partial<Pick<HeavyQueueEntry, "cpu" | "memory" | "peakCpu" | "peakMemory">> =
+    entry.runner === "linux" ? {} : entry;
+  return {
+    source: "queue",
+    ...(entry.runner === "linux" ? { runner: "linux" as const } : {}),
+    entryId: entry.id,
+    pid: entry.pid,
+    startTimeMs: Math.max(0, Date.parse(entry.startedAt) || 0),
+    threadId: entry.threadId,
+    cwd: entry.cwd,
+    label: entry.label,
+    name: heavyEntryName(entry),
+    startedAt: entry.startedAt,
+    stoppable: entry.server !== true,
+    ...(usage.cpu === undefined ? {} : { cpu: tenth(usage.cpu) }),
+    ...(usage.memory === undefined ? {} : { memory: roundMemory(usage.memory) }),
+    ...(usage.peakCpu === undefined ? {} : { peakCpu: tenth(usage.peakCpu) }),
+    ...(usage.peakMemory === undefined ? {} : { peakMemory: roundMemory(usage.peakMemory) }),
+  };
+};
 
 /**
  * Every heavy command running now: started queue entries first, then the direct commands under
- * agent and terminal owners. A queue entry's process tree never counts again as a direct command.
+ * agent and terminal owners, then heavy commands nothing in T3 started (a detached script's
+ * playwright). A queue entry's process tree never counts again as a direct command.
  */
 export function classifyHeavyCommands(input: {
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
   readonly owners: ReadonlyArray<ProcessOwner>;
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
+  /** This T3 server: its tree and its launchers are T3's own, never detached work. */
+  readonly serverPid: number;
   /** The sample's time, in epoch milliseconds. */
   readonly now: number;
   readonly previous: ReadonlyMap<string, Tracked>;
@@ -147,47 +195,88 @@ export function classifyHeavyCommands(input: {
   for (const entry of running) {
     const root = entry.server === true ? undefined : byPid.get(entry.pid);
     if (root !== undefined) for (const pid of treeUsage(root, children).pids) claimed.add(pid);
+    // Daemons the sampler found working for it count in its row, not as detached work.
+    for (const pid of entry.daemons ?? []) claimed.add(pid);
   }
 
   const direct: HeavyCommand[] = [];
   const trees = new Map<string, ReadonlyArray<number>>();
   const tracked = new Map<string, Tracked>();
+  /** Lists the root while it is heavy, or was within the linger, carrying its peaks. */
+  const list = (
+    root: ResourceTelemetryProcess,
+    usage: TreeUsage,
+    row: Pick<HeavyCommand, "source" | "threadId" | "stoppable" | "reason">,
+  ) => {
+    const key = commandKey(root.identity.pid, root.identity.startTimeMs);
+    const previous = input.previous.get(key);
+    const heavy =
+      root.runTimeMs >= MIN_RUN_MS &&
+      (usage.cpu >= HEAVY_CORES || usage.memoryBytes >= HEAVY_MEMORY_BYTES);
+    if (!heavy && (previous === undefined || input.now - previous.lastHeavyAt >= LINGER_MS)) {
+      return;
+    }
+    const next: Tracked = {
+      peakCpu: Math.max(previous?.peakCpu ?? 0, usage.cpu),
+      peakMemory: Math.max(previous?.peakMemory ?? 0, usage.memoryBytes),
+      lastHeavyAt: heavy ? input.now : previous!.lastHeavyAt,
+    };
+    tracked.set(key, next);
+    const label = root.command || root.name;
+    direct.push({
+      ...row,
+      pid: root.identity.pid,
+      startTimeMs: root.identity.startTimeMs,
+      label,
+      name: heavyEntryName({ label, cwd: "" }),
+      startedAt: DateTime.formatIso(DateTime.makeUnsafe(root.identity.startTimeMs)),
+      cpu: tenth(usage.cpu),
+      memory: roundMemory(usage.memoryBytes),
+      peakCpu: tenth(next.peakCpu),
+      peakMemory: roundMemory(next.peakMemory),
+    });
+  };
+
   for (const owner of input.owners) {
     if (owner.kind === "device-hub") continue;
     for (const root of commandRoots(owner.pid, children, claimed)) {
       const usage = treeUsage(root, children, claimed);
-      const key = commandKey(root.identity.pid, root.identity.startTimeMs);
-      const previous = input.previous.get(key);
       // Every command stays stoppable: a row on screen may be a sample behind its usage.
-      trees.set(key, usage.pids);
-      const heavy =
-        root.runTimeMs >= MIN_RUN_MS &&
-        (usage.cpu >= HEAVY_CORES || usage.memoryBytes >= HEAVY_MEMORY_BYTES);
-      if (!heavy && (previous === undefined || input.now - previous.lastHeavyAt >= LINGER_MS)) {
-        continue;
-      }
-      const next: Tracked = {
-        peakCpu: Math.max(previous?.peakCpu ?? 0, usage.cpu),
-        peakMemory: Math.max(previous?.peakMemory ?? 0, usage.memoryBytes),
-        lastHeavyAt: heavy ? input.now : previous!.lastHeavyAt,
-      };
-      tracked.set(key, next);
-      const label = root.command || root.name;
-      direct.push({
-        source: owner.kind,
-        pid: root.identity.pid,
-        startTimeMs: root.identity.startTimeMs,
-        threadId: owner.threadId,
-        label,
-        name: heavyEntryName({ label, cwd: "" }),
-        startedAt: DateTime.formatIso(DateTime.makeUnsafe(root.identity.startTimeMs)),
-        stoppable: true,
-        cpu: tenth(usage.cpu),
-        memory: roundMemory(usage.memoryBytes),
-        peakCpu: tenth(next.peakCpu),
-        peakMemory: roundMemory(next.peakMemory),
-      });
+      trees.set(commandKey(root.identity.pid, root.identity.startTimeMs), usage.pids);
+      list(root, usage, { source: owner.kind, threadId: owner.threadId, stoppable: true });
     }
+  }
+
+  // Detached work is what T3 neither runs nor launched: outside the server and its launchers,
+  // every owner and every queue job.
+  const ours = new Set(claimed);
+  for (const pid of [input.serverPid, ...input.owners.map((owner) => owner.pid)]) {
+    const root = byPid.get(pid);
+    if (root !== undefined) for (const tree of treeUsage(root, children).pids) ours.add(tree);
+  }
+  for (let at = byPid.get(input.serverPid)?.ppid; at !== undefined && at > 1;) {
+    ours.add(at);
+    at = byPid.get(at)?.ppid;
+  }
+  // Parents start first, so the topmost heavy process claims its tree before a heavy child is seen.
+  const byAge = input.processes.toSorted(
+    (a, b) => a.identity.startTimeMs - b.identity.startTimeMs || a.identity.pid - b.identity.pid,
+  );
+  for (const root of byAge) {
+    if (ours.has(root.identity.pid)) continue;
+    const parent = byPid.get(root.ppid);
+    // A command a shell or a detached script ran, not an app's helper (an editor's tsgo --lsp).
+    if (parent !== undefined && parent.identity.pid > 1 && !isShell(parent)) continue;
+    if (!isHeavyProcess(root)) continue;
+    const usage = treeUsage(root, children, ours);
+    for (const pid of usage.pids) ours.add(pid);
+    // No T3 thread or terminal started it, so Stop gets no `trees` key to signal.
+    list(root, usage, {
+      source: "detached",
+      threadId: null,
+      stoppable: false,
+      reason: DETACHED_REASON,
+    });
   }
   // Oldest first keeps rows in place while their numbers change.
   direct.sort((a, b) => a.startTimeMs - b.startTimeMs || a.pid - b.pid);

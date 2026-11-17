@@ -99,16 +99,21 @@ recipient, and each member works a request in its own hidden thread for that req
 request's project, `assistant:<assistantId>:g-<hash>` (`assistant_group_request_threads`). Requests
 never share a thread, so a packet, `history`, `#seq` quotes, stopped-task lists and hand-off counts are
 all scoped to one request. When every task of a request is completed or cancelled its threads are
-settled (`settleThread`, retried when a cancelled run ends); a task opening again in it un-settles
-them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
-the per-group threads of chats from before requests; they stay for history and for runs that started
-on them, and `threadRowOf` reads both tables. The suffix is a hash because team ids
-may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
-source of a member's thread id: a deleted thread keeps its id reserved, so `ensureThread` launches the
-replacement under an id derived from the dead one and moves the row. `forThread` resolves these
-threads as non-current, so sandbox, runtime policy, connectors and the note apply, and
-`guardAssistantThread` refuses archive, delete and unarchive on them; the service changes their
-lifecycle through the Orchestrator directly.
+settled (`settleThread`). A delivered task is not finished work: a thread still at work (its own
+subagents or delegates, or a thread it launched, found by `assistant_tasks.source_thread_id`) is held
+(`settle_held_at`). A later run end settles only held threads, never one already settled and then
+reopened. Pinning it, marking it active or a message from the user releases the hold, and from then
+only the user or inactivity settles it. The wait is one level deep: a thread
+that a launched thread launched does not hold the conversation. A task opening again in it
+un-settles them first and drops the holds. Paused, failed and project-waiting requests never settle.
+`assistant_group_threads` holds the per-group threads of chats from before requests; they stay for
+history and for runs that started on them, and `threadRowOf` reads both tables. The suffix is a hash
+because team ids may hold `:`; look the group up in the table, never parse it out of the id. The
+table is also the only source of a member's thread id: a deleted thread keeps its id reserved, so
+`ensureThread` launches the replacement under an id derived from the dead one and moves the row.
+`forThread` resolves these threads as non-current, so sandbox, runtime policy, connectors and the
+note apply, and `guardAssistantThread` refuses archive, delete and unarchive on them; the service
+changes their lifecycle through the Orchestrator directly.
 
 Recipients are decided before any model, first match winning (`routeGroupMessage`): the `@` mentions
 anywhere in the text (`assistantGroupMentions`, the one parser the clients highlight and preview
@@ -237,8 +242,9 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 ## Tasks are ordinary threads with an owner
 
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
-project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
-takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
+project, title, and the conversation that launched it) before the launch starts, so a run that ends
+fast still finds it; a failed launch takes it back. The source conversation lets a client attribute
+a thread launched from a member's hidden group thread to that group task. The thread stays a normal project thread: no flag on it, listed in project lists.
 These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not
@@ -290,6 +296,15 @@ These follow the row, none of them a new mechanism:
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
   the thread has an active run); lists drop dismissed rows in `assistantTaskRows`, while the task
   badge on the thread still reads the row, which is where a dismissed task is restored.
+- The reactor dismisses a task itself once its result reached the owner: its last run completed with
+  nothing waiting on the user, and the owner's run started by the notice that covers that run
+  (`TaskEventNotices.told`: that run's notice, or an earlier one it adds nothing to) completed. It
+  checks on the task's run end, on the owner's run end and on start, and dismisses once per run
+  (`auto_dismissed_run_id`, a conditional write). A Restore records the task's latest run there too,
+  so it holds until another run delivers, even against a check already in flight. A dismissed task with
+  nothing left on its branch then settles (`ThreadSettlementService.finishedWorkSettlement`), and so
+  do subagent children whose parent took their result or settled. With auto-settle off only that
+  last cascade runs: a parent the user settled takes its idle children along.
 
 The project check is the existing `projectScopeRefusal` at `t3_thread_launch`; a refused launch never
 reaches the link.
@@ -306,6 +321,18 @@ failed, cancelled or interrupted recipient run into an automatic "Status: blocke
 failure is the sender's own tool error. Without a `clientRequestId` the key follows the target and
 text, so an identical send within one session repeats the same request. Shells carry
 `queuedMessageCount` for the row badge.
+
+The stored `text` is the envelope the model reads (`<t3_request>`/`<t3_reply>` and the system line),
+so clients never parse it: the same send puts `context.teammate` beside it (sender, request id,
+status, files and where the bare body sits in `text`, one entry per reply of a group). It is stored,
+so it holds offsets rather than a second copy of the words; a range the text does not hold shows the
+text whole. The orchestrator keeps it only on `createdBy: "agent"`, and no one may edit a queued message
+that carries it (or a guest's), so a client cannot claim to be a teammate or rewrite one; other
+agents' prompts, such as a scheduled task's, stay editable. Messages from a
+server without it go through one parser in `client-runtime` (`teammateMessage.ts`). No date decides,
+since each environment updates on its own day: it reads an envelope only where the server's own
+marks prove it (an assistant sender the envelope names, the ids the server gave replies and group
+deliveries) and names the teammate from the directory, never from the tags.
 
 A send may name several assistants (`threadIds`). Each gets its own request row (`<group>:to:<thread>`)
 sharing a `group_id`, all opened before the first send so a fast reply never sees a group of one. Replies
@@ -355,8 +382,8 @@ the editors lock the name once saved.
 
 Providers read connectors at session start through `McpProviderSessions.connectors(threadId)`, a
 late-bound source the runtime layer fills (provider-core sits below assistants). It resolves secrets
-then, answers from `AssistantDirectory.forThread`, and is empty for any non-assistant thread. One
-unreadable secret drops only that connector. Per provider:
+then, answers from `AssistantDirectory.forThread`, and appends the T3-wide servers the thread may use
+(see Integrations below). One unreadable secret drops only that connector. Per provider:
 
 - Claude: merged into `mcpServers` next to `t3-code`, never into `allowedTools`, so a read-only
   assistant still asks before calling a connector tool and the runtime mode governs the rest.
@@ -371,6 +398,49 @@ unreadable secret drops only that connector. Per provider:
 
 Command connectors run as the server's user outside any sandbox; the user wrote them, but a
 read-only access level does not confine them.
+
+## Integrations (T3-wide services behind the proxy)
+
+A connected integration never reaches a provider with its token. `GlobalMcpConnectors` hands the
+thread `<name>_t3` pointing at `/mcp/integrations/<name>` with the thread's T3 session bearer, and
+`IntegrationProxy` attaches the upstream token server-side, refreshing once on a 401. The proxy
+re-checks the thread's selection (`Assistant.integrations`) and the integration's availability on
+every request, so a change applies without restarting the session.
+
+The proxy is the access boundary for assistants, unlike connectors: read only blocks a write
+`tools/call` and Ask before acting files one decision per tool and arguments hash, which an
+approval forwards once. A tool counts as a write unless the upstream `tools/list` annotated it
+`readOnlyHint` or the catalog lists it as read-only. Annotations live in memory and a provider lists
+tools once per session, so after a T3 restart the proxy sends its own `tools/list` in the provider's
+MCP session (one at a time per integration) before deciding. Because T3 already decided, Claude gets
+`mcp__<name>_t3__*` in `allowedTools` and Codex `default_tools_approval_mode = "approve"` on assistant
+threads only; other threads keep the provider's own prompts under their runtime mode. Cursor and ACP
+agents have no such switch and may prompt again. ACP agents without http
+MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrations work there
+although http connectors do not. OpenCode, Pi and Muse read no connectors, so integrations never
+reach them.
+
+`IntegrationDetector` reads Claude Code and Codex MCP config read-only per provider instance and
+never writes it. File presence does not prove a server works, so D7 (the provider's own copy wins
+and T3 does not inject its proxy) counts only a Codex entry that is enabled, or a Claude user-scope,
+plugin or claude.ai server whose latest session init reported `connected`. The adapter passes that
+init list through `McpProviderSessions.reportLoadedServers`, and the detector stores it per instance
+so a restart does not re-offer Connect. Local and project scope stay out of D7 because the init list
+is per cwd. Detected rows carry key names only, and their id is keyed over the values, so a copy
+request made after the file changed finds nothing.
+The detector re-parses a config file only when its mtime or size changes, so a test that rewrites a
+fixture in place must change one of them.
+
+Sign-in picks its redirect in `beginConnect` from what the client reports, not from how it is
+connected: the server's `/oauth/integrations/callback` when the client reaches this server over
+HTTPS or, from a web page, loopback HTTP; otherwise the desktop's loopback listener; otherwise the
+user pastes the final address. A desktop with a listener uses loopback even over HTTPS, and
+`loopback-only` catalog entries never use the server route. Pending flows (state and PKCE verifier)
+live in memory only. Any client cancels a pending sign-in by integration name, because the flow may
+have started on another device; a desktop listener stops when the pushed state no longer has it.
+
+Agents get `t3_integration` `list` and `read` only. It has no connect action, and its result is built
+field by field from `IntegrationsState`, so a new field there never reaches an agent by accident.
 
 ## Autonomy and the loop guard
 
@@ -392,6 +462,29 @@ whose request id starts with `autonomy:`; `DecisionService` settles such a notic
 the assistant anything, otherwise dismissing it would wake the assistant again. Telegram goes to the
 first allowed user's chat, unless a reply target already points at Telegram (the reply reactor posts
 the run there).
+
+## Problem detection
+
+`ProblemDetector` (`apps/server/src/problems/`) files one kanban card per failure cause, with no
+model. Sources only `report` an occurrence, keyed by what happened (a run id, an outage, a check
+result), never by its delivery, so a replayed event or a restart is a no-op. `tick` then processes
+each pending occurrence on its own and records a skip reason for the ones it drops, so one bad row
+never stops the rest. Every kanban write uses a command id derived from the occurrence key, which
+makes a crash between the card and the bookkeeping safe to retry.
+
+- **Cause.** The fingerprint is source, project, subject, the normalized command and the first line
+  of the normalized error (numbers, paths, ids, hashes and times stripped). A cause has one open
+  card; when that card is done, archived or deleted, the next occurrence starts a new generation
+  that names the previous card. A card never carries another project's data.
+- **Owner.** `selectOwner` is the single rule (project assistant with the project, then scope all;
+  ties go to notifying, then the oldest) and agrees with `projectScopeRefusal`. Each tick re-checks
+  the owner of every open card, so removing an assistant's access hands the card on.
+- **Wake.** A filed card queues a wake for its owner; a burst across projects becomes one message
+  per owner. It reuses `autonomy_wakes` (source `problem`), the daily limits, the pause switch and
+  the spending gate, so a held wake waits instead of being dropped. The owner's final answer is
+  the user's notice, prefixed with the approved header line.
+- **Replaces the fan-out.** With detection on for a project, the `run_failed` and `pr_checks_failed`
+  rules no longer wake every assistant there; watches still fire.
 
 ## iMessage channel
 

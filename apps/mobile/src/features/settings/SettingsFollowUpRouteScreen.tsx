@@ -5,28 +5,12 @@ import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { DEFAULT_FOLLOW_UP_BEHAVIOR, type FollowUpBehavior } from "../../lib/followUpBehavior";
+import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../../lib/followUpBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { CHAT_COPY, FOLLOW_UP_OPTIONS } from "./chatCopy";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
-
-const FOLLOW_UP_OPTIONS: ReadonlyArray<{
-  readonly behavior: FollowUpBehavior;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    behavior: "queue",
-    label: "Queue",
-    description: "Your message waits and runs after the current turn finishes.",
-  },
-  {
-    behavior: "steer",
-    label: "Steer",
-    description: "Your message reaches the agent right away, changing what it is working on.",
-  },
-];
 
 export function SettingsFollowUpRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -45,7 +29,7 @@ export function SettingsFollowUpRouteScreen() {
       contentContainerClassName="gap-3 px-5 pt-4"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
     >
-      <SettingsSection title="While the agent is running">
+      <SettingsSection title={CHAT_COPY.whileRunning}>
         {FOLLOW_UP_OPTIONS.map((option, index) => (
           <SettingsChoiceRow
             key={option.behavior}
@@ -59,8 +43,7 @@ export function SettingsFollowUpRouteScreen() {
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Long-press the send button to use the other option for a single message. With a hardware
-        keyboard, hold {Platform.OS === "android" ? "Ctrl" : "Command"} while sending.
+        {CHAT_COPY.footer(Platform.OS === "android" ? "Ctrl" : "Command")}
       </Text>
     </ScrollView>
   );

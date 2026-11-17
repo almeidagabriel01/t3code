@@ -4,6 +4,7 @@ import {
   type AssistantTeamId,
   ModelSelection,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -27,6 +28,9 @@ export interface AssistantTeamRow {
   readonly open_tasks?: number;
   readonly running_tasks?: number;
   readonly preview?: string | null;
+  readonly paused_tasks?: number;
+  readonly failed_tasks?: number;
+  readonly thread_ids_json?: string | null;
   readonly preview_project_id?: string | null;
   readonly scopes_json?: string;
   readonly removed_project_ids_json?: string;
@@ -88,6 +92,12 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           working: (row.open_tasks ?? 0) > 0,
           runningCount: row.running_tasks ?? 0,
           preview: row.preview ?? null,
+          pausedTasks: row.paused_tasks ?? 0,
+          failedTasks: row.failed_tasks ?? 0,
+          threadIds: Option.getOrElse(
+            decodeMemberIds(row.thread_ids_json ?? "[]"),
+            () => [],
+          ) as ThreadId[],
           previewProjectId: (row.preview_project_id ?? null) as ProjectId | null,
           removedProjectIds: Option.getOrElse(
             decodeMemberIds(row.removed_project_ids_json ?? "[]"),

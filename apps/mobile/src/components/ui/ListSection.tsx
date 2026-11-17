@@ -1,8 +1,11 @@
 import { MOBILE_SHAPE } from "../../lib/designTokens";
 import type { ReactNode } from "react";
-import { Platform, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 
+import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+
+const HEADER = "flex-row items-center justify-between gap-3";
 
 export function ListSection(props: {
   readonly title?: string;
@@ -10,35 +13,68 @@ export function ListSection(props: {
   readonly trailing?: ReactNode;
   readonly children: ReactNode;
   readonly footer?: string;
+  /** Makes the whole header a toggle with a chevron; a collapsed section shows only its header. */
+  readonly collapsible?: {
+    readonly expanded: boolean;
+    readonly onToggle: () => void;
+    /** What the toggle reads aloud after the title, such as the count the trailing text shows. */
+    readonly summary?: string;
+  };
 }) {
+  const { collapsible } = props;
+  const title = (
+    <View
+      className={
+        Platform.OS === "android"
+          ? "min-w-0 flex-1 flex-row items-center gap-2 px-4"
+          : "min-w-0 flex-1 flex-row items-center gap-2 px-2"
+      }
+    >
+      {props.titleIcon}
+      {/* Exact width: a content-sized title is pixel-rounded narrower and Android clips its wrapped last word. */}
+      <Text textRole="footnote" className="min-w-0 flex-1 font-t3-medium text-foreground-muted">
+        {props.title}
+      </Text>
+    </View>
+  );
   return (
     <View className="gap-2">
-      {props.title ? (
-        <View className="flex-row items-center justify-between gap-3">
-          <View
-            className={
-              Platform.OS === "android"
-                ? "min-w-0 flex-1 flex-row items-center gap-2 px-4"
-                : "min-w-0 flex-1 flex-row items-center gap-2 px-2"
-            }
-          >
-            {props.titleIcon}
-            <Text textRole="footnote" className="shrink font-t3-medium text-foreground-muted">
-              {props.title}
-            </Text>
-          </View>
+      {!props.title ? null : collapsible === undefined ? (
+        <View className={HEADER}>
+          {title}
           {props.trailing}
         </View>
-      ) : null}
-      <View
-        className="overflow-hidden border-continuous bg-grouped-card"
-        style={{
-          borderRadius:
-            Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,
-        }}
-      >
-        {props.children}
-      </View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={[props.title, collapsible.summary].filter(Boolean).join(", ")}
+          accessibilityState={{ expanded: collapsible.expanded }}
+          onPress={collapsible.onToggle}
+          className={`${HEADER} active:opacity-70`}
+        >
+          {title}
+          <View className="flex-row items-center gap-1.5">
+            {props.trailing}
+            <SymbolView
+              name={collapsible.expanded ? "chevron.down" : "chevron.right"}
+              size={12}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
+          </View>
+        </Pressable>
+      )}
+      {collapsible?.expanded === false ? null : (
+        <View
+          className="overflow-hidden border-continuous bg-grouped-card"
+          style={{
+            borderRadius:
+              Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,
+          }}
+        >
+          {props.children}
+        </View>
+      )}
       {props.footer ? (
         <Text textRole="footnote" className="px-4 text-foreground-muted">
           {props.footer}

@@ -6,16 +6,13 @@ import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/sess
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
 import {
-  type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
-  type ThreadEnvMode,
-  type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -46,8 +43,10 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
-import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
+import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
+import { HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
+import { WorktreeCleanupSections } from "./components/WorktreeCleanupSections";
 import {
   ProviderIdleTimeoutSection,
   ToolOutputHistorySection,
@@ -59,6 +58,19 @@ import { ProjectModelSections } from "./components/ProjectModelSections";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import {
+  CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
+  SERVER_SETTINGS_COPY,
+  STREAMING_CHOICES,
+  SUBMODULE_CHOICES,
+  WORKSPACE_CHOICES,
+} from "./serverSettingsCopy";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -67,6 +79,13 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
   "source-control": "Source control",
   worktrees: "Worktrees",
   maintenance: "Maintenance",
+};
+
+const CONNECT_ENVIRONMENT: Record<SettingsPage, string> = {
+  threads: CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+  "source-control": CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+  worktrees: CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
+  maintenance: CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -81,72 +100,15 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [
+    "worktreeCleanup",
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
     "branchNamingMode",
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  maintenance: ["continueThreadsAfterServerUpdate", ...RUNNER_PROJECT_KEYS],
+  maintenance: ["continueThreadsAfterServerUpdate", "detectProblems", ...RUNNER_PROJECT_KEYS],
 };
-
-const SUBMODULE_CHOICES: ReadonlyArray<{
-  readonly mode: WorktreeSubmodules | null;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or initialize recursively.",
-  },
-  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
-  {
-    mode: "top-level",
-    label: "Top level only",
-    description: "Skip submodules declared inside other submodules.",
-  },
-  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
-];
-
-const WORKSPACE_CHOICES: ReadonlyArray<{
-  readonly mode: ThreadEnvMode | null;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: null,
-    label: "Inherit",
-    description: "Use the repository's t3.json, or the current checkout.",
-  },
-  {
-    mode: "local",
-    label: "Current checkout",
-    description: "Start new threads in the existing workspace.",
-  },
-  {
-    mode: "worktree",
-    label: "New worktree",
-    description: "Give each new thread a separate checkout.",
-  },
-];
-
-const STREAMING_CHOICES: ReadonlyArray<{
-  readonly mode: ResponseStreamingMode;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: "turn",
-    label: "After the turn",
-    description: "Show the answer when the agent finishes.",
-  },
-  {
-    mode: "paragraph",
-    label: "Finished paragraphs",
-    description: "Show each paragraph or code block as it completes.",
-  },
-];
 
 // Only servers with thread auto-settlement store these, so other targets get the rest of a patch.
 const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
@@ -206,6 +168,7 @@ function ServerSettingsDetail(props: {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const {
+    availableTargets,
     selectedTargets,
     selectedProjects,
     selectedProjectGroups,
@@ -344,7 +307,10 @@ function ServerSettingsDetail(props: {
           <Text className="px-2 text-base text-foreground-muted">
             {projectSelected
               ? "Select a project with a checkout on a connected environment."
-              : "Use the filter above to select a connected environment."}
+              : emptyEnvironmentSelectionText(
+                  CONNECT_ENVIRONMENT[props.page],
+                  availableTargets.length > 0,
+                )}
           </Text>
         ) : (
           <>
@@ -371,7 +337,7 @@ function ServerSettingsDetail(props: {
                   />
                 ) : null}
                 <SettingsSection
-                  title="Default workspace"
+                  title={SERVER_SETTINGS_COPY.defaultWorkspace.title}
                   footer={managed("defaultThreadEnvMode")}
                   trailing={
                     pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
@@ -397,7 +363,7 @@ function ServerSettingsDetail(props: {
                   ))}
                 </SettingsSection>
                 <SettingsSection
-                  title="Default permissions"
+                  title={SERVER_SETTINGS_COPY.defaultPermissions.title}
                   footer={managed("defaultRuntimeMode")}
                   trailing={
                     pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
@@ -420,7 +386,7 @@ function ServerSettingsDetail(props: {
                   ))}
                 </SettingsSection>
                 <SettingsSection
-                  title="Response streaming"
+                  title={SERVER_SETTINGS_COPY.responseStreaming.title}
                   footer={managed("responseStreamingMode")}
                   trailing={
                     pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
@@ -440,13 +406,13 @@ function ServerSettingsDetail(props: {
                     />
                   ))}
                 </SettingsSection>
-                <SettingsSection title="Preview browser">
+                <SettingsSection title={SERVER_SETTINGS_COPY.previewBrowser.title}>
                   <SettingsSwitchRow
                     icon="globe"
-                    label="Agent browser access"
+                    label={SERVER_SETTINGS_COPY.agentBrowserAccess.title}
                     subtitle={managedSubtitle(
                       "enableAgentBrowserAccess",
-                      "Allow agents to use the in-app preview browser.",
+                      SERVER_SETTINGS_COPY.agentBrowserAccess.description,
                     )}
                     value={uniform("enableAgentBrowserAccess")}
                     disabled={disabledFor("enableAgentBrowserAccess")}
@@ -495,37 +461,37 @@ function ServerSettingsDetail(props: {
                     canWrite={(environmentId) => writableEnvironments.has(environmentId)}
                   />
                 )}
-                <SettingsSection title="Pull requests">
+                <SettingsSection title={SERVER_SETTINGS_COPY.pullRequests.title}>
                   <SettingsSwitchRow
                     icon={PullRequestGlyph.merged}
-                    label="Remove agent credits when merging"
+                    label={SERVER_SETTINGS_COPY.removeAgentCredits.title}
                     subtitle={managedSubtitle(
                       "removeAgentCreditsOnMerge",
-                      "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
+                      SERVER_SETTINGS_COPY.removeAgentCredits.description,
                     )}
                     value={uniform("removeAgentCreditsOnMerge")}
                     disabled={disabledFor("removeAgentCreditsOnMerge")}
                     onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
                   />
                 </SettingsSection>
-                <SettingsSection title="Default branch">
+                <SettingsSection title={SERVER_SETTINGS_COPY.defaultBranch.title}>
                   <SettingsSwitchRow
                     icon="arrow.down.circle"
-                    label="Automatically pull"
+                    label={SERVER_SETTINGS_COPY.autoPull.title}
                     subtitle={managedSubtitle(
                       "defaultAutoPull",
-                      "Keep the default branch current when there are no local changes.",
+                      SERVER_SETTINGS_COPY.autoPull.description,
                     )}
                     value={uniform("defaultAutoPull")}
                     disabled={disabledFor("defaultAutoPull")}
                     onValueChange={(value) => write({ defaultAutoPull: value })}
                   />
                 </SettingsSection>
-                <SettingsSection title="Clones">
+                <SettingsSection title={SERVER_SETTINGS_COPY.clones.title}>
                   <SettingsSwitchRow
                     icon="folder"
-                    label="Clone into host folders"
-                    subtitle="Clones go to github.com/owner/repo under the Add project folder, like ghq."
+                    label={SERVER_SETTINGS_COPY.hostFolders.title}
+                    subtitle={SERVER_SETTINGS_COPY.hostFolders.description}
                     value={uniform("ghqCloneLayout")}
                     disabled={disabledFor("ghqCloneLayout")}
                     onValueChange={(value) => write({ ghqCloneLayout: value })}
@@ -536,13 +502,13 @@ function ServerSettingsDetail(props: {
 
             {props.page === "worktrees" ? (
               <>
-                <SettingsSection title="New worktrees">
+                <SettingsSection title={SERVER_SETTINGS_COPY.newWorktrees.title}>
                   <SettingsSwitchRow
                     icon="arrow.triangle.branch"
-                    label="Start from remote"
+                    label={SERVER_SETTINGS_COPY.startFromRemote.title}
                     subtitle={managedSubtitle(
                       "newWorktreesStartFromOrigin",
-                      "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
+                      SERVER_SETTINGS_COPY.startFromRemote.description,
                     )}
                     value={uniform("newWorktreesStartFromOrigin")}
                     disabled={disabledFor("newWorktreesStartFromOrigin")}
@@ -550,7 +516,7 @@ function ServerSettingsDetail(props: {
                   />
                 </SettingsSection>
                 <SettingsSection
-                  title="Worktree submodules"
+                  title={SERVER_SETTINGS_COPY.worktreeSubmodules.title}
                   footer={managed("worktreeSubmodules")}
                   trailing={
                     pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
@@ -587,6 +553,14 @@ function ServerSettingsDetail(props: {
                   }}
                   onChange={write}
                 />
+                <WorktreeCleanupSections
+                  targets={displayTargets}
+                  projectSelected={projectSelected}
+                  disabledFor={disabledFor}
+                  managed={managed}
+                  write={write}
+                  clearProjectCleanup={() => clearProjectOverrides(["worktreeCleanup"])}
+                />
               </>
             ) : null}
 
@@ -601,13 +575,13 @@ function ServerSettingsDetail(props: {
                   />
                 ) : null}
                 {!projectSelected ? (
-                  <SettingsSection title="Manage environments">
+                  <SettingsSection title={SERVER_SETTINGS_COPY.manageEnvironments.title}>
                     {selectedTargets.map((target) => (
                       <SettingsRow
                         key={target.environmentId}
                         icon="server.rack"
                         label={target.label}
-                        value="Server and provider updates"
+                        value={SERVER_SETTINGS_COPY.manageEnvironments.description}
                         onPress={() =>
                           navigation.navigate("SettingsEnvironmentDetail", {
                             environmentId: target.environmentId,
@@ -625,30 +599,46 @@ function ServerSettingsDetail(props: {
                     onChange={(mode) => write({ keepAwake: mode })}
                   />
                 ) : null}
+                {!projectSelected ? (
+                  <SettingsSection>
+                    <SettingsRow
+                      icon="gauge.with.dots.needle.50percent"
+                      label={SERVER_SETTINGS_COPY.resourceManager.title}
+                      target="SettingsResourceManager"
+                    />
+                  </SettingsSection>
+                ) : null}
                 {/* Each machine has its own queue, so several environments get one section each. */}
                 {!projectSelected
                   ? displayTargets.map((target) => {
                       const machine =
                         displayTargets.length > 1 ? target.environment.label : undefined;
                       return (
-                        <Fragment key={target.environment.environmentId}>
-                          <HeavyCommandsSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                          />
-                          <HeavyQueueSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                            runner={{
-                              enabled: target.settings.runnerEnabled,
-                              where: target.settings.runnerWhere,
-                              overflow: target.settings.runnerOverflow,
-                            }}
-                          />
-                        </Fragment>
+                        <HeavyQueueSection
+                          key={target.environment.environmentId}
+                          environmentId={target.environment.environmentId}
+                          {...(machine === undefined ? {} : { machine })}
+                          runner={{
+                            enabled: target.settings.runnerEnabled,
+                            where: target.settings.runnerWhere,
+                            everything: target.settings.runnerLinuxEverything,
+                          }}
+                          slowAgentJobs={{
+                            value: target.settings.heavySlowAgentJobs,
+                            disabled: disabledFor("heavySlowAgentJobs"),
+                            onChange: (value) => write({ heavySlowAgentJobs: value }),
+                          }}
+                        />
                       );
                     })
                   : null}
+                {!projectSelected ? (
+                  <HeavyNoticesSection
+                    value={isMixed("heavyNotices") ? null : uniform("heavyNotices")}
+                    disabled={disabledFor("heavyNotices")}
+                    onChange={(mode) => write({ heavyNotices: mode })}
+                  />
+                ) : null}
                 <RunnerSection
                   environmentId={reference.environment.environmentId}
                   settings={reference.settings}
@@ -702,15 +692,15 @@ function ServerSettingsDetail(props: {
                     />
                   </>
                 ) : null}
-                <SettingsSection title="Updates">
+                <SettingsSection title={SERVER_SETTINGS_COPY.updates.title}>
                   <SettingsSwitchRow
                     icon="arrow.clockwise"
-                    label="Check provider updates"
+                    label={SERVER_SETTINGS_COPY.providerUpdates.title}
                     subtitle={managedSubtitle(
                       "enableProviderUpdateChecks",
                       projectSelected
-                        ? "Environment-wide setting. Select All projects to change it."
-                        : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                        ? SERVER_SETTINGS_COPY.providerUpdates.projectDescription
+                        : SERVER_SETTINGS_COPY.providerUpdates.description,
                     )}
                     value={uniform("enableProviderUpdateChecks")}
                     disabled={disabledFor("enableProviderUpdateChecks")}
@@ -719,16 +709,37 @@ function ServerSettingsDetail(props: {
                   <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
                       icon="arrow.uturn.forward"
-                      label="Continue after restart"
+                      label={SERVER_SETTINGS_COPY.continueAfterRestart.title}
                       subtitle={managedSubtitle(
                         "continueThreadsAfterServerUpdate",
-                        "Resume interrupted threads after an update or restart.",
+                        SERVER_SETTINGS_COPY.continueAfterRestart.description,
                       )}
                       value={uniform("continueThreadsAfterServerUpdate")}
                       disabled={disabledFor("continueThreadsAfterServerUpdate")}
                       onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                     />
                   </View>
+                </SettingsSection>
+                <SettingsSection title={SERVER_SETTINGS_COPY.diagnostics.title}>
+                  <SettingsSwitchRow
+                    icon="exclamationmark.shield"
+                    label={
+                      projectSelected
+                        ? SERVER_SETTINGS_COPY.detectProblems.projectTitle
+                        : SERVER_SETTINGS_COPY.detectProblems.title
+                    }
+                    subtitle={
+                      projectSelected
+                        ? managed("detectProblems")
+                        : managedSubtitle(
+                            "detectProblems",
+                            SERVER_SETTINGS_COPY.detectProblems.description,
+                          )
+                    }
+                    value={uniform("detectProblems")}
+                    disabled={disabledFor("detectProblems")}
+                    onValueChange={(value) => write({ detectProblems: value })}
+                  />
                 </SettingsSection>
               </>
             ) : null}

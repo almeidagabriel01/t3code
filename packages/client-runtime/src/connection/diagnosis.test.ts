@@ -154,6 +154,19 @@ describe("presentConnectionDiagnosis", () => {
     expect(results(backoff(failure))).not.toContainEqual(expect.stringMatching(/:ok$/));
   });
 
+  it("offers pairing again only when the host refuses this device's direct credential", () => {
+    const refused = (reason: "authentication" | "permission", via: "relay" | "direct") =>
+      new ConnectionBlockedError({ reason, detail: "refused", hop: "server", via });
+    for (const reason of ["authentication", "permission"] as const) {
+      const direct = diagnose(backoff(refused(reason, "direct")), "direct");
+      expect(direct?.headline).toBe("T3 Code on Mac mini did not accept this device");
+      expect(direct?.pairAgain).toBe(true);
+      expect(direct?.steps.join(" ")).toContain("Pair this device again");
+      expect(diagnose(backoff(refused(reason, "relay")))?.pairAgain).toBe(false);
+    }
+    expect(diagnose(backoff(unavailable("origin_unreachable")), "direct")?.pairAgain).toBe(false);
+  });
+
   it("keeps the relay health status out of a failure that has its own cause", () => {
     const failure = mapRemoteEnvironmentError(
       new RemoteEnvironmentAuthFetchError({ message: "Failed to fetch", cause: new TypeError() }),

@@ -451,6 +451,7 @@ vi.mock("../../components/ui/AppBar", () => ({
     onBack?: () => void;
     onBackToList?: () => void;
     hideBottomBorder?: boolean;
+    titlePress?: { accessibilityLabel: string; leading?: ReactNode; onPress: () => void };
     menus?: Array<{ items: Array<MockMenuItem> }>;
   }) => (
     <header
@@ -458,6 +459,11 @@ vi.mock("../../components/ui/AppBar", () => ({
       data-border={props.hideBottomBorder ? "hidden" : "shown"}
     >
       <button aria-label="header:back to list" onClick={props.onBackToList} />
+      {props.titlePress ? (
+        <button aria-label={props.titlePress.accessibilityLabel} onClick={props.titlePress.onPress}>
+          {props.titlePress.leading}
+        </button>
+      ) : null}
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
       {/* Submenu titles, so a test can see what a nested entry is called. */}
@@ -735,6 +741,10 @@ vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { assistant: { name: string } }) => (
     <i>{`av:${props.assistant.name}`}</i>
   ),
+  AssistantCluster: (props: { faces: Array<{ key: string }> }) => (
+    <i data-testid="cluster">{props.faces.map((face) => face.key).join(",")}</i>
+  ),
+  removedAssistantFace: (id: string) => ({ id, name: "Assistant", avatar: null, icon: null }),
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./useUsageLimitLabel", () => ({
@@ -757,6 +767,7 @@ vi.mock("./useAssistantFlows", () => ({
 }));
 
 import { AssistantGroupChatRouteScreen } from "./AssistantGroupChatRouteScreen";
+import { clearGroupOutgoings } from "./GroupComposer";
 
 const member = (id: string, name: string, role: string) => ({
   id,
@@ -870,6 +881,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = window.document.createElement("div");
   root = createRoot(container);
+  clearGroupOutgoings();
   mocks.modelPick = null;
   Object.assign(mocks, {
     teams: [team()],
@@ -1275,6 +1287,38 @@ describe("group composer", () => {
     mocks.post.mockResolvedValue({ ok: false, message: "server down", reason: null });
     await click("Send");
     expect(text()).toContain("server down");
+    // A post the chat then shows landed; one the user edited since keeps their text, not the warning.
+    const landed = (clientRequestId: unknown) => {
+      mocks.live = snapshot([...FEED, message("m9", 9, { author: "user", clientRequestId })]);
+      return render();
+    };
+    await type("hi again");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await type("hi again, edited");
+    await landed(mocks.requestIds.at(-1));
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, "hi again, edited"]);
+    await type("hi");
+    await click("Send");
+    expect(text()).toContain("unconfirmed");
+    await landed(mocks.requestIds.at(-1));
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
+    // A landed reply lets go of its quote too, as one whose post answered does.
+    await click("Reply to Ada");
+    await type("thanks");
+    await click("Send");
+    await landed(mocks.requestIds.at(-1));
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    // Edited before its post showed, it keeps the user's text and still lets go of the quote.
+    await click("Reply to Ada");
+    await type("thanks again");
+    await click("Send");
+    await type("thanks again!");
+    await landed(mocks.requestIds.at(-1));
+    expect([container.querySelector('[data-testid="group-reply-chip"]'), input().value]).toEqual([
+      null,
+      "thanks again!",
+    ]);
   });
 
   it("replies to a member's message from the row button or its menu, then clears or sends", async () => {
@@ -1355,6 +1399,19 @@ describe("task cards", () => {
 });
 
 describe("group header and archive", () => {
+  it("its title shows every member's face, a removed one too, and opens Group info", async () => {
+    mocks.teams = [team({ memberIds: ["ada", "beto", "jarvis", "gone"] })];
+    render();
+    expect(container.querySelector('[data-testid="cluster"]')?.textContent).toBe(
+      "ada,beto,jarvis,gone",
+    );
+    await click("Crew, Group info");
+    expect(mocks.navigate).toHaveBeenCalledWith("AssistantGroupInfo", {
+      environmentId: "hub",
+      teamId: "g1",
+    });
+  });
+
   it("its menu edits, adds an assistant, schedules and archives", async () => {
     render();
     await click("header:Edit group");
@@ -1584,6 +1641,23 @@ describe("group attachments", () => {
     });
     expect(chips()).toHaveLength(0);
     expect(mocks.release).toHaveBeenCalledWith("hub", ["pending-shot.png", "pending-sheet.pdf"]);
+
+    // A send whose reply was lost keeps its files when the chat closes, so its resend carries them
+    // under the same id.
+    mocks.release.mockClear();
+    mocks.pick.mockResolvedValue({ files: [draft("note.pdf")], error: null });
+    await click("Add attachment:Choose Files");
+    await type("@ada again");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    act(() => root.unmount());
+    root = createRoot(container);
+    render();
+    expect([chips().length, mocks.release.mock.calls]).toEqual([1, []]);
+    await click("Send");
+    const [sent, resent] = mocks.post.mock.calls.slice(-2).map(([input]) => input);
+    expect([resent, mocks.requestIds.at(-1)]).toEqual([sent, mocks.requestIds.at(-2)]);
+    expect(resent).toEqual(expect.objectContaining({ attachments: [expect.anything()] }));
   });
 
   it("removes an uploaded file's pending upload, and retries a failed one from its chip", async () => {
@@ -1886,6 +1960,61 @@ describe("requests", () => {
     await click(TAB.alpha);
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
     expect(input().value).toBe("still here");
+    // An unconfirmed reply takes its quote back after another tab or leaving the chat, so its
+    // resend keeps its id; the chat then showing its post drops the quote with the warning.
+    await click(TAB.beta);
+    await click("Reply to request Review");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await click(TAB.alpha);
+    await click(TAB.beta);
+    expect(text()).toContain("Replying to Review");
+    remount();
+    render();
+    expect(text()).toContain("Replying to Review");
+    await click("Send");
+    const [first, resent] = mocks.requestIds;
+    expect([mocks.post.mock.lastCall?.[0], resent]).toEqual([
+      expect.objectContaining({ replyToMessageId: "r3" }),
+      first,
+    ]);
+    mocks.live = snapshot(
+      [...REQUESTS, message("m9", 9, { ...user, text: "still here", clientRequestId: first })],
+      TASKS,
+    );
+    render();
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
+    // A reply cancelled on a failed send stays cancelled after another tab: it is a new message.
+    await click("Reply to request Review");
+    await type("again");
+    await click("Send");
+    await click("Cancel reply");
+    await click(TAB.alpha);
+    await click(TAB.beta);
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    await click("Send");
+    const [failed, again] = mocks.requestIds.slice(-2);
+    expect([mocks.post.mock.lastCall?.[0]?.replyToMessageId, again === failed]).toEqual([
+      undefined,
+      false,
+    ]);
+    // So does one cancelled while its send was on its way and failed in another tab.
+    let fail = (_: { ok: false; message: string; reason: "unconfirmed" }) => {};
+    mocks.post.mockReturnValueOnce(new Promise((resolve) => (fail = resolve)));
+    await click("Reply to request Review");
+    await click("Send");
+    await click("Cancel reply");
+    await click(TAB.alpha);
+    await act(async () => fail({ ok: false, message: "unconfirmed", reason: "unconfirmed" }));
+    await click(TAB.beta);
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    await click("Send");
+    const [onItsWay, after] = mocks.requestIds.slice(-2);
+    expect([mocks.post.mock.lastCall?.[0]?.replyToMessageId, after === onItsWay]).toEqual([
+      undefined,
+      false,
+    ]);
   });
 
   it("says how many tasks run in the whole group, even in a tab whose stream holds none", () => {
@@ -2159,6 +2288,29 @@ describe("requests", () => {
     await click(TAB.beta);
     expect(mocks.modelPick).toBeNull();
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    // Unless a failed send of that tab takes its picks back, so it goes again as sent, under its id.
+    await click(TAB.alpha);
+    await click("Project:Beta");
+    await pickOpus("project:p1");
+    await type("@beto go");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await click(TAB.beta);
+    await click(TAB.alpha);
+    await click("Send");
+    const [first, resent] = mocks.requestIds;
+    expect([mocks.post.mock.calls.map(([input]) => input), resent]).toEqual([
+      Array(2).fill(expect.objectContaining({ projectId: "p2", modelSelection: OPUS })),
+      first,
+    ]);
+    // A model the user clears on it stays cleared after another tab: it is another message.
+    await setPick(null);
+    await click(TAB.beta);
+    await click(TAB.alpha);
+    expect(mocks.modelPick).toBeNull();
+    await click("Send");
+    expect(mocks.post.mock.lastCall?.[0]).not.toHaveProperty("modelSelection");
+    expect(mocks.requestIds.at(-1)).not.toBe(first);
   });
 
   it("drops both composer picks for good on a tab the user did not choose here", async () => {

@@ -48,22 +48,36 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 // A thread that waits on the user is what puts an assistant under "Needs you". The fake is a
-// real shell with its id and approval flag replaced, so every other reader still gets a full shape.
+// real shell with its id, approval flag and pending request replaced, as the server sends them, so
+// every other reader still gets a full shape.
 const waiting = vi.hoisted(() => new Set<string>());
 vi.mock(import("~/state/entities"), async (original) => {
   const actual = await original();
   const asWaiting = (base: ReturnType<typeof actual.useQuietThreadShells>[number], id: string) =>
-    ({ ...base, id, hasPendingApprovals: true }) as typeof base;
+    ({
+      ...base,
+      id,
+      hasPendingApprovals: true,
+      pendingRequest: {
+        id: `request-${id}`,
+        kind: "command_execution_approval",
+        createdAt: "2026-03-17T19:00:00.000Z",
+      },
+    }) as typeof base;
   return {
     ...actual,
+    // Until the first snapshot lands there is no real shell to copy, so nothing waits yet.
     useThreadShell: (ref) => {
-      const base = actual.useQuietThreadShells()[0]!;
+      const base = actual.useQuietThreadShells()[0];
       const real = actual.useThreadShell(ref);
-      return ref && waiting.has(ref.threadId) ? asWaiting(base, ref.threadId) : real;
+      return base && ref && waiting.has(ref.threadId) ? asWaiting(base, ref.threadId) : real;
     },
     useQuietThreadShells: () => {
       const real = actual.useQuietThreadShells();
-      return [...real, ...[...waiting].map((id) => asWaiting(real[0]!, id))];
+      const base = real[0];
+      return base === undefined
+        ? real
+        : [...real, ...[...waiting].map((id) => asWaiting(base, id))];
     },
   };
 });
@@ -94,7 +108,14 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
-  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+  integrations: { mode: "all" },
+  autonomy: {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
@@ -157,6 +178,10 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
   await using screen = await openApp();
   await expect.element(section("Needs you").getByText("Needs your approval")).toBeVisible();
   await expect.element(section("Needs you").getByText("CFO")).toBeVisible();
+  await expect
+    .element(section("Needs you").getByTestId("assistant-status"))
+    .toHaveAttribute("aria-label", "Approval");
+  expect(section("Leaders").getByTestId("group-status").query()).toBeNull();
   await expect.element(section("Leaders").getByText("Bo")).toBeVisible();
   await expect.element(section("Nobody yet").getByText("No members yet.")).toBeVisible();
   await expect.element(section("render").getByText("Revisor")).toBeVisible();
@@ -199,6 +224,8 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
 });
 
 it("opens a group's chat and lists archived groups with a way back", async () => {
+  // A member waiting on the user shows on its group's header, in a thread row's words.
+  waiting.add("assistant:bo:1");
   fakeTeamEdits.updates = [];
   publishAssistants(
     [assistant("bo", "Bo")],
@@ -209,6 +236,10 @@ it("opens a group's chat and lists archived groups with a way back", async () =>
   );
   await using screen = await openApp();
   await expect.element(section("Leaders")).toBeVisible();
+  await expect
+    .element(section("Leaders").getByTestId("group-status"))
+    .toHaveAttribute("aria-label", "Approval");
+  waiting.clear();
   expect(section("Old crew").query()).toBeNull();
   await userEvent.click(section("Leaders").getByRole("button", { name: "Open chat" }));
   await eventually(() =>

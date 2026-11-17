@@ -170,6 +170,12 @@ import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
+import * as IntegrationAuth from "./integrations/IntegrationAuth.ts";
+import * as IntegrationDetector from "./integrations/IntegrationDetector.ts";
+import * as IntegrationFetch from "./integrations/IntegrationFetch.ts";
+import * as IntegrationsHttp from "./integrations/integrationsHttp.ts";
+import * as IntegrationProxy from "./integrations/IntegrationProxy.ts";
+import * as AskBeforeActingGate from "./assistants/AskBeforeActingGate.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
@@ -239,6 +245,8 @@ import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSet
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyQueueSampler from "./heavyQueue/HeavyQueueSampler.ts";
 import * as RunnerPublisher from "./heavyQueue/RunnerPublisher.ts";
+import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
+import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
@@ -755,6 +763,9 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+// Layers memoize by reference: the problem detector reads the same notices the server starts.
+const layerHeavyQueueNotices = HeavyQueueNotices.layer();
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMemoryStarted,
   layerMemorySync,
@@ -770,6 +781,19 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeavyQueueSampler.layer(),
   RunnerPublisher.layer(),
   HeavyCommands.layer(),
+  layerHeavyQueueNotices,
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* ProblemDetector.ProblemDetector).start();
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ProblemDetector.layer.pipe(
+        Layer.provide(layerHeavyQueueNotices),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+    ),
+  ),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
@@ -952,6 +976,16 @@ const sandboxDistDir = NodeFS.existsSync(NodePath.join(import.meta.dirname, "bin
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(InstanceSpend.layer),
+  Layer.provideMerge(
+    IntegrationAuth.layer.pipe(
+      Layer.provide(IntegrationFetch.layer),
+      // Runtime sessions read the same detector: claude.ai lists and native catalog entries (D7).
+      Layer.provideMerge(IntegrationDetector.layer),
+      // Layers memoize by reference, so these are the instances the rest of the server reads.
+      Layer.provide(layerServerSettings),
+      Layer.provide(ServerSecretStore.layer),
+    ),
+  ),
   Layer.provideMerge(AssistantSpend.layer),
   // The sandbox container assistants may work in, linked to this environment like any peer.
   Layer.provideMerge(
@@ -992,6 +1026,7 @@ const layerMakeRoutes = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer),
       Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+      Layer.provide(IntegrationsHttp.layer),
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
@@ -1002,6 +1037,20 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    // Integrations for provider sessions, beside /mcp. Memoized layers: the gate the decisions fill.
+    IntegrationProxy.routeLayer.pipe(
+      Layer.provide(
+        IntegrationProxy.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              AskBeforeActingGate.gateLayer,
+              AssistantDirectory.layer,
+              IntegrationFetch.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,

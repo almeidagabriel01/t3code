@@ -20,6 +20,7 @@ import {
   type AssistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -56,6 +57,8 @@ import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { showGroupTab } from "./openGroupTabs";
 import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentsWithScope } from "./session";
+import { environmentThreadShells } from "./threads";
+import { reuseEntries, sameStamped } from "./stableEntries";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -125,7 +128,39 @@ const assistantEntriesAtom = Atom.family((key: string) =>
         archived.push({ environmentId, assistant });
       }
     }
-    return { active, archived, teams, activeTeams, archivedTeams, environmentIds };
+    // Rows memoize on their entry, so an entry whose record did not change keeps its identity.
+    const prior = Option.getOrUndefined(
+      get.self<{
+        readonly active: ReadonlyArray<AssistantEntry>;
+        readonly archived: ReadonlyArray<AssistantEntry>;
+        readonly teams: ReadonlyArray<AssistantTeamEntry>;
+        readonly activeTeams: ReadonlyArray<AssistantTeamEntry>;
+        readonly archivedTeams: ReadonlyArray<AssistantTeamEntry>;
+        readonly environmentIds: ReadonlyArray<EnvironmentId>;
+      }>(),
+    );
+    const assistantKey = (entry: AssistantEntry) => `${entry.environmentId}:${entry.assistant.id}`;
+    const sameAssistant = (a: AssistantEntry, b: AssistantEntry) =>
+      a.environmentId === b.environmentId && sameStamped(a.assistant, b.assistant);
+    const teamKey = (entry: AssistantTeamEntry) => `${entry.environmentId}:${entry.team.id}`;
+    // Chat counters move without a new stamp.
+    const sameTeam = (a: AssistantTeamEntry, b: AssistantTeamEntry) =>
+      a.team === b.team ||
+      (a.environmentId === b.environmentId &&
+        sameStamped(a.team, b.team) &&
+        JSON.stringify(a.team.chat) === JSON.stringify(b.team.chat));
+    const next = {
+      active: reuseEntries(prior?.active, active, assistantKey, sameAssistant),
+      archived: reuseEntries(prior?.archived, archived, assistantKey, sameAssistant),
+      teams: reuseEntries(prior?.teams, teams, teamKey, sameTeam),
+      activeTeams: reuseEntries(prior?.activeTeams, activeTeams, teamKey, sameTeam),
+      archivedTeams: reuseEntries(prior?.archivedTeams, archivedTeams, teamKey, sameTeam),
+      environmentIds: reuseEntries(prior?.environmentIds, environmentIds, String, Object.is),
+    };
+    return prior !== undefined &&
+      (Object.keys(next) as Array<keyof typeof next>).every((field) => next[field] === prior[field])
+      ? prior
+      : next;
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
 
@@ -162,6 +197,28 @@ export function useAssistantTasks(
   assistantId: Assistant["id"],
 ): ReadonlyArray<AssistantTask> {
   return useAtomValue(assistantTasksAtom(`${environmentId}\u0000${assistantId}`));
+}
+
+const assistantTasksByAssistantAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const byAssistant = new Map<string, ReadonlyArray<AssistantTask>>();
+    for (const [environmentId, state] of get(assistantStatesAtom(key))) {
+      for (const assistant of selectActiveAssistants(state)) {
+        byAssistant.set(
+          `${environmentId}:${assistant.id}`,
+          selectAssistantTasks(state, assistant.id),
+        );
+      }
+    }
+    return byAssistant;
+  }).pipe(Atom.withLabel(`web-assistant-tasks-by-assistant:${key}`)),
+);
+
+/** Every active assistant's tasks keyed `environmentId:assistantId`, for the sidebar's one pass. */
+export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
+  return useAtomValue(
+    assistantTasksByAssistantAtom(environmentIdsKey(useAssistantsEnvironmentIds())),
+  );
 }
 
 const taskAssistantAtom = Atom.family((key: string) =>
@@ -219,6 +276,22 @@ export async function setAssistantTaskDismissed(
 /** The link of this thread to the assistant that launched it, dismissed or not. */
 export function useAssistantTask(environmentId: EnvironmentId, threadId: ThreadId) {
   return useAtomValue(assistantTaskAtom(`${environmentId}\u0000${threadId}`));
+}
+
+const assistantLiveWorkAtom = Atom.family((key: string) =>
+  Atom.make((get) =>
+    assistantLiveWork({
+      tasks: get(assistantStatesAtom(key)).flatMap(([environmentId, state]) =>
+        [...state.tasks.values()].map((task) => ({ environmentId, task })),
+      ),
+      shells: get(environmentThreadShells.quietThreadShellsAtom),
+    }),
+  ).pipe(Atom.withLabel(`web-assistant-live-work:${key}`)),
+);
+
+/** Where each assistant works right now and its live delegated children, derived once for every row. */
+export function useAssistantLiveWork() {
+  return useAtomValue(assistantLiveWorkAtom(environmentIdsKey(useAssistantsEnvironmentIds())));
 }
 
 /** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */

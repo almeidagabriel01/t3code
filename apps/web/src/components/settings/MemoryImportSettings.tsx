@@ -31,6 +31,8 @@ import {
 import { randomUUID } from "../../lib/utils";
 import { MemoryScopeSettings, type MemoryScopeSelection } from "./MemoryScopeSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { MEMORY_SETTINGS_COPY } from "./settingsSearchMemoryItems";
+import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
@@ -197,10 +199,14 @@ export function MemoryImportSettings({
       progress?.phase ?? "",
     );
   return (
-    <SettingsSection title="Import memories">
+    <SettingsSection {...searchableSetting("memory-import")}>
       <SettingsRow
-        title="Provider memories"
-        description={`Import supported ${new Intl.ListFormat("en", { type: "disjunction" }).format(formats.map((f) => memoryImportFormatLabels[f]))} memories from the selected device. Other providers are not supported. Memory write and file read permissions are required.`}
+        {...searchableSetting("memory-import-providers")}
+        description={MEMORY_SETTINGS_COPY.importDescription(
+          new Intl.ListFormat("en", { type: "disjunction" }).format(
+            formats.map((f) => memoryImportFormatLabels[f]),
+          ),
+        )}
       >
         <div className="space-y-4 pt-4 pb-2 sm:max-w-md">
           <div className="grid gap-1.5">
@@ -414,13 +420,16 @@ export function MemoryImportSettings({
       </SettingsRow>
       {!canSafelyImport() ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unsafe-browser state, not a setting
           title="Import unavailable"
           description={<span role="alert">{unsafeImportBrowserMessage}</span>}
         />
       ) : null}
       {!workflow ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           title="Browser storage unavailable"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           description={
             <span role="alert">
               Browser storage is unavailable. Imports require saved recovery information.
@@ -436,7 +445,9 @@ export function MemoryImportSettings({
           progress.phase,
         )) ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- progress state, not a setting
           title="Import progress"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- progress state, not a setting
           description={
             <span role="status">
               {busy ? "Import request in progress. " : ""}
@@ -451,7 +462,9 @@ export function MemoryImportSettings({
       ) : null}
       {progress?.receipt ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- result state, not a setting
           title="Import result"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- result state, not a setting
           description={
             <>
               {progress.receipt.state === "partial"
@@ -467,6 +480,7 @@ export function MemoryImportSettings({
       ) : null}
       {error ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
           title="Import needs attention"
           description={<span role="alert">{error}</span>}
         />

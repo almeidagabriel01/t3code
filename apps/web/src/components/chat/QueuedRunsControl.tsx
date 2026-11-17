@@ -12,7 +12,10 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  queuedMessageEditRefusal,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
@@ -38,6 +41,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
+import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 
 export interface EditQueuedRunRequest {
@@ -129,7 +133,7 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, message }, serverIndex) => ({
       key: run.id,
       message,
       runId: run.id,
@@ -137,8 +141,7 @@ export function QueuedRunsControl({
       freshContext: run.freshContext === true,
       serverIndex,
       text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
+      editRefusal: queuedMessageEditRefusal(message),
       attachments,
       thumbnails: attachments
         .filter((attachment) => attachment.type === "image")
@@ -157,7 +160,7 @@ export function QueuedRunsControl({
       freshContext: false,
       serverIndex: null,
       text: message.text,
-      editable: true,
+      editRefusal: null,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? [])
         .filter(isImageAttachment)
@@ -204,7 +207,7 @@ export function QueuedRunsControl({
       const latest = queued.at(-1);
       if (
         !latest ||
-        latest.context?.guest !== undefined ||
+        queuedMessageEditRefusal(latest.message) !== null ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
         busyRunId !== null
@@ -250,14 +253,20 @@ export function QueuedRunsControl({
       </span>
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+          // A teammate's queued message previews their words, as its sent row will.
+          const presentation = item.message ? resolveUserMessagePresentation(item.message) : null;
+          const shownText = presentation?.teammate ? presentation.text : item.text;
+          const previewText = isAttachmentOnlyBootstrapPrompt(shownText)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
+                replaceComposerContextReferences(shownText, (reference) =>
                   reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
                 ),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
+          const editDisabledReason = item.editRefusal ?? props.editBlockedReason;
+          const editDisabled =
+            item.runId === null || busyRunId !== null || editDisabledReason !== null;
           return (
             <li
               key={item.key}
@@ -321,34 +330,31 @@ export function QueuedRunsControl({
                 ) : (
                   <>
                     <Tooltip>
-                      {/* The span keeps the tooltip, and its reason, on a disabled button. */}
-                      <TooltipTrigger render={<span className="flex shrink-0" />}>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost-muted"
-                          aria-label="Edit queued message"
-                          disabled={
-                            item.runId === null ||
-                            !item.editable ||
-                            busyRunId !== null ||
-                            props.editBlockedReason !== null
-                          }
-                          onClick={() => {
-                            if (item.runId !== null && item.messageId !== null) {
-                              props.onEditQueuedRun({
-                                runId: item.runId,
-                                messageId: item.messageId,
-                                text: item.text,
-                                attachments: item.attachments,
-                              });
-                            }
-                          }}
-                        >
-                          <PencilIcon />
-                        </Button>
+                      <TooltipTrigger
+                        render={
+                          // aria-disabled, not disabled: pointer events stay, so hovering shows why it is off.
+                          <Button
+                            size="icon-xs"
+                            variant="ghost-muted"
+                            aria-label="Edit queued message"
+                            aria-disabled={editDisabled || undefined}
+                            onClick={() => {
+                              if (!editDisabled && item.runId !== null && item.messageId !== null) {
+                                props.onEditQueuedRun({
+                                  runId: item.runId,
+                                  messageId: item.messageId,
+                                  text: item.text,
+                                  attachments: item.attachments,
+                                });
+                              }
+                            }}
+                          />
+                        }
+                      >
+                        <PencilIcon />
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {props.editBlockedReason ??
+                        {editDisabledReason ??
                           `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
@@ -427,6 +433,7 @@ function QueuedMessage(props: {
       : null,
   );
   const taskEvent = props.message ? taskEventActivity(props.message) : null;
+  const teammate = presentation?.teammate ? teammateMessageSummary(presentation.teammate) : null;
   const fold =
     attribution === "automation"
       ? {
@@ -437,10 +444,12 @@ function QueuedMessage(props: {
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
-            label: senderShell?.title.trim() || "Agent",
+            label: teammate?.names || senderShell?.title.trim() || "Agent",
             summary: taskEvent
               ? `${taskEvent.title} · ${taskEvent.label}`
-              : (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? ""),
+              : (teammate?.line ??
+                props.previewText.split(/\r?\n/).find((line) => line.trim()) ??
+                ""),
           }
         : null;
   const bodyVisible = fold === null || expanded;

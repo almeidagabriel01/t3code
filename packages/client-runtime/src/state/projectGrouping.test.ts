@@ -265,6 +265,25 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it.each([
+    // The assistants' home is not a project anyone works in, so no project list shows it.
+    { role: "assistants" as const, title: "Assistants", labels: ["server"] },
+    { role: "scratch" as const, title: "No project", labels: ["server", "No project"] },
+  ])(
+    "keeps the $role project out of the repository it sits in, so a real project keeps its name",
+    ({ role, title, labels }) => {
+      // A T3 home inside a git repo puts its managed projects in that repo's worktree.
+      const projects = [
+        makeProject("server", "/work/t3code"),
+        makeProject(role, "/work/t3code/.t3/assistants", { title, managedRole: role }),
+      ];
+      for (const mode of ["repository", "repository_path", "separate"] as const) {
+        const groups = buildProjectGroups({ projects, settings: settings(mode) });
+        expect(groups.map((group) => group.label)).toEqual(labels);
+      }
+    },
+  );
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {

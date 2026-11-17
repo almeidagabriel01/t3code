@@ -68,6 +68,14 @@ function preview(
   );
 }
 
+function overflow(
+  input: Parameters<typeof createSidebarSortingStrategy>[0],
+  active: string,
+  over: string,
+) {
+  return createSidebarSortingStrategy(input).overflow(layout(input.items, active, over));
+}
+
 describe("sidebar collision detection", () => {
   function collisionArgs(blockedAboveSource = false) {
     const rows = [thread("source", "active"), thread("blocked", "active")];
@@ -375,6 +383,14 @@ describe("sidebar drag projection", () => {
     expect(result.get("a1")?.y).toBe(32 + 83);
     expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(32);
     expect(result.get("s")?.y).toBe(32);
+    // The labels push the last row 32px past the list; the group reserves that much below it.
+    expect(
+      overflow(
+        { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
+        "a2",
+        "a1",
+      ),
+    ).toBe(32);
   });
 
   it.each(["s1", "missing-target"])(
@@ -429,6 +445,13 @@ describe("sidebar drag projection", () => {
       expect(result.get(sidebarMarkerId("active-placeholder"))?.scaleY).toBe(0);
       expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(dividerOffset);
       expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(settledOffset);
+      expect(
+        overflow(
+          { items, settledOrder: [], settledExpanded: true },
+          active,
+          sidebarMarkerId("active-placeholder"),
+        ),
+      ).toBe(Math.max(0, settledOffset));
     },
   );
 

@@ -16,6 +16,7 @@ const { mocks } = vi.hoisted(() => ({
         projectId: string;
       };
     }>,
+    sites: [] as Array<Record<string, string>>,
   },
 }));
 vi.mock("react-native", () => ({
@@ -35,9 +36,7 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
-  assistantGroupThreadsOf: () => [],
   assistantFace: () => "idle",
-  assistantPresence: () => ({ mood: "idle", detail: "Idle", since: null }),
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode; testID?: string }) => (
@@ -64,17 +63,21 @@ vi.mock("../../components/ui/Menu", () => ({
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active }),
-}));
-vi.mock("../../state/entities", () => ({
-  useThreadShell: () => null,
-  useQuietThreadShells: () => [],
+  useAssistantLiveWork: () => ({ sites: mocks.sites }),
+  useAssistantStatus: () => ({ of: () => ({ mood: "idle", detail: "Idle", since: null }) }),
 }));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 vi.mock("./assistantPresentation", () => ({
-  AssistantAvatar: (props: { assistant: { name: string } }) => (
-    <i>{`av:${props.assistant.name}`}</i>
+  AssistantCluster: (props: {
+    faces: ReadonlyArray<{ key: string; assistant: { name: string }; mood?: string }>;
+  }) => (
+    <b data-testid="cluster">
+      {props.faces.map((face) => (
+        <i key={face.key} data-mood={face.mood}>{`av:${face.assistant.name}`}</i>
+      ))}
+    </b>
   ),
 }));
 
@@ -92,8 +95,9 @@ const bot = (name: string, extra: object = {}) => ({
   },
 });
 
-function render(entries: typeof mocks.active) {
+function render(entries: typeof mocks.active, sites: typeof mocks.sites = []) {
   mocks.active = entries;
+  mocks.sites = sites;
   mocks.select.mockClear();
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -113,18 +117,18 @@ const click = (container: HTMLElement, label: string) =>
 
 describe("ProjectAssistantFaces", () => {
   it.each([
-    { names: [], faces: [], more: null },
-    { names: ["Atlas"], faces: ["Atlas"], more: null },
-    { names: ["Atlas", "Nova"], faces: ["Atlas", "Nova"], more: null },
-    { names: ["Atlas", "Nova", "Echo", "Pip"], faces: ["Atlas", "Nova"], more: "+2" },
-  ])("shows $faces and $more for $names", ({ names, faces, more }) => {
+    { names: [] },
+    { names: ["Atlas"] },
+    { names: ["Atlas", "Nova"] },
+    { names: ["Atlas", "Nova", "Echo", "Pip", "Rex"] },
+  ])("hands every one of $names to one cluster", ({ names }) => {
     const container = render(names.map((name) => bot(name)));
-    expect([...container.querySelectorAll("i")].map((face) => face.textContent)).toEqual(
-      faces.map((name) => `av:${name}`),
+    expect(container.querySelectorAll('[data-testid="cluster"]').length).toBe(
+      names.length > 0 ? 1 : 0,
     );
-    expect(
-      container.querySelector('[data-testid="project-assistant-more"]')?.textContent ?? null,
-    ).toBe(more);
+    expect([...container.querySelectorAll("i")].map((face) => face.textContent)).toEqual(
+      names.map((name) => `av:${name}`),
+    );
     expect(container.textContent?.includes("Alpha")).toBe(names.length > 0);
   });
 
@@ -154,6 +158,48 @@ describe("ProjectAssistantFaces", () => {
     expect(mocks.select).toHaveBeenCalledWith({
       name: "Thread",
       params: { environmentId: "hub", threadId: "t-Echo" },
+    });
+  });
+
+  it("puts an assistant working here first, in its work's mood, and opens that work", () => {
+    const site = { environmentId: "hub", assistantId: "id-Echo", face: "waiting" };
+    const container = render(
+      [bot("Atlas"), bot("Echo", { scope: "all" })],
+      [
+        { ...site, projectId: "p1", threadId: "task-1" },
+        { ...site, projectId: "p9", threadId: "task-9" },
+      ],
+    );
+    const faces = [...container.querySelectorAll("i")];
+    expect(faces.map((face) => [face.textContent, face.dataset.mood ?? null])).toEqual([
+      ["av:Echo", "waiting"],
+      ["av:Atlas", "idle"],
+    ]);
+    expect(container.querySelector('[aria-label="Echo is working here, Atlas"]')).not.toBeNull();
+    click(container, "menu:Echo is working here");
+    expect(mocks.select).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "task-1" },
+    });
+  });
+
+  it("opens the work from the cluster when the only face is a working one", () => {
+    const container = render(
+      [bot("Echo", { scope: "all" })],
+      [
+        {
+          environmentId: "hub",
+          assistantId: "id-Echo",
+          projectId: "p1",
+          threadId: "task-1",
+          face: "working",
+        },
+      ],
+    );
+    click(container, "Echo is working here");
+    expect(mocks.select).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "task-1" },
     });
   });
 

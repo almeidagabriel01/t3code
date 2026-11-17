@@ -94,7 +94,7 @@ const make = Effect.gen(function* () {
 
   const save: AssistantConnectors["Service"]["save"] = Effect.fn("AssistantConnectors.save")(
     function* (assistantId, previous, input) {
-      const problem = assistantMcpServersProblem(input);
+      const problem = assistantMcpServersProblem(input, previous);
       if (problem !== null)
         return yield* new AssistantError({ reason: "invalid", message: problem });
       const stale = new Set(previous.flatMap((server) => savedSecretNames(assistantId, server)));

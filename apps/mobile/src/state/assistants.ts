@@ -19,6 +19,9 @@ import {
   type AssistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
+import { assistantStatusOf } from "@t3tools/client-runtime/sidebarZones";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -52,8 +55,12 @@ import { useEnvironmentQuery } from "./query";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
+import { decisionEntriesAtom } from "./decisions";
+import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
+import { environmentThreadShells } from "./threads";
+import { buildThreadOwnership, sameKeySet, type ThreadOwnership } from "./threadOwnership";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -120,6 +127,41 @@ const assistantEntriesAtom = Atom.make((get) => {
   return { active, archived, teams, activeTeams, archivedTeams, environmentIds };
 }).pipe(Atom.withLabel("mobile-assistant-entries"));
 
+const assistantLiveWorkAtom = Atom.make((get) =>
+  assistantLiveWork({
+    tasks: get(assistantStatesAtom).flatMap(([environmentId, state]) =>
+      [...state.tasks.values()].map((task) => ({ environmentId, task })),
+    ),
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+  }),
+).pipe(Atom.withLabel("mobile-assistant-live-work"));
+
+/** Where each assistant works right now and its live delegated children, derived once for every row. */
+export function useAssistantLiveWork() {
+  return useAtomValue(assistantLiveWorkAtom);
+}
+
+const assistantStatusAtom = Atom.make((get) => {
+  const presentations = get(environmentPresentations.presentationsAtom);
+  return assistantStatusOf({
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+    decisions: get(decisionEntriesAtom).open,
+    ownerOf: get(threadOwnershipAtom).ownerOf,
+    sites: get(assistantLiveWorkAtom).sites,
+    reachable: (environmentId) =>
+      environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
+  });
+}).pipe(Atom.withLabel("mobile-assistant-status"));
+
+/**
+ * Every assistant's one status (`assistantStatus`), derived once and read alike by the sidebar,
+ * Home, info, Work, project faces and a thread's presence menu. `of` takes an assistant; `read`
+ * adjusts a presence in hand; `items` is the Needs you list it counted.
+ */
+export function useAssistantStatus() {
+  return useAtomValue(assistantStatusAtom);
+}
+
 /** What an assistant spent across its conversations; idle (null) when it has no budget to show. */
 export function useAssistantSpend(
   environmentId: EnvironmentId,
@@ -175,6 +217,43 @@ export function useAssistantTasks(
 }
 
 const NO_TASKS: ReadonlyArray<AssistantTask> = [];
+
+const assistantTasksByAssistantAtom = Atom.make((get) => {
+  const byAssistant = new Map<string, ReadonlyArray<AssistantTask>>();
+  for (const [environmentId, state] of get(assistantStatesAtom)) {
+    for (const assistant of selectActiveAssistants(state)) {
+      byAssistant.set(
+        `${environmentId}:${assistant.id}`,
+        selectAssistantTasks(state, assistant.id),
+      );
+    }
+  }
+  return byAssistant;
+}).pipe(Atom.withLabel("mobile-assistant-tasks-by-assistant"));
+
+/** Every active assistant's tasks by `env:assistantId`, so Home derives its whole section at once. */
+export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
+  return useAtomValue(assistantTasksByAssistantAtom);
+}
+
+/** Who started each listed thread; read by the project lists, their move planner and Needs you. */
+export const threadOwnershipAtom = Atom.make((get): ThreadOwnership => {
+  const entries = get(assistantEntriesAtom);
+  const next = buildThreadOwnership({
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+    active: entries.active,
+    activeTeams: entries.activeTeams,
+    tasksByAssistant: get(assistantTasksByAssistantAtom),
+  });
+  const previous = Option.getOrNull(get.self<ThreadOwnership>());
+  return previous !== null && sameKeySet(previous.ownedThreadKeys, next.ownedThreadKeys)
+    ? { ...next, ownedThreadKeys: previous.ownedThreadKeys }
+    : next;
+}).pipe(Atom.withLabel("mobile-thread-ownership"));
+
+export function useThreadOwnership(): ThreadOwnership {
+  return useAtomValue(threadOwnershipAtom);
+}
 
 /** The assistant that launched this thread as a task, or null for any other thread. */
 export function useTaskAssistant(

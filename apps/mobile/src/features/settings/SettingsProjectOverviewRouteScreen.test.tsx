@@ -12,6 +12,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     leave: vi.fn(),
     confirm: vi.fn(),
     deleteProject: vi.fn(),
+    access: "granted" as "granted" | "missing",
   },
 }));
 
@@ -46,7 +47,7 @@ vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Child
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children, AppTextInput: () => null }));
 vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
 vi.mock("../assistants/ProjectAssistantAccessSection", () => ({
-  ProjectAssistantAccessSection: () => null,
+  ProjectAssistantAccessSections: () => null,
 }));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn(), confirm: mocks.confirm }));
@@ -67,13 +68,16 @@ vi.mock("../../state/use-composer-drafts", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
-  useEnvironmentsWithScope: () => new Set(["local"]),
+  useEnvironmentsWithScope: () => new Set(mocks.access === "granted" ? ["local"] : []),
+  useEnvironmentsScopeAccess: () => new Map([["local", mocks.access]]),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.deleteProject }));
 vi.mock("../../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("./components/SettingsSwitchRow", () => ({ SettingsSwitchRow: () => null }));
+vi.mock("./components/SettingsSwitchRow", () => ({
+  SettingsSwitchRow: (props: { subtitle?: string }) => <span>{props.subtitle}</span>,
+}));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   useSettingsEnvironmentMenu: () => ({ items: [] }),
 }));
@@ -105,6 +109,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.selectedKeys = null;
   mocks.liveKeys = null;
+  mocks.access = "granted";
   mocks.selectAllProjects.mockReset();
   mocks.leave.mockReset();
   mocks.confirm.mockReset();
@@ -145,5 +150,14 @@ describe("project overview with the multi-project filter", () => {
   it("leaves the filter alone when it moved to other projects during the removal", async () => {
     await removeProject(["a", "b"]);
     expect(mocks.selectAllProjects).not.toHaveBeenCalled();
+  });
+
+  it("keeps Organize and says why when this connection cannot change the project", () => {
+    mocks.selectedKeys = new Set(["a"]);
+    mocks.access = "missing";
+    render();
+    expect(container.textContent).toContain(
+      "This connection cannot change this project on every machine.",
+    );
   });
 });

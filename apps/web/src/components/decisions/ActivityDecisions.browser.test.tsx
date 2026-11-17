@@ -67,8 +67,11 @@ it("answers a decision from the Activity page over the connection", async () => 
   container.style.cssText = "height: 900px; width: 1400px;";
   await using _screen = await render(<AppRoot router={router} />, { container, router: false });
 
-  await expect.element(page.getByText("Pick a migration strategy")).toBeVisible();
-  await userEvent.click(page.getByText("Offline"));
+  // The sidebar's Needs you lists the same decision with one-click answers.
+  await expect
+    .element(page.getByRole("heading", { name: "Pick a migration strategy" }))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("radiogroup", { name: "Options" }).getByText("Offline"));
   await userEvent.click(page.getByRole("button", { name: "Answer" }));
   await vi.waitFor(() =>
     expect(fakeDecisions.calls).toEqual([

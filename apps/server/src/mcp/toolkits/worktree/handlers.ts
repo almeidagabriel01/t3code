@@ -1,6 +1,7 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, WorktreeMcpFailure } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Project from "../../../project/ProjectService.ts";
+import * as StorageCleanup from "../../../storageCleanup.ts";
 import { readThread, unavailable } from "../../threadAccess.ts";
 import * as Effect from "effect/Effect";
 
@@ -44,6 +45,34 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* WorktreeMcpService.WorktreeMcpService;
       return yield* service.handoff(scope, input);
+    }),
+  ),
+  t3_worktree_finish: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      if (!scope.capabilities.has("worktree"))
+        return yield* new WorktreeMcpFailure({
+          code: "capability_denied",
+          message: "This MCP credential does not grant worktree capabilities.",
+        });
+      const thread = yield* McpInvocationContext.requireThreadScope(scope, "t3_worktree_finish");
+      const cleanup = yield* StorageCleanup.StorageCleanup;
+      return yield* cleanup
+        .finishWorktree({ threadId: thread.thread.threadId, worktreePath: input.worktreePath })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new WorktreeMcpFailure({
+                code:
+                  error.reason === "thread-not-found"
+                    ? "thread_not_found"
+                    : error.reason === "project-not-found"
+                      ? "project_not_found"
+                      : "operation_failed",
+                message: error.message,
+              }),
+          ),
+        );
     }),
   ),
   t3_worktree_status: McpToolAccess.readsAsCaller(() =>

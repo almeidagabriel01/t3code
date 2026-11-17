@@ -203,7 +203,7 @@ describe("group projects", () => {
 
 describe("assistants with access", () => {
   const access = () => (
-    <ProjectAssistantAccessSection environmentId={"hub" as never} projectId={"p1" as never} />
+    <ProjectAssistantAccessSection environmentId={"hub" as never} projectIds={["p1" as never]} />
   );
 
   it("toggles a group with add and remove", async () => {

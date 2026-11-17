@@ -16,6 +16,10 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
+  connectEnvironmentToSee,
+  selectEnvironmentToSee,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageLoadingState,
@@ -513,8 +517,8 @@ export function UsagePage() {
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
-                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
-                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
+                  ? connectEnvironmentToSee(showingLimits ? "limits" : "usage")
+                  : selectEnvironmentToSee(showingLimits ? "limits" : "usage")}
               </p>
             ) : showingLimits ? (
               <UsageLimitsSection

@@ -117,6 +117,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  /** Reads the single "Delete merged worktrees" choice and the Linux copy switch. */
+  mergedWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Sent by macOS servers, which honor the fastWorktreeCheckout setting. */
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
@@ -164,6 +166,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   decisions: Schema.optionalKey(Schema.Boolean),
   /** Hide Assistants when absent; older servers have no assistant methods. */
   assistants: Schema.optionalKey(Schema.Boolean),
+  /** Hide Integrations when absent; older servers have no integration methods. */
+  integrations: Schema.optionalKey(Schema.Boolean),
   /** Hide iMessage when absent; only Mac servers can run it. */
   imessageChannel: Schema.optionalKey(Schema.Boolean),
   /** Hide the keep-awake status when absent; older servers cannot hold the host awake. */

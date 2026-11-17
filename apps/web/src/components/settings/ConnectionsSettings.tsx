@@ -1,3 +1,5 @@
+import { pairAgainAddress } from "@t3tools/client-runtime/connection";
+import { CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
@@ -36,10 +38,16 @@ import {
 } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { useAccessEnvironment } from "./useAccessEnvironment";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { CONNECTION_SETTINGS_COPY } from "./settingsSearchConnectionItems";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
@@ -331,6 +339,8 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  // A new key per programmatic open seeds the dialog's host; Pair again starts at the refused address.
+  const [routeDialog, setRouteDialog] = useState({ key: 0, host: "" });
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
@@ -339,6 +349,12 @@ function ConnectionsSettingsContent({
     } else {
       setSavedBackendError(null);
     }
+  };
+  const openRouteDialog = (target: EnvironmentPresentation, host: string) => {
+    setRouteTarget(target);
+    setRouteDialog((current) => ({ key: current.key + 1, host }));
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
   };
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
@@ -873,6 +889,7 @@ function ConnectionsSettingsContent({
         return (
           <SettingsRow
             {...searchableSetting("wsl-backend")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
             description="Couldn't load the WSL backend state."
             status={<span className="block text-destructive">{desktopWslError}</span>}
             control={
@@ -897,6 +914,7 @@ function ConnectionsSettingsContent({
       return (
         <SettingsRow
           {...searchableSetting("wsl-backend")}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           description="WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference."
           status={
             desktopWslError ? (
@@ -931,7 +949,6 @@ function ConnectionsSettingsContent({
       <>
         <SettingsRow
           {...searchableSetting("wsl-backend")}
-          description="Run the selected WSL distro alongside Windows. Projects remain on their current filesystem."
           status={
             desktopWslError ? (
               <span className="block text-destructive">{desktopWslError}</span>
@@ -979,8 +996,7 @@ function ConnectionsSettingsContent({
         />
         {desktopWslState.enabled ? (
           <SettingsRow
-            title="WSL only"
-            description="Run only the WSL backend. T3 Code restarts when this changes."
+            {...settingCopy("wsl-only")}
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
@@ -1003,7 +1019,7 @@ function ConnectionsSettingsContent({
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : searchableSetting("tailscale-https").description
           : missingTailscaleEndpointDescription(desktopServerExposureState)
       }
       control={
@@ -1062,6 +1078,7 @@ function ConnectionsSettingsContent({
   const renderNetworkAccessRow = () => (
     <SettingsRow
       title={searchableSetting("network-access").title}
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
       description={
         isLocalBackendNetworkAccessible ? (
           <NetworkAccessDescription
@@ -1078,7 +1095,7 @@ function ConnectionsSettingsContent({
             }
           />
         ) : desktopServerExposureState ? (
-          "Limited to this machine."
+          searchableSetting("network-access").description
         ) : (
           "Loading…"
         )
@@ -1097,12 +1114,12 @@ function ConnectionsSettingsContent({
       title={searchableSetting("network-access").title}
       description={
         desktopBridge
-          ? "This connection cannot view or change network exposure."
+          ? CONNECTION_SETTINGS_COPY.networkAccessNoControl
           : currentAuthPolicy === "remote-reachable"
-            ? "Remote access is already configured. Change network exposure where the server starts."
+            ? CONNECTION_SETTINGS_COPY.networkAccessRemoteConfigured
             : currentAuthPolicy === "loopback-browser"
-              ? "Only this machine can connect. Restart with a non-loopback host for remote pairing."
-              : "Network exposure information is unavailable."
+              ? CONNECTION_SETTINGS_COPY.networkAccessLoopback
+              : CONNECTION_SETTINGS_COPY.networkAccessUnavailable
       }
       control={
         !desktopBridge &&
@@ -1138,7 +1155,10 @@ function ConnectionsSettingsContent({
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
-              accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
+              accessEnvironment?.label ??
+              (desktopBridge
+                ? searchableSetting("connections-environment").title
+                : CONNECTION_SETTINGS_COPY.primaryEnvironmentTitle)
             }
             icon={
               <EnvironmentMachineIcon
@@ -1181,7 +1201,8 @@ function ConnectionsSettingsContent({
             ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
-                title="Version"
+                {...settingCopy("server-version")}
+                // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
                 description={
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
@@ -1258,8 +1279,7 @@ function ConnectionsSettingsContent({
 
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
-              id="authorized-clients"
-              title="Authorized clients"
+              {...searchableSetting("authorized-clients")}
               collapsedContent={
                 canReadAccess && newestPairingLink
                   ? renderPairingClientsList([newestPairingLink], [])
@@ -1572,12 +1592,9 @@ function ConnectionsSettingsContent({
           </Dialog>
         </>
       ) : (
-        <SettingsSection {...searchableSetting("connections-environment")}>
-          <SettingsRow
-            title="No environment selected"
-            description="Connect an environment to view its settings and access."
-          />
-        </SettingsSection>
+        <SettingsServerEnvironmentNotice id={searchableSetting("connections-environment").id}>
+          {CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS}
+        </SettingsServerEnvironmentNotice>
       )}
     </>
   );
@@ -1587,19 +1604,20 @@ function ConnectionsSettingsContent({
   return (
     <SettingsPageContainer>
       {desktopBridge ? (
-        <SettingsSection id="this-app" title="This app">
+        <SettingsSection {...searchableSetting("this-app")}>
           <LocalEnvironmentSetting />
         </SettingsSection>
       ) : null}
       <SettingsSection
         {...searchableSetting("remote-environments")}
-        title="Environments"
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
             <AddEnvironmentDialog
+              key={routeDialog.key}
+              initialHost={routeDialog.host}
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
               error={savedBackendError}
@@ -1617,11 +1635,8 @@ function ConnectionsSettingsContent({
             removingEnvironmentId={removingSavedEnvironmentId}
             onSetEnabled={handleSetSavedBackendEnabled}
             onRemove={handleRemoveSavedBackend}
-            onAddRoute={(target) => {
-              setRouteTarget(target);
-              setSavedBackendError(null);
-              setAddBackendDialogOpen(true);
-            }}
+            onAddRoute={(target) => openRouteDialog(target, "")}
+            onPairAgain={(target) => openRouteDialog(target, pairAgainAddress(target.entry) ?? "")}
           />
         ))}
         <CloudRemoteEnvironmentRows

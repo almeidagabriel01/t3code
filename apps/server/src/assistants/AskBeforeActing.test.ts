@@ -9,7 +9,14 @@ import { DecisionService, layer as decisionsLayer } from "../decisions/DecisionS
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { installLayer } from "./AskBeforeActing.ts";
-import { AskBeforeActingGate, gateLayer, SEND_DECLINED } from "./AskBeforeActingGate.ts";
+import {
+  AskBeforeActingGate,
+  gateLayer,
+  SEND_DECLINED,
+  TOOL_APPROVAL_UNAVAILABLE,
+  TOOL_DECLINED,
+  TOOL_WAITING_FOR_APPROVAL,
+} from "./AskBeforeActingGate.ts";
 
 const sender = ThreadId.make("assistant:sam:1");
 const target = ThreadId.make("thread:agent");
@@ -135,11 +142,85 @@ it.effect("an ask that expired unanswered is asked again, not reported as declin
   ),
 );
 
+const toolCall = (argsHash: string) => ({
+  assistant,
+  threadId: sender,
+  integration: "linear",
+  serviceName: "Linear",
+  tool: "create_issue",
+  argsHash,
+  argsPreview: `{"title":"${argsHash}"}`,
+});
+
+const runTool = <A>(
+  body: (
+    ask: (argsHash: string) => Effect.Effect<unknown>,
+    decisions: DecisionService["Service"],
+  ) => Effect.Effect<A, DecisionError>,
+) =>
+  Effect.gen(function* () {
+    const gate = yield* AskBeforeActingGate;
+    const decisions = yield* DecisionService;
+    return yield* body((argsHash) => gate.requestToolApproval(toolCall(argsHash)), decisions);
+  }).pipe(Effect.provide(layer));
+
+it.effect("a write tool call opens one decision keyed by its arguments and forwards once", () =>
+  runTool((ask, decisions) =>
+    Effect.gen(function* () {
+      for (const _ of [1, 2]) {
+        expect(yield* ask("a")).toEqual({ allowed: false, message: TOOL_WAITING_FOR_APPROVAL });
+      }
+      const [decision, ...rest] = yield* open(decisions);
+      expect(rest).toEqual([]);
+      expect(decision).toMatchObject({
+        title: "Sam wants to use Linear: create_issue",
+        context: 'Linear · create_issue\n\n{"title":"a"}',
+      });
+      // Other arguments are another action.
+      yield* ask("b");
+      expect(yield* open(decisions)).toHaveLength(2);
+      yield* decisions.answer({ decisionId: decision!.id, optionId: "accept" });
+      expect(yield* ask("a")).toMatchObject({ allowed: true });
+      // The approval is used; the same call asks again.
+      expect(yield* ask("a")).toEqual({ allowed: false, message: TOOL_WAITING_FOR_APPROVAL });
+      expect(yield* open(decisions)).toHaveLength(2);
+    }),
+  ),
+);
+
+it.effect("an approval not used within ten minutes asks again", () =>
+  runTool((ask, decisions) =>
+    Effect.gen(function* () {
+      yield* ask("a");
+      const [decision] = yield* open(decisions);
+      yield* decisions.answer({ decisionId: decision!.id, optionId: "accept" });
+      yield* TestClock.adjust("11 minutes");
+      expect(yield* ask("a")).toEqual({ allowed: false, message: TOOL_WAITING_FOR_APPROVAL });
+      expect(yield* open(decisions)).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect("a denied tool call stays declined for those arguments", () =>
+  runTool((ask, decisions) =>
+    Effect.gen(function* () {
+      yield* ask("a");
+      const [decision] = yield* open(decisions);
+      yield* decisions.answer({ decisionId: decision!.id, optionId: "deny" });
+      expect(yield* ask("a")).toEqual({ allowed: false, message: TOOL_DECLINED });
+    }),
+  ),
+);
+
 it.effect("fails closed while no approval path is installed", () =>
   Effect.gen(function* () {
     const gate = yield* AskBeforeActingGate;
     expect(
       yield* gate.check({ assistant, senderThreadId: sender, targetThreadId: target, text: "x" }),
     ).toMatchObject({ allowed: false });
+    expect(yield* gate.requestToolApproval(toolCall("a"))).toEqual({
+      allowed: false,
+      message: TOOL_APPROVAL_UNAVAILABLE,
+    });
   }).pipe(Effect.provide(gateLayer)),
 );

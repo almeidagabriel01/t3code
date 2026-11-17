@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ServerProviderSkill } from "@t3tools/contracts";
 import { t3SkillsOf } from "@t3tools/client-runtime/state/global-skills";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { CONNECT_ENVIRONMENT_FOR_T3_SKILLS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useState } from "react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -20,7 +21,8 @@ import {
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 export function GlobalSkillsSettings() {
@@ -37,8 +39,8 @@ export function GlobalSkillsSettings() {
         />
       ) : (
         <SettingsRow
-          title="T3 skills"
-          description="Connect an environment to manage its T3 skills."
+          title={settingCopy("t3-skills").title}
+          description={CONNECT_ENVIRONMENT_FOR_T3_SKILLS}
         />
       )}
     </SettingsSection>
@@ -103,13 +105,12 @@ function SkillList({
   return (
     <>
       <SettingsRow
-        title="Skills folder"
+        {...settingCopy("t3-skills-folder")}
         description={
           <span>
-            Put a skill folder with a SKILL.md in this environment's skills folder, then rescan.
-            Call it in a message with $t3:&lt;folder-name&gt;.
+            {MAINTENANCE_SETTINGS_COPY.skillsFolderHelp}
             <br />
-            {folder ? <code>{folder}</code> : "Rescan to show the folder path."}
+            {folder ? <code>{folder}</code> : MAINTENANCE_SETTINGS_COPY.skillsFolderRescan}
           </span>
         }
         control={
@@ -134,6 +135,7 @@ function SkillList({
         }
       />
       {published.length === 0 ? (
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
         <SettingsRow title="No T3 skills yet" description="Add a skill folder, then rescan." />
       ) : null}
       {published.map((skill) => (

@@ -74,13 +74,31 @@ describe("newBoardTargets", () => {
     ]);
   });
 
-  it("drops No project when its board exists or the server offers no such folder", () => {
+  it("offers an existing Scratch project as No project when the server names no folder", () => {
+    expect(targets(null)).toEqual([
+      ["No project", "s1"],
+      ["Beta", "p2"],
+    ]);
+  });
+
+  it("offers a missing Scratch project only where the server offers its folder", () => {
+    const withoutScratch = (root: string | null) =>
+      newBoardTargets({
+        environments: [{ environmentId, scratchWorkspaceRoot: root }],
+        projects: projects.filter((entry) => entry.id !== "s1"),
+        boards,
+      }).map((target) => [target.title, target.projectId]);
+    expect(withoutScratch("/data/scratch")).toEqual([
+      ["No project", null],
+      ["Beta", "p2"],
+    ]);
+    expect(withoutScratch(null)).toEqual([["Beta", "p2"]]);
+  });
+
+  it("drops No project when its board exists", () => {
     const scratchBoard = { environmentId, board: { ...board, id: "b2", projectId: "s1" } };
     expect(targets("/data/scratch", [...boards, scratchBoard] as never)).toEqual([["Beta", "p2"]]);
-    expect(targets(null)).toEqual([
-      ["Beta", "p2"],
-      ["No project", "s1"],
-    ]);
+    expect(targets(null, [...boards, scratchBoard] as never)).toEqual([["Beta", "p2"]]);
   });
 
   it("tells same-titled projects apart and keeps Scratch out of the labels", () => {

@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
@@ -32,19 +33,27 @@ const makeAuth = (
   error?: EnvironmentAuth.ServerAuthCredentialError,
 ) => {
   const requests: string[] = [];
-  const layer = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
-    authenticateWebSocketUpgrade: (request) => {
-      requests.push(request.url);
-      return error
-        ? Effect.fail(error)
-        : Effect.succeed({
-            sessionId: AuthSessionId.make("stream-test"),
-            subject: "stream-test",
-            method: "bearer-access-token",
-            scopes,
-          });
-    },
-  });
+  const layer = Layer.mock(SessionStore.SessionStore, {
+    cookieName: "t3_session",
+    legacyCookieName: undefined,
+    awaitInvalidation: () => Effect.never,
+  }).pipe(
+    Layer.merge(
+      Layer.mock(EnvironmentAuth.EnvironmentAuth, {
+        authenticateWebSocketUpgrade: (request) => {
+          requests.push(request.url);
+          return error
+            ? Effect.fail(error)
+            : Effect.succeed({
+                sessionId: AuthSessionId.make("stream-test"),
+                subject: "stream-test",
+                method: "bearer-access-token",
+                scopes,
+              });
+        },
+      }),
+    ),
+  );
   return { layer, requests };
 };
 

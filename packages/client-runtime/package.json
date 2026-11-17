@@ -103,6 +103,10 @@
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
     },
+    "./teammateMessage": {
+      "types": "./src/teammateMessage.ts",
+      "default": "./src/teammateMessage.ts"
+    },
     "./prompt-links": {
       "types": "./src/promptLinks.ts",
       "default": "./src/promptLinks.ts"
@@ -291,6 +295,18 @@
       "types": "./src/state/heavyQueueModel.ts",
       "default": "./src/state/heavyQueueModel.ts"
     },
+    "./state/resourceTree": {
+      "types": "./src/state/resourceTree.ts",
+      "default": "./src/state/resourceTree.ts"
+    },
+    "./state/processLabel": {
+      "types": "./src/state/processLabel.ts",
+      "default": "./src/state/processLabel.ts"
+    },
+    "./list-order": {
+      "types": "./src/listOrder.ts",
+      "default": "./src/listOrder.ts"
+    },
     "./state/runnerModel": {
       "types": "./src/state/runnerModel.ts",
       "default": "./src/state/runnerModel.ts"
@@ -335,6 +351,10 @@
       "types": "./src/messageFold.ts",
       "default": "./src/messageFold.ts"
     },
+    "./settings-empty-selection": {
+      "types": "./src/settingsEmptySelection.ts",
+      "default": "./src/settingsEmptySelection.ts"
+    },
     "./scheduledTaskWording": {
       "types": "./src/scheduledTaskWording.ts",
       "default": "./src/scheduledTaskWording.ts"
@@ -347,9 +367,29 @@
       "types": "./src/assistantWork.ts",
       "default": "./src/assistantWork.ts"
     },
+    "./attentionOrder": {
+      "types": "./src/attentionOrder.ts",
+      "default": "./src/attentionOrder.ts"
+    },
     "./assistantList": {
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"
+    },
+    "./sidebarZones": {
+      "types": "./src/sidebarZones.ts",
+      "default": "./src/sidebarZones.ts"
+    },
+    "./assistantCluster": {
+      "types": "./src/assistantCluster.ts",
+      "default": "./src/assistantCluster.ts"
+    },
+    "./assistantInfo": {
+      "types": "./src/assistantInfo.ts",
+      "default": "./src/assistantInfo.ts"
+    },
+    "./assistantLiveWork": {
+      "types": "./src/assistantLiveWork.ts",
+      "default": "./src/assistantLiveWork.ts"
     },
     "./assistantSections": {
       "types": "./src/assistantSections.ts",
@@ -366,6 +406,14 @@
     "./state/assistants": {
       "types": "./src/state/assistants.ts",
       "default": "./src/state/assistants.ts"
+    },
+    "./integrations": {
+      "types": "./src/integrations.ts",
+      "default": "./src/integrations.ts"
+    },
+    "./state/integrations": {
+      "types": "./src/state/integrations.ts",
+      "default": "./src/state/integrations.ts"
     },
     "./state/mac-permissions": {
       "types": "./src/state/macPermissions.ts",

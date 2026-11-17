@@ -49,6 +49,7 @@ import IconArrowsLeftRight from "@tabler/icons-react-native/IconArrowsLeftRight"
 import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBan from "@tabler/icons-react-native/IconBan";
+import IconBellOff from "@tabler/icons-react-native/IconBellOff";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
@@ -209,6 +210,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   at: IconAt,
   "archivebox.fill": IconArchive,
   "bell.badge": IconBellRinging,
+  "bell.slash": IconBellOff,
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
   brain: IconBrain,
@@ -286,6 +288,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
   "line.3.horizontal.decrease.circle.fill": IconFilterFilled,
+  lock: IconLock,
   macmini: IconServer,
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,

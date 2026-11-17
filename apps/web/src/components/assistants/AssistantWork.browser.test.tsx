@@ -92,7 +92,14 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
-  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+  integrations: { mode: "all" },
+  autonomy: {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
@@ -141,11 +148,12 @@ async function openWork(assistants: Assistant[] = [assistant("jarvis", "Jarvis")
   return screen;
 }
 
-it("opens from the card, says it can work, and retries a failed run", async () => {
+it("opens from the card, leads with a failed run, and retries it", async () => {
   fakeCommands.dispatched.length = 0;
   await using _screen = await openWork();
   const dialog = page.getByRole("dialog", { name: "Jarvis work" });
-  await expect.element(dialog.getByText("Ready to work")).toBeVisible();
+  await expect.element(dialog.getByText("Last run failed", { exact: true })).toBeVisible();
+  expect(dialog.getByText("Ready to work").query()).toBeNull();
   await expect.element(dialog.getByText("Its last run failed.")).toBeVisible();
   await userEvent.click(dialog.getByRole("button", { name: "Retry" }));
   await eventually(() =>

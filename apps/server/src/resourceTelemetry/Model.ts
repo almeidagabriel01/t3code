@@ -3,7 +3,9 @@ import type {
   DesktopHostTelemetrySnapshot,
   ResourceMonitorProcessSample,
   ResourceMonitorSnapshotEvent,
+  ResourceMonitorUntrackedUsage,
   ResourceTelemetryAggregate,
+  ResourceTelemetryOutsideApp,
   ResourceTelemetryProcess,
   ResourceTelemetryProcessCategory,
 } from "@t3tools/contracts";
@@ -92,6 +94,33 @@ export function processIdentityKey(pid: number, startTimeMs: number): string {
 
 function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+const OUTSIDE_APP_LIMIT = 5;
+const HELPER = /^(.+?) Helper\b/;
+
+/** An app's helpers ("Code Helper (Renderer)") count as the app; anything else keeps its name. */
+const appName = (processName: string) => (HELPER.exec(processName)?.[1] ?? processName).trim();
+
+/** Sums the sidecar's per-name usage into apps, then keeps the heaviest by CPU and by memory. */
+export function outsideApps(
+  untracked: ReadonlyArray<ResourceMonitorUntrackedUsage>,
+): ResourceTelemetryOutsideApp[] {
+  const byApp = new Map<string, ResourceTelemetryOutsideApp>();
+  for (const usage of untracked) {
+    const name = appName(usage.name);
+    if (name === "") continue;
+    const current = byApp.get(name);
+    byApp.set(name, {
+      name,
+      cpuPercent: (current?.cpuPercent ?? 0) + finiteNonNegative(usage.cpuPercent),
+      rssBytes: (current?.rssBytes ?? 0) + usage.residentBytes,
+      processCount: (current?.processCount ?? 0) + usage.processCount,
+    });
+  }
+  const heaviest = (by: (app: ResourceTelemetryOutsideApp) => number) =>
+    [...byApp.values()].sort((a, b) => by(b) - by(a)).slice(0, OUTSIDE_APP_LIMIT);
+  return [...new Set([...heaviest((app) => app.cpuPercent), ...heaviest((app) => app.rssBytes)])];
 }
 
 function categoryGroup(
@@ -476,7 +505,7 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
     }
     return false;
   };
-  // Every tracked process outside the server and Electron trees belongs to a device root.
+  // Every tracked process outside the server and Electron trees belongs to a device or heavy-job root.
   const externalPids = new Set(
     processes.filter((process) => !isT3(process.pid)).map((process) => process.pid),
   );

@@ -20,6 +20,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { AssistantDialogHost } from "../components/assistants/AssistantDialog";
+import { AssistantInfoPanel } from "../components/assistants/AssistantInfoPanel";
 import { AssistantWorkHost } from "../components/assistants/AssistantWorkDialog";
 import { AssistantTeamDialogHost } from "../components/assistants/AssistantTeamDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
@@ -38,6 +39,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { HeavyNoticeToasts } from "../components/HeavyNoticeToasts";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -197,10 +199,12 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <AssistantDialogHost />
+      <AssistantInfoPanel />
       <AssistantWorkHost />
       <AssistantTeamDialogHost />
       <ThreadHandoffDialogHost />
       <ProjectCloneToastCoordinator />
+      <HeavyNoticeToasts />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}

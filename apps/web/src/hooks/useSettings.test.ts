@@ -98,6 +98,16 @@ describe("client settings hydration", () => {
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a patch for the session after a failed read without writing it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    persistenceMocks.getClientSettings.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    await persistClientSettingsPatch({ sidebarAssistantsExpandedGroups: ["group:env:t1"] });
+
+    expect(getClientSettings().sidebarAssistantsExpandedGroups).toEqual(["group:env:t1"]);
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+
   it("holds patches until a pending read supplies the saved preferences", async () => {
     let finishRead!: (settings: ClientSettings) => void;
     persistenceMocks.getClientSettings.mockImplementationOnce(

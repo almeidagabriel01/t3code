@@ -562,5 +562,10 @@ describe("side chat slash commands", () => {
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:model",
     ]);
+    expect(slashCommandItemsForPromptPosition(items, false, true).map((item) => item.id)).toEqual([
+      "slash:side",
+      "slash:btw",
+      "slash:model",
+    ]);
   });
 });

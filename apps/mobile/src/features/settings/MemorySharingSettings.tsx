@@ -41,6 +41,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { settled } from "../../lib/settled";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { toggleMemoryRequester } from "./SettingsMemoryRouteScreen.logic";
+import { MEMORY_COPY } from "./memoryCopy";
 const Copy = ({ children }: { children: React.ReactNode }) => (
   <Text className="p-3 text-sm text-foreground-muted">{children}</Text>
 );
@@ -446,7 +447,7 @@ export function MemoryAdministration({
   };
   return (
     <>
-      <SettingsSection title="Sharing">
+      <SettingsSection title={MEMORY_COPY.sharing.title}>
         <Copy>
           {!hub
             ? error
@@ -466,7 +467,7 @@ export function MemoryAdministration({
           hub.settings.mode === "disabled" ? (
             <Action
               icon="server.rack"
-              label="Make this device the hub"
+              label={MEMORY_COPY.sharing.makeHub}
               disabled={blocked}
               onPress={() =>
                 void saveHub({
@@ -480,7 +481,7 @@ export function MemoryAdministration({
           ) : (
             <Action
               icon="slash.circle"
-              label="Turn sharing off"
+              label={MEMORY_COPY.sharing.turnOff}
               disabled={blocked}
               onPress={() => setConfirm("disable")}
             />
@@ -536,7 +537,7 @@ export function MemoryAdministration({
         ) : null}
       </SettingsSection>
       {hub?.settings.mode === "hub" ? (
-        <SettingsSection title="Devices">
+        <SettingsSection title={MEMORY_COPY.sharing.devices}>
           {members
             .filter((m) => m.environmentId !== environmentId)
             .map((member) => {
@@ -573,8 +574,8 @@ export function MemoryAdministration({
                 </View>
               );
             })}
-          <Copy>Add device</Copy>
-          <Copy>Choose a connected device that supports memory.</Copy>
+          <Copy>{MEMORY_COPY.sharing.addDevice}</Copy>
+          <Copy>{MEMORY_COPY.sharing.addDeviceDescription}</Copy>
           {candidates
             .filter((e) => !knownMembers.has(e.environmentId))
             .map((e) => (
@@ -664,11 +665,8 @@ export function MemoryAdministration({
         </SettingsSection>
       ) : null}
       {hub && hub.settings.mode !== "disabled" ? (
-        <SettingsSection title="Original conversations">
-          <Copy>
-            When a memory points to a conversation on this device, these devices can open the
-            original. Removing a device applies to later requests and to results still on the hub.
-          </Copy>
+        <SettingsSection title={MEMORY_COPY.sharing.originals}>
+          <Copy>{MEMORY_COPY.sharing.originalsDescription}</Copy>
           {policy?.desiredRequesterEnvironmentIds.map((id) => (
             <View key={id}>
               <Copy>{name(id)}</Copy>
