@@ -3009,6 +3009,27 @@ it.effect.each<{
   },
 );
 
+it.effect("a thread dismissed while another ends is named in what the task reads", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.launch("thread:api", h.threadOf("ada"));
+    yield* h.launch("thread:docs", h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Started.");
+    yield* h.sqlRows(
+      "UPDATE assistant_tasks SET dismissed_at = '2026-03-01' WHERE thread_id = 'thread:docs' RETURNING thread_id",
+    );
+    // The request no longer follows it: its waits go to the direct conversation.
+    assert.isFalse(yield* groups.syncWaitingThread(ThreadId.make("thread:docs")));
+    yield* h.endLaunch("thread:api", "completed", "API fixed.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    const woken = h.sent.at(-1)!.text;
+    assert.include(woken, "API fixed.");
+    assert.match(woken, /\[Brief thread:docs\]\([^)\n]+\) was dismissed by the user/);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("a task waits for both what it assigned and what it launched", () => {
   const h = harness();
   return Effect.gen(function* () {

@@ -190,15 +190,17 @@ export function launchResultText(input: {
   readonly title: string;
   readonly threadId: ThreadId;
   /** Null when it was deleted or archived, or could not be read. */
-  readonly status: TaskEventStatus | null;
+  readonly status: TaskEventStatus | "dismissed" | null;
   readonly lastMessage: string | undefined;
 }): string {
-  if (input.status === null) {
+  if (input.status === null || input.status === "dismissed") {
     const link = formatThreadLink(
       { environmentId: null, threadId: input.threadId },
       input.title.trim() || "Task",
     );
-    return `Task ${link} was deleted or archived, or could not be read.`;
+    return input.status === null
+      ? `Task ${link} was deleted or archived, or could not be read.`
+      : `Task ${link} was dismissed by the user; it no longer holds this request.`;
   }
   const headline = taskEventHeadline({ ...input, status: input.status });
   return input.lastMessage === undefined

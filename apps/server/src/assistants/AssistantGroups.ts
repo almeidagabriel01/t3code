@@ -798,13 +798,18 @@ const make = Effect.gen(function* () {
       WHERE parent_id = ${parentId} AND status NOT IN ${sql.in(SETTLED)}`;
 
   /**
-   * Threads launched from these conversations, or from a thread launched from them, that were not
-   * dismissed, oldest first, each with the conversation its chain starts from.
+   * Threads launched from these conversations, or from a thread launched from them, oldest first,
+   * each with the conversation its chain starts from and whether the user dismissed it.
    */
   const launchesFrom = (originIds: ReadonlyArray<string>) =>
     originIds.length === 0
       ? Effect.succeed([])
-      : sql<{ readonly thread_id: string; readonly origin_id: string; readonly title: string }>`
+      : sql<{
+          readonly thread_id: string;
+          readonly origin_id: string;
+          readonly title: string;
+          readonly dismissed: number;
+        }>`
           WITH RECURSIVE chain(thread_id, origin_id, depth) AS (
             SELECT thread_id, launched_from_thread_id, 1 FROM assistant_tasks
             WHERE launched_from_thread_id IN ${sql.in(originIds)}
@@ -813,9 +818,9 @@ const make = Effect.gen(function* () {
             JOIN chain c ON t.launched_from_thread_id = c.thread_id
             WHERE c.depth < ${MAX_LAUNCH_DEPTH}
           )
-          SELECT t.thread_id, MIN(c.origin_id) AS origin_id, t.title
+          SELECT t.thread_id, MIN(c.origin_id) AS origin_id, t.title,
+            t.dismissed_at IS NOT NULL AS dismissed
           FROM chain c JOIN assistant_tasks t ON t.thread_id = c.thread_id
-          WHERE t.dismissed_at IS NULL
           GROUP BY t.thread_id ORDER BY t.created_at ASC, t.rowid ASC`;
 
   /** The request conversation a launched thread's chain starts from, if any. */
@@ -1978,17 +1983,27 @@ const make = Effect.gen(function* () {
       WHERE native.thread_id = ${threadId} AND native.origin = 'provider_native'
       ORDER BY native.started_at ASC, native.subagent_id ASC`;
 
-  /** What still runs under a conversation; `held` also counts subagents that have no thread yet. */
+  /**
+   * What runs under a conversation, each launch and native subagent read once: `threads` and
+   * `subagents` are the live ones, and `held` also counts subagents that have no thread yet.
+   */
   const liveWork = Effect.fn("AssistantGroups.liveWork")(function* (threadId: string) {
-    const threads: string[] = [];
+    const launches = [];
     for (const launch of yield* launchesFrom([threadId])) {
-      if ((yield* launchState(launch)).live) threads.push(launch.thread_id);
+      // A dismissed thread never holds; it only reports that it was dismissed.
+      launches.push({ launch, state: launch.dismissed === 1 ? null : yield* launchState(launch) });
     }
-    const subagents = (yield* nativeSubagents(threadId)).filter((row) => row.live === 1);
+    const natives = yield* nativeSubagents(threadId);
+    const threads = launches.flatMap(({ launch, state }) =>
+      state?.live === true ? [launch.thread_id] : [],
+    );
+    const live = natives.filter((row) => row.live === 1);
     return {
       threads,
-      subagents: subagents.flatMap((row) => row.child_thread_id ?? []),
-      held: threads.length > 0 || subagents.length > 0,
+      subagents: live.flatMap((row) => row.child_thread_id ?? []),
+      held: threads.length > 0 || live.length > 0,
+      launches,
+      natives,
     };
   });
 
@@ -2004,10 +2019,21 @@ const make = Effect.gen(function* () {
     const waitedOn = workInReason(task.reason);
     const ended: string[] = [];
     let limited = false;
+    const work = yield* liveWork(threadId);
     // Only work it waited on reports: what ended before the turn did was seen there.
-    for (const launch of yield* launchesFrom([threadId])) {
+    for (const { launch, state } of work.launches) {
       if (!waitedOn.threads.includes(launch.thread_id)) continue;
-      const state = yield* launchState(launch);
+      if (state === null) {
+        ended.push(
+          launchResultText({
+            title: launch.title,
+            threadId: launch.thread_id as ThreadId,
+            status: "dismissed",
+            lastMessage: undefined,
+          }),
+        );
+        continue;
+      }
       if (state.live) continue;
       const lastMessage =
         state.status === null || !("runId" in state)
@@ -2023,7 +2049,7 @@ const make = Effect.gen(function* () {
       );
       limited ||= "limited" in state && state.limited;
     }
-    for (const row of yield* nativeSubagents(threadId)) {
+    for (const row of work.natives) {
       if (row.live === 1 || row.child_thread_id === null) continue;
       if (!waitedOn.subagents.includes(row.child_thread_id)) continue;
       ended.push(
@@ -2039,9 +2065,8 @@ const make = Effect.gen(function* () {
     if (limited) {
       return yield* patchTask(task, { status: "failed", reason: "thread_usage_limit", followup });
     }
-    const live = yield* liveWork(threadId);
-    if (live.held || (yield* unsettledChildren(task.task_id)).length > 0) {
-      const reason = workReason(live);
+    if (work.held || (yield* unsettledChildren(task.task_id)).length > 0) {
+      const reason = workReason(work);
       if (reason === task.reason && followup === task.followup) return task;
       return yield* patchTask(task, { reason, followup });
     }
@@ -2063,12 +2088,7 @@ const make = Effect.gen(function* () {
       revision: task.revision + 1,
       result_text: null,
       followup: [
-        ...(followup !== null
-          ? [launchResultsText(followup)]
-          : workReason(waitedOn) !== null
-            ? // Nothing to report: the user dismissed what it waited on.
-              [launchResultsText("What you waited on was dismissed.")]
-            : []),
+        ...(followup === null ? [] : [launchResultsText(followup)]),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
       ].join("\n\n"),
     });
@@ -3067,7 +3087,7 @@ const make = Effect.gen(function* () {
    */
   const syncWaiting = Effect.fn("AssistantGroups.syncWaiting")(function* (requestId: string) {
     const request = yield* getMessage(requestId);
-    if (request === undefined) return;
+    if (request === undefined) return new Set<string>();
     const members = yield* sql<{ readonly thread_id: string; readonly assistant_id: string }>`
       SELECT thread_id, assistant_id FROM assistant_group_request_threads
       WHERE request_id = ${requestId}`;
@@ -3080,6 +3100,7 @@ const make = Effect.gen(function* () {
     const ownerOf = new Map(members.map((row) => [row.thread_id, row.assistant_id]));
     // A thread a member launched for the request waits on the user in the request's block too.
     for (const launch of yield* launchesFrom(members.map((row) => row.thread_id))) {
+      if (launch.dismissed === 1) continue;
       const owner = ownerOf.get(launch.origin_id);
       if (owner !== undefined) ownerOf.set(launch.thread_id, owner);
     }
@@ -3124,6 +3145,7 @@ const make = Effect.gen(function* () {
       yield* publishMessage(resolved[0]);
       yield* assistants.refreshTeamChat(resolved[0].team_id);
     }
+    return new Set<string>(ownerOf.keys());
   });
 
   const syncWaitingThread: AssistantGroups["Service"]["syncWaitingThread"] = Effect.fn(
@@ -3134,8 +3156,8 @@ const make = Effect.gen(function* () {
         ? yield* threadRowOf(threadId)
         : yield* launchOrigin(threadId);
       if (owner?.request_id == null) return false;
-      yield* lock.withPermits(1)(syncWaiting(owner.request_id));
-      return true;
+      // A thread the request no longer follows (dismissed) wakes the direct conversation instead.
+      return (yield* lock.withPermits(1)(syncWaiting(owner.request_id))).has(threadId);
     },
     (effect) =>
       effect.pipe(
