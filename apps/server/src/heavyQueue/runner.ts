@@ -925,8 +925,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
-    if (macBudget !== null && sample !== null) {
-      const { cost } = jobVerdict(input, sample, entry, macBudget);
+    // Only what fits spends it, as in `plan`: a waiter too big to start takes no one's room.
+    const verdict = macBudget === null ? null : jobVerdict(input, sample!, entry, macBudget);
+    if (macBudget !== null && verdict !== null && verdict.hold === null) {
+      const { cost } = verdict;
       macBudget = {
         memoryBytes: macBudget.memoryBytes - cost.memoryBytes,
         cpu: macBudget.cpu - cost.cpu,
