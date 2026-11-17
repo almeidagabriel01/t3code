@@ -2001,7 +2001,12 @@ const make = Effect.gen(function* () {
       revision: task.revision + 1,
       result_text: null,
       followup: [
-        ...(followup === null ? [] : [launchResultsText(followup)]),
+        ...(followup !== null
+          ? [launchResultsText(followup)]
+          : waitedOn.size > 0
+            ? // Nothing to report: the user dismissed what it waited on.
+              [launchResultsText("The threads you waited on were dismissed.")]
+            : []),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
       ].join("\n\n"),
     });
@@ -3092,7 +3097,15 @@ const make = Effect.gen(function* () {
   const settleLaunch: AssistantGroups["Service"]["settleLaunch"] = Effect.fn(
     "AssistantGroups.settleLaunch",
   )(function* (threadId) {
-    const origin = yield* launchOrigin(threadId).pipe(Effect.orDie);
+    const origin = yield* launchOrigin(threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("assistant groups: a launched thread's origin could not be read", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
     if (origin?.request_id == null) return false;
     const requestId = origin.request_id;
     yield* lock

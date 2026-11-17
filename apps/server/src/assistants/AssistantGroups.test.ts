@@ -2758,6 +2758,7 @@ it.effect.each<{
     yield* release(h);
     yield* groups.settleLaunch(ThreadId.make("thread:api"));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    assert.include(h.sent[1]!.text, "The threads you launched for this request are done:");
   }).pipe(Effect.provide(h.layer));
 });
 
