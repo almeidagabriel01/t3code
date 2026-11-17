@@ -59,6 +59,7 @@ describe("cost class", () => {
     ["path", "vp lint scripts/build.ts playwright.config.ts", null, "quick", "2 files"],
     ["path", "tsc --noEmit src/compile/a.ts", null, "quick", "1 file"],
     ["path", "vp test run src/build/x.test.ts", null, "quick", "1 file"],
+    ["path", "vp test run src/browser/Foo.test.tsx", null, "quick", "1 file"],
     ["path", "vp test run src/a/Foo.browser.test.tsx", null, "standard", "first run"],
     ["path", "vp test run e2e.test.ts", null, "standard", "first run"],
     ["path", "vp test run e2e/foo.test.ts", null, "standard", "first run"],
