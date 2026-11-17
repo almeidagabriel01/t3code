@@ -89,9 +89,9 @@ export const heavyStatus = (input: {
   const runnerOfEntry = new Map(input.entries.map((entry) => [entry.id, runnerOf(entry)]));
   return {
     askUser:
-      // Quick work runs in its own slots and a service outside the queue: neither waits.
+      // A service runs outside the queue, and quick work that starts now in its own slots: neither waits.
       destination?.runsOn === "direct" ||
-      destination?.class === "quick" ||
+      (destination?.class === "quick" && destination.startsNow) ||
       destination?.class === "service"
         ? false
         : destination?.runsOn === "linux"

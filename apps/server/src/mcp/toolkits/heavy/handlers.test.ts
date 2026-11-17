@@ -221,6 +221,14 @@ describe("heavyStatus", () => {
       askUser: false,
     })),
     {
+      name: "a quick command that would wait (quick slots full) under pressure: ask",
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, startsNow: false, class: "quick" as const, classWhy: "1 file" },
+      },
+      askUser: true,
+    },
+    {
       name: "Mac-bound: Linux jobs never fill this Mac's slots",
       change: {
         maxRunning: 1,
