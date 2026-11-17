@@ -20,6 +20,7 @@ import type {
 
 import {
   assistantGroupActivity,
+  assistantGroupDraftThreadId,
   assistantGroupInScope,
   assistantGroupChatWaiting,
   assistantGroupTabs,
@@ -690,6 +691,14 @@ describe("assistantGroupAwaitingRoute", () => {
 });
 
 describe("composer helpers", () => {
+  it("keeps one draft per group, apart from every assistant thread", () => {
+    const one = assistantGroupDraftThreadId("t1" as AssistantTeamId);
+    assert.strictEqual(one, assistantGroupDraftThreadId("t1" as AssistantTeamId));
+    assert.notStrictEqual(one, assistantGroupDraftThreadId("t2" as AssistantTeamId));
+    // Assistant chats and their tasks are `assistant:<id>:…`; a group draft must never read as one.
+    assert.isFalse(one.startsWith("assistant:"));
+  });
+
   const ALPHA = { id: "p1" as ProjectId, name: "Alpha" };
   const BETA = { id: "p2" as ProjectId, name: "Beta" };
   const none = { replyOwner: null, request: null, stopped: [] };

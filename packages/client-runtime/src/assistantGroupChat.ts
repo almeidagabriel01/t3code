@@ -17,6 +17,7 @@ import {
   type Assistant,
   type AssistantTeam,
   type AssistantTeamChat,
+  type AssistantTeamId,
   type AssistantTeamChatScope,
   type AssistantTeamChatWaitingReason,
   type AssistantGroupMessage,
@@ -323,6 +324,14 @@ export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 /** The tab of a project's requests; General for those with none. */
 export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
   return projectId === null ? "general" : `project:${projectId}`;
+}
+
+/**
+ * The thread id a group's unsent message is kept under, so each client stores it in its thread
+ * draft store and reads "has a draft" the same way for threads, assistants and groups.
+ */
+export function assistantGroupDraftThreadId(teamId: AssistantTeamId): ThreadId {
+  return ThreadId.make(`assistant-group:${teamId}`);
 }
 
 export interface AssistantGroupTab {
