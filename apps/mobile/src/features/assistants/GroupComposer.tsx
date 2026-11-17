@@ -21,7 +21,9 @@ import {
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { getProviderSkillsForSlashMenu } from "@t3tools/client-runtime/providerSkills";
 import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
@@ -62,7 +64,12 @@ import {
 } from "../../state/use-composer-drafts";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
-import { ComposerPopoverSurface } from "../threads/ComposerCommandPopover";
+import {
+  ComposerCommandPopover,
+  ComposerPopoverSurface,
+  type ComposerCommandItem,
+} from "../threads/ComposerCommandPopover";
+import { composerSkillItems, composerSlashSkillItems } from "../threads/composerSkillItems";
 import { ComposerSurface } from "../threads/ThreadComposer";
 import {
   ComposerDictationCancelAction,
@@ -75,7 +82,9 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import { clearGroupAttachments, useGroupAttachments } from "./GroupAttachments";
+import { GroupContextMeter } from "./GroupContextMeter";
 import { AssistantAvatar } from "./assistantPresentation";
+import { useGroupDraftSkills } from "./useGroupDraftSkills";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
@@ -483,6 +492,32 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
+  const skills = useGroupDraftSkills({
+    environmentId: props.environmentId,
+    text,
+    members: props.members,
+    lead,
+    replyTo: props.replyingTo?.to ?? null,
+    model: props.projectModel?.messageModel,
+  });
+  // `@` and `#` stay the group's; only the thread's skill triggers carry over.
+  // No context chips (file, thread, card): the group post has no `context` field yet (spec D3).
+  const detected =
+    collapsed && mention === null && projectMention === null && skills.length > 0
+      ? detectComposerTrigger(text, caret)
+      : null;
+  const skillAt =
+    detected?.kind === "skill" || detected?.kind === "slash-command" ? detected : null;
+  const skillOptions =
+    skillAt === null
+      ? []
+      : skillAt.kind === "skill"
+        ? composerSkillItems(skills, skillAt.query, false)
+        : composerSlashSkillItems(
+            getProviderSkillsForSlashMenu(skills, true),
+            skillAt.query.toLowerCase(),
+            false,
+          );
   const attached = useGroupAttachments(
     groupKey,
     props.environmentId,
@@ -521,6 +556,15 @@ export function GroupComposer(props: {
   ) => {
     const next = insertAssistantGroupMention(base, at, option);
     write(next.text, next.caret);
+  };
+
+  const pickSkill = (item: ComposerCommandItem) => {
+    if (skillAt === null || item.type !== "skill") return;
+    const replacement = `$${item.skill.name} `;
+    write(
+      text.slice(0, skillAt.rangeStart) + replacement + text.slice(skillAt.rangeEnd),
+      skillAt.rangeStart + replacement.length,
+    );
   };
 
   const pickProject = (project: GroupComposerProjectOption) => {
@@ -654,6 +698,14 @@ export function GroupComposer(props: {
           onPickProject={pickProject}
         />
       )}
+      {skillOptions.length === 0 ? null : (
+        <ComposerCommandPopover
+          items={skillOptions}
+          triggerKind="skill"
+          isLoading={false}
+          onSelect={pickSkill}
+        />
+      )}
       <ComposerSurface style={{ borderRadius: 24, borderCurve: "continuous", paddingVertical: 4 }}>
         <ComposerDictationError
           error={voice.state.phase === "error" ? voice.state.error : null}
@@ -701,6 +753,7 @@ export function GroupComposer(props: {
             draftKey={draftKey}
             environmentId={props.environmentId}
             groupMentions={composerGroupMentions(props.members, props.projects, faces)}
+            skills={skills}
             multiline
             value={text}
             selection={selection}
@@ -862,6 +915,13 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
+            <GroupContextMeter
+              environmentId={props.environmentId}
+              chat={props.chat}
+              text={text}
+              members={props.members}
+              leadId={props.leadId}
+            />
             <View className="flex-1" />
             <ComposerDictationStartAction
               state={voice.state}
