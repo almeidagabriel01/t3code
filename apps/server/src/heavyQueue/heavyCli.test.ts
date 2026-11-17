@@ -237,6 +237,22 @@ describe("t3 heavy", () => {
     expect(await kept.exited).toBe(0);
   });
 
+  // The CLI waits on a busy lock without limit, and says who holds it.
+  it("says who holds the queue's lock while it waits for it", async () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    const run = heavy(dir, [process.execPath, "-e", "console.log('ran')"]);
+    await run.until(
+      "err",
+      `[t3 heavy] waiting for the queue's lock: process ${process.pid} holds it\n`,
+    );
+    NodeFS.rmSync(lock, { recursive: true });
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe("ran\n");
+  });
+
   it("a Linux part outside a Linux job ends with a clear error, running nothing", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "ran");

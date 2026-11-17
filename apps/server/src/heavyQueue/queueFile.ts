@@ -238,11 +238,19 @@ export const boundLockWait = (ms: number) => {
   lockWaitMs = ms;
 };
 
+let lockNotice: { readonly heard: (pid: number) => void; readonly afterMs: number } | null = null;
+/** Who to tell, once a wait for the lock passes `afterMs`, which process holds it; null stops. */
+export const noticeLockWait = (heard: ((pid: number) => void) | null, afterMs = 0) => {
+  lockNotice = heard === null ? null : { heard, afterMs };
+};
+
 const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
   const token = lockToken();
   NodeFS.mkdirSync(dir, { recursive: true });
-  const deadline = Date.now() + lockWaitMs;
+  const started = Date.now();
+  const deadline = started + lockWaitMs;
+  let told = false;
   for (let first = true; ; first = false) {
     if (!first && Date.now() >= deadline) throw lockBusy(readToken(lock));
     try {
@@ -260,6 +268,11 @@ const withLock = <A>(dir: string, run: () => A): A => {
       continue; // The lock went away between the two calls.
     }
     if (stale && breakIfStale(lock)) continue;
+    const pid = Number(holder?.split(" ")[0]);
+    if (!told && lockNotice !== null && Date.now() - started >= lockNotice.afterMs && pid > 0) {
+      told = true;
+      lockNotice.heard(pid);
+    }
     const left = deadline - Date.now();
     if (left <= 0) throw lockBusy(holder);
     pause(Math.min(LOCK_RETRY_MS, left));

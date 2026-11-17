@@ -49,6 +49,7 @@ import {
   setProgress,
   setQos,
   tryStart,
+  noticeLockWait,
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -568,7 +569,16 @@ const enterFolder = (cwd: string) => {
   }
 };
 
+/** How long the CLI waits for the queue's lock before saying who holds it. */
+const LOCK_NOTICE_MS = 1_000;
+
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
+  // It waits on a busy lock without limit, so the agent and the user see what it waits for.
+  noticeLockWait(
+    (pid) =>
+      process.stderr.write(`[t3 heavy] waiting for the queue's lock: process ${pid} holds it\n`),
+    LOCK_NOTICE_MS,
+  );
   if (argv[0] === "hook") {
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
     return;

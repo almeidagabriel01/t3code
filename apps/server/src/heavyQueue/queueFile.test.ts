@@ -1992,6 +1992,23 @@ describe("the lock across processes", () => {
     expect(Queue.lockIsStale(Queue.lockToken(), 3_600_000, Queue.isAlive)).toBe(false);
   });
 
+  it("tells a waiter once who holds the lock it waits for", () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    const heard: number[] = [];
+    Queue.noticeLockWait((pid) => heard.push(pid), 0);
+    Queue.boundLockWait(0);
+    try {
+      expect(() => Queue.setPaused(dir, true)).toThrow();
+    } finally {
+      Queue.boundLockWait(Number.POSITIVE_INFINITY);
+      Queue.noticeLockWait(null);
+    }
+    expect(heard).toEqual([process.pid]);
+  });
+
   it("gives up on a live owner's lock after its wait, with an error naming the owner", () => {
     const dir = tempDir();
     const lock = NodePath.join(dir, "lock");
