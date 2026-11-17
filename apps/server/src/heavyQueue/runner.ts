@@ -165,6 +165,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly linkFailures?: number;
   /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
   readonly failure?: string;
+  /** Its worktree broke the install on Linux (a stale lockfile): the fix, for its end notice. */
+  readonly worktree?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
   readonly held?: Pick<HeavyQueueEntry, "ask" | "route">;
 };

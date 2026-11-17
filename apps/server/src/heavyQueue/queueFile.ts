@@ -1355,7 +1355,7 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
 export const setProgress = (
   dir: string,
   id: string,
-  progress: Pick<HeavyQueueEntry, "phase" | "remote">,
+  progress: Pick<QueuedEntry, "phase" | "remote" | "worktree">,
 ) =>
   mutate(dir, (doc) => ({
     doc: {
