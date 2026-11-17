@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -598,6 +599,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
+  /** The active provider thread's context usage; null for an unknown thread or none started. */
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -7637,6 +7642,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getThreadContextUsage = Effect.fn("ProjectionStore.getThreadContextUsage")(
+      function* (threadId: ThreadId) {
+        const [row] = yield* sql<{ readonly active_provider_thread_id: ProviderThreadId | null }>`
+          SELECT active_provider_thread_id FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId} AND deleted_at IS NULL
+        `;
+        const active = row?.active_provider_thread_id ?? null;
+        if (active === null) return null;
+        const records = yield* readCanonicalProjection(
+          threadId,
+          undefined,
+          ["providerThreads", "providerTurns"],
+          {
+            providerThreadIds: [active],
+            providerTurnThreadIds: [active],
+            latestProviderTurnUsageOnly: true,
+          },
+        );
+        const providerThread = records.providerThreads.find((thread) => thread.id === active);
+        return {
+          latestTurnUsage: records.providerTurns[0]?.tokenUsage ?? null,
+          providerThread:
+            providerThread === undefined
+              ? null
+              : {
+                  contextUsage: providerThread.contextUsage ?? null,
+                  updatedAt: providerThread.updatedAt,
+                },
+        };
+      },
+      (effect, threadId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -7817,6 +7856,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
+      getThreadContextUsage: readOnReader(getThreadContextUsage),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),

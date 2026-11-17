@@ -796,6 +796,8 @@ it.effect.each<{
   titles?: Record<string, string | null>;
   /** The chat's request projects that no longer exist, when the case checks them. */
   removed?: ReadonlyArray<string>;
+  /** Each waiting tab's oldest waiting request and why, when the case checks them. */
+  waitingRequests?: Record<string, readonly [requestId: string, reason: string]>;
 }>([
   {
     // p1's task has stopped, so p1 stays listed even once read.
@@ -804,6 +806,36 @@ it.effect.each<{
     scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
     cursors: {},
     removed: [],
+    waitingRequests: { p2: ["gm:3", "wait"], "": ["gm:5", "project"] },
+  },
+  {
+    name: "a tab leads to its oldest waiting request, a wait before a newer paused task",
+    steps: [
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, created_at)
+          VALUES ('gm:8', '${TEAM}', 8, 'user', 'message', 'x', 'gm:8', 'p2', 'p2', 't')`,
+      },
+      { sql: rootTask("gm:8", "paused") },
+      { sql: "UPDATE assistant_group_messages SET wait_resolved_at = 't' WHERE seq = 4" },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+    waitingRequests: { p2: ["gm:8", "paused"], "": ["gm:5", "project"] },
+  },
+  {
+    name: "with both still open, the older wait leads",
+    steps: [
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, created_at)
+          VALUES ('gm:8', '${TEAM}', 8, 'user', 'message', 'x', 'gm:8', 'p2', 'p2', 't')`,
+      },
+      { sql: rootTask("gm:8", "paused") },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+    waitingRequests: { p2: ["gm:3", "wait"], "": ["gm:5", "project"] },
   },
   {
     name: "reading every tab moves the group's position past them, and the tabs' go",
@@ -875,16 +907,16 @@ it.effect.each<{
     cursors: {},
   },
   {
-    name: "a stopped task waits on the user in its tab, read or not",
+    name: "a task paused before the newest boundary no longer waits, read or not",
     steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'paused'" }, { read: {} }],
     readSeq: 7,
-    scopes: { p1: [0, true, 7], p2: [0, true, 7], "": [0, true, 7] },
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
     cursors: {},
   },
   {
-    name: "a failed task waits on the user too",
+    name: "nor does a task failed before it",
     steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'failed'" }],
-    scopes: { p1: [1, true, 0], p2: [1, true, 0], "": [1, true, 0] },
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
     cursors: {},
   },
   {
@@ -917,7 +949,7 @@ it.effect.each<{
     titles: { p1: PROJECT_TITLES.p1!, p2: PROJECT_TITLES.p2!, p9: null, "": null },
     removed: ["p2", "p9"],
   },
-])("$name", ({ steps, readSeq, scopes, cursors, titles, removed }) => {
+])("$name", ({ steps, readSeq, scopes, cursors, titles, removed, waitingRequests }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
@@ -993,6 +1025,23 @@ it.effect.each<{
       Object.values(scopes).reduce((sum, [unread]) => sum + unread, 0),
     );
     if (removed !== undefined) assert.deepEqual(chat.removedProjectIds, removed);
+    if (waitingRequests !== undefined) {
+      assert.deepEqual(
+        Object.fromEntries(
+          (chat.scopes ?? []).flatMap((scope): [string, readonly [string, string]][] =>
+            scope.waitingRequest === undefined
+              ? []
+              : [
+                  [
+                    scope.projectId ?? "",
+                    [scope.waitingRequest.requestId, scope.waitingRequest.reason],
+                  ],
+                ],
+          ),
+        ),
+        waitingRequests,
+      );
+    }
     const stored = yield* sql<{ readonly scope: string; readonly read_seq: number }>`
       SELECT scope, read_seq FROM assistant_group_read_cursors`;
     assert.deepEqual(Object.fromEntries(stored.map((c) => [c.scope, c.read_seq])), cursors);

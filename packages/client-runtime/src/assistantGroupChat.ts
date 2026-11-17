@@ -188,6 +188,8 @@ export type AssistantGroupRequestStatus =
   | "working"
   /** A task is paused or failed: the user resumes, reassigns or cancels it. */
   | "needs-you"
+  /** The user stopped it (or archived the group): it waits on no one until resumed. */
+  | "stopped"
   | "done"
   | "cancelled";
 
@@ -196,6 +198,7 @@ export const ASSISTANT_GROUP_REQUEST_STATUS_LABEL: Record<AssistantGroupRequestS
   "needs-project": "Needs project",
   working: "Working",
   "needs-you": "Needs you",
+  stopped: "Stopped",
   done: "Done",
   cancelled: "Cancelled",
 };
@@ -246,7 +249,8 @@ function requestStatus(
   // A member's conversation waiting on the user outranks the work around it.
   if (rows.some((row) => row.message.waiting?.resolved === false)) return "needs-you";
   if (tasks.some((task) => OPEN_STATUSES.has(task.status))) return "working";
-  if (assistantGroupTasksNeedUser(tasks.map((task) => task.status))) return "needs-you";
+  if (assistantGroupTasksNeedUser(tasks)) return "needs-you";
+  if (tasks.some((task) => task.status === "paused")) return "stopped";
   if (tasks.length > 0) {
     return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
   }
@@ -797,6 +801,12 @@ export function assistantGroupInScope(
   return scope === undefined || block.projectId === scope.projectId;
 }
 
+const FOLDED_STATUSES: ReadonlySet<AssistantGroupRequestStatus> = new Set([
+  "done",
+  "cancelled",
+  "stopped",
+]);
+
 /**
  * A block opens by itself while it needs attention, holds unread messages, or is the newest one;
  * finished requests fold away. The user's own toggle wins over this.
@@ -806,7 +816,7 @@ export function assistantGroupRequestExpanded(
   readSeq: number,
   newest: boolean,
 ): boolean {
-  if (newest || (block.status !== "done" && block.status !== "cancelled")) return true;
+  if (newest || !FOLDED_STATUSES.has(block.status)) return true;
   const lastUserSeq = lastUserSeqs(block.rows.map((row) => row.message)).get(block.requestId);
   return block.rows.some(
     (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message, lastUserSeq),
@@ -1299,6 +1309,7 @@ const ACTIVITY_STATUS: Partial<
   cancelled: "cancelled",
   paused: "interrupted",
   "needs-you": "interrupted",
+  stopped: "interrupted",
 };
 
 const ACTIVITY_LABEL: Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, string> = {

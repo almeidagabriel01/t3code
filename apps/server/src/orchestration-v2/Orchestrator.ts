@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
   OrchestrationV2AppThreadLineage,
@@ -526,6 +527,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, OrchestratorV2Error>;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
@@ -15198,6 +15202,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
       return projectionStore.getThreadTitles(threadIds).pipe(Effect.mapError(shellProjectionError));
+    }),
+    getThreadContextUsage: Effect.fn("OrchestratorV2.getThreadContextUsage")(function (threadId) {
+      return projectionStore
+        .getThreadContextUsage(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getThreadEventSequence: Effect.fn("OrchestratorV2.getThreadEventSequence")(function (threadId) {
       return eventSink
