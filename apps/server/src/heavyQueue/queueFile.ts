@@ -231,11 +231,30 @@ const isHeavyQueueError = Schema.is(HeavyQueueError);
 export const isLockBusy = (error: unknown) =>
   isHeavyQueueError(error) && error.message.startsWith(LOCK_BUSY);
 
-/** How long a caller waits for the lock before failing; the CLI's waiters wait on. */
+/** How long a caller blocks for the lock before failing; the CLI's waiters wait on. */
 let lockWaitMs = Number.POSITIVE_INFINITY;
-/** A server can't block its event loop on a stuck owner: it bounds the wait and reports busy. */
+/** A server blocks for 0 ms, so a stuck owner never stalls its event loop; it retries with `whenLockFree`. */
 export const boundLockWait = (ms: number) => {
+  const previous = lockWaitMs;
   lockWaitMs = ms;
+  return previous;
+};
+
+export const LOCK_ASYNC_RETRY_MS = 50;
+/** The server's wait for a busy lock, spent asleep between tries instead of on the thread. */
+export const SERVER_LOCK_WAIT_MS = 2_000;
+/** `whenLockFree` for plain async code shared with the CLI, where the lock never reads busy. */
+export const whenLockFreeAsync = async <A>(run: () => A, ceilingMs = SERVER_LOCK_WAIT_MS) => {
+  const deadline = Date.now() + ceilingMs;
+  for (;;) {
+    try {
+      return run();
+    } catch (error) {
+      if (!isLockBusy(error) || Date.now() >= deadline) throw error;
+    }
+    // @effect-diagnostics-next-line globalTimers:off -- Plain async code the CLI shares, with no Effect runtime.
+    await new Promise((resolve) => setTimeout(resolve, LOCK_ASYNC_RETRY_MS));
+  }
 };
 
 let lockNotice: { readonly heard: (pid: number) => void; readonly afterMs: number } | null = null;
@@ -251,8 +270,7 @@ const withLock = <A>(dir: string, run: () => A): A => {
   const started = Date.now();
   const deadline = started + lockWaitMs;
   let told = false;
-  for (let first = true; ; first = false) {
-    if (!first && Date.now() >= deadline) throw lockBusy(readToken(lock));
+  for (;;) {
     try {
       NodeFS.mkdirSync(lock);
       NodeFS.writeFileSync(NodePath.join(lock, "owner"), token);

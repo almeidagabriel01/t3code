@@ -314,6 +314,62 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  // A live owner's lock: never stale, so only its release lets anyone in.
+  const holdLock = (dir: string) => {
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    return () => NodeFS.rmSync(lock, { recursive: true });
+  };
+
+  it.effect("withSlot waits out a busy lock past the server's bound, then queues and runs", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const release = holdLock(dir);
+        const ran = yield* Deferred.make<string>();
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot("Open iPhone", null, Deferred.succeed(ran, "ran")),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["tests"]);
+        release();
+        Queue.remove(dir, holder.id);
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(fiber);
+        expect(yield* Deferred.await(ran)).toBe("ran");
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("withSlot retries leaving the queue while the lock is busy", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        Queue.remove(dir, holder.id);
+        let release = () => {};
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot(
+            "a",
+            null,
+            Effect.sync(() => {
+              release = holdLock(dir);
+            }),
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["a"]);
+        release();
+        yield* TestClock.adjust("50 millis");
+        yield* Fiber.join(fiber);
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("promote and cancel fail for the running entry and for unknown ids", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {

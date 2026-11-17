@@ -28,6 +28,7 @@ import {
 } from "./daemons.ts";
 import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
+import { whenLockFree } from "./whenLockFree.ts";
 import { applySlowdown, isNoop, slowdownStep } from "./slowdown.ts";
 
 const SAMPLE_INTERVAL = "2 seconds";
@@ -280,8 +281,8 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           processes.some(isBuildDaemon) ||
           (entries.some((entry) => entry.startedAt === null) && (yield* daemonsAnywhere));
         // A lock held past the server's wait fails this reading only: the next tick writes again.
-        const written = yield* Effect.try({
-          try: () =>
+        const written = yield* whenLockFree(
+          () =>
             QueueFile.recordSample(
               dir,
               {
@@ -305,18 +306,18 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
                 ? peaksOf(entries, processes, footprints.jobs, daemons, footprints.trees)
                 : {},
             ),
-          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
-        });
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        );
         // Only the primary writer slows jobs down, so two servers never fight over one job's QoS.
         if (platform !== "darwin" || written === null || !written.primary) return;
         const { doc } = written;
         const step = slowdownStep(doc, processes, at);
         if (isNoop(step, doc.slowedDaemons)) return;
         yield* applySlowdown(step);
-        yield* Effect.try({
-          try: () => QueueFile.recordSlowdown(dir, step),
-          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
-        });
+        yield* whenLockFree(
+          () => QueueFile.recordSlowdown(dir, step),
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        );
       }).pipe(Effect.ignore);
       yield* tick.pipe(
         Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),

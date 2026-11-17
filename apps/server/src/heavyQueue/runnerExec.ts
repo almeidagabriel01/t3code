@@ -12,7 +12,13 @@ import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
 import { parseLine, type Word } from "./shellLine.ts";
-import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
+import {
+  claimLostRun,
+  readDoc,
+  resolveLostPgid,
+  settleLostRun,
+  whenLockFreeAsync,
+} from "./queueFile.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
@@ -501,17 +507,17 @@ export const drainLostRuns = async (
   const holdMs = (machine.runnerSshTimeoutSeconds + 2 * machine.runnerStopWaitSeconds + 5) * 1000;
   for (const lost of readDoc(dir).lostRuns) {
     const claim = Date.now() + holdMs;
-    if (!claimLostRun(dir, lost, claim)) continue;
+    if (!(await whenLockFreeAsync(() => claimLostRun(dir, lost, claim)))) continue;
     let pgid = lost.remote.pgid;
     if (lost.pgidOnly === true && pgid === null) {
       // Its record still holds the folder, so the pgid file there is still the lost run's.
       const read = await remote.readPgid(machine, environment, lost.remote.id);
       if (read === "unreachable") {
-        settleLostRun(dir, lost, false, claim);
+        await whenLockFreeAsync(() => settleLostRun(dir, lost, false, claim));
         return;
       }
       // No group to stop it by, but nothing new ran in the folder yet: the whole stop is still safe.
-      if (read !== null) resolveLostPgid(dir, lost, read);
+      if (read !== null) await whenLockFreeAsync(() => resolveLostPgid(dir, lost, read));
       pgid = read;
     }
     const result = await remote.stop(
@@ -521,7 +527,7 @@ export const drainLostRuns = async (
       pgid,
       lost.pgidOnly === true && pgid !== null,
     );
-    settleLostRun(dir, lost, confirmed(result), claim);
+    await whenLockFreeAsync(() => settleLostRun(dir, lost, confirmed(result), claim));
     if (result === "unreachable") return;
   }
 };

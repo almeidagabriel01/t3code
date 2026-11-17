@@ -18,7 +18,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -37,11 +36,13 @@ import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
+import { whenLockFree } from "./whenLockFree.ts";
 import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
+/** A release finalizer can't wait forever, but a slow owner must not leave a server entry behind. */
+const REMOVE_LOCK_WAIT_MS = 10_000;
 const STREAM_INTERVAL = "2 seconds";
-const SERVER_LOCK_WAIT_MS = 2_000;
 
 const failure = (reason: HeavyQueueError["reason"], message: string) =>
   new HeavyQueueError({ reason, message });
@@ -210,8 +211,9 @@ export const bashHook =
     QueueFile.answerBashCall(dir, hookInput, prefix, {}, true);
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
-  // A stuck lock owner must not block this server's event loop; the CLI's waiters wait on.
-  QueueFile.boundLockWait(SERVER_LOCK_WAIT_MS);
+  // A stuck lock owner must not block this server's event loop: one try, then async retries.
+  const lockWait = QueueFile.boundLockWait(0);
+  yield* Effect.addFinalizer(() => Effect.sync(() => QueueFile.boundLockWait(lockWait)));
   const command = `${yield* queuePrefix(dir)} --`;
   const hookCommand = yield* queuePrefix(dir, ["hook"]);
   const settingsPath =
@@ -343,12 +345,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
   const changed = yield* PubSub.sliding<void>(1);
   const announce = PubSub.publish(changed, undefined);
   const act = (action: string, run: () => QueueFile.MoveResult) =>
-    Effect.try({ try: run, catch: unavailable }).pipe(
+    whenLockFree(run, unavailable).pipe(
       Effect.flatMap((result) => moveFailure(action, result)),
       Effect.tap(() => announce),
     );
   const change = (run: () => void) =>
-    Effect.try({ try: run, catch: unavailable }).pipe(Effect.tap(() => announce));
+    whenLockFree(run, unavailable).pipe(Effect.tap(() => announce));
 
   const withSlot = Effect.fnUntraced(function* <A, E, R>(
     label: string,
@@ -359,8 +361,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const id = NodeCrypto.randomUUID();
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     return yield* Effect.acquireUseRelease(
-      Effect.try({
-        try: () =>
+      // Waits on a busy lock off the thread: a slow owner delays the call instead of failing it.
+      whenLockFree(
+        () =>
           QueueFile.enqueue(dir, {
             id,
             pid: process.pid,
@@ -371,15 +374,13 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
             startedAt: null,
             server: true,
           }),
-        catch: unavailable,
-      }),
+        unavailable,
+        null,
+      ),
       () =>
         Effect.gen(function* () {
           while (true) {
-            const start = yield* Effect.try({
-              try: () => QueueFile.tryStart(dir, id),
-              catch: unavailable,
-            }).pipe(
+            const start = yield* whenLockFree(() => QueueFile.tryStart(dir, id), unavailable).pipe(
               // A busy lock is one more poll, not a failed wait.
               Effect.catchIf(QueueFile.isLockBusy, () =>
                 Effect.succeed({ status: "busy" as const }),
@@ -395,12 +396,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         }),
       () =>
         // A server-held entry outlives no one but this server: a busy lock must not leave it behind.
-        Effect.try({ try: () => QueueFile.remove(dir, id), catch: unavailable }).pipe(
-          Effect.retry({
-            while: QueueFile.isLockBusy,
-            times: 10,
-            schedule: Schedule.spaced(POLL_INTERVAL),
-          }),
+        whenLockFree(() => QueueFile.remove(dir, id), unavailable, REMOVE_LOCK_WAIT_MS).pipe(
           Effect.ignore({ log: true }),
         ),
     );
@@ -449,20 +445,20 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       id: string,
       priority: "low" | "high",
     ) {
-      const { result, entry } = yield* Effect.try({
-        try: () => QueueFile.setPriority(dir, id, priority),
-        catch: unavailable,
-      });
+      const { result, entry } = yield* whenLockFree(
+        () => QueueFile.setPriority(dir, id, priority),
+        unavailable,
+      );
       yield* moveFailure("changed", result);
       // A server-held slot's pid is T3 itself, never lowered.
       if (entry?.startedAt !== null && entry?.server !== true && platform === "darwin") {
         yield* setTreePriority(entry!.pid, priority).pipe(
           Effect.mapError((error) => unavailable(error)),
         );
-        yield* Effect.try({
-          try: () => QueueFile.setQos(dir, id, priority === "high" ? "normal" : "background"),
-          catch: unavailable,
-        });
+        yield* whenLockFree(
+          () => QueueFile.setQos(dir, id, priority === "high" ? "normal" : "background"),
+          unavailable,
+        );
       }
       yield* announce;
     }),
@@ -479,7 +475,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       act("moved", () => QueueFile.route(dir, id, runner, force)),
     ),
     routeAll: Effect.fn("HeavyQueue.routeAll")((runner: HeavyRunner) =>
-      Effect.try({ try: () => QueueFile.routeAll(dir, runner), catch: unavailable }).pipe(
+      whenLockFree(() => QueueFile.routeAll(dir, runner), unavailable).pipe(
         Effect.tap(() => announce),
       ),
     ),
