@@ -152,7 +152,7 @@ export function runnerReport(record: HeavyEventRecord): ProblemReport | null {
     projectId: null,
     threadId: record.job.threadId,
     subject: null,
-    command: record.job.name,
+    command: record.job.label ?? record.job.name,
     where: record.job.runner === "linux" ? "Linux" : "this Mac",
     at: record.at,
   };

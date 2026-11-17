@@ -160,6 +160,8 @@ export type HeavyEventRecord = HeavyEvent & {
   readonly job: {
     readonly id: string;
     readonly name: string;
+    /** The command it ran; absent in records written before it was kept. */
+    readonly label?: string;
     readonly threadId: string | null;
     readonly runner: HeavyRunner;
   };
@@ -181,6 +183,7 @@ const recordOf = (
   job: {
     id: entry.id,
     name: entry.name ?? entry.label,
+    label: entry.label,
     threadId: entry.threadId,
     runner: entry.runner ?? "mac",
   },
