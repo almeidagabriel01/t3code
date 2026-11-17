@@ -190,6 +190,7 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     slots: block.machine.runnerLinuxSlots,
     running: doc.entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux")
       .length,
+    cpuPercent: linux.cpuPercent === null ? null : Math.round(linux.cpuPercent),
     load1: linux.load1 === null ? null : Math.round(linux.load1 * 10) / 10,
     cpuCount: linux.cpuCount,
     availableMemoryBytes: linux.availableMemoryBytes,

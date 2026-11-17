@@ -474,7 +474,13 @@ describe("ssh calls around a Linux run", () => {
     const ok = fake("printf '0.50 0.4 0.3 1/2 3\\n4\\nMem: 100 10 20 0 0 80\\n'");
     expect(await checkLinux(DEFAULT_MACHINE_CONFIG, env(ok))).toEqual({
       ok: true,
-      reading: { load1: 0.5, cpuCount: 4, totalMemoryBytes: 100, availableMemoryBytes: 80 },
+      reading: {
+        cpuPercent: null,
+        load1: 0.5,
+        cpuCount: 4,
+        totalMemoryBytes: 100,
+        availableMemoryBytes: 80,
+      },
     });
     const refused = fake(
       "echo 'ssh: connect to host pc port 22: Connection refused' >&2; exit 255",

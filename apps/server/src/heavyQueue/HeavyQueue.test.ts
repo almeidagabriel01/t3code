@@ -654,6 +654,7 @@ describe("Linux as clients see it", () => {
       online: false,
       slots: 3,
       running: 1,
+      cpuPercent: null,
       load1: null,
       cpuCount: null,
       availableMemoryBytes: null,

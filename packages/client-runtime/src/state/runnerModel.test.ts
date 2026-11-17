@@ -33,6 +33,7 @@ const linux: HeavyRunnerLinux = {
   online: true,
   slots: 2,
   running: 1,
+  cpuPercent: 12.4,
   load1: 1.234,
   cpuCount: 6,
   availableMemoryBytes: 8.1 * 1024 ** 3,
@@ -124,9 +125,15 @@ describe("the queue × Runner line", () => {
 
 describe("Linux status", () => {
   it.each([
-    [linux, "Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.1 GB free"],
-    [{ ...linux, load1: null, availableMemoryBytes: null }, "Linux online · 1 of 2 running"],
-    [{ ...linux, cpuCount: null }, "Linux online · 1 of 2 running · load 1.2 · 8.1 GB free"],
+    [linux, "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free"],
+    [
+      { ...linux, cpuPercent: null, load1: null, availableMemoryBytes: null },
+      "Linux online · 1 of 2 running",
+    ],
+    [
+      { ...linux, cpuCount: null },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 · 8.1 GB free",
+    ],
     [{ ...linux, online: false, error: "Connection refused" }, "Linux offline: Connection refused"],
     [{ ...linux, online: false }, "Linux offline"],
     [{ ...linux, online: null }, "Checking Linux (pc)…"],

@@ -190,7 +190,13 @@ describe("the publisher layer", () => {
           calls += 1;
           return {
             ok: true,
-            reading: { load1: 1, cpuCount: 6, totalMemoryBytes: 8, availableMemoryBytes: 4 },
+            reading: {
+              cpuPercent: 10,
+              load1: 1,
+              cpuCount: 6,
+              totalMemoryBytes: 8,
+              availableMemoryBytes: 4,
+            },
           };
         };
         const services = Layer.mergeAll(
@@ -241,7 +247,13 @@ describe("the publisher layer", () => {
         Queue.offerUnsafe(checked, machine.runnerHost);
         return {
           ok: true,
-          reading: { load1: 1, cpuCount: 6, totalMemoryBytes: 8, availableMemoryBytes: 4 },
+          reading: {
+            cpuPercent: 10,
+            load1: 1,
+            cpuCount: 6,
+            totalMemoryBytes: 8,
+            availableMemoryBytes: 4,
+          },
         };
       };
       const change = (next: ServerSettings) => {

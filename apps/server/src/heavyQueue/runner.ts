@@ -617,6 +617,9 @@ export interface LinuxHealth extends Sustained {
   readonly checkedAt: number | null;
   /** The last successful check. */
   readonly okAt: number | null;
+  /** Busy share of its CPU, 0–100, like the Mac's; null without two readings to compare. */
+  readonly cpuPercent: number | null;
+  /** The one-minute load, a hint only: it counts waiting tasks, not CPU in use. */
   readonly load1: number | null;
   readonly cpuCount: number | null;
   readonly availableMemoryBytes: number | null;
@@ -633,6 +636,7 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
   failures: 0,
   checkedAt: null,
   okAt: null,
+  cpuPercent: null,
   load1: null,
   cpuCount: null,
   availableMemoryBytes: null,
@@ -643,13 +647,32 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
 };
 
 export interface LinuxReading {
+  readonly cpuPercent: number | null;
   readonly load1: number | null;
   readonly cpuCount: number | null;
   readonly availableMemoryBytes: number | null;
   readonly totalMemoryBytes: number | null;
 }
 
-/** `cat /proc/loadavg; nproc; free -b` output. */
+/**
+ * The busy share between two `/proc/stat` `cpu` lines, 0–100: busy is all but idle and iowait,
+ * over user..steal (guest time is already inside user and nice). Null when either line is
+ * missing or the counters did not move forward.
+ */
+export const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
+  const times = (line: string | undefined) => {
+    const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
+    return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
+  };
+  const [a, b] = [times(before), times(after)];
+  if (a === null || b === null) return null;
+  const total = b.reduce((sum, n) => sum + n, 0) - a.reduce((sum, n) => sum + n, 0);
+  const idle = b[3]! + b[4]! - (a[3]! + a[4]!);
+  if (!(total > 0) || idle < 0 || idle > total) return null;
+  return ((total - idle) / total) * 100;
+};
+
+/** `HEARTBEAT_COMMAND` output. */
 export const parseHeartbeat = (text: string): LinuxReading => {
   const lines = text.split("\n");
   const load1 = Number(lines[0]?.trim().split(/\s+/)[0]);
@@ -661,7 +684,9 @@ export const parseHeartbeat = (text: string): LinuxReading => {
   const total = Number(mem?.[1]);
   const available = Number(mem?.[6]);
   const value = (n: number) => (Number.isFinite(n) ? n : null);
+  const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
   return {
+    cpuPercent: cpuPercentBetween(before, after),
     load1: value(load1),
     cpuCount: Number.isInteger(cpuCount) && cpuCount > 0 ? cpuCount : null,
     totalMemoryBytes: value(total),
@@ -677,13 +702,12 @@ const GIB = 1024 ** 3;
 
 /** Which of Linux's own limits a reading is past, for the waiting reason; null when none or unknown. */
 const linuxOverBy = (reading: LinuxReading, machine: RunnerMachineConfig): string | null => {
-  const { availableMemoryBytes: free, totalMemoryBytes: total, load1, cpuCount } = reading;
+  const { availableMemoryBytes: free, totalMemoryBytes: total, cpuPercent: cpu } = reading;
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
     return `${(Math.max(0, free) / GIB).toFixed(1)} GB free, keeping ${floor}%`;
   }
-  if (load1 === null || cpuCount === null) return null;
-  const cpu = (load1 / cpuCount) * 100;
+  if (cpu === null) return null;
   return cpu > machine.runnerLinuxCpuCeilingPercent
     ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
     : null;
@@ -922,7 +946,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
-  const reading = health.load1 !== null || health.availableMemoryBytes !== null;
+  const reading = health.cpuPercent !== null || health.availableMemoryBytes !== null;
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -1317,7 +1341,9 @@ export const removeCopyScript = (id: string) => {
   ].join("\n");
 };
 
-export const HEARTBEAT_COMMAND = "cat /proc/loadavg; nproc; free -b";
+// Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.
+export const HEARTBEAT_COMMAND =
+  "cat /proc/loadavg; nproc; free -b; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat";
 
 /**
  * Stops what is left of run `id` there: its process group, then anything still naming its

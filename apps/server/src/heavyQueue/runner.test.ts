@@ -67,9 +67,10 @@ const runningOn = (id: string, runner: "mac" | "linux", cwd = `/work/${id}`) =>
 
 const ONLINE: LinuxHealth = { ...UNKNOWN_HEALTH, online: true, okAt: NOW - 1000 };
 const OFFLINE: LinuxHealth = { ...UNKNOWN_HEALTH, online: false, failures: 2 };
-/** A heartbeat with numbers: 8 of 12 GiB free, load 0.5 on 6 cores. */
+/** A heartbeat with numbers: 8 of 12 GiB free, 8% CPU, load 0.5 on 6 cores. */
 const READ: LinuxHealth = {
   ...ONLINE,
+  cpuPercent: 8,
   load1: 0.5,
   cpuCount: 6,
   availableMemoryBytes: 8 * GIB,
@@ -347,7 +348,7 @@ describe("routing matrix", () => {
         [job("a", "vp test run")],
         { runnerWhere: "linux" },
         {
-          health: { ...READ, load1: 5.4, overLimit: true },
+          health: { ...READ, cpuPercent: 90, overLimit: true },
         },
       ),
     );
@@ -1604,9 +1605,10 @@ describe("Linux health", () => {
   describe("over its limits only on sustained readings", () => {
     const WINDOW = 20_000;
     const BEAT = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
-    const reading = (freeGib: number, load1 = 0.5) => ({
+    const reading = (freeGib: number, cpuPercent = 8, load1 = 0.5) => ({
       ok: true as const,
       reading: {
+        cpuPercent,
         load1,
         cpuCount: 6,
         availableMemoryBytes: freeGib * GIB,
@@ -1623,7 +1625,9 @@ describe("Linux health", () => {
     };
     const low = reading(1);
     const fine = reading(8);
-    const busy = reading(8, 5.4);
+    const busy = reading(8, 90);
+    // 17/11: load 34.7 on 6 cores while `top` showed the PC 98% idle.
+    const queued = reading(8, 2, 34.7);
 
     it.each([
       [
@@ -1650,6 +1654,15 @@ describe("Linux health", () => {
           [BEAT, busy],
         ],
         [false, true],
+      ],
+      [
+        "a high load on an idle CPU never counts",
+        [
+          [0, queued],
+          [BEAT, queued],
+          [2 * BEAT, queued],
+        ],
+        [false, false, false],
       ],
       [
         "one good heartbeat does not bring it back",
@@ -1700,6 +1713,78 @@ describe("Linux health", () => {
     });
   });
 
+  /** `HEARTBEAT_COMMAND` output with `/proc/stat`'s `cpu` line before and after. */
+  const heartbeat = (load: string, before: string, after: string) =>
+    [
+      `${load} 0.80 0.50 2/400 1234`,
+      "6",
+      "               total        used        free      shared  buff/cache   available",
+      "Mem:     12000000000  3000000000  6000000000     1000000  3000000000  8500000000",
+      "Swap:     4000000000           0  4000000000",
+      before,
+      after,
+    ].join("\n");
+  const STAT = "cpu  2255340 3412 2290112 22625563 6290 0 4562 0 0 0";
+
+  it.each([
+    // 300 jiffies (6 cores, half a second): 6 busy, 294 idle, though the load is 34.7.
+    [
+      "an idle PC with a high load",
+      "34.70",
+      "cpu  2255344 3412 2290114 22625857 6290 0 4562 0 0 0",
+      2,
+    ],
+    ["a busy PC", "5.40", "cpu  2255540 3412 2290182 22625583 6290 0 4572 0 0 0", 93.3],
+    [
+      "waiting on disk is not busy",
+      "8.00",
+      "cpu  2255400 3412 2290112 22625753 6340 0 4562 0 0 0",
+      20,
+    ],
+    ["steal is busy", "1.00", "cpu  2255340 3412 2290112 22625713 6290 0 4562 150 0 0", 50],
+    // Guest time already sits inside user: counting it again would pass 100%.
+    ["guest time once", "1.00", "cpu  2255640 3412 2290112 22625563 6290 0 4562 0 300 0", 100],
+    ["counters that did not move", "1.00", STAT, null],
+    ["counters that went back (a reboot)", "1.00", "cpu  10 0 10 1000 0 0 0 0 0 0", null],
+    ["a missing second line", "1.00", "", null],
+  ] as const)("reads CPU in use from /proc/stat: %s", (_name, load, after, cpu) => {
+    const reading = parseHeartbeat(heartbeat(load, STAT, after));
+    expect(reading.cpuPercent === null ? null : Math.round(reading.cpuPercent * 10) / 10).toBe(cpu);
+    expect(reading.load1).toBe(Number(load));
+  });
+
+  it("a PC idle under a high load takes an eligible job", () => {
+    const idle = {
+      ok: true as const,
+      reading: parseHeartbeat(
+        heartbeat("34.70", STAT, "cpu  2255344 3412 2290114 22625857 6290 0 4562 0 0 0"),
+      ),
+    };
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    const health = [0, 1, 2].reduce<LinuxHealth>(
+      (health, at) =>
+        nextHealth(health, idle, DEFAULT_MACHINE_CONFIG, 20_000, NOW - 3 * beat + at * beat),
+      { ...UNKNOWN_HEALTH, online: true },
+    );
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(outcomeOf(plan, "a")).toBe("linux-start");
+  });
+
+  // A server or PC without the `/proc/stat` lines reads no CPU: unknown never holds jobs back.
+  it("a heartbeat with no CPU reading and a high load takes an eligible job", () => {
+    const blind = { ok: true as const, reading: parseHeartbeat(heartbeat("34.70", "", "")) };
+    expect(blind.reading.cpuPercent).toBeNull();
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    const health = [0, 1, 2].reduce<LinuxHealth>(
+      (health, at) =>
+        nextHealth(health, blind, DEFAULT_MACHINE_CONFIG, 20_000, NOW - 3 * beat + at * beat),
+      { ...UNKNOWN_HEALTH, online: true },
+    );
+    expect(health.overLimit).toBe(false);
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(outcomeOf(plan, "a")).toBe("linux-start");
+  });
+
   it("reads load, cores and memory from the heartbeat output", () => {
     const text = [
       "1.25 0.80 0.50 2/400 1234",
@@ -1709,12 +1794,14 @@ describe("Linux health", () => {
       "Swap:     4000000000           0  4000000000",
     ].join("\n");
     expect(parseHeartbeat(text)).toEqual({
+      cpuPercent: null,
       load1: 1.25,
       cpuCount: 6,
       totalMemoryBytes: 12_000_000_000,
       availableMemoryBytes: 8_500_000_000,
     });
     expect(parseHeartbeat("garbage")).toEqual({
+      cpuPercent: null,
       load1: null,
       cpuCount: null,
       totalMemoryBytes: null,
