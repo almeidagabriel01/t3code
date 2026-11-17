@@ -1060,6 +1060,20 @@ describe("Runner in the queue file", () => {
     ]);
   });
 
+  // 39: the incident's entry had `route: linux`; a failure there drops that route, so it parks.
+  it("parks a job sent to Linux once its environment fails there, past the next heartbeat", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "wait" })));
+    Queue.enqueue(dir, test("a", { route: "linux" }), NOW);
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
+    const failure = "Dependency install on Linux failed: help: Update your lockfile";
+    Queue.requeue(dir, "a", { dropped: true, failure, linuxFailedAt: NOW + 1 });
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW + 20_000);
+    expect(Queue.tryStart(dir, "a", NOW + 20_000)).toMatchObject({
+      status: "waiting",
+      reason: `Linux couldn't run this: ${failure}: waiting for it`,
+    });
+  });
+
   // Linux comes back long enough to take the job, which never reaches it, then goes again.
   const flap = (dir: string, at: number) => {
     const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
