@@ -405,26 +405,29 @@ const make = Effect.gen(function* () {
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {
     const now = yield* nowIso;
     const result = yield* (
-      row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX)
-        ? Effect.void
-        : row.approval_request_id !== null
-          ? respondToApproval(row)
-          : (yield* claimedByGroup(row))
-            ? Effect.void
-            : threads.sendToThread({
-                projectId: row.project_id as ProjectId,
-                // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
-                commandId: CommandId.make(`decision-answer:${row.decision_id}`),
-                messageId: MessageId.make(`decision-answer:${row.decision_id}`),
-                threadId: row.from_thread_id as ThreadId,
-                text: deliveryText(row),
-                // Already claimed to this thread when the answer was taken.
-                attachments: toDecision(row).answer?.attachments ?? [],
-                mode: "queue",
-                createdBy: "user",
-                creationSource: "server",
-              })
-    ).pipe(Effect.result);
+      // A manual to-do wakes no agent: answering it only records the answer.
+      (
+        row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX) || row.kind === "manual"
+          ? Effect.void
+          : row.approval_request_id !== null
+            ? respondToApproval(row)
+            : (yield* claimedByGroup(row))
+              ? Effect.void
+              : threads.sendToThread({
+                  projectId: row.project_id as ProjectId,
+                  // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
+                  commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+                  messageId: MessageId.make(`decision-answer:${row.decision_id}`),
+                  threadId: row.from_thread_id as ThreadId,
+                  text: deliveryText(row),
+                  // Already claimed to this thread when the answer was taken.
+                  attachments: toDecision(row).answer?.attachments ?? [],
+                  mode: "queue",
+                  createdBy: "user",
+                  creationSource: "server",
+                })
+      ).pipe(Effect.result)
+    );
     if (result._tag === "Success") {
       yield* sql`
         UPDATE decisions SET delivered_at = ${now}
