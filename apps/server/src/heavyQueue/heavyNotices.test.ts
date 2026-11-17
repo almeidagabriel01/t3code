@@ -1,16 +1,22 @@
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 import type { HeavyNoticesMode, HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   deadlineRecord,
   endedRecord,
+  errorLineOf,
   EVENT_LOG_SIZE,
   faultOf,
   unreachableLine,
   faultRecord,
   type FaultSeen,
   groupNotices,
+  notFoundHere,
   type HeavyEventRecord,
   type LinuxView,
   type NoticeTick,
@@ -18,6 +24,7 @@ import {
   rawNotices,
   requeueRecord,
   shownIn,
+  startFailureOf,
   startRecord,
   STUCK_FLOOR_MS,
   STUCK_NO_HISTORY_MS,
@@ -508,6 +515,31 @@ describe("notices for each problem", () => {
     ]);
   });
 
+  // The problem card shows the line that ran: the label drops the script's folder and is cut.
+  it.each([
+    [
+      "named, with a line",
+      { name: "web fmt", label: "fmt.sh a", line: "/s/fmt.sh a" },
+      "/s/fmt.sh a",
+    ],
+    ["named, label is the line", { name: "web fmt", label: "vp fmt a.ts" }, "vp fmt a.ts"],
+    ["unnamed, with a line", { label: "fmt.sh a", line: "/s/fmt.sh a" }, "/s/fmt.sh a"],
+    ["unnamed, label is the line", { label: "vp lint" }, undefined],
+    ["with a heredoc", { name: "gate", line: "x".repeat(1200) }, `${"x".repeat(999)}…`],
+  ])("keeps the command line of a job %s", (_case, fields, label) => {
+    expect(endedRecord({ ...mac, ...fields }, 127, NOW)!.job.label).toBe(label);
+  });
+
+  it("a job that could not start says what was missing", () => {
+    const missing = record(endedRecord(mac, 127, NOW, "script not found: /s/fmt.sh"));
+    expect(rawNotices(tick({ records: [missing] }))[0]!.description).toBe(
+      "script not found: /s/fmt.sh",
+    );
+    expect(
+      rawNotices(tick({ records: [record(endedRecord(mac, 127, NOW))] }))[0]!.description,
+    ).toBe("Command not found or not executable (exit 127)");
+  });
+
   it("names a job by its --name and shortens long ones", () => {
     const named = record(endedRecord({ ...mac, name: "Web tests" }, 1, NOW));
     const long = record(endedRecord({ ...mac, label: "x".repeat(80) }, 1, NOW));
@@ -863,5 +895,134 @@ describe("grouping", () => {
 
   it("sends nothing for an empty tick", () => {
     expect(groupNotices([], new Map(), NOW).batch).toEqual([]);
+  });
+});
+
+describe("startFailureOf", () => {
+  const files = new Set(["/w/run.sh", "/w/locked.sh"]);
+  const exists = (path: string) => files.has(path);
+  it.each([
+    ["/w/fmt.sh", [], 127, "script not found: /w/fmt.sh"],
+    ["./fmt.sh", [], 127, "script not found: /w/fmt.sh"],
+    ["../fmt.sh", [], 126, "script not found: /fmt.sh"],
+    ["/w/locked.sh", [], 126, "not executable: /w/locked.sh"],
+    // The script inside a shell line, by path or by bare name as `sh backend.sh` gives it.
+    ["sh", ["./fmt.sh"], 127, "script not found: /w/fmt.sh"],
+    ["sh", ["backend.sh"], 127, "script not found: /w/backend.sh"],
+    // A script that exists and exits 127 itself, a bare name, or a plain failure: its own output says why.
+    ["/w/run.sh", [], 127, undefined],
+    ["sh", ["./run.sh"], 127, undefined],
+    ["sh", [], 126, undefined],
+    ["vp", [], 127, undefined],
+    ["/w/fmt.sh", [], 1, undefined],
+  ] as const)("%s %j exiting %i", (program, scripts, code, reason) => {
+    expect(startFailureOf(program, scripts, "/w", code, exists)).toBe(reason);
+  });
+});
+
+// A program Linux's pre-flight can't find is Linux's fault only when this Mac finds it.
+describe("notFoundHere", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-here-"));
+  const pkg = NodePath.join(root, "apps", "server");
+  NodeFS.mkdirSync(NodePath.join(root, "node_modules", ".bin"), { recursive: true });
+  NodeFS.mkdirSync(pkg, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, "node_modules", ".bin", "tool"), "#!/bin/sh\n", {
+    mode: 0o755,
+  });
+  it.each([
+    ["a bin of the checkout's root", "tool", undefined],
+    ["the same bin by its path from the root", "../../node_modules/.bin/tool", undefined],
+    ["a shell builtin", "cd", undefined],
+    ["a program on PATH", "sh", undefined],
+    [
+      "a bin path relative to a package that has none",
+      "./node_modules/.bin/tool",
+      `tool not found from ${pkg}; it is at ${NodePath.join(root, "node_modules", ".bin", "tool")}`,
+    ],
+    [
+      "a name found nowhere",
+      "t3-no-such-tool",
+      "command not found on this Mac either: t3-no-such-tool",
+    ],
+  ])("%s", (_, program, reason) => {
+    expect(notFoundHere(program, pkg, root, "/usr/bin:/bin")).toBe(reason);
+  });
+  // A checkout whose dependencies were never installed here.
+  it.each(["./node_modules/.bin/effect-tsgo", "effect-tsgo"])(
+    "%s in a project with no node_modules says to install them",
+    (program) => {
+      const bare = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bare-"));
+      NodeFS.writeFileSync(NodePath.join(bare, "package.json"), "{}");
+      expect(notFoundHere(program, bare, bare, "/usr/bin:/bin")).toBe(
+        `effect-tsgo not found in ${bare}: its dependencies aren't installed; run \`vp i\``,
+      );
+    },
+  );
+});
+
+// A project bin's path: where it really is, or that nothing was installed.
+describe("startFailureOf for a project bin", () => {
+  it.each([
+    [
+      "not installed",
+      ["/w/package.json"],
+      "effect-tsgo not found in /w/apps/server: its dependencies aren't installed; run `vp i`",
+    ],
+    [
+      "installed at the root",
+      ["/w/package.json", "/w/node_modules", "/w/node_modules/.bin/effect-tsgo"],
+      "effect-tsgo not found from /w/apps/server; it is at /w/node_modules/.bin/effect-tsgo",
+    ],
+    [
+      "installed without it",
+      ["/w/package.json", "/w/node_modules"],
+      "script not found: /w/apps/server/node_modules/.bin/effect-tsgo",
+    ],
+  ])("%s", (_, files, reason) => {
+    const exists = (path: string) => files.includes(path);
+    expect(
+      startFailureOf("./node_modules/.bin/effect-tsgo", [], "/w/apps/server", 127, exists),
+    ).toBe(reason);
+  });
+});
+
+// The card once quoted vitest's `⎯⎯⎯[50/62]⎯` rule, ANSI codes and all.
+describe("errorLineOf", () => {
+  const VITEST = [
+    "\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m src/heavyQueue/runner.test.ts\x1b[2m > \x1b[22mLinux health\x1b[2m > \x1b[22ma PC idle under a high load takes an eligible job",
+    "\x1b[31m\x1b[1mAssertionError\x1b[22m: expected 'linux-wait' to be 'linux-start' // Object.is equality\x1b[39m",
+    "",
+    '    \x1b[90m1851|\x1b[39m     expect(outcomeOf(plan, "a")).toBe("linux-start");',
+    "",
+    "\x1b[31m\x1b[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[50/62]⎯\x1b[22m\x1b[39m",
+    "",
+  ].join("\n");
+  it.each([
+    [
+      "a vitest failure",
+      VITEST,
+      "FAIL  src/heavyQueue/runner.test.ts > Linux health > a PC idle under a high load takes an eligible job",
+      '1851|     expect(outcomeOf(plan, "a")).toBe("linux-start");',
+    ],
+    [
+      "an install that fails",
+      "Progress: resolved 1678, reused 1674\n ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404\n",
+      "ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404",
+      "ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404",
+    ],
+    [
+      "only ANSI and rules",
+      "\x1b[31m\x1b[2m⎯⎯⎯[50/62]⎯\x1b[22m\x1b[39m\n\x1b[2m────\x1b[22m\n",
+      null,
+      null,
+    ],
+    [
+      "a plain last line",
+      "rsync: connection unexpectedly closed\n[t3 heavy] Linux: syncing\n",
+      null,
+      "rsync: connection unexpectedly closed",
+    ],
+  ])("%s", (_case, text, failure, last) => {
+    expect(errorLineOf(text)).toEqual({ failure, last });
   });
 });

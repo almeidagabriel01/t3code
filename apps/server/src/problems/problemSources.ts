@@ -169,7 +169,7 @@ export function runnerReport(record: HeavyEventRecord): ProblemReport | null {
     case "ended": {
       // Its worktree broke the install: the job ended with the fix, which is no problem of T3's.
       if (record.worktree !== undefined) return null;
-      const exit = { ...base, error: `Exit code ${record.code}` };
+      const exit = { ...base, error: record.error ?? `Exit code ${record.code}` };
       const missing = record.code === 126 || record.code === 127;
       // Linux reports a failed sync or install, and 126/127, as a t3-fault record.
       const faulted = missing || record.phase === "syncing" || record.phase === "installing";

@@ -75,6 +75,34 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
     "nohup env -u CI timeout -s INT 10 vp test run",
     "nohup env -u CI timeout -s INT 10 vp test run",
   ],
+  // A formatter given its files is light: the heavy work beside it is the segment.
+  ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", "vp lint --no-ignore a.ts b.tsx"],
+  ['f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts', "vp test run src/a.test.ts"],
+  [
+    "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
+    "pnpm exec effect-tsgo tsrs --noEmit",
+  ],
+  ["vp run fmt src/a.ts; vp run typecheck", "vp run typecheck"],
+  // Without files it walks the whole tree: writing or checking, still heavy.
+  ["vp fmt", "vp fmt"],
+  ["vp fmt --check", "vp fmt --check"],
+  ["vp fmt . && vp lint", "vp fmt ."],
+  ["vp fmt apps/web && vp lint a.ts", "vp fmt apps/web"],
+  ["pnpm run format", "pnpm run format"],
+  // An expansion may name a folder or the whole tree, unless the line shows it lists files.
+  ["vp fmt $(git ls-files)", "vp fmt $(git ls-files)"],
+  ['vp fmt "$DIR"', 'vp fmt "$DIR"'],
+  ["vp fmt $(find .)", "vp fmt $(find .)"],
+  ["vp fmt `ls`", "vp fmt `ls`"],
+  ["vp fmt $f 2>&1", "vp fmt $f 2>&1"],
+  ["vp fmt src/$(x).ts", "vp fmt src/$(x).ts"],
+  ["for f in $(git ls-files); do vp fmt $f; done", "vp fmt $f"],
+  ["for f in a.ts; do f=apps; vp fmt $f; done", "vp fmt $f"],
+  ['f=($(git ls-files)); vp fmt "${f[@]}"', 'vp fmt "${f[@]}"'],
+  ['f=(a.ts); f+=(apps); vp fmt "${f[@]}"', 'vp fmt "${f[@]}"'],
+  // A dot in a folder's name is not a file's extension.
+  ["vp fmt apps/v1.2", "vp fmt apps/v1.2"],
+  ["vp fmt packages/foo.bar", "vp fmt packages/foo.bar"],
 ];
 
 const LIGHT = [
@@ -106,6 +134,17 @@ const LIGHT = [
   'grep "a\\|vitest" src/x.ts',
   "git log --grep 'vp test run' -1",
   "bash -c 'echo vitest'",
+  // A formatter given its files one by one, or one file on stdin.
+  "vp fmt apps/web/src/a.ts apps/web/src/b.tsx",
+  "vp fmt a.ts b.tsx",
+  "vp fmt --stdin-filepath=a.ts",
+  "for f in a.ts b.tsx; do vp fmt $f 2>&1; done",
+  'f=(a.ts b.tsx); vp fmt "${f[@]}"',
+  "pnpm exec vp fmt src/x.ts",
+  "./node_modules/.bin/vp fmt apps/web/src/a.tsx",
+  "vpr fmt a.ts",
+  "vp fmt --check a.ts",
+  'for f in $(git diff --name-only t3/fork2...HEAD); do command vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f || echo "fmt diff $f"; done; echo fmt-done',
 ];
 
 describe("heavy Bash commands", () => {
@@ -347,6 +386,16 @@ describe("an agent's own remoto call", () => {
     [`sh -c 'vp lint && remoto vp test'`, false, null, true, `sh -c 'vp lint && remoto vp test'`],
     ["sh ./check.sh", true, "cd /w && remoto vp test run", false, null],
     ["sh ./check.sh", true, "vp lint && remoto vp test run", true, null],
+    // `t3 heavy` inside hands off like `remoto`: Linux, which has no `t3`, never runs that script.
+    ["sh ./check.sh", true, "t3 heavy -- vp lint && remoto vp test run", false, null],
+    ["sh ./check.sh", true, "vp lint && t3 heavy -- vp test run", true, null],
+    [
+      "sh ./check.sh",
+      true,
+      `vp lint\nELECTRON_RUN_AS_NODE=1 '/App/T3 Code' '/App/bin.mjs' heavy --queue-dir '/q' -- vp test run`,
+      true,
+      null,
+    ],
     ["remoto vp test run", false, null, false, null],
   ])("%j (Runner %s, script %j) queued %s, runs %j", (command, runner, body, queued, linux) => {
     const readScript = () => body;

@@ -584,7 +584,7 @@ export interface LinuxRun {
     readonly progress: RemoteProgress;
     /** Output lines naming Mac-only files, for a failed run. */
     readonly platform: ReadonlyArray<string>;
-    /** A package whose install was unfinished there, from the wrapper or the output. */
+    /** A package whose install was unfinished there, from the wrapper or the output before the command. */
     readonly install: string | null;
     /** The fix for a dependency install the worktree's own files broke, before the command ran. */
     readonly worktree: string | null;
@@ -645,9 +645,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   let worktree: string | null = null;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    // Only the steps before the command: its own output may quote the same errors (a test name).
+    if (progress.running) return;
     install ??= installFailure(line);
-    // The command's own output may quote the same errors.
-    if (!progress.running) worktree ??= worktreeProblemOf(line);
+    worktree ??= worktreeProblemOf(line);
   };
   const out = lineSplitter(scan);
   const err = lineSplitter((line, newline) => {

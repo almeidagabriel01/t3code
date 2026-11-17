@@ -130,6 +130,54 @@ describe("normalize and fingerprint (PRO-01, PRO-02, PRO-05)", () => {
     }
   });
 
+  const E = "\u001b";
+  const vitest = (rule: string, count: string) =>
+    `${E}[31m${E}[2m${rule}[${count}]⎯${E}[22m${E}[39m\n\n${E}[41m${E}[1m FAIL ${E}[22m${E}[49m src/a.test.ts > runs\nAssertionError: expected 1 to equal 2`;
+  it.each([
+    [
+      "vitest counters and rule widths",
+      vitest("⎯".repeat(22), "50/62"),
+      vitest("⎯".repeat(24), "3/4"),
+    ],
+    ["ANSI colour around the same line", `${E}[31mError: boom${E}[39m`, "Error: boom"],
+    [
+      "a labelled rule of another width",
+      "⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯\nx",
+      "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 31 ⎯⎯\nx",
+    ],
+    [
+      "one more file in the command",
+      "vp test run src/a.ts src/b.ts",
+      "vp test run src/a.ts src/b.ts src/c",
+    ],
+  ])("one failure is one card across %s", (_, first, again) => {
+    const at = (text: string) =>
+      fingerprint(
+        report({ command: text.startsWith("vp ") ? text : "vp test run", error: text }),
+        "p1",
+        "linux-install",
+      );
+    assert.equal(at(first), at(again));
+  });
+
+  it.each([
+    ["the failing test", vitest("⎯⎯", "1/2"), "Environment: FAIL  src/a.test.ts > runs"],
+    [
+      "a real install failure",
+      "ERR_PNPM_FETCH_404 GET https://r/x: Not Found",
+      "Environment: ERR_PNPM_FETCH_404 GET https://r/x: Not Found",
+    ],
+    ["output with only colour and rules", `${E}[31m⎯⎯[3/4]⎯${E}[39m\n`, "Environment: Failed"],
+  ])("a card title names %s", (_, error, title) => {
+    assert.equal(cardTitle("environment", error), title);
+  });
+
+  it("different failures still open different cards", () => {
+    const at = (error: string) =>
+      fingerprint(report({ command: "vp test run", error }), "p1", "linux-install");
+    assert.notEqual(at(vitest("⎯⎯", "1/2")), at(vitest("⎯⎯", "1/2").replace("> runs", "> stops")));
+  });
+
   it("a reported cause is the whole identity: other commands and errors are the same card", () => {
     const fault = report({ cause: "command-not-found:vp", command: "vp test", error: "vp: nope" });
     const same = fingerprint(fault, "p1", "command-not-found");

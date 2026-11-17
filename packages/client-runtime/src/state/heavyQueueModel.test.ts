@@ -266,6 +266,7 @@ describe("summary and formatting", () => {
     online: true,
     slots: 2,
     running: 1,
+    cpuPercent: 4,
     load1: 2,
     cpuCount: 6,
     availableMemoryBytes: 8 * 1024 ** 3,
@@ -302,7 +303,7 @@ describe("summary and formatting", () => {
       {
         running: 1,
         slots: 2,
-        cpuPercent: null,
+        cpuPercent: 4,
         load: 2,
         cpuCount: 6,
         freeBytes: LINUX.availableMemoryBytes,
@@ -317,7 +318,7 @@ describe("summary and formatting", () => {
       {
         running: 1,
         slots: 2,
-        cpuPercent: null,
+        cpuPercent: 4,
         load: 2,
         cpuCount: 6,
         freeBytes: LINUX.availableMemoryBytes,
@@ -584,6 +585,7 @@ describe("machineBar", () => {
     online: true,
     slots: 2,
     running: 0,
+    cpuPercent: 12,
     load1: 3,
     cpuCount: 6,
     availableMemoryBytes: 8 * GiB,
@@ -738,29 +740,38 @@ describe("machineBar", () => {
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
   });
 
-  it("reads Linux's load as a share of its cores", () => {
+  it("reads Linux's CPU in use like the Mac's, its load only a hint", () => {
     const { linux } = machineBar(state({ linux: LINUX }), null);
     expect(linux!.cpu).toEqual({
-      share: 0.5,
-      value: "50%",
+      share: 0.12,
+      value: "12%",
       warn: false,
-      hint: "Load 3.0 on 6 cores",
+      hint: "12% CPU in use · load 3.0 on 6 cores",
     });
+    // 17/11: load 34.7 on 6 cores on a PC 98% idle read as 578%.
+    const queued = machineBar(
+      state({ linux: { ...LINUX, cpuPercent: 2, load1: 34.7 } }),
+      null,
+    ).linux!;
+    expect(queued.cpu).toMatchObject({ share: 0.02, value: "2%" });
     expect(linux!.memory!.hint).toBe("8.0 GB free of 16.0 GB");
     const bare = machineBar(
       state({ linux: { ...LINUX, cpuCount: null, totalMemoryBytes: null } }),
       null,
     ).linux!;
-    expect(bare.cpu).toMatchObject({ value: "--", hint: "Load 3.0" });
+    expect(bare.cpu).toMatchObject({ value: "12%", hint: "12% CPU in use · load 3.0" });
     expect(bare.memory).toMatchObject({ share: null, hint: "8.0 GB free" });
     const none = machineBar(
-      state({ linux: { ...LINUX, load1: null, availableMemoryBytes: null } }),
+      state({ linux: { ...LINUX, cpuPercent: null, availableMemoryBytes: null } }),
       null,
     ).linux!;
     expect([none.cpu?.hint, none.memory?.hint]).toEqual([
-      "No load reading yet",
+      "No CPU reading yet",
       "No memory reading yet",
     ]);
+    // A server from before the CPU reading sends none: never a load passed off as CPU.
+    const { cpuPercent: _cpu, ...older } = LINUX;
+    expect(machineBar(state({ linux: older }), null).linux!.cpu?.hint).toBe("No CPU reading yet");
   });
 });
 

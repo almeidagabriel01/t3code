@@ -150,6 +150,47 @@ describe("t3 heavy", () => {
     expect(await Promise.all([first.exited, now.exited])).toEqual([0, 0]);
   });
 
+  // A job whose script was missing once logged only its --name and 127.
+  it("a named job whose script is missing logs its line and the missing path", async () => {
+    const dir = tempDir();
+    const script = NodePath.join(dir, "fmt.sh");
+    const run = heavy(dir, [script, "a.ts"], {}, [
+      "--name",
+      "web fmt",
+      "--runner",
+      "mac",
+      "--now",
+      "--",
+    ]);
+    expect(await run.exited).toBe(127);
+    expect(Queue.readDoc(dir).results).toEqual([
+      expect.objectContaining({
+        code: 127,
+        name: "web fmt",
+        line: `'${script}' 'a.ts'`,
+        error: `script not found: ${script}`,
+      }),
+    ]);
+  });
+
+  it("a project bin run where nothing is installed says to install, here and on its card", async () => {
+    const dir = tempDir();
+    NodeFS.writeFileSync(NodePath.join(dir, "package.json"), "{}");
+    const bin = "./node_modules/.bin/effect-tsgo";
+    const run = heavy(dir, [bin, "tsrs"], {}, ["--runner", "mac", "--now", "--"], dir);
+    expect(await run.exited).toBe(127);
+    const reason = "its dependencies aren't installed; run `vp i`";
+    expect(run.stderr()).toContain(`[t3 heavy] cannot run ${bin}: effect-tsgo not found in `);
+    expect(run.stderr()).toContain(reason);
+    expect(Queue.readDoc(dir).results).toEqual([
+      expect.objectContaining({
+        code: 127,
+        line: `'${bin}' 'tsrs'`,
+        error: expect.stringContaining(reason),
+      }),
+    ]);
+  });
+
   it("frees the place of a killed waiter and exits 125 when the user removes one", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "marker.txt");
@@ -592,19 +633,20 @@ describe("t3 heavy", () => {
       ["output", 2, "mac", 0, 2, "vp on mac: test run\n"],
       ["marker", 1, "mac", 0, 2, "linux-ok\n"],
       ["marker", 2, "mac", 0, 2, "vp on mac: test run\n"],
-      ["output", 2, "agent", 75, 2, ""],
+      ["output", 2, "agent", 1, 2, ""],
     ] as const)(
       "an install failure seen in the %s %i time(s), %s, ends %i after %i Linux runs",
       async (seen, fails, policy, code, runs, output) => {
+        // Output counts only before the command runs: its own output may quote the same error.
         const failure =
           seen === "output"
-            ? "echo 'Error: Electron failed to install correctly.' >&2"
-            : `printf '${M} install=electron\\n' >&2`;
+            ? `printf '${M} phase=installing\\n' >&2; echo 'Error: Electron failed to install correctly.' >&2`
+            : `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} install=electron\\n' >&2`;
         const { dir, env } = setup(
           [
             `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
-            `printf '${M} phase=running pgid=4\\n' >&2`,
             `if [ $n -le ${fails} ]; then ${failure}; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
             "echo linux-ok",
             `printf '${M} exit=0\\n' >&2`,
           ].join("\n"),
@@ -625,6 +667,63 @@ describe("t3 heavy", () => {
         );
       },
     );
+
+    // `./node_modules/.bin/effect-tsgo` from a package whose bins live at the root. A bare name
+    // may exist on Linux alone, so it goes there and only Linux's own pre-flight can refuse it.
+    const missingThere = (tool: string) =>
+      `touch "$0.ran"; printf '${M} phase=running pgid=4\\n${M} missing=${tool}\\n${M} exit=127\\n' >&2; exit 127`;
+    it.each([
+      ["a bin path", "./node_modules/.bin/effect-tsgo", false, false, "script not found: "],
+      ["an uninstalled bin", "./node_modules/.bin/effect-tsgo", true, false, "run `vp i`"],
+      [
+        "a bare name",
+        "t3-no-such-tool",
+        false,
+        true,
+        "command not found on this Mac either: t3-no-such-tool",
+      ],
+    ])(
+      "a program neither machine can run (%s) ends 127 saying why, with no Linux fault",
+      async (_, program, project, reaches, reason) => {
+        const { dir, env } = setup(missingThere(program), { runnerDropped: "mac" });
+        if (project) NodeFS.writeFileSync(NodePath.join(dir, "package.json"), "{}");
+        const run = heavyHere(
+          dir,
+          [program, "tsrs", "--noEmit"],
+          env,
+          ["--runner", "linux", "--"],
+          dir,
+        );
+        expect(await run.exited).toBe(127);
+        expect(run.stdout()).toBe("");
+        expect(run.stderr()).toContain(reason);
+        expect(NodeFS.existsSync(NodePath.join(dir, "remoto.ran"))).toBe(reaches);
+        expect(faults(dir)).toEqual([]);
+        expect(Queue.readDoc(dir).results).toEqual([
+          expect.objectContaining({ code: 127, error: expect.stringContaining(reason) }),
+        ]);
+      },
+    );
+
+    // The incident behind four 75s: failing tests whose output quotes an install error.
+    it("a failing command that quotes an install error ends with its own code, once", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=installing\\n${M} phase=running pgid=4\\n' >&2`,
+          "echo ' FAIL  src/a.test.ts > reads sharp: Could not load the \"sharp\" module' >&2",
+          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} exit=1\\n' >&2`,
+          "exit 1",
+        ].join("\n"),
+        { runnerDropped: "agent" },
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(1);
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
+      expect(run.stderr()).not.toContain("Dependency install on Linux failed");
+      expect(faults(dir).map((fault) => fault.cause)).toEqual([]);
+    });
 
     // An install the worktree's own state breaks fails everywhere: the job ends with the fix,
     // never reruns, and files no problem card.
@@ -790,7 +889,8 @@ describe("t3 heavy", () => {
       expect(run.stderr().includes("Not copied back (changed on this Mac): mine.txt\n")).toBe(on);
     });
 
-    // A PC that went away answers neither check: the agent hears before Linux can confirm.
+    // On a run's last attempt, a PC that went away answers neither check: the agent hears
+    // before Linux can confirm.
     it.each([
       ["answers the stop check", "echo gone", ""],
       [
@@ -799,7 +899,7 @@ describe("t3 heavy", () => {
         ", and hasn't confirmed it stopped there",
       ],
     ] as const)(
-      "Tell the agent hands back a run Linux dropped once Linux is offline and the PC %s, never running it here",
+      "Tell the agent hands back a run Linux dropped on its last attempt once Linux is offline and the PC %s, never running it here",
       async (_, stop, unconfirmed) => {
         const { dir, env } = setup(
           [
@@ -829,6 +929,8 @@ describe("t3 heavy", () => {
           dir,
         );
         await run.until("err", "Linux: running");
+        // Two earlier attempts lost the link: this drop is its last.
+        Queue.setProgress(dir, Queue.read(dir)[0]!.id, { linkFailures: 2 } as never);
         NodeFS.writeFileSync(down, "");
         const fail = { ok: false as const, error: "ssh: connect to host pc: Connection refused" };
         Queue.recordHealth(dir, fail, 1);
@@ -864,6 +966,24 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stderr()).toContain("moved by the user");
       expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    // Linux short of memory stops its newest run (the queue marks it): not a failure, it waits again.
+    it("a running Linux job stopped for memory goes back to the queue, not as a drop", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      const id = Queue.read(dir)[0]!.id;
+      Queue.setProgress(dir, id, { stop: "memory" } as never);
+      await run.until("err", "Linux ran short of memory");
+      // Requeued before the note: it may already run again, still counting the stop.
+      const entry = Queue.read(dir).find((e) => e.id === id);
+      expect(entry).toMatchObject({ evictions: 1 });
+      for (const key of ["dropped", "linkFailures", "linuxFailedAt", "stop"]) {
+        expect(entry).not.toHaveProperty(key);
+      }
+      run.child.kill("SIGTERM");
+      await run.exited;
     });
 
     it("without remoto installed, Linux counts as unavailable", async () => {
@@ -1043,6 +1163,53 @@ describe("t3 heavy", () => {
       expect(heavyLaunch({ ...remoto, where: "mac" }, "/w", "/h", modeAt, false)).toMatchObject({
         where: "mac",
       });
+    });
+
+    // A job whose heavy work already queues or goes to `remoto` inside would hold a Mac slot only to
+    // wait for its own inner ones. Run as written, it keeps no job env, so those still queue.
+    it.each([
+      ["a `sh -c` that calls remoto", [SH, "-c", "sh -c 'remoto vp test run'"], {}],
+      [
+        "a script whose work is t3 heavy and remoto",
+        ["./gate.sh"],
+        {
+          "./gate.sh": "t3 heavy -- vp lint\nremoto vp test run\n",
+        },
+      ],
+      [
+        "a script calling the queue by the prefix agents copy",
+        [SH, "-c", "./gate.sh"],
+        {
+          "./gate.sh": `ELECTRON_RUN_AS_NODE=1 '/App/T3 Code' '/App/bin.mjs' heavy --queue-dir '/q' --name lint -- vp lint\n`,
+        },
+      ],
+    ] as const)("runs %s as written in every mode", (_name, [program, ...args], scripts) => {
+      const read = () => (word: string) => (scripts as Record<string, string>)[word] ?? null;
+      for (const runner of [true, false]) {
+        const launch = heavyLaunch(
+          { program, args, where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner }),
+          false,
+          read,
+        );
+        expect(launch).toEqual({ kind: "direct" });
+      }
+    });
+
+    it("still queues a script with heavy work of its own beside the hand-off", () => {
+      const read = () => () => "vp lint\nt3 heavy -- vp test run\n";
+      expect(
+        heavyLaunch(
+          { program: "./gate.sh", args: [], where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner: true }),
+          false,
+          read,
+        ),
+      ).toMatchObject({ kind: "queue" });
     });
 
     it("runs a commit with no hook as written, and queues a hooked one first", () => {

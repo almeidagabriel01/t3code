@@ -16,6 +16,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as DateTime from "effect/DateTime";
 
 import { redactChannelText } from "../channels/channelRedaction.ts";
+import { meaningfulLines } from "../heavyQueue/heavyNotices.ts";
 
 export type ProblemSource = "runner" | "run" | "ci" | "scheduled" | "session" | "link";
 
@@ -127,15 +128,13 @@ export function normalize(text: string): string {
     .replace(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b/g, "<hash>")
     .replace(/(?:~|\.{1,2})?(?:\/[\w.@%+-]+)+\/?/g, "<path>")
     .replace(/\d+/g, "<n>")
+    .replace(/([-=_*~⎯─━═])\1+/gu, "$1")
     .replace(/\s+/g, " ")
+    .replace(/\S*<path>(?: \S*<path>)+/g, "<path>")
     .trim();
 }
 
-const firstLine = (text: string) =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line !== "") ?? "";
+const firstLine = (text: string) => meaningfulLines(text)[0] ?? "";
 
 /** Which root holds `folder`, by id; the longest root wins. */
 export function folderOwner<Id extends string>(
