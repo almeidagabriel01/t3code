@@ -29,6 +29,7 @@ export interface AssistantTeamRow {
   readonly unread_count?: number;
   readonly open_tasks?: number;
   readonly running_tasks?: number;
+  readonly running_member_ids_json?: string | null;
   readonly preview?: string | null;
   readonly paused_tasks?: number;
   readonly failed_tasks?: number;
@@ -121,6 +122,10 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           unreadCount: row.unread_count ?? 0,
           working: (row.open_tasks ?? 0) > 0,
           runningCount: row.running_tasks ?? 0,
+          runningMemberIds: Option.getOrElse(
+            decodeMemberIds(row.running_member_ids_json ?? "[]"),
+            () => [],
+          ) as AssistantId[],
           preview: row.preview ?? null,
           pausedTasks: row.paused_tasks ?? 0,
           failedTasks: row.failed_tasks ?? 0,
