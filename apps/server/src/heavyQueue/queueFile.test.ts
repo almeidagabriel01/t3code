@@ -485,10 +485,14 @@ describe("heavy queue file", () => {
       dir,
       { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
       {
-        a: { cpu: 0.5, memoryBytes: 300 },
+        a: { cpu: 0.5, memoryBytes: 300, treeMemoryBytes: 120, daemons: [7] },
       },
     );
-    expect(Queue.read(dir)[0]).toMatchObject({ peakCpu: 1.5, peakMemory: 300 });
+    expect(Queue.read(dir)[0]).toMatchObject({
+      peakCpu: 1.5,
+      peakMemory: 300,
+      peakTreeMemory: 120,
+    });
     // Processes the sample could not read: CPU unknown, memory still counts.
     Queue.recordSample(
       dir,
@@ -499,7 +503,7 @@ describe("heavy queue file", () => {
     expect(Queue.read(dir)[0]!.cpu).toBeUndefined();
     Queue.remove(dir, "a");
     expect(Queue.readDoc(dir).history["vp run build"]).toMatchObject([
-      { cpu: 1.5, memoryBytes: 300 },
+      { cpu: 1.5, memoryBytes: 300, treeMemoryBytes: 120 },
     ]);
     // A job whose CPU was never read leaves a run without CPU, never a 0.
     Queue.enqueue(dir, { ...entry("b"), label: "vp run build" });

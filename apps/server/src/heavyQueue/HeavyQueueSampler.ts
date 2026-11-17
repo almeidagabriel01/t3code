@@ -14,7 +14,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
-import { adoptedRoots, attributeDaemons, readClues, unseenJavaPeers } from "./daemons.ts";
+import {
+  adoptedRoots,
+  attributeDaemons,
+  isBuildDaemon,
+  readClues,
+  unseenJavaPeers,
+} from "./daemons.ts";
 import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
 import { applySlowdown, isNoop, slowdownStep } from "./slowdown.ts";
@@ -45,7 +51,12 @@ export const peaksOf = (
   const peaks: Record<
     string,
     // Null when the monitor did not see the job's root: unknown, never idle.
-    { cpu: number | null; memoryBytes: number; daemons?: ReadonlyArray<number> }
+    {
+      cpu: number | null;
+      memoryBytes: number;
+      treeMemoryBytes?: number;
+      daemons?: ReadonlyArray<number>;
+    }
   > = {};
   for (const entry of entries) {
     // A Linux job's local tree is only `remoto`'s wrapper.
@@ -63,7 +74,12 @@ export const peaksOf = (
       memoryBytes:
         footprint ??
         helpers.reduce((sum, process) => sum + process.residentBytes, tree.memoryBytes),
-      ...(helpers.length === 0 ? {} : { daemons: helpers.map((process) => process.identity.pid) }),
+      ...(helpers.length === 0
+        ? {}
+        : {
+            daemons: helpers.map((process) => process.identity.pid),
+            ...(footprint === undefined ? { treeMemoryBytes: tree.memoryBytes } : {}),
+          }),
     };
   }
   return peaks;
@@ -263,6 +279,7 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             totalMemoryBytes: reading.totalMemoryBytes,
             pressureLevel: reading.memoryPressureLevel ?? null,
             swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
+            buildDaemonsAlive: processes.some(isBuildDaemon),
           },
           running ? peaksOf(entries, processes, footprints.jobs, daemons) : {},
         );

@@ -733,6 +733,17 @@ describe("admission by real capacity", () => {
     for (const [id, text] of Object.entries(reasons)) expect(result.reasons[id]).toBe(text);
   });
 
+  it("row 50: a run's build daemons still alive are already in the reading, not in its cost", () => {
+    const daemonRun = { ...run(1, 2.4, 60_000), treeMemoryBytes: 0.8 * GIB };
+    const entries = [entry("r", "vp run docker", 60_000), entry("t", "vp run gradle")];
+    const books = { ...history, "vp run gradle": [daemonRun] };
+    const gone = plan({ ...sized, history: books, entries });
+    expect(gone.admits).toEqual([]);
+    expect(gone.reasons["t"]).toBe("memory floor: 1.0 GB room, needs 2.4 GB");
+    const alive = { ...q2, buildDaemonsAlive: true };
+    expect(plan({ ...sized, history: books, entries, sample: alive }).admits).toEqual(["t"]);
+  });
+
   it("starts the aged head as soon as its room appears", () => {
     const entries = [
       entry("r1", "vp run e2e", 60_000),

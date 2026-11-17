@@ -20,6 +20,8 @@ export interface Sample {
   /** macOS memory pressure level (2 warning, 4 critical); absent from older readers. */
   readonly pressureLevel?: number | null;
   readonly swapInBytesPerSecond?: number | null;
+  /** A Gradle or Kotlin daemon is up: its memory is in this reading, not in a new job's cost. */
+  readonly buildDaemonsAlive?: boolean;
   /** Routing's view of the limits; absent from older files, which read as room. */
   readonly overLimit?: boolean;
   readonly overLimitSince?: number | null;
@@ -72,6 +74,8 @@ export interface Run {
   /** Absent when no sample read the job's processes. */
   readonly cpu?: number;
   readonly memoryBytes: number;
+  /** Its own tree alone, when build daemons outside it were counted in `memoryBytes`. */
+  readonly treeMemoryBytes?: number;
   readonly durationMs: number;
 }
 
@@ -216,13 +220,18 @@ export const estimate = (
   entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
   cpuCount: number,
   guesses: Guesses,
+  buildDaemonsAlive = false,
 ): Cost => {
   const runs = runsOf(history, entry);
   const medium = kindOf(entry) === "medium";
   const guessCpu = Math.min(medium ? 2 : 4, Math.max(1, cpuCount));
   // The usual run, not the worst: admission starts one job per settle window, so a run that
   // outgrows it shows in the next reading before anything else starts.
-  const memoryBytes = median(runs.map((run) => run.memoryBytes));
+  const memoryBytes = median(
+    runs.map((run) =>
+      buildDaemonsAlive ? (run.treeMemoryBytes ?? run.memoryBytes) : run.memoryBytes,
+    ),
+  );
   if (memoryBytes !== null) {
     return {
       cpu: learnedCpu(history, entry) ?? guessCpu,
@@ -297,7 +306,9 @@ export const budgetOf = (
   const fresh = running.filter(
     (entry) => entry.startedAt !== null && input.now - Date.parse(entry.startedAt) < SETTLE_MS,
   );
-  const committed = fresh.map((entry) => estimate(input.history, entry, sample.cpuCount, input));
+  const committed = fresh.map((entry) =>
+    estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive),
+  );
   return {
     memoryBytes:
       sample.availableMemoryBytes -
@@ -325,7 +336,7 @@ export const jobVerdict = (
   entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
   budget: Budget,
 ) => {
-  const cost = estimate(input.history, entry, sample.cpuCount, input);
+  const cost = estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive);
   if (cost.memoryBytes > budget.memoryBytes) {
     return {
       cost,
@@ -418,7 +429,8 @@ export const plan = (input: PlanInput): Plan => {
   /** Room after the recent starts only, to tell "a job just started" from a full machine. */
   const settled = budgetOf({ ...plain, now: Infinity }, sample, running);
   let budget = admitted.reduce(
-    (left, entry) => spend(left, estimate(input.history, entry, sample.cpuCount, input)),
+    (left, entry) =>
+      spend(left, estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive)),
     budgetOf(plain, sample, running),
   );
   let slots = Math.max(1, input.maxRunning) - running.length - admitted.length;
@@ -470,7 +482,10 @@ export const plan = (input: PlanInput): Plan => {
     // shortage from load outside the queue blocks no one.
     if (isHead && aged(entry) && !fitsSettled) {
       const ours = running.reduce(
-        (sum, job) => sum + estimate(input.history, job, sample.cpuCount, input).memoryBytes,
+        (sum, job) =>
+          sum +
+          estimate(input.history, job, sample.cpuCount, input, sample.buildDaemonsAlive)
+            .memoryBytes,
         0,
       );
       if (verdict.cost.memoryBytes <= budget.memoryBytes + ours) {

@@ -840,6 +840,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
       const run = {
         ...(gone.peakCpu === undefined ? {} : { cpu: gone.peakCpu }),
         memoryBytes: gone.peakMemory,
+        ...(gone.peakTreeMemory === undefined ? {} : { treeMemoryBytes: gone.peakTreeMemory }),
         durationMs,
       };
       remember(history, signature, run, after.historyCommands);
@@ -1000,6 +1001,7 @@ export const recordSample = (
         /** Null when the job's processes could not be read: unknown, never 0. */
         readonly cpu: number | null;
         readonly memoryBytes: number;
+        readonly treeMemoryBytes?: number;
         readonly daemons?: ReadonlyArray<number>;
       }
     >
@@ -1027,6 +1029,9 @@ export const recordSample = (
           : { cpu: peak.cpu, peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu) }),
         memory: peak.memoryBytes,
         peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
+        ...(peak.treeMemoryBytes === undefined
+          ? {}
+          : { peakTreeMemory: Math.max(entry.peakTreeMemory ?? 0, peak.treeMemoryBytes) }),
       };
     });
     const sample = sampled(doc, reading, entries);

@@ -25,7 +25,7 @@ export const NO_CLUES: DaemonClues = { links: [], cwds: new Map(), names: new Ma
 const BUILD_DAEMON = /\b(?:GradleDaemon|KotlinCompileDaemon)\b/;
 
 /** A Gradle or Kotlin compile daemon, by its command line; their workers come with their trees. */
-const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
+export const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
   BUILD_DAEMON.test(process.command);
 
 /** `lsof -F pn` records: each `p<pid>` line, then the `n<name>` lines of its files. */

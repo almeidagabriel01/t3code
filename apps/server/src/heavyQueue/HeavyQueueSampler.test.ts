@@ -96,9 +96,11 @@ Summary Footprint: 6123379008 B`;
 
   it("adds the daemons working for a job, each process once", () => {
     // 20 is a build daemon outside 10's tree; 99 has already exited.
+    const tree = Sampler.peaksOf([entry("a", 10, true)], processes, {}, {}).a!.memoryBytes;
     expect(Sampler.peaksOf([entry("a", 10, true)], processes, {}, { a: [20, 99] })).toEqual({
-      a: { cpu: 7, memoryBytes: 1599, daemons: [20] },
+      a: { cpu: 7, memoryBytes: 1599, treeMemoryBytes: tree, daemons: [20] },
     });
+    expect(tree).toBeLessThan(1599);
     expect(Sampler.peaksOf([entry("a", 10, true)], processes, { a: 5000 }, { a: [20] })).toEqual({
       a: { cpu: 7, memoryBytes: 5000, daemons: [20] },
     });
