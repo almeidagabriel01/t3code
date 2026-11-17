@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -43,7 +44,7 @@ const harness = (fail?: (call: number) => ThreadManagement.ThreadManagementError
   }> = [];
   const turnItems: Array<Record<string, unknown>> = [];
   const layer = Decisions.layer.pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
@@ -638,5 +639,40 @@ it.effect("an approval decision refuses attachments and an empty answer is still
     );
     assert.equal(refused.reason, "invalid");
     assert.equal((yield* decisions.get(decision.id)).status, "open");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("only an answered to-do reopens, back to open with no word to the agent", () => {
+  const { layer, sends } = harness();
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const sql = yield* SqlClient.SqlClient;
+    const reason = (decisionId: string) =>
+      refusal(decisions.reopen(decisionId as DecisionId)).pipe(Effect.map((error) => error.reason));
+    assert.equal(yield* reason("missing"), "not_found");
+
+    const choice = yield* ask(decisions);
+    assert.equal(yield* reason(choice.id), "invalid");
+    yield* decisions.answer({ decisionId: choice.id, optionId: "online" });
+    assert.equal(yield* reason(choice.id), "invalid");
+
+    const todo = yield* ask(decisions, { clientRequestId: "ask-todo" });
+    yield* sql`UPDATE decisions SET kind = 'manual', steps_json = '["Rotate the key"]'
+      WHERE decision_id = ${todo.id}`;
+    assert.equal(yield* reason(todo.id), "invalid");
+    yield* sql`UPDATE decisions SET status = 'answered', answer_json = '{"optionId":"online"}',
+      answered_at = '2026-11-17T00:00:00.000Z', delivered_at = '2026-11-17T00:00:00.000Z'
+      WHERE decision_id = ${todo.id}`;
+    const sent = sends.length;
+
+    const reopened = yield* decisions.reopen(todo.id);
+    assert.deepInclude(reopened, { status: "open", kind: "manual", steps: ["Rotate the key"] });
+    assert.notProperty(reopened, "answer");
+    assert.notProperty(reopened, "answeredAt");
+    assert.notProperty(reopened, "deliveredAt");
+    yield* decisions.deliverPending;
+    assert.equal(sends.length, sent);
+    // Reopening twice is refused, so a repeated click cannot undo a fresh answer.
+    assert.equal(yield* reason(todo.id), "invalid");
   }).pipe(Effect.provide(layer));
 });

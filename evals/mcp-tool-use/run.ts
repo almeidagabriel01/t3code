@@ -58,7 +58,11 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
 import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
-import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
+import {
+  decisionResultsText,
+  groupTaskPacket,
+} from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
+import { decisionDeliveryText } from "../../apps/server/src/decisions/DecisionService.ts";
 import { wakeText } from "../../apps/server/src/problems/problemRules.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
 import {
@@ -461,6 +465,19 @@ export const McpToolUseCase = Schema.Struct({
               status: Schema.String,
               owner: Schema.String,
               instruction: Schema.String,
+            }),
+          ),
+        ),
+        /** Decisions the member asked earlier and how the user settled them; the task runs again. */
+        decisions: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              title: Schema.String,
+              options: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+              status: Schema.Literals(["answered", "withdrawn", "expired"]),
+              optionId: Schema.optional(Schema.String),
+              text: Schema.optional(Schema.String),
             }),
           ),
         ),
@@ -1275,7 +1292,39 @@ export const buildMessages = (sample: Sample) => {
                   quoted: groupTask.quoted ?? [],
                   from: groupTask.from,
                   instruction: testCase.prompt,
-                  followup: null,
+                  followup:
+                    groupTask.decisions === undefined
+                      ? null
+                      : decisionResultsText(
+                          groupTask.decisions.map((decision) =>
+                            decisionDeliveryText({
+                              id: Contracts.DecisionId.make(decision.id),
+                              fromThreadId: ThreadId.make("assistant:a-self:g-1"),
+                              threadTitle: groupTask.request ?? testCase.id,
+                              title: decision.title,
+                              context: "",
+                              options: decision.options,
+                              status: decision.status,
+                              ...(decision.status === "answered"
+                                ? {
+                                    answeredAt: "2026-11-17T12:00:00.000Z",
+                                    answer: {
+                                      ...(decision.optionId === undefined
+                                        ? {}
+                                        : { optionId: decision.optionId }),
+                                      ...(decision.text === undefined
+                                        ? {}
+                                        : { text: decision.text }),
+                                    },
+                                  }
+                                : {}),
+                              ...(decision.status === "expired"
+                                ? { expiresAt: "2026-11-17T12:00:00.000Z" }
+                                : {}),
+                              createdAt: "2026-11-17T11:00:00.000Z",
+                            }),
+                          ),
+                        ),
                   ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
                 })
               : testCase.promptContext === undefined

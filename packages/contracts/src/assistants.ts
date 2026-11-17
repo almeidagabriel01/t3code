@@ -443,6 +443,10 @@ export function assistantGroupFinishedScopes(
   return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
 }
 
+/** `requests` keeps each request in its own block; `continuous` reads the chat as one feed. */
+export const AssistantGroupConversationMode = Schema.Literals(["requests", "continuous"]);
+export type AssistantGroupConversationMode = typeof AssistantGroupConversationMode.Type;
+
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
   name: AssistantTeamName,
@@ -457,6 +461,8 @@ export const AssistantTeam = Schema.Struct({
   memories: Schema.optionalKey(AssistantTeamMemories),
   /** The model a group request starts on, below the project's own default. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Absent from older servers, which have only `requests`. */
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Projects every member may work in, on top of its own; absent from older servers. */
   projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
@@ -779,6 +785,7 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   memories: Schema.optional(AssistantTeamMemories),
   /** Null clears it. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Replaces the group's projects; the two lists below then apply to it, removals last. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
   addProjectIds: Schema.optional(Schema.Array(ProjectId)),

@@ -300,6 +300,42 @@ it.effect("runs of other threads, or with nobody to answer, post nothing", () =>
   }).pipe(Effect.provide(layer));
 });
 
+// Group threads share the DM's id shape, so only their tables tell them apart.
+const groupThreads = [
+  {
+    name: "a request thread",
+    threadId: "assistant:jarvis:g-0123456789abcdef",
+    insert: (sql: SqlClient.SqlClient) => sql`
+      INSERT INTO assistant_group_request_threads (request_id, assistant_id, team_id, thread_id)
+      VALUES ('req-1', 'jarvis', 'team-1', 'assistant:jarvis:g-0123456789abcdef')`,
+  },
+  {
+    name: "a whole-group thread",
+    threadId: "assistant:jarvis:g-fedcba9876543210",
+    insert: (sql: SqlClient.SqlClient) => sql`
+      INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+      VALUES ('team-1', 'jarvis', 'assistant:jarvis:g-fedcba9876543210')`,
+  },
+];
+
+it.effect.each(groupThreads)(
+  "$name never posts to the member's chat, nor stops its replies",
+  (group) => {
+    const { layer, records } = harness();
+    return Effect.gen(function* () {
+      const reactor = yield* Reactor.ChannelReplyReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* speak();
+      yield* group.insert(sql);
+      records.set("run-1", { messages: [{ text: "Task done." }], turnItems: [] });
+      yield* reactor.handle(runEvent("completed", "run-1", group.threadId));
+      yield* reactor.handle(messageEvent({ threadId: group.threadId }));
+      assert.lengthOf(yield* outboxRows, 0);
+      assert.lengthOf(yield* sql`SELECT * FROM channel_reply_targets`, 1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("a message from the app stops replies going to the chat; other sources do not", () => {
   const { layer, records } = harness();
   return Effect.gen(function* () {

@@ -10,6 +10,7 @@ import {
   DecisionError,
   DecisionId,
   DecisionOption,
+  DecisionSteps,
   MessageId,
   RuntimeRequestId,
   type DecisionsAnswerInput,
@@ -31,6 +32,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { AssistantGroupGate } from "../assistants/AssistantGroupGate.ts";
 import { userInputOptionIndex } from "../autonomy/needsYou.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
@@ -63,6 +65,8 @@ interface DecisionRow {
   readonly answered_at: string | null;
   readonly delivered_at: string | null;
   readonly approval_request_id: string | null;
+  readonly kind: string | null;
+  readonly steps_json: string | null;
   readonly created_at: string;
 }
 
@@ -91,6 +95,16 @@ const decodeOptions = Schema.decodeSync(OptionsJson);
 const encodeOptions = Schema.encodeSync(OptionsJson);
 const decodeAnswer = Schema.decodeSync(AnswerJson);
 const encodeAnswer = Schema.encodeSync(AnswerJson);
+const decodeSteps = Schema.decodeUnknownOption(Schema.fromJsonString(DecisionSteps));
+
+/** A kind or steps this build cannot read is left out, never a reason to hide the decision. */
+const kindAndSteps = (row: DecisionRow): Pick<Decision, "kind" | "steps"> => {
+  const steps = row.steps_json === null ? undefined : decodeSteps(row.steps_json);
+  return {
+    ...(row.kind === "choice" || row.kind === "manual" ? { kind: row.kind } : {}),
+    ...(steps?._tag === "Some" ? { steps: steps.value } : {}),
+  };
+};
 
 const toDecision = (row: DecisionRow): Decision => ({
   id: DecisionId.make(row.decision_id),
@@ -101,6 +115,7 @@ const toDecision = (row: DecisionRow): Decision => ({
   options: decodeOptions(row.options_json),
   ...(row.recommended === null ? {} : { recommended: row.recommended }),
   ...(row.expires_at === null ? {} : { expiresAt: row.expires_at }),
+  ...kindAndSteps(row),
   status: row.status,
   ...(row.answer_json === null ? {} : { answer: decodeAnswer(row.answer_json) }),
   ...(row.answered_at === null ? {} : { answeredAt: row.answered_at }),
@@ -111,8 +126,7 @@ const toDecision = (row: DecisionRow): Decision => ({
 });
 
 /** What the requesting agent reads. It never says "approved" for anything but a chosen option. */
-const deliveryText = (row: DecisionRow): string => {
-  const decision = toDecision(row);
+export const decisionDeliveryText = (decision: Decision): string => {
   const head = `"${decision.title}" [decision ${decision.id}]`;
   if (decision.status === "expired") {
     return `The decision ${head} expired at ${decision.expiresAt} with no answer. Nothing was approved; do not assume approval. Continue without it or ask in chat.`;
@@ -134,6 +148,7 @@ const deliveryText = (row: DecisionRow): string => {
       : []),
   ].join("\n");
 };
+const deliveryText = (row: DecisionRow) => decisionDeliveryText(toDecision(row));
 
 export class DecisionService extends Context.Service<
   DecisionService,
@@ -151,6 +166,8 @@ export class DecisionService extends Context.Service<
     readonly answer: (input: DecisionsAnswerInput) => Effect.Effect<Decision, DecisionError>;
     /** The user declines; the agent is told, never told it was approved. */
     readonly dismiss: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
+    /** Undoes "Done" on an answered `manual` decision; the agent is not told. */
+    readonly reopen: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
     /** The requesting agent takes its question back. Repeating, or after settling, changes nothing. */
     readonly withdraw: (input: {
       readonly decisionId: DecisionId;
@@ -174,6 +191,8 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const random = yield* SecureRandom.SecureRandom;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // Absent outside the full server (most tests): every outcome then goes to its thread.
+  const groupGate = yield* Effect.serviceOption(AssistantGroupGate);
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<DecisionsEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -372,27 +391,43 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** A group task the decision holds takes the outcome as its next turn instead of a message. */
+  const claimedByGroup = (row: DecisionRow) =>
+    groupGate._tag === "None"
+      ? Effect.succeed(false)
+      : groupGate.value.claimDecision({
+          decisionId: row.decision_id,
+          threadId: row.from_thread_id,
+          text: deliveryText(row),
+          attachments: toDecision(row).answer?.attachments ?? [],
+        });
+
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {
     const now = yield* nowIso;
     const result = yield* (
-      row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX)
-        ? Effect.void
-        : row.approval_request_id === null
-          ? threads.sendToThread({
-              projectId: row.project_id as ProjectId,
-              // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
-              commandId: CommandId.make(`decision-answer:${row.decision_id}`),
-              messageId: MessageId.make(`decision-answer:${row.decision_id}`),
-              threadId: row.from_thread_id as ThreadId,
-              text: deliveryText(row),
-              // Already claimed to this thread when the answer was taken.
-              attachments: toDecision(row).answer?.attachments ?? [],
-              mode: "queue",
-              createdBy: "user",
-              creationSource: "server",
-            })
-          : respondToApproval(row)
-    ).pipe(Effect.result);
+      // A manual to-do wakes no agent: answering it only records the answer.
+      (
+        row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX) || row.kind === "manual"
+          ? Effect.void
+          : row.approval_request_id !== null
+            ? respondToApproval(row)
+            : (yield* claimedByGroup(row))
+              ? Effect.void
+              : threads.sendToThread({
+                  projectId: row.project_id as ProjectId,
+                  // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
+                  commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+                  messageId: MessageId.make(`decision-answer:${row.decision_id}`),
+                  threadId: row.from_thread_id as ThreadId,
+                  text: deliveryText(row),
+                  // Already claimed to this thread when the answer was taken.
+                  attachments: toDecision(row).answer?.attachments ?? [],
+                  mode: "queue",
+                  createdBy: "user",
+                  creationSource: "server",
+                })
+      ).pipe(Effect.result)
+    );
     if (result._tag === "Success") {
       yield* sql`
         UPDATE decisions SET delivered_at = ${now}
@@ -519,6 +554,27 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const reopen: DecisionService["Service"]["reopen"] = Effect.fn("DecisionService.reopen")(
+    function* (decisionId) {
+      return yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const row = yield* findRow(decisionId);
+          if (row.kind !== "manual" || row.status !== "answered") {
+            return yield* invalid("Only a to-do marked done can be reopened.");
+          }
+          yield* sql`
+            UPDATE decisions SET status = 'open', answer_json = NULL, answered_at = NULL,
+              delivered_at = NULL, delivery_attempts = 0, delivery_error = NULL
+            WHERE decision_id = ${decisionId}`;
+          const next = yield* findRow(decisionId);
+          yield* publish(next);
+          return toDecision(next);
+        }),
+      );
+    },
+    storage,
+  );
+
   const withdraw: DecisionService["Service"]["withdraw"] = Effect.fn("DecisionService.withdraw")(
     function* (input) {
       const row = yield* findRow(input.decisionId);
@@ -572,6 +628,7 @@ const make = Effect.gen(function* () {
     subscribe,
     answer,
     dismiss,
+    reopen,
     withdraw,
     claimExecution,
     releaseExecution,

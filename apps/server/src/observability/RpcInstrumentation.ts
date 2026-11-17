@@ -126,6 +126,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.decisionsSubscribe]: "decisions",
   [WS_METHODS.decisionsAnswer]: "decisions",
   [WS_METHODS.decisionsDismiss]: "decisions",
+  [WS_METHODS.decisionsReopen]: "decisions",
   [WS_METHODS.computerUsePermissions]: "server",
   [WS_METHODS.computerUseOpenSettings]: "server",
   [WS_METHODS.assistantsSubscribe]: "assistants",

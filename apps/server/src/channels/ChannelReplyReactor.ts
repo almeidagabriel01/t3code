@@ -96,6 +96,20 @@ const make = Effect.gen(function* () {
         };
   });
 
+  /** The assistant whose DM this thread is; group threads share the id shape, so ask their tables. */
+  const dmAssistantOf = Effect.fn("ChannelReplyReactor.dmAssistantOf")(function* (
+    threadId: string,
+  ) {
+    const assistantId = assistantIdFromThreadId(threadId);
+    if (assistantId === null) return null;
+    const group = yield* sql`
+      SELECT 1 FROM assistant_group_request_threads WHERE thread_id = ${threadId}
+      UNION ALL
+      SELECT 1 FROM assistant_group_threads WHERE thread_id = ${threadId}
+      LIMIT 1`;
+    return group.length > 0 ? null : assistantId;
+  });
+
   /** The thread's project; none when it cannot be read. */
   const projectOf = (threadId: string) =>
     engine.getThreadShell(threadId as ThreadId).pipe(
@@ -115,6 +129,7 @@ const make = Effect.gen(function* () {
       );
       if (autonomy.enabled && autonomy.notifyWaiting) return;
     }
+    if ((yield* dmAssistantOf(run.threadId)) === null) return;
     const target = yield* targetFor(run.threadId);
     const deliveryId = `channel-run:${run.id}`;
     if (target === undefined || Option.isSome(yield* outbox.find(deliveryId))) return;
@@ -162,7 +177,7 @@ const make = Effect.gen(function* () {
             (event.payload.creationSource === "web" || event.payload.creationSource === "mobile")
           ? // The conversation moved to the app: replies stop going to the chat.
             Effect.gen(function* () {
-              const assistantId = assistantIdFromThreadId(event.payload.threadId);
+              const assistantId = yield* dmAssistantOf(event.payload.threadId);
               if (assistantId !== null) {
                 yield* sql`DELETE FROM channel_reply_targets WHERE assistant_id = ${assistantId}`;
               }

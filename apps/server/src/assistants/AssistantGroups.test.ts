@@ -35,8 +35,11 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
+import { QUIET_REPLY } from "@t3tools/shared/assistantTaskEvents";
 
 import * as ServerConfig from "../config.ts";
+import * as Decisions from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -6845,3 +6848,355 @@ it.effect.each([
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+const askDecision = (
+  h: ReturnType<typeof harness>,
+  threadId: string,
+  id: string,
+  extra: { kind?: string; approval?: string; requestId?: string } = {},
+) =>
+  h
+    .sqlRows(`
+    INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id, thread_title,
+      title, context, options_json, status, created_at, kind, approval_request_id)
+    VALUES ('${id}', '${threadId}', 'p1', '${extra.requestId ?? id}', 'Fix', 'Ship it?', '',
+      '[{"id":"yes","label":"Yes"}]', 'open', '2026-03-01', ${extra.kind === undefined ? "NULL" : `'${extra.kind}'`},
+      ${extra.approval === undefined ? "NULL" : `'${extra.approval}'`})
+    RETURNING decision_id`)
+    .pipe(Effect.orDie);
+
+it.effect(
+  "an open choice the member asked holds its task, and a restart never calls it gone",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      yield* askDecision(h, h.threadOf("ada"), "d1");
+      yield* h.finish(0, "completed", "I asked you which way.");
+      const [task] = yield* h.tasks;
+      assert.deepEqual([task!.status, task!.reason], ["waiting", "decisions:d1"]);
+      const sent = h.sent.length;
+      yield* groups.settleWaiting;
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:waiting"]);
+      assert.equal(h.sent.length, sent);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { name: "a manual to-do", extra: { kind: "manual" } },
+  { name: "an approval mirror", extra: { approval: "req-1" } },
+  { name: "an autonomy notice", extra: { requestId: "autonomy:wake-1" } },
+])("$name never holds the task", ({ extra }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* askDecision(h, h.threadOf("ada"), "d1", extra);
+    yield* h.finish(0, "completed", "Done.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+/** The group with the real decision service, and the gate through which it hands answers over. */
+const withDecisions = (h: ReturnType<typeof harness>) => {
+  const groups = Layer.mergeAll(h.layer, Gate.gateLayer);
+  return Layer.mergeAll(
+    groups,
+    Decisions.layer.pipe(Layer.provide(groups)),
+    Groups.installLayer.pipe(Layer.provide(groups)),
+  );
+};
+
+const askAda = (h: ReturnType<typeof harness>, expiresInMinutes?: number) =>
+  Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    return yield* decisions.request({
+      fromThreadId: h.threadOf("ada"),
+      projectId: ProjectId.make(h.sent[0]!.projectId),
+      threadTitle: "Fix the build",
+      clientRequestId: "ask-1",
+      title: "Ship the fix today?",
+      context: "",
+      options: [
+        { id: "yes", label: "Yes" },
+        { id: "no", label: "No" },
+      ],
+      ...(expiresInMinutes === undefined ? {} : { expiresInMinutes }),
+    });
+  });
+
+const noDecisionAnswer = (h: ReturnType<typeof harness>) =>
+  assert.deepEqual(
+    h.sent.filter((row) => row.messageId.startsWith("decision-answer:")),
+    [],
+  );
+
+it.effect.each([
+  {
+    way: "answered",
+    expiresInMinutes: undefined,
+    settle: (id: string) =>
+      Effect.gen(function* () {
+        const decisions = yield* Decisions.DecisionService;
+        yield* decisions.answer({ decisionId: id as never, optionId: "no" });
+      }),
+    told: "The user answered the decision",
+    files: [],
+  },
+  {
+    way: "answered with a file",
+    expiresInMinutes: undefined,
+    settle: (id: string) =>
+      Effect.gen(function* () {
+        yield* storeUploads;
+        const decisions = yield* Decisions.DecisionService;
+        yield* decisions.answer({ decisionId: id as never, attachments: [fileUpload] });
+      }),
+    told: "Attached: sheet.pdf",
+    files: ["sheet.pdf"],
+  },
+  {
+    way: "dismissed",
+    expiresInMinutes: undefined,
+    settle: (id: string) =>
+      Effect.gen(function* () {
+        const decisions = yield* Decisions.DecisionService;
+        yield* decisions.dismiss(id as never);
+      }),
+    told: "The user dismissed this decision",
+    files: [],
+  },
+  {
+    way: "left to expire",
+    expiresInMinutes: 60,
+    settle: () =>
+      Effect.gen(function* () {
+        const decisions = yield* Decisions.DecisionService;
+        yield* TestClock.adjust("2 hours");
+        yield* decisions.expireDue;
+        yield* decisions.deliverPending;
+      }),
+    told: "expired at",
+    files: [],
+  },
+])(
+  "a member's decision $way runs its task again in the request",
+  ({ expiresInMinutes, settle, told, files }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      const decision = yield* askAda(h, expiresInMinutes);
+      yield* h.finish(0, "completed", "I asked you.");
+      assert.deepEqual(
+        (yield* h.tasks).map((task) => [task.status, task.reason]),
+        [["waiting", `decisions:${decision.id}`]],
+      );
+      yield* settle(decision.id);
+      // The reactor's part: every change to a group thread's decision settles its tasks.
+      yield* groups.settleDecision(h.threadOf("ada"));
+      noDecisionAnswer(h);
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+      assert.include(h.sent[1]!.text, told);
+      assert.deepEqual(
+        h.sent[1]!.attachments.map((file) => file.name),
+        files,
+      );
+      assert.notInclude(h.sent[1]!.text, "can no longer be found");
+      // A repeat, as a restart's sweep, starts nothing more.
+      yield* groups.settleDecision(h.threadOf("ada"));
+      yield* groups.settleWaiting;
+      assert.lengthOf(h.sent, 2);
+      yield* h.finish(1, "completed", "Holding the fix until Monday.");
+      const last = (yield* h.messages).at(-1)!;
+      assert.deepEqual([last.kind, last.text], ["message", "Holding the fix until Monday."]);
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+    }).pipe(Effect.provide(withDecisions(h)));
+  },
+);
+
+it.effect("a quiet turn after the user's answer leaves a muted Nothing new line", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const decision = yield* askAda(h);
+    yield* h.finish(0, "completed", "I asked you.");
+    yield* (yield* Decisions.DecisionService).answer({ decisionId: decision.id, optionId: "yes" });
+    yield* groups.settleDecision(h.threadOf("ada"));
+    yield* h.finish(1, "completed", QUIET_REPLY);
+    const last = (yield* h.messages).at(-1)!;
+    assert.deepEqual([last.kind, last.text], ["change", "Nothing new"]);
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+it.effect("an answer that lands while the task runs is taken up when its run ends", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const decision = yield* askAda(h);
+    yield* (yield* Decisions.DecisionService).answer({ decisionId: decision.id, optionId: "no" });
+    yield* groups.settleDecision(h.threadOf("ada"));
+    assert.lengthOf(h.sent, 1);
+    yield* h.finish(0, "completed", "I asked you.");
+    noDecisionAnswer(h);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    assert.include(h.sent[1]!.text, "The user answered the decision");
+    // Taken once: the column is empty again.
+    const [task] = yield* h.sqlRows<{ pending_followup_json: string | null }>(
+      "SELECT pending_followup_json FROM assistant_group_tasks",
+    );
+    assert.isNull(task!.pending_followup_json);
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+it.effect("a decision the member takes back ends its task with no extra turn", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    const decision = yield* askAda(h);
+    yield* (yield* Decisions.DecisionService).withdraw({
+      decisionId: decision.id,
+      fromThreadId: h.threadOf("ada"),
+    });
+    yield* groups.settleDecision(h.threadOf("ada"));
+    yield* h.finish(0, "completed", "Fixed without asking.");
+    assert.lengthOf(h.sent, 1);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+const answerAda = (decisionId: string) =>
+  Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    yield* decisions.answer({ decisionId: decisionId as never, optionId: "no" });
+  });
+
+const cancelFirstTask = (groups: Groups.AssistantGroups["Service"], taskId: string) =>
+  Effect.gen(function* () {
+    yield* groups.taskAction({ taskId: taskId as never, action: "stop" });
+    yield* groups.taskAction({ taskId: taskId as never, action: "cancel" });
+  });
+
+it.effect.each([
+  {
+    case: "answered after the request was cancelled reaches the member and reopens nothing",
+    play: (
+      h: ReturnType<typeof harness>,
+      groups: Groups.AssistantGroups["Service"],
+      taskId: string,
+    ) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        yield* h.finish(0, "completed", "I asked you.");
+        yield* cancelFirstTask(groups, taskId);
+        yield* answerAda(decision.id);
+        yield* groups.settleDecision(h.threadOf("ada"));
+      }),
+    answeredIn: ["ada"],
+    statuses: ["ada:cancelled"],
+  },
+  {
+    case: "taken by its task, which is then cancelled, still reaches the member",
+    play: (
+      h: ReturnType<typeof harness>,
+      groups: Groups.AssistantGroups["Service"],
+      taskId: string,
+    ) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        yield* h.finish(0, "completed", "I asked you.");
+        yield* answerAda(decision.id);
+        yield* cancelFirstTask(groups, taskId);
+        // The sweep delivers what the cancelled task gave back.
+        yield* (yield* Decisions.DecisionService).deliverPending;
+      }),
+    answeredIn: ["ada"],
+    statuses: ["ada:cancelled"],
+  },
+  {
+    case: "left open when the asker handed the task over goes with the work",
+    play: (h: ReturnType<typeof harness>, groups: Groups.AssistantGroups["Service"]) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        yield* groups.member.transfer({
+          callerThreadId: h.threadOf("ada"),
+          member: "beto",
+          note: "the fix is half done",
+        });
+        yield* h.finish(0, "completed", "Handed to Beto.");
+        yield* answerAda(decision.id);
+        yield* groups.settleDecision(h.threadOf("ada"));
+        yield* h.finish(1, "completed", "Working on it.");
+        const resumed = h.sent.at(-1)!;
+        assert.equal(resumed.threadId, h.threadOf("beto"));
+        assert.include(resumed.text, "The user answered the decision");
+      }),
+    answeredIn: [],
+    statuses: ["beto:running"],
+  },
+  {
+    case: "goes to the task that waits on it, not the asker's other running task",
+    play: (h: ReturnType<typeof harness>) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        // The asker's first task still runs; a later one of hers waits on this decision.
+        yield* h
+          .sqlRows(`
+            INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind,
+              request_message_id, owner_id, instruction, status, reason, created_at, updated_at,
+              request_id)
+            SELECT 'task-2', team_id, 'task-2', kind, request_message_id, owner_id, 'The docs too',
+              'waiting', 'decisions:${decision.id}', created_at, updated_at, request_id
+            FROM assistant_group_tasks RETURNING task_id`)
+          .pipe(Effect.orDie);
+        yield* answerAda(decision.id);
+        const rows = yield* h.sqlRows<{ pending_followup_json: string | null }>(
+          "SELECT pending_followup_json FROM assistant_group_tasks ORDER BY rowid",
+        );
+        assert.deepEqual(
+          rows.map((row) => row.pending_followup_json?.includes(decision.id) ?? false),
+          [false, true],
+        );
+      }),
+    answeredIn: [],
+    statuses: ["ada:running", "ada:waiting"],
+  },
+  {
+    case: "on a manual to-do wakes nobody",
+    play: (h: ReturnType<typeof harness>) =>
+      Effect.gen(function* () {
+        yield* askDecision(h, h.threadOf("ada"), "d1", { kind: "manual" });
+        // Answered while the asker runs: no turn of hers reads it.
+        yield* (yield* Decisions.DecisionService).answer({
+          decisionId: "d1" as never,
+          optionId: "yes",
+        });
+        yield* h.finish(0, "completed", "Done.");
+        const [row] = yield* h.sqlRows<{ delivered_at: string | null }>(
+          "SELECT delivered_at FROM decisions WHERE decision_id = 'd1'",
+        );
+        assert.isNotNull(row!.delivered_at);
+      }),
+    answeredIn: [],
+    statuses: ["ada:completed"],
+  },
+])("a member's decision $case", ({ play, answeredIn, statuses }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* play(h, groups, posted.tasks[0]!.id);
+    assert.deepEqual(statusesOf(yield* h.tasks), statuses);
+    assert.deepEqual(
+      h.sent
+        .filter((row) => row.messageId.startsWith("decision-answer:"))
+        .map((row) => row.threadId),
+      answeredIn.map((member) => h.threadOf(member)),
+    );
+  }).pipe(Effect.provide(withDecisions(h)));
+});

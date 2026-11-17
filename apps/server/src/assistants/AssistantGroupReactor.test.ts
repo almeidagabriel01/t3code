@@ -22,12 +22,16 @@ it.effect(
       const handled: string[] = [];
       const watching: string[] = [];
       const synced: string[] = [];
+      const released: string[] = [];
       const done = yield* Deferred.make<void>();
       const decided = yield* Deferred.make<void>();
       const failed = yield* Deferred.make<void>();
       let subscriptions = 0;
       let domainSubscriptions = 0;
-      const decision = (fromThreadId: string) => ({ type: "upserted", decision: { fromThreadId } });
+      const decision = (fromThreadId: string, status = "open") => ({
+        type: "upserted",
+        decision: { fromThreadId, status },
+      });
       const layer = Reactor.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -52,8 +56,9 @@ it.effect(
                     )
                   : Stream.fromIterable([
                       { type: "snapshot", decisions: [] },
-                      decision("thread:outside"),
+                      decision("thread:outside", "answered"),
                       decision("assistant:ada:g-0123456789abcdef"),
+                      decision("assistant:ada:g-0123456789abcdef", "answered"),
                     ]),
               ) as never,
             }),
@@ -62,9 +67,10 @@ it.effect(
               start: Effect.sync(() => void watching.push("started")),
               settleWaiting: Effect.sync(() => void watching.push("settled")),
               syncWaitingThread: (threadId) =>
-                Effect.sync(() => void synced.push(threadId)).pipe(
+                Effect.sync(() => void synced.push(threadId)).pipe(Effect.as(true)),
+              settleDecision: (threadId) =>
+                Effect.sync(() => void released.push(threadId)).pipe(
                   Effect.andThen(Deferred.succeed(decided, undefined)),
-                  Effect.as(true),
                 ),
               handleRunEvent: (event) =>
                 Effect.sync(() => void handled.push(event.type)).pipe(
@@ -93,7 +99,12 @@ it.effect(
         // A failed subscription checks nothing; the retry checks the waiting tasks once anchored.
         assert.deepEqual(watching, ["started", "failed", "subscribed", "settled"]);
         assert.deepEqual(handled, ["run.updated", "thread.created"]);
-        assert.deepEqual(synced, ["assistant:ada:g-0123456789abcdef"]);
+        assert.deepEqual(synced, [
+          "assistant:ada:g-0123456789abcdef",
+          "assistant:ada:g-0123456789abcdef",
+        ]);
+        // Only a settled decision can let the task that waited on it run again.
+        assert.deepEqual(released, ["assistant:ada:g-0123456789abcdef"]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
 );

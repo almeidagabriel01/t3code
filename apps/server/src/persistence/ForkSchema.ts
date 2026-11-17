@@ -433,6 +433,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!decisionColumns.some((column) => column.name === "executed_at")) {
     yield* sql`ALTER TABLE decisions ADD COLUMN executed_at TEXT`;
   }
+  // kind NULL reads as "choice"; steps_json is the user's checklist for any kind.
+  yield* addColumns("decisions", [
+    ["kind", "TEXT"],
+    ["steps_json", "TEXT"],
+  ]);
   const assistantColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistants)`;
   if (!assistantColumns.some((column) => column.name === "budget_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN budget_json TEXT`;
@@ -778,6 +783,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["instructions", "TEXT NOT NULL DEFAULT ''"],
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["default_model_selection", "TEXT"],
+    // NULL reads as "requests".
+    ["conversation_mode", "TEXT"],
   ]);
   // A member's hidden thread for a group, and the last chat message that thread was shown.
   yield* sql`
@@ -798,6 +805,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  // Decision outcomes that reached a task while it ran, consumed when its run ends, the answer
+  // files its next turn carries, and the open decisions it inherited in a hand-over.
+  yield* addColumns("assistant_group_tasks", [
+    ["pending_followup_json", "TEXT"],
+    ["followup_attachments_json", "TEXT"],
+    ["inherited_decisions_json", "TEXT"],
+  ]);
   // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
   // pages its own lines. Filled once below, in the start that adds the column; after that only
   // the rows the repair gives a request take its project, so General is never swept again.
