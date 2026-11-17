@@ -393,11 +393,10 @@ type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
 
 /** The cost class admission uses for `entry`, with its why; the one the Resource Manager shows. */
 export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
-  // The usual run on the machine it goes to; a command that only ran on the other reads its runs there.
-  const books = [input.history, input.linuxHistory ?? {}];
-  const [own, other] = entry.runner === "linux" ? books.toReversed() : books;
-  const ownRuns = runsOf(own!, entry);
-  const runs = ownRuns.length > 0 ? ownRuns : runsOf(other!, entry);
+  // The usual run on the machine it goes to. A Linux job without Linux runs reads this Mac's, never
+  // the reverse: Linux timings would let a Mac first run skip the Mac's slots as quick.
+  const linuxRuns = entry.runner === "linux" ? runsOf(input.linuxHistory ?? {}, entry) : [];
+  const runs = linuxRuns.length > 0 ? linuxRuns : runsOf(input.history, entry);
   // A server-held slot (a device open) is never idle work: its CPU is T3's own.
   const now = entry.server === true ? undefined : input.now;
   const cost = costOf(
