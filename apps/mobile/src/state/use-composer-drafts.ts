@@ -26,6 +26,7 @@ import { useEffect, useState } from "react";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { draftHasUserContent } from "@t3tools/client-runtime/composerDraft";
 import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
@@ -646,9 +647,16 @@ export function getComposerDraftSnapshot(draftKey: string): ComposerDraft {
   return normalizeDraft(appAtomRegistry.get(composerDraftsAtom)[draftKey]);
 }
 
-/** What the user wrote or attached; settings alone (model, mode) are not a draft. */
+/**
+ * What the user wrote, attached or referenced; settings alone (model, mode, workspace) are no
+ * draft. Only list marks read this: `isComposerDraftEmpty` still decides what is saved.
+ */
 export function composerDraftHasUserContent(draft: ComposerDraft): boolean {
-  return draft.text.trim().length > 0 || draft.attachments.length > 0;
+  return draftHasUserContent({
+    prompt: draft.text,
+    attachmentCount: draft.attachments.length,
+    contextCount: draft.context?.records.length ?? 0,
+  });
 }
 
 export function isComposerDraftEmpty(draft: ComposerDraft): boolean {
@@ -2153,7 +2161,7 @@ export function useComposerDraftSettings(draftKey: string | null): ComposerDraft
 }
 
 /** Whether a thread, assistant or group conversation holds an unsent draft. */
-export function useComposerDraftHasContent(draftKey: string | null): boolean {
+export function useHasUnsentDraft(draftKey: string | null): boolean {
   const hasContent = useAtomValue(
     draftKey ? composerDraftHasContentAtom(draftKey) : NO_DRAFT_CONTENT_ATOM,
   );

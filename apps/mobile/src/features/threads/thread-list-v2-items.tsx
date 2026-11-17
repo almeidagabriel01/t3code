@@ -90,10 +90,7 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { DraftMark } from "./draft-mark";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import {
-  clearComposerDraftContent,
-  useComposerDraftHasContent,
-} from "../../state/use-composer-drafts";
+import { clearComposerDraftContent, useHasUnsentDraft } from "../../state/use-composer-drafts";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -773,7 +770,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const draftKey = scopedThreadKey(thread.environmentId, thread.id);
-  const hasDraft = useComposerDraftHasContent(draftKey);
+  // The thread on screen never marks its own draft.
+  const hasDraft = useHasUnsentDraft(draftKey) && !selected;
   const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${hasDraft ? ", draft" : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 

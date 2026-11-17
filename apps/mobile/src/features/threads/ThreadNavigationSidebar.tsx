@@ -99,6 +99,7 @@ type SidebarListItem =
 interface ThreadNavigationSidebarProps {
   readonly width: number;
   readonly visible: boolean;
+  /** The draft key of the open conversation; a group chat's is thread-shaped and matches no row. */
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
@@ -560,6 +561,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           gutter={4}
           renderThread={(item) => renderListItem({ item })}
           environmentById={teamsEnvironments(savedConnectionsById)}
+          openConversationKey={props.selectedThreadKey ?? null}
         />
         {selectedProjectScope === null ? null : (
           <ProjectAssistantFaces

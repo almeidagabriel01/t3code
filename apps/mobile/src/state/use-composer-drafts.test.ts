@@ -2301,6 +2301,9 @@ describe("mobile composer drafts", () => {
     expect(has()).toBe(false);
     setComposerDraftText(key, "   ");
     expect(has()).toBe(false);
+    // The text of a group message on its way is not the group's draft.
+    setComposerDraftText(assistantGroupOutgoingDraftKey(key, null), "on its way");
+    expect(has()).toBe(false);
     setComposerDraftText(key, "half a thought");
     expect(has()).toBe(true);
     // Sending clears the content and keeps the settings, which alone are no draft.

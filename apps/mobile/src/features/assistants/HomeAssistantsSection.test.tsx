@@ -323,7 +323,7 @@ vi.mock("../../state/assistants", async () => {
 });
 vi.mock("../../state/decisions", () => ({ useDecisionEntries: () => ({ open: [] }) }));
 vi.mock("../../state/use-composer-drafts", () => ({
-  useComposerDraftHasContent: (key: string | null) => key !== null && mocks.drafts.has(key),
+  useHasUnsentDraft: (key: string | null) => key !== null && mocks.drafts.has(key),
   clearComposerDraftContent: mocks.clearDraft,
 }));
 vi.mock("../../state/presentation", async () => {
@@ -507,7 +507,7 @@ const hostRow = (item: HostItem) => (
 const render = (
   sidebar = true,
   labels = new Map<string, string>(),
-  extra: { renderThread?: unknown; drawn?: boolean } = {},
+  extra: { renderThread?: unknown; drawn?: boolean; openConversationKey?: string } = {},
 ) =>
   act(() =>
     root.render(
@@ -520,6 +520,7 @@ const render = (
             new Map([...labels].map(([id, label]) => [id, { label, address: id }] as const))
           }
           {...(extra.renderThread ? { renderThread: extra.renderThread as never } : {})}
+          {...(extra.openConversationKey ? { openConversationKey: extra.openConversationKey } : {})}
         />
         {extra.drawn === undefined ? null : <JumpProbe drawn={extra.drawn} />}
       </RegistryProvider>,
@@ -832,6 +833,17 @@ describe("HomeAssistantsSection", () => {
       ["hub:t0"],
       ["hub:assistant-group:g1"],
     ]);
+    // The conversation on screen beside the list never marks its own draft.
+    for (const openConversationKey of ["hub:t0", "hub:assistant-group:g1"]) {
+      act(() => root.unmount());
+      root = createRoot(container);
+      render(true, new Map(), { openConversationKey });
+      expect(marks()).toHaveLength(1);
+      expect(
+        byLabel(openConversationKey === "hub:t0" ? "Bot0" : "Finance"),
+        openConversationKey,
+      ).not.toBeNull();
+    }
     // Narrow rows keep the pen and drop the word.
     Object.assign(mocks, { rowWidth: 200, metaWidth: 200 });
     act(() => root.unmount());
