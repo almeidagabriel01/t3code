@@ -54,7 +54,9 @@ import {
   type RunId,
   runtimeModeForToolAccess,
   ThreadId,
-  type DecisionId,
+  DECISION_CONTEXT_MAX_LENGTH,
+  DECISION_TITLE_MAX_LENGTH,
+  DecisionId,
 } from "@t3tools/contracts";
 import {
   isQuietReply,
@@ -111,7 +113,9 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate, type GroupDecisionOutcome } from "./AssistantGroupGate.ts";
 import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
+import * as DecisionService from "../decisions/DecisionService.ts";
 import {
+  asksUser,
   decisionsHoldingThread,
   threadsWaitingOnUser,
   type ThreadWait,
@@ -703,6 +707,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const decisions = yield* DecisionService.DecisionService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const assistants = yield* AssistantService;
   const modelSelections = yield* ProjectModelSelection.ProjectModelSelectionService;
@@ -2307,6 +2312,9 @@ const make = Effect.gen(function* () {
   ) {
     const tasks: TaskRow[] = [];
     for (const recipient of recipients) {
+      if (message.author === "user" && message.request_id !== null) {
+        yield* answerInChat(message.request_id, recipient.assistant_id);
+      }
       tasks.push(
         yield* insertTask({
           teamId: team.id,
@@ -3278,12 +3286,100 @@ const make = Effect.gen(function* () {
         requestId: task.request_id,
         workedMs: workedMsOf(run),
       });
+      // A root task's answer that asks the user waits on them, as if asked with t3_decision.
+      const asked =
+        task.kind === "root" && !quiet && asksUser(answer)
+          ? yield* askInDecision(task, run.threadId, answer)
+          : undefined;
+      if (asked !== undefined) {
+        yield* patchTask(task, {
+          status: "waiting",
+          reason: workReason({ threads: [], subagents: [], decisions: [asked] }),
+          result_text: answer,
+          followup: null,
+        });
+        return;
+      }
       const done = yield* patchTask(task, {
         status: "completed",
         reason: null,
         result_text: answer,
       });
       yield* resumeParent(done);
+    }
+  });
+
+  /**
+   * Opens the decision for a question a member asked the user in its answer, keyed by the task's
+   * revision so a replayed run end finds the same one. Undefined when it cannot be opened: the task
+   * then ends as before rather than wait on nothing.
+   */
+  const askInDecision = Effect.fn("AssistantGroups.askInDecision")(
+    function* (task: TaskRow, threadId: ThreadId, answer: string) {
+      const request = task.request_id === null ? undefined : yield* getMessage(task.request_id);
+      const team = yield* teamRow(task.team_id);
+      const projectId = (yield* inspectThread(threadId))?.projectId ?? request?.project_id;
+      if (projectId == null) return undefined;
+      const subject = request?.title || "your request";
+      const decision = yield* decisions.request({
+        fromThreadId: threadId,
+        projectId: projectId as ProjectId,
+        threadTitle: `${team.name} · ${subject}`,
+        clientRequestId: `group-asks:${task.task_id}:${task.revision}`,
+        title: clip(
+          `${yield* nameOf(task.owner_id)} asks: ${subject}`,
+          DECISION_TITLE_MAX_LENGTH - 1,
+        ),
+        context: clip(answer, DECISION_CONTEXT_MAX_LENGTH - 1),
+        options: [{ id: "recommendations", label: "Go ahead with your recommendations" }],
+      });
+      return decision.id as string;
+    },
+    (effect, task) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: a member's question could not be opened", {
+            taskId: task.task_id,
+            cause,
+          }).pipe(Effect.as(undefined)),
+        ),
+      ),
+  );
+
+  /**
+   * The user's message to a member answers what that member asked them in the request: the
+   * decisions a task of its waits on alone are taken back and the task ends, so the message is the
+   * one turn that carries the work on. A task that also waits on other work keeps waiting.
+   */
+  const answerInChat = Effect.fn("AssistantGroups.answerInChat")(function* (
+    requestId: string,
+    ownerId: string,
+  ) {
+    const waiting = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks
+      WHERE request_id = ${requestId} AND owner_id = ${ownerId} AND status = 'waiting'
+        AND pending_followup_json IS NULL`;
+    for (const task of waiting) {
+      const held = workInReason(task.reason);
+      if (held.decisions.length === 0 || held.threads.length > 0 || held.subagents.length > 0) {
+        continue;
+      }
+      if ((yield* unsettledChildren(task.task_id)).length > 0) continue;
+      const threadId = (yield* wireTasks([task]))[0]!.threadId;
+      const withdrawn = yield* Effect.forEach(held.decisions, (decisionId) =>
+        decisions
+          .withdraw({ decisionId: DecisionId.make(decisionId), fromThreadId: threadId })
+          .pipe(Effect.result),
+      );
+      // An outcome that already landed belongs to the task's next turn: leave it to that.
+      if (
+        withdrawn.some(
+          (result) => result._tag === "Failure" || result.success.status !== "withdrawn",
+        )
+      ) {
+        continue;
+      }
+      yield* patchTask(task, { status: "completed", reason: null });
     }
   });
 

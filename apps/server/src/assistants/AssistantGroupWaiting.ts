@@ -116,3 +116,26 @@ export const threadsWaitingOnUser = Effect.fn("AssistantGroupWaiting.threadsWait
     return waits;
   },
 );
+
+const FENCE = /^\s*(```|~~~)/;
+/** A question mark that closes a sentence: after a word, before a space, the end or a closer. */
+const CLOSING_QUESTION = /[^\s?？][?？]+(?=$|[\s*_)\]"'»”’])/u;
+
+/**
+ * Whether a member's answer puts a question to the user: a sentence of its prose ends in a question
+ * mark. Code (fenced or inline) and quoted lines are not its own words, so they never count. The
+ * server's net for a question asked in text instead of with t3_decision; an extra decision the user
+ * dismisses costs less than a request that reads as finished while it waits on them.
+ */
+export const asksUser = (text: string): boolean => {
+  let fenced = false;
+  for (const line of text.split("\n")) {
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || line.trimStart().startsWith(">")) continue;
+    if (CLOSING_QUESTION.test(line.replace(/`[^`]*`/g, "``"))) return true;
+  }
+  return false;
+};

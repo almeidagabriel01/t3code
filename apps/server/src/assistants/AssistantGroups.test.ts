@@ -481,7 +481,13 @@ const harness = (options: Options = {}) => {
     ),
     SqlitePersistence.layerMemory,
   );
-  const layer = Groups.layer.pipe(Layer.provideMerge(mocks.pipe(Layer.provideMerge(base))));
+  // The real decision service, below the group service as in the server, with the gate it hands
+  // outcomes through (installed by `withDecisions`).
+  const decisions = Decisions.layer.pipe(
+    Layer.provideMerge(Gate.gateLayer),
+    Layer.provideMerge(mocks.pipe(Layer.provideMerge(base))),
+  );
+  const layer = Groups.layer.pipe(Layer.provideMerge(decisions));
 
   const setup = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -6900,14 +6906,8 @@ it.effect.each([
 });
 
 /** The group with the real decision service, and the gate through which it hands answers over. */
-const withDecisions = (h: ReturnType<typeof harness>) => {
-  const groups = Layer.mergeAll(h.layer, Gate.gateLayer);
-  return Layer.mergeAll(
-    groups,
-    Decisions.layer.pipe(Layer.provide(groups)),
-    Groups.installLayer.pipe(Layer.provide(groups)),
-  );
-};
+const withDecisions = (h: ReturnType<typeof harness>) =>
+  Layer.mergeAll(h.layer, Groups.installLayer.pipe(Layer.provide(h.layer)));
 
 const askAda = (h: ReturnType<typeof harness>, expiresInMinutes?: number) =>
   Effect.gen(function* () {
@@ -7198,5 +7198,134 @@ it.effect.each([
         .map((row) => row.threadId),
       answeredIn.map((member) => h.threadOf(member)),
     );
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+// A lead's real turn (2026-11-17): it ended its request's task with numbered questions, each with
+// a recommendation, and no tool call. The request read as finished and nobody was told.
+const ASKS_USER = [
+  "The analyst's proposal is ready. Before anyone writes code I need three answers from you.",
+  "1. **May I run one read-only query in production?** I recommend yes.",
+  "2. **Are the old taxes kept or computed again?** I recommend computing them again.",
+  "3. **What if an old invoice has a code we no longer use?** I recommend a warning.",
+  "If you answer 'go ahead with the recommendations', I start the query and hand it to Back.",
+].join("\n\n");
+
+const openDecisionsOf = (h: ReturnType<typeof harness>, member: string) =>
+  Effect.gen(function* () {
+    const listed = yield* (yield* Decisions.DecisionService).list({ threadId: h.threadOf(member) });
+    return listed.filter((decision) => decision.status === "open");
+  });
+
+const waitNotices = (h: ReturnType<typeof harness>) =>
+  h.sqlRows<{ wait_key: string; wait_resolved_at: string | null }>(
+    "SELECT wait_key, wait_resolved_at FROM assistant_group_messages WHERE wait_key IS NOT NULL",
+  );
+
+it.effect.each([
+  { said: ASKS_USER, asks: true },
+  {
+    said: "Which of the two invoices should I fix first: the rejected one or the copy?",
+    asks: true,
+  },
+  { said: "Understood: only this fix goes to main. The analyst is still on it.", asks: false },
+  {
+    said: "The fix started with Back. Taxes are computed again; the screen shows them.",
+    asks: false,
+  },
+  { said: "```ts\nconst ok = a ? b : c?.d;\n```\nDone, the build is green.", asks: false },
+])("a member's answer that asks the user waits on the user: $asks", ({ said, asks }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    // As in the real request: the task ran again on its subtask's result, then asked.
+    const child = yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "cy",
+      instruction: "Write the spec",
+    });
+    yield* h.finish(0, "completed", "The analyst is on it.");
+    yield* h.finishTask(child.taskId, "completed", "The spec is ready.");
+    yield* h.finish(h.sent.length - 1, "completed", said);
+    const open = yield* openDecisionsOf(h, "ada");
+    const [root] = yield* h.tasks;
+    // The answer is in the chat either way.
+    assert.equal((yield* h.messages).findLast((row) => row.kind === "message")!.text, said);
+    if (!asks) {
+      assert.deepEqual(open, []);
+      assert.equal(root!.status, "completed");
+      return;
+    }
+    assert.lengthOf(open, 1);
+    assert.deepEqual([root!.status, root!.reason], ["waiting", `decisions:${open[0]!.id}`]);
+    assert.include(open[0]!.context, said.slice(0, 40));
+    // Clients open the group's request from it, not the member's hidden thread.
+    assert.deepEqual(open[0]!.group, { teamId: TEAM, requestId: request.message.id });
+    assert.include(
+      open[0]!.options.map((option) => option.label),
+      "Go ahead with your recommendations",
+    );
+    // The request's needs-you notice, from the same wait.
+    yield* groups.syncWaitingThread(h.threadOf("ada"));
+    assert.deepEqual(
+      (yield* waitNotices(h)).map((row) => [row.wait_key, row.wait_resolved_at]),
+      [[`decision:${open[0]!.id}`, null]],
+    );
+    // Nothing settles a request that waits on the user.
+    assert.notInclude(
+      h.dispatched.filter((row) => row.type === "thread.settle").map((row) => row.threadId),
+      h.threadOf("ada"),
+    );
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+it.effect("answering the question a member asked runs its task again once", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.finish(0, "completed", ASKS_USER);
+    yield* groups.syncWaitingThread(h.threadOf("ada"));
+    const [decision] = yield* openDecisionsOf(h, "ada");
+    yield* (yield* Decisions.DecisionService).answer({
+      decisionId: decision!.id,
+      optionId: decision!.options[0]!.id,
+    });
+    yield* groups.settleDecision(h.threadOf("ada"));
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
+    assert.lengthOf(h.sent, 2);
+    assert.include(h.sent[1]!.text, "Go ahead with your recommendations");
+    yield* groups.syncWaitingThread(h.threadOf("ada"));
+    assert.isNotNull((yield* waitNotices(h))[0]!.wait_resolved_at);
+    yield* h.finish(1, "completed", "Started: Back has the fix.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(withDecisions(h)));
+});
+
+it.effect("a user's reply in the chat answers what the member asked, in one turn", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* h.finish(0, "completed", ASKS_USER);
+    yield* groups.syncWaitingThread(h.threadOf("ada"));
+    const asked = (yield* h.messages).findLast((row) => row.kind === "message")!;
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "1. Yes 2. Your call 3. Your call",
+        replyToMessageId: asked.message_id as never,
+      },
+      h.user,
+    );
+    assert.deepEqual(yield* openDecisionsOf(h, "ada"), []);
+    // The old turn is done; the reply is the one new turn, in the same request thread.
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed", "ada:running"]);
+    assert.lengthOf(h.sent, 2);
+    assert.equal(h.sent[1]!.threadId, h.threadOf("ada"));
+    assert.include(h.sent[1]!.text, "1. Yes 2. Your call 3. Your call");
+    yield* groups.syncWaitingThread(h.threadOf("ada"));
+    assert.isNotNull((yield* waitNotices(h))[0]!.wait_resolved_at);
   }).pipe(Effect.provide(withDecisions(h)));
 });

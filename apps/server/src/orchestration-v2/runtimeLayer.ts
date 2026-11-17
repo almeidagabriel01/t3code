@@ -448,6 +448,8 @@ const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
       ProjectionStore.layer,
       AssistantDirectory.layer,
       AssistantTasks.layer,
+      // A member's question asked in text opens a decision on this same instance.
+      layerDecisionsProvided,
     ),
   ),
 );

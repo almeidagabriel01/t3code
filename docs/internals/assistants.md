@@ -152,6 +152,14 @@ the request, keyed by `wait_key` (unique), and marks it resolved in place once t
 runs on `runtime-request.updated` for a group thread, on any decision change from one
 (`AssistantGroupReactor` watches the decision stream), and in `reconcile` at start.
 
+A wait exists only as a decision or a request, so a root task whose answer asks the user in text
+(`asksUser`: a sentence of its prose ends in a question mark) gets one from the server
+(`askInDecision`, keyed by task and revision): the task waits on it instead of completing, and every
+surface that reads waits sees it. A false positive costs a decision the user dismisses; a miss
+leaves a request reading as finished while it waits. A user's message to that member in the request
+takes back the decisions its waiting task holds alone and ends that task (`answerInChat`), so the
+message is the one turn that carries the answer.
+
 A chat message may carry attachments, uploaded as pending first like any composer upload. `post` claims
 them into group-owned ids (`group-<hash>-…`) so they outlive the 24h pending sweep, and
 `assistant_group_messages.attachments_json` keeps them. A task's turn gets its own copies in the member's
