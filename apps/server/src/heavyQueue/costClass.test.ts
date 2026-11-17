@@ -54,6 +54,17 @@ describe("cost class", () => {
     ],
     ["dir", "vp lint apps/web", null, "standard", "first run"],
     ["glob", "vp fmt 'src/**/*.ts'", null, "standard", "first run"],
+    // A config or project file names how to check, not what: the check is the whole project.
+    ["config", "tsc --noEmit -p apps/web/tsconfig.json", null, "standard", "first run"],
+    ["config", "pnpm exec tsc --project tsconfig.json", null, "standard", "first run"],
+    ["config", "vp lint --config oxlint.json", null, "standard", "first run"],
+    ["config", "vp lint -c oxlint.json src/a.ts", null, "quick", "1 file"],
+    // A watcher by its flag or script name, after a workspace selector too; a flag turned off is not.
+    ["watch", "vp test run --watch=false", null, "standard", "first run"],
+    ["watch", "pnpm run test:watch", null, "service", "keeps running"],
+    ["watch", "pnpm build:watch", null, "service", "keeps running"],
+    ["watch", "pnpm --filter web dev", null, "service", "keeps running"],
+    ["watch", "vp run -F web dev", null, "service", "keeps running"],
   ])("row %s: %s", (_row, line, durationMs, kind, why) => {
     expect(cost(line, durationMs)).toEqual({ class: kind, why });
   });

@@ -5,13 +5,16 @@
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-const DEV_SERVER = /^(dev|start|serve|watch|preview)([:._-].*)?$/;
+const DEV_SERVER = /^(dev|start|serve|watch|preview)([:._-].*)?$|(^|[:._-])watch([:._-]|$)/;
+/** Options that pick a workspace package (`pnpm --filter web dev`): their value is no script. */
+const SELECTOR_FLAGS = new Set(["--filter", "-F", "--workspace"]);
+const RUN = /^(run|run-script)$/;
 const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
   next: /^(dev|start)$/,
   expo: /^start$/,
 };
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+export const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
 
 /** `npx vite`, `pnpm exec next dev`: the tool they run, and its words. */
@@ -27,15 +30,22 @@ export const runTarget = (
 };
 
 /** A dev server by its script or program (`vp run dev`, `next dev`, `expo start`). */
-export const isDevServer = (program: string, words: ReadonlyArray<string>) => {
+export const isDevServer = (
+  program: string,
+  words: ReadonlyArray<string>,
+  flags: ReadonlyArray<string> = [],
+) => {
   const target = runTarget(program, words);
-  const [first = "", second = ""] = target.words;
+  const selected = PACKAGE_MANAGERS.has(target.program) && flags.some((f) => SELECTOR_FLAGS.has(f));
+  // The selector's value is the first word that is not `run`, wherever the selector sits.
+  const value = selected ? target.words.findIndex((word) => !RUN.test(word)) : -1;
+  const [first = "", second = ""] = target.words.filter((_, index) => index !== value);
   // A program can be named like an object key (`__proto__`): only the table's own entries count.
   if (Object.hasOwn(DEV_PROGRAMS, target.program) && DEV_PROGRAMS[target.program]!.test(first)) {
     return true;
   }
   if (!PACKAGE_MANAGERS.has(target.program)) return false;
-  return DEV_SERVER.test(first === "run" || first === "run-script" ? second : first);
+  return DEV_SERVER.test(RUN.test(first) ? second : first);
 };
 
 /** Never finishes by itself: a dev server or a watcher (`--watch`, `vitest watch`). */
@@ -44,8 +54,8 @@ export const keepsRunning = (
   words: ReadonlyArray<string>,
   flags: ReadonlyArray<string>,
 ) =>
-  isDevServer(program, words) ||
-  flags.some((flag) => /^--watch(=|$)/.test(flag)) ||
+  isDevServer(program, words, flags) ||
+  flags.some((flag) => /^--watch(=(?!false$|0$)|$)/.test(flag)) ||
   runTarget(program, words).words.includes("watch");
 
 export type Kind = "exclusive" | "heavy" | "medium";

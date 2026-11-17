@@ -20,6 +20,8 @@ const isFile = (word: string) =>
 const isTarget = (word: string) => isFile(word) || /[\\/*?[$]/.test(word);
 
 const SHELL_TEXT = /^-[a-z]*c[a-z]*$/;
+/** Options whose value says how to check (`-p tsconfig.json`), not what to check. */
+const CONFIG_FLAG = /^(-p|--project|-c|--config|--tsconfig)$/;
 
 /** A part's own work, or the work of the line it runs with `sh -c`. */
 const workOf = (part: Part): ReadonlyArray<Part> => {
@@ -33,7 +35,10 @@ const workOf = (part: Part): ReadonlyArray<Part> => {
 export const filesOf = (part: Part): ReadonlyArray<string> | null => {
   const text = part.values.slice(part.remoteAt).join(" ");
   if (part.script !== null || kindOf({ label: text }) !== "medium") return null;
-  const targets = part.words.filter(isTarget);
+  const configs = new Set(
+    part.values.filter((_, index) => CONFIG_FLAG.test(part.values[index - 1] ?? "")),
+  );
+  const targets = part.words.filter((word) => isTarget(word) && !configs.has(word));
   const readsFile =
     part.flags.some((flag) => /^--stdin-filepath(=|$)/.test(flag)) ||
     part.command.redirects.some(
