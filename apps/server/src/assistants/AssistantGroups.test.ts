@@ -7101,6 +7101,72 @@ it.effect.each([
     statuses: ["ada:cancelled"],
   },
   {
+    case: "taken by its task, which is then cancelled, still reaches the member",
+    play: (
+      h: ReturnType<typeof harness>,
+      groups: Groups.AssistantGroups["Service"],
+      taskId: string,
+    ) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        yield* h.finish(0, "completed", "I asked you.");
+        yield* answerAda(decision.id);
+        yield* cancelFirstTask(groups, taskId);
+        // The sweep delivers what the cancelled task gave back.
+        yield* (yield* Decisions.DecisionService).deliverPending;
+      }),
+    answeredIn: ["ada"],
+    statuses: ["ada:cancelled"],
+  },
+  {
+    case: "left open when the asker handed the task over goes with the work",
+    play: (h: ReturnType<typeof harness>, groups: Groups.AssistantGroups["Service"]) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        yield* groups.member.transfer({
+          callerThreadId: h.threadOf("ada"),
+          member: "beto",
+          note: "the fix is half done",
+        });
+        yield* h.finish(0, "completed", "Handed to Beto.");
+        yield* answerAda(decision.id);
+        yield* groups.settleDecision(h.threadOf("ada"));
+        yield* h.finish(1, "completed", "Working on it.");
+        const resumed = h.sent.at(-1)!;
+        assert.equal(resumed.threadId, h.threadOf("beto"));
+        assert.include(resumed.text, "The user answered the decision");
+      }),
+    answeredIn: [],
+    statuses: ["beto:running"],
+  },
+  {
+    case: "goes to the task that waits on it, not the asker's other running task",
+    play: (h: ReturnType<typeof harness>) =>
+      Effect.gen(function* () {
+        const decision = yield* askAda(h);
+        // The asker's first task still runs; a later one of hers waits on this decision.
+        yield* h
+          .sqlRows(`
+            INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind,
+              request_message_id, owner_id, instruction, status, reason, created_at, updated_at,
+              request_id)
+            SELECT 'task-2', team_id, 'task-2', kind, request_message_id, owner_id, 'The docs too',
+              'waiting', 'decisions:${decision.id}', created_at, updated_at, request_id
+            FROM assistant_group_tasks RETURNING task_id`)
+          .pipe(Effect.orDie);
+        yield* answerAda(decision.id);
+        const rows = yield* h.sqlRows<{ pending_followup_json: string | null }>(
+          "SELECT pending_followup_json FROM assistant_group_tasks ORDER BY rowid",
+        );
+        assert.deepEqual(
+          rows.map((row) => row.pending_followup_json?.includes(decision.id) ?? false),
+          [false, true],
+        );
+      }),
+    answeredIn: [],
+    statuses: ["ada:running", "ada:waiting"],
+  },
+  {
     case: "on a manual to-do wakes nobody",
     play: (h: ReturnType<typeof harness>) =>
       Effect.gen(function* () {

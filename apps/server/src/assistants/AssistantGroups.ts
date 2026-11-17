@@ -370,6 +370,8 @@ interface TaskRow {
   readonly followup_attachments_json: string | null;
   /** Decision outcomes that reached the task while it ran or waited; its next turn takes them. */
   readonly pending_followup_json: string | null;
+  /** Open decisions a member asked before handing the task over: their outcomes follow the work. */
+  readonly inherited_decisions_json: string | null;
   readonly expected_result: string | null;
   readonly source_seqs_json: string;
   readonly resources_json: string;
@@ -474,6 +476,10 @@ const pendingFollowupsOf = (row: TaskRow) =>
   row.pending_followup_json === null
     ? []
     : Option.getOrElse(decodePendingFollowups(row.pending_followup_json), () => []);
+const inheritedDecisionsOf = (row: TaskRow) =>
+  row.inherited_decisions_json === null
+    ? []
+    : Option.getOrElse(decodeStrings(row.inherited_decisions_json), () => []);
 /** The patch that hands decision outcomes to the task's next turn, with their files. */
 const followupOfDecisions = (
   outcomes: ReturnType<typeof pendingFollowupsOf>,
@@ -1093,29 +1099,40 @@ const make = Effect.gen(function* () {
       | "followup"
       | "followup_attachments_json"
       | "pending_followup_json"
+      | "inherited_decisions_json"
     >
   >;
   const patchTask = Effect.fn("AssistantGroups.patchTask")(function* (
     task: TaskRow,
     patch: TaskPatch,
   ) {
-    const next = {
+    const merged = {
       ...task,
       ...("followup" in patch ? { followup_attachments_json: null } : {}),
       ...patch,
     };
+    const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
+    const isOpen = OPEN.includes(merged.status as AssistantGroupTaskStatus);
+    // Outcomes a task never took when it closes go back to delivery, which then reaches the
+    // member's own conversation, as an answer that lands after the task ended does.
+    const released = wasOpen && !isOpen ? pendingFollowupsOf(merged) : [];
+    const next = released.length === 0 ? merged : { ...merged, pending_followup_json: null };
     const rows = yield* sql<TaskRow>`
       UPDATE assistant_group_tasks SET status = ${next.status}, reason = ${next.reason},
         revision = ${next.revision}, owner_id = ${next.owner_id}, result_text = ${next.result_text},
         followup = ${next.followup}, followup_attachments_json = ${next.followup_attachments_json},
         pending_followup_json = ${next.pending_followup_json},
+        inherited_decisions_json = ${next.inherited_decisions_json},
         updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
+    if (released.length > 0) {
+      yield* sql`
+        UPDATE decisions SET delivered_at = NULL
+        WHERE decision_id IN ${sql.in(released.map((outcome) => outcome.decisionId))}`;
+    }
     yield* publishTask(rows[0]!);
     // Working, running and waiting-on-the-user counters all follow the status.
     if (task.status !== next.status) yield* assistants.refreshTeamChat(task.team_id);
-    const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
-    const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
     const requestId = task.request_id ?? task.request_message_id;
     if (wasOpen && !isOpen) yield* closeRequestIfDone(requestId);
     if (!wasOpen && isOpen) yield* reopenRequest(requestId);
@@ -3197,12 +3214,23 @@ const make = Effect.gen(function* () {
       yield* resumeParent({ ...task, status: "failed" });
     } else if (runner !== undefined && runner !== task.owner_id) {
       // Handed to someone else while it ran: the new owner takes it, nothing is posted, and the
-      // threads this run launched now wait on the new owner's conversation.
+      // threads this run launched now wait on the new owner's conversation. The decisions it left
+      // open go with the work: their outcomes reach this task, not the old owner's thread.
+      const asked = yield* decisionsHoldingThread(run.threadId).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
       const moved = yield* patchTask(task, {
         status: "queued",
         reason: null,
         revision: task.revision + 1,
         result_text: null,
+        ...(asked.length === 0
+          ? {}
+          : {
+              inherited_decisions_json: encodeStrings([
+                ...new Set([...inheritedDecisionsOf(task), ...asked]),
+              ]),
+            }),
       });
       if ((yield* launchesFrom([run.threadId])).length > 0) {
         yield* sql`
@@ -3386,14 +3414,19 @@ const make = Effect.gen(function* () {
           if (row?.request_id == null) return false;
           const open = yield* sql<TaskRow>`
             SELECT * FROM assistant_group_tasks
-            WHERE request_id = ${row.request_id} AND owner_id = ${row.assistant_id}
-              AND status IN ('running', 'waiting')
+            WHERE request_id = ${row.request_id} AND status IN ${sql.in(OPEN)}
             ORDER BY rowid ASC`;
-          const task = open.find(
-            (candidate) =>
-              candidate.status === "running" ||
+          // The task that waits on it, then the one the asker handed it to, and only then the
+          // asker's running task, which reads it when its run ends.
+          const task =
+            open.find((candidate) =>
               workInReason(candidate.reason).decisions.includes(input.decisionId),
-          );
+            ) ??
+            open.find((candidate) => inheritedDecisionsOf(candidate).includes(input.decisionId)) ??
+            open.find(
+              (candidate) =>
+                candidate.owner_id === row.assistant_id && candidate.status === "running",
+            );
           if (task === undefined) return false;
           const pending = pendingFollowupsOf(task);
           // A repeated delivery (a retry after a crash) lands on the outcome already taken.

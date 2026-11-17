@@ -752,6 +752,7 @@ it.effect("adds the team chat continuity columns once, however often the schema 
       ["decisions", "steps_json"],
       ["assistant_group_tasks", "pending_followup_json"],
       ["assistant_group_tasks", "followup_attachments_json"],
+      ["assistant_group_tasks", "inherited_decisions_json"],
     ] as const;
     for (const [table, column] of added) {
       assert.include(yield* columnsOf(table), column, `${table}.${column}`);
