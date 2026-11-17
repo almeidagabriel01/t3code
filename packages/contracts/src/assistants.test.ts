@@ -12,6 +12,7 @@ import {
   assistantTeamProblem,
   AssistantsEvent,
   AssistantTeam,
+  AssistantTeamsUpdateInput,
   AssistantMcpServerInput,
   AssistantsUpdateInput,
   assistantHandleFromName,
@@ -25,6 +26,7 @@ const isUpdateInput = Schema.is(AssistantsUpdateInput);
 const decode = Schema.decodeUnknownSync(Assistant);
 const decodeEvent = Schema.decodeSync(AssistantsEvent);
 const decodeTeam = Schema.decodeUnknownSync(AssistantTeam);
+const isTeamUpdate = Schema.is(AssistantTeamsUpdateInput);
 
 describe("assistantHandleFromName", () => {
   it.each([
@@ -408,6 +410,24 @@ describe("assistantTeamProblem", () => {
     });
     expect(team.leadId).toBeNull();
     expect(team).not.toHaveProperty("leaderId");
+  });
+
+  it("reads a group's conversation mode when sent, and accepts only the known modes", () => {
+    const team = {
+      id: "t1",
+      name: "Core",
+      memberIds: ["a"],
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    };
+    // An older server sends none, and the client hides the option.
+    expect(decodeTeam(team)).not.toHaveProperty("conversationMode");
+    expect(decodeTeam({ ...team, conversationMode: "continuous" }).conversationMode).toBe(
+      "continuous",
+    );
+    expect(() => decodeTeam({ ...team, conversationMode: "chatty" })).toThrow();
+    expect(isTeamUpdate({ teamId: "t1", conversationMode: "requests" })).toBe(true);
+    expect(isTeamUpdate({ teamId: "t1", conversationMode: "chatty" })).toBe(false);
   });
 
   it("an old snapshot without teams, and a task without a source, still decode", () => {

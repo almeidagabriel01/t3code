@@ -479,6 +479,7 @@ import {
   DecisionError,
   DecisionsAnswerInput,
   DecisionsDismissInput,
+  DecisionsReopenInput,
   DecisionsEvent,
   DecisionsListInput,
   DecisionsListResult,
@@ -844,6 +845,7 @@ export const WS_METHODS = {
   decisionsSubscribe: "decisions.subscribe",
   decisionsAnswer: "decisions.answer",
   decisionsDismiss: "decisions.dismiss",
+  decisionsReopen: "decisions.reopen",
   computerUsePermissions: "computerUse.permissions",
   computerUseOpenSettings: "computerUse.openSettings",
   assistantsSubscribe: "assistants.subscribe",
@@ -2503,6 +2505,11 @@ const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
   success: Decision,
   error: DecisionRpcErrors,
 });
+const WsDecisionsReopenRpc = Rpc.make(WS_METHODS.decisionsReopen, {
+  payload: DecisionsReopenInput,
+  success: Decision,
+  error: DecisionRpcErrors,
+});
 
 const ComputerUseRpcErrors = Schema.Union([ComputerUseError, EnvironmentAuthorizationError]);
 const WsComputerUsePermissionsRpc = Rpc.make(WS_METHODS.computerUsePermissions, {
@@ -3221,6 +3228,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDecisionsSubscribeRpc,
   WsDecisionsAnswerRpc,
   WsDecisionsDismissRpc,
+  WsDecisionsReopenRpc,
   WsComputerUsePermissionsRpc,
   WsComputerUseOpenSettingsRpc,
   WsAssistantsSubscribeRpc,

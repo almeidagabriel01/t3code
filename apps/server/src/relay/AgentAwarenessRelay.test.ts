@@ -331,6 +331,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       subscribe: options.decisionEvents ?? Stream.empty,
       answer: unused,
       dismiss: unused,
+      reopen: unused,
       withdraw: unused,
       claimExecution: unused,
       releaseExecution: unused,

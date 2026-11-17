@@ -10,6 +10,7 @@ import {
   DecisionError,
   DecisionId,
   DecisionOption,
+  DecisionSteps,
   MessageId,
   RuntimeRequestId,
   type DecisionsAnswerInput,
@@ -63,6 +64,8 @@ interface DecisionRow {
   readonly answered_at: string | null;
   readonly delivered_at: string | null;
   readonly approval_request_id: string | null;
+  readonly kind: string | null;
+  readonly steps_json: string | null;
   readonly created_at: string;
 }
 
@@ -91,6 +94,16 @@ const decodeOptions = Schema.decodeSync(OptionsJson);
 const encodeOptions = Schema.encodeSync(OptionsJson);
 const decodeAnswer = Schema.decodeSync(AnswerJson);
 const encodeAnswer = Schema.encodeSync(AnswerJson);
+const decodeSteps = Schema.decodeUnknownOption(Schema.fromJsonString(DecisionSteps));
+
+/** A kind or steps this build cannot read is left out, never a reason to hide the decision. */
+const kindAndSteps = (row: DecisionRow): Pick<Decision, "kind" | "steps"> => {
+  const steps = row.steps_json === null ? undefined : decodeSteps(row.steps_json);
+  return {
+    ...(row.kind === "choice" || row.kind === "manual" ? { kind: row.kind } : {}),
+    ...(steps?._tag === "Some" ? { steps: steps.value } : {}),
+  };
+};
 
 const toDecision = (row: DecisionRow): Decision => ({
   id: DecisionId.make(row.decision_id),
@@ -101,6 +114,7 @@ const toDecision = (row: DecisionRow): Decision => ({
   options: decodeOptions(row.options_json),
   ...(row.recommended === null ? {} : { recommended: row.recommended }),
   ...(row.expires_at === null ? {} : { expiresAt: row.expires_at }),
+  ...kindAndSteps(row),
   status: row.status,
   ...(row.answer_json === null ? {} : { answer: decodeAnswer(row.answer_json) }),
   ...(row.answered_at === null ? {} : { answeredAt: row.answered_at }),
@@ -151,6 +165,8 @@ export class DecisionService extends Context.Service<
     readonly answer: (input: DecisionsAnswerInput) => Effect.Effect<Decision, DecisionError>;
     /** The user declines; the agent is told, never told it was approved. */
     readonly dismiss: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
+    /** Undoes "Done" on an answered `manual` decision; the agent is not told. */
+    readonly reopen: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
     /** The requesting agent takes its question back. Repeating, or after settling, changes nothing. */
     readonly withdraw: (input: {
       readonly decisionId: DecisionId;
@@ -519,6 +535,27 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const reopen: DecisionService["Service"]["reopen"] = Effect.fn("DecisionService.reopen")(
+    function* (decisionId) {
+      return yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const row = yield* findRow(decisionId);
+          if (row.kind !== "manual" || row.status !== "answered") {
+            return yield* invalid("Only a to-do marked done can be reopened.");
+          }
+          yield* sql`
+            UPDATE decisions SET status = 'open', answer_json = NULL, answered_at = NULL,
+              delivered_at = NULL, delivery_attempts = 0, delivery_error = NULL
+            WHERE decision_id = ${decisionId}`;
+          const next = yield* findRow(decisionId);
+          yield* publish(next);
+          return toDecision(next);
+        }),
+      );
+    },
+    storage,
+  );
+
   const withdraw: DecisionService["Service"]["withdraw"] = Effect.fn("DecisionService.withdraw")(
     function* (input) {
       const row = yield* findRow(input.decisionId);
@@ -572,6 +609,7 @@ const make = Effect.gen(function* () {
     subscribe,
     answer,
     dismiss,
+    reopen,
     withdraw,
     claimExecution,
     releaseExecution,
