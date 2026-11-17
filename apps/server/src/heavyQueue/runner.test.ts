@@ -269,7 +269,7 @@ describe("routing matrix", () => {
   it("a Mac over its ceiling holds back none of the incident's jobs while Linux is up", () => {
     const shapes = [
       "vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx",
-      'vp fmt "${f[@]}" && vp test run src/a.test.ts',
+      'f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts',
       "pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
       "vp run fmt src/a.ts; vp run typecheck",
       "vp fmt --check && vp test run",
@@ -465,6 +465,29 @@ describe("routing matrix", () => {
         "waiting for Linux: Linux ran short of memory beside other jobs: waiting to run there alone",
       );
     }
+  });
+
+  it("Linux admits no one past a job waiting to run there alone, then takes it once empty", () => {
+    const queue = [
+      job("a", "vp test run", { evictions: 2 } as never),
+      job("b", "vp test run"),
+      job("c", "vp test run"),
+    ];
+    const plan = (beside: ReadonlyArray<HeavyQueueEntry>, where: "linux" | "automatic") =>
+      planRoutes(input([...beside, ...queue], { runnerWhere: where }, { health: READ }));
+    const draining = plan([runningOn("l1", "linux")], "linux");
+    expect(["a", "b", "c"].map((id) => outcomeOf(draining, id))).toEqual([
+      "linux-wait",
+      "linux-wait",
+      "linux-wait",
+    ]);
+    expect(draining.reasons.b).toBe(
+      "waiting for Linux: Linux is kept free for a job that runs there alone",
+    );
+    expect(Object.keys(plan([], "linux").admits)).toEqual(["a"]);
+    // Hybrid needn't wait for Linux to drain: this Mac has room for it.
+    const hybrid = plan([runningOn("l1", "linux")], "automatic");
+    expect(outcomeOf(hybrid, "a")).toBe("mac-start");
   });
 
   it("two waiters of one worktree never take Linux together", () => {
@@ -1585,7 +1608,7 @@ describe("patterns and eligibility", () => {
     '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\nif [ -n "${CI:-}" ]; then echo ci; fi\nvp lint --no-ignore src/a.ts\nfor p in apps/server apps/web; do (cd $p && vp test run); done\n';
   it.each([
     ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", {}, "linux", null],
-    ['vp fmt "${f[@]}" && vp test run src/a.test.ts', {}, "linux", null],
+    ['f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts', {}, "linux", null],
     [
       "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
       {},

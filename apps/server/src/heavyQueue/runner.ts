@@ -678,7 +678,7 @@ export interface LinuxReading {
  * over user..steal (guest time is already inside user and nice). Null when either line is
  * missing or the counters did not move forward.
  */
-export const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
+const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
   const times = (line: string | undefined) => {
     const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
     return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
@@ -1008,6 +1008,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
   const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
+  /** Jobs stopped twice for memory, waiting for Linux to empty: it admits nobody else meanwhile. */
+  const alone = new Set(
+    waiting
+      .filter((entry) => ((entry as QueuedEntry).evictions ?? 0) >= 2)
+      .map((entry) => entry.id),
+  );
   let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
   let lastLinuxStart = Math.max(
@@ -1035,6 +1041,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
   const shows = (reason: string) => input.runnerOn === true || reason === COMMIT_HOOK;
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
+    alone.delete(entry.id);
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
@@ -1078,6 +1085,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     if (busyWorktrees.has(worktree)) {
       return { kind: "worktree", why: "this worktree is already running on Linux" };
+    }
+    // Linux drains for a job that runs there alone: admitting others would starve it.
+    if ([...alone].some((id) => id !== entry.id)) {
+      return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
     if (health.overLimit) {
@@ -1142,6 +1153,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     cancel(`${what} and nobody answered in time: canceled`);
   };
   const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+    alone.delete(entry.id);
     routes[entry.id] = "linux";
     linuxCount += 1;
     linuxFree -= 1;
