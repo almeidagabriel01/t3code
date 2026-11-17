@@ -1300,16 +1300,21 @@ export function assistantGroupWaitingReason(
   return task.status === "queued" && task.reason?.startsWith("waiting for ") ? task.reason : null;
 }
 
-const WAITING_THREADS_PREFIX = "threads:";
-
-/** The work threads a waiting member opened and waits on, read from `threads:<id>,<id>`. */
+/**
+ * The work threads a waiting member opened and waits on, read from the `threads` segment of a
+ * `key:<id>,<id>;key:...` reason. Other segments are ignored.
+ */
 export function assistantGroupWaitingThreadIds(
   task: Pick<AssistantGroupTask, "status" | "reason">,
 ): ReadonlyArray<ThreadId> | null {
-  if (task.status !== "waiting" || !task.reason?.startsWith(WAITING_THREADS_PREFIX)) return null;
+  if (task.status !== "waiting" || task.reason === null) return null;
+  const segment = task.reason
+    .split(";")
+    .map((part) => /^\s*threads\s*:(.*)$/s.exec(part)?.[1])
+    .find((ids) => ids !== undefined);
+  if (segment === undefined) return null;
   const ids = new Set(
-    task.reason
-      .slice(WAITING_THREADS_PREFIX.length)
+    segment
       .split(",")
       .map((id) => id.trim())
       .filter((id) => id !== ""),
