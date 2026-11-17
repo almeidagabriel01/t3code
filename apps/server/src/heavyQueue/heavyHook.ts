@@ -11,6 +11,9 @@ const BASH_MAX_TIMEOUT_MS = 600_000;
 /** Claude Code's longest Bash limit for a background call: a queued wait never kills the command. */
 const BACKGROUND_TIMEOUT_MS = 7_200_000;
 
+/** How a line the agent sent to Linux with `remoto` explains why it runs on this Mac instead. */
+export const REMOTO_HERE = "You asked for Linux (remoto); runs here: ";
+
 /** Where a queued line would go and whether it starts at once, as the queue sees it right now. */
 export interface BashProbe {
   readonly startsNow: boolean;
@@ -652,7 +655,9 @@ export const queueBashCall = (
       },
       ...(background && probed !== null && toolInput.run_in_background !== true
         ? { additionalContext: waitNote(probed, options.inT3 === true) }
-        : {}),
+        : probed?.reason?.startsWith(REMOTO_HERE) === true
+          ? { additionalContext: `[t3 heavy] ${probed.reason}.` }
+          : {}),
     },
   };
 };

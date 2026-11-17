@@ -221,6 +221,17 @@ describe("the PreToolUse answer", () => {
   it.each([
     ["starts now", probed(true), false, false, 600_000, null],
     [
+      "starts now on this Mac although it asked for Linux",
+      () => ({
+        ...probed(true)(),
+        reason: "You asked for Linux (remoto); runs here: Always on this Mac: xcrun",
+      }),
+      true,
+      false,
+      600_000,
+      "[t3 heavy] You asked for Linux (remoto); runs here: Always on this Mac: xcrun.",
+    ],
+    [
       "waits on this Mac, in T3",
       probed(false),
       true,
@@ -249,7 +260,9 @@ describe("the PreToolUse answer", () => {
     if (note === null) expect(context).toBeUndefined();
     else {
       expect(context).toContain(note);
-      expect(context).toContain(inT3 ? "t3_background_wait" : "Claude Code tells you");
+      if (background) {
+        expect(context).toContain(inT3 ? "t3_background_wait" : "Claude Code tells you");
+      }
     }
   });
 

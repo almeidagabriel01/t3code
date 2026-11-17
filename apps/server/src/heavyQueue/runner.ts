@@ -35,6 +35,7 @@ import {
   lineParts,
   nameOf,
   readLine,
+  REMOTO_HERE,
   TYPE_CHECKERS,
   UNREADABLE_SCRIPT,
   workParts,
@@ -944,11 +945,7 @@ export const intentOf = (
   }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
-    return mac(
-      entry.where === "linux"
-        ? `You asked for Linux (remoto); runs here: ${verdict.reason}`
-        : verdict.reason!,
-    );
+    return mac(entry.where === "linux" ? `${REMOTO_HERE}${verdict.reason}` : verdict.reason!);
   }
   if (entry.route === "mac") return mac((entry as QueuedEntry).routeReason ?? "Moved to this Mac");
   if (entry.route === "linux") return { intent: "linux", reason: "" };
