@@ -6845,3 +6845,48 @@ it.effect.each([
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+const askDecision = (
+  h: ReturnType<typeof harness>,
+  threadId: string,
+  id: string,
+  extra: { kind?: string; approval?: string; requestId?: string } = {},
+) =>
+  h.sqlRows(`
+    INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id, thread_title,
+      title, context, options_json, status, created_at, kind, approval_request_id)
+    VALUES ('${id}', '${threadId}', 'p1', '${extra.requestId ?? id}', 'Fix', 'Ship it?', '',
+      '[{"id":"yes","label":"Yes"}]', 'open', '2026-03-01', ${extra.kind === undefined ? "NULL" : `'${extra.kind}'`},
+      ${extra.approval === undefined ? "NULL" : `'${extra.approval}'`})
+    RETURNING decision_id`).pipe(Effect.orDie);
+
+it.effect("an open choice the member asked holds its task, and a restart never calls it gone", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* askDecision(h, h.threadOf("ada"), "d1");
+    yield* h.finish(0, "completed", "I asked you which way.");
+    const [task] = yield* h.tasks;
+    assert.deepEqual([task!.status, task!.reason], ["waiting", "decisions:d1"]);
+    const sent = h.sent.length;
+    yield* groups.settleWaiting;
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:waiting"]);
+    assert.equal(h.sent.length, sent);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "a manual to-do", extra: { kind: "manual" } },
+  { name: "an approval mirror", extra: { approval: "req-1" } },
+  { name: "an autonomy notice", extra: { requestId: "autonomy:wake-1" } },
+])("$name never holds the task", ({ extra }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+    yield* askDecision(h, h.threadOf("ada"), "d1", extra);
+    yield* h.finish(0, "completed", "Done.");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});

@@ -31,6 +31,24 @@ const optionLabels = (json: string): ReadonlyArray<string> => {
 };
 
 /**
+ * The decisions that hold a member's group task: open choices its conversation asked with
+ * t3_decision. Mirrors of runtime requests, autonomy notices and manual to-dos never hold it.
+ */
+export const decisionsHoldingThread = Effect.fn("AssistantGroupWaiting.decisionsHoldingThread")(
+  function* (threadId: string) {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly decision_id: string }>`
+      SELECT decision_id FROM decisions
+      WHERE from_thread_id = ${threadId} AND status = 'open'
+        AND approval_request_id IS NULL
+        AND client_request_id NOT LIKE ${`${NOTICE_REQUEST_PREFIX}%`}
+        AND COALESCE(kind, 'choice') = 'choice'
+      ORDER BY created_at, decision_id`;
+    return rows.map((row) => row.decision_id);
+  },
+);
+
+/**
  * What the given threads wait on the user for: pending runtime requests T3 does not answer itself
  * (approvals, questions) and open decisions they asked with t3_decision. Decisions that only mirror
  * one of those requests, and autonomy's own notices, are left out so one wait is listed once.

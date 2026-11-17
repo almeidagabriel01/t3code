@@ -111,7 +111,11 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
-import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
+import {
+  decisionsHoldingThread,
+  threadsWaitingOnUser,
+  type ThreadWait,
+} from "./AssistantGroupWaiting.ts";
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {
   childResultsText,
@@ -207,15 +211,17 @@ const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const MAX_LAUNCH_DEPTH = 8;
 
 /**
- * Work still alive under a member's conversation: threads launched from it (down their chain) and
- * the provider-native subagents it runs, each by thread id, oldest first.
+ * Work still alive under a member's conversation: threads launched from it (down their chain), the
+ * provider-native subagents it runs, each by thread id, and the decisions it asked the user, by
+ * decision id, oldest first.
  */
 interface LiveWork {
   readonly threads: ReadonlyArray<string>;
   readonly subagents: ReadonlyArray<string>;
+  readonly decisions: ReadonlyArray<string>;
 }
-const WORK_KINDS = ["threads", "subagents"] as const;
-/** A waiting task names what holds it: `threads:<id>,<id>;subagents:<id>`, empty parts left out. */
+const WORK_KINDS = ["threads", "subagents", "decisions"] as const;
+/** A waiting task names what holds it: `threads:<id>;subagents:<id>;decisions:<id>`, empty parts left out. */
 const workReason = (work: LiveWork) =>
   WORK_KINDS.filter((kind) => work[kind].length > 0)
     .map((kind) => `${kind}:${work[kind].join(",")}`)
@@ -227,7 +233,11 @@ const workInReason = (reason: string | null): LiveWork => {
       return [part.slice(0, cut), part.slice(cut + 1).split(",")] as const;
     }),
   );
-  return { threads: parts.get("threads") ?? [], subagents: parts.get("subagents") ?? [] };
+  return {
+    threads: parts.get("threads") ?? [],
+    subagents: parts.get("subagents") ?? [],
+    decisions: parts.get("decisions") ?? [],
+  };
 };
 
 /**
@@ -2075,10 +2085,14 @@ const make = Effect.gen(function* () {
       state?.live === true ? [launch.thread_id] : [],
     );
     const live = natives.filter((row) => row.live === 1);
+    const decisions = yield* decisionsHoldingThread(threadId).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
     return {
       threads,
       subagents: live.flatMap((row) => row.child_thread_id ?? []),
-      held: threads.length > 0 || live.length > 0,
+      decisions,
+      held: threads.length > 0 || live.length > 0 || decisions.length > 0,
       launches,
       natives,
     };
@@ -2167,8 +2181,8 @@ const make = Effect.gen(function* () {
       followup: [
         ...(followup !== null
           ? [launchResultsText(followup)]
-          : workReason(waitedOn) !== null
-            ? // What it named is gone without a trace (its rows were removed).
+          : workReason({ ...waitedOn, decisions: [] }) !== null
+            ? // A thread or subagent it named is gone without a trace (its rows were removed).
               [launchResultsText("What you waited on can no longer be found.")]
             : []),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
