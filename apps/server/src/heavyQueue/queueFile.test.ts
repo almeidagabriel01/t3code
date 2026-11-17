@@ -1673,6 +1673,25 @@ describe("Runner in the queue file", () => {
       }
     });
 
+    it("sends a call that would wait to the background, naming why", () => {
+      const dir = queueWith(block(config({ runnerEnabled: false })));
+      const free = Queue.answerBashCall(dir, call("vp test run"), PREFIX)!.hookSpecificOutput;
+      expect(free.updatedInput).toMatchObject({ timeout: 600_000 });
+      expect(free.updatedInput).not.toHaveProperty("run_in_background");
+      Queue.setPaused(dir, true);
+      const held = Queue.answerBashCall(
+        dir,
+        call("vp test run"),
+        PREFIX,
+        {},
+        true,
+      )!.hookSpecificOutput;
+      expect(held.updatedInput).toMatchObject({ run_in_background: true, timeout: 7_200_000 });
+      expect(held.additionalContext).toMatch(
+        /^\[t3 heavy\] Queued on this Mac \(position 1, .*t3_background_wait/,
+      );
+    });
+
     it("follows the project of the call's folder", () => {
       const dir = queueWith(
         block(config({ runnerEnabled: false }), [{ root: "/w/on", config: config() }]),
@@ -1699,6 +1718,7 @@ describe("Runner in the queue file", () => {
       expect(Queue.answerBashCall(dir, commit, PREFIX)).toBeNull();
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toEqual({
         runsOn: "direct",
+        position: null,
         reason: "No commit hook in this repository: runs directly",
         startsNow: true,
         linuxFull: false,

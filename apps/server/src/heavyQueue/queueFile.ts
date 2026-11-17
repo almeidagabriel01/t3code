@@ -972,6 +972,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       runsOn: "direct" as const,
       reason: COMMIT_RUNS_DIRECT,
       startsNow: true,
+      position: null,
       linuxFull: false,
     };
   }
@@ -989,6 +990,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(withProbe, now);
+  const waiters = withProbe.entries.filter((e) => e.startedAt === null);
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
   const ahead = withProbe.entries
@@ -1001,6 +1003,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     runsOn: plan.routes[id] ?? ("mac" as const),
     reason: plan.reasons[id] ?? null,
     startsNow: plan.admits[id] !== undefined,
+    position: waiters.findIndex((e) => e.id === id) + 1,
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
   };
 };
@@ -1622,6 +1625,7 @@ export const answerBashCall = (
   hookInput: unknown,
   prefix: string,
   environment: Readonly<Record<string, string | undefined>> = {},
+  inT3 = environment.T3CODE_THREAD_ID !== undefined,
 ) => {
   const doc = readDoc(dir);
   const cwd =
@@ -1636,6 +1640,7 @@ export const answerBashCall = (
     modeFor(doc, at),
     environment,
     scriptReader(at),
+    { probe: (line) => probe(dir, line, cwd), inT3 },
   );
   return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
     ? null

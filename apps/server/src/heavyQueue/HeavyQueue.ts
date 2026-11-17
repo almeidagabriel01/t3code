@@ -203,7 +203,7 @@ export const bashHook =
   (prefix: string, dir: string = QueueFile.defaultQueueDir()) =>
   (hookInput: unknown) =>
     // readDoc never throws: a missing or corrupt file reads as an empty queue that is on.
-    QueueFile.answerBashCall(dir, hookInput, prefix);
+    QueueFile.answerBashCall(dir, hookInput, prefix, {}, true);
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
   const command = `${yield* queuePrefix(dir)} --`;

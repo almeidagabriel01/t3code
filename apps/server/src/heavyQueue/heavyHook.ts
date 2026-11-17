@@ -8,6 +8,25 @@ import { parseLine, type Command, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
 const BASH_MAX_TIMEOUT_MS = 600_000;
+/** Claude Code's longest Bash limit for a background call: a queued wait never kills the command. */
+const BACKGROUND_TIMEOUT_MS = 7_200_000;
+
+/** Where a queued line would go and whether it starts at once, as the queue sees it right now. */
+export interface BashProbe {
+  readonly startsNow: boolean;
+  readonly runsOn: "mac" | "linux" | "direct";
+  readonly position: number | null;
+  readonly reason: string | null;
+}
+
+const waitNote = (probe: BashProbe, inT3: boolean) => {
+  const machine = probe.runsOn === "linux" ? "Linux" : "this Mac";
+  const where = `${probe.position === null ? "" : `position ${probe.position}, `}${probe.reason ?? "waiting its turn"}`;
+  const how = inT3
+    ? "call t3_background_wait with this task's id, then read its output"
+    : "Claude Code tells you when it finishes; read its output then";
+  return `[t3 heavy] Queued on ${machine} (${where}). It runs in the background so the wait never times out: ${how}. Running it again does not move it up.`;
+};
 /** Set in a queue job's environment: commands inside it already hold a slot. */
 export const HEAVY_JOB_ENV = "T3CODE_HEAVY_JOB";
 
@@ -573,6 +592,10 @@ export const queueBashCall = (
     readonly runner?: boolean;
     /** Reads a script the line runs, from the folder the line starts in. */
     readonly readScript?: ReadScript;
+    /** Asks the queue about the line: only one that starts now stays in the foreground. */
+    readonly probe?: (command: string) => BashProbe;
+    /** Called from a T3 session, whose agents wait with `t3_background_wait`. */
+    readonly inT3?: boolean;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
@@ -597,6 +620,10 @@ export const queueBashCall = (
     typeof hookInput.tool_use_id === "string" && hookInput.tool_use_id !== ""
       ? ` --request-id ${shellQuote(hookInput.tool_use_id)}`
       : "";
+  // A wrong guess either way is safe: a foreground call that waits keeps today's 600 s limit, and
+  // a background one that starts at once just ends sooner.
+  const probed = options.probe?.(command) ?? null;
+  const background = toolInput.run_in_background === true || (probed !== null && !probed.startsNow);
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse" as const,
@@ -604,11 +631,15 @@ export const queueBashCall = (
       updatedInput: {
         ...toolInput,
         command: `${queuePrefix}${request}${unreadable ? ` --runner mac --route-reason ${shellQuote(UNREADABLE_SCRIPT)}` : ""} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
-        // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
-        ...(toolInput.run_in_background === true
-          ? {}
+        // Waiting counts toward the Bash timeout: a call that waits goes to the background, whose
+        // limit is long enough for any queue.
+        ...(background
+          ? { run_in_background: true, timeout: Math.max(currentTimeout, BACKGROUND_TIMEOUT_MS) }
           : { timeout: Math.max(currentTimeout, BASH_MAX_TIMEOUT_MS) }),
       },
+      ...(background && probed !== null && toolInput.run_in_background !== true
+        ? { additionalContext: waitNote(probed, options.inT3 === true) }
+        : {}),
     },
   };
 };
@@ -632,12 +663,14 @@ export const interceptBashCall = (
   mode: { readonly enabled: boolean; readonly runner?: boolean },
   environment: Readonly<Record<string, string | undefined>> = {},
   readScript?: ReadScript,
+  ask: { readonly probe?: (command: string) => BashProbe; readonly inT3?: boolean } = {},
 ) =>
   heavyRoute(mode) === "direct"
     ? null
     : queueBashCall(hookInput, queuePrefix, environment, {
         runner: mode.runner === true,
         ...(readScript === undefined ? {} : { readScript }),
+        ...ask,
       });
 
 export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

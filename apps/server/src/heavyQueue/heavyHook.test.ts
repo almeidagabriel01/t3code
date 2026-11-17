@@ -198,14 +198,59 @@ describe("the PreToolUse answer", () => {
     );
   });
 
-  it("never lowers a longer timeout and leaves a background call's limit alone", () => {
+  it("never lowers a longer timeout and gives a background call the background limit", () => {
     const longer = queueBashCall(bash({ command: "vp build", timeout: 900_000 }), PREFIX);
     expect(longer!.hookSpecificOutput.updatedInput.timeout).toBe(900_000);
     const background = queueBashCall(
       bash({ command: "vp build", run_in_background: true }),
       PREFIX,
     );
-    expect(background!.hookSpecificOutput.updatedInput).not.toHaveProperty("timeout");
+    expect(background!.hookSpecificOutput.updatedInput.timeout).toBe(7_200_000);
+    expect(background!.hookSpecificOutput).not.toHaveProperty("additionalContext");
+  });
+
+  const probed =
+    (startsNow: boolean, runsOn: "mac" | "linux" = "mac") =>
+    () => ({
+      startsNow,
+      runsOn,
+      position: startsNow ? null : 3,
+      reason: startsNow ? null : "2 jobs running",
+    });
+
+  it.each([
+    ["starts now", probed(true), false, false, 600_000, null],
+    [
+      "waits on this Mac, in T3",
+      probed(false),
+      true,
+      true,
+      7_200_000,
+      "Queued on this Mac (position 3, 2 jobs running)",
+    ],
+    [
+      "waits on Linux, outside T3",
+      probed(false, "linux"),
+      false,
+      true,
+      7_200_000,
+      "Queued on Linux (position 3, 2 jobs running)",
+    ],
+  ] as const)("a call that %s", (_why, probe, inT3, background, timeout, note) => {
+    const answer = queueBashCall(
+      bash({ command: "vp build", description: "Build", timeout: 120_000 }),
+      PREFIX,
+      {},
+      { probe, inT3 },
+    )!.hookSpecificOutput;
+    expect(answer.updatedInput).toMatchObject({ description: "Build", timeout });
+    expect(answer.updatedInput.run_in_background === true).toBe(background);
+    const context = (answer as { additionalContext?: string }).additionalContext;
+    if (note === null) expect(context).toBeUndefined();
+    else {
+      expect(context).toContain(note);
+      expect(context).toContain(inT3 ? "t3_background_wait" : "Claude Code tells you");
+    }
   });
 
   it.each([
