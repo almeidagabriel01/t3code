@@ -984,6 +984,8 @@ export function assistantGroupComposerSession(input: {
   if (decision?.kind === "resume") {
     return state.tasks.get(decision.taskId as AssistantGroupTaskId) ?? null;
   }
+  // A draft to several members lands in several sessions: no one meter speaks for them.
+  if (decision !== null && decision.ids.length > 1) return null;
   const ownerId = decision?.ids[0] ?? input.leadId;
   let newest: AssistantGroupTask | null = null;
   for (const task of state.tasks.values()) {
@@ -1480,11 +1482,12 @@ export interface AssistantGroupWaitingItem {
 /**
  * The requests that wait on the user, oldest first, one item each, by the rule the server's
  * `waiting` follows: an open wait, the lead asking for a project, or tasks that need the user
- * (paused or failed ones before the newest boundary no longer count). Open tasks come with the
- * snapshot, so a request whose messages are not loaded is listed too.
+ * (one asked for before the newest boundary no longer counts). Open tasks come with the snapshot;
+ * a wait off the loaded page comes from its tab's `waitingRequest`, the oldest there.
  */
 export function assistantGroupWaitingRequests(
   state: AssistantGroupChatState,
+  scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "waitingRequest">> = [],
 ): ReadonlyArray<AssistantGroupWaitingItem> {
   const rootOf = (requestId: AssistantGroupMessageId) =>
     state.messages.get(requestId) ?? state.requests.get(requestId) ?? null;
@@ -1521,13 +1524,15 @@ export function assistantGroupWaitingRequests(
       found.set(requestId, item(requestId, { reason: "project", assistantId: null, task: null }));
     }
   }
+  // A task's own asking message dates it; one off the page is older than any loaded boundary.
+  const afterBoundary = (task: AssistantGroupTask) =>
+    boundarySeq === 0 || (rootOf(task.requestMessageId)?.seq ?? 0) > boundarySeq;
   for (const [requestId, tasks] of tasksOf) {
     if (found.has(requestId) || !assistantGroupTasksNeedUser(tasks)) continue;
-    const rootSeq = rootOf(requestId)?.seq;
-    if (rootSeq !== undefined && rootSeq < boundarySeq) continue;
     const task = tasks
-      .filter((entry) => assistantGroupTaskNeedsUser(entry, tasks))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+      .filter((entry) => afterBoundary(entry) && assistantGroupTaskNeedsUser(entry, tasks))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (task === undefined) continue;
     found.set(
       requestId,
       item(requestId, {
@@ -1537,8 +1542,22 @@ export function assistantGroupWaitingRequests(
       }),
     );
   }
+  for (const { projectId, waitingRequest } of scopes) {
+    if (waitingRequest === undefined) continue;
+    const requestId = waitingRequest.requestId as AssistantGroupMessageId;
+    if (found.has(requestId)) continue;
+    found.set(requestId, {
+      requestId,
+      title: waitingRequest.title,
+      projectId,
+      reason: waitingRequest.reason,
+      assistantId: waitingRequest.assistantId,
+      task: null,
+    });
+  }
+  // A request with no loaded root lies before the page.
   const seqOf = (requestId: AssistantGroupMessageId) =>
-    rootOf(requestId)?.seq ?? Number.POSITIVE_INFINITY;
+    rootOf(requestId)?.seq ?? Number.NEGATIVE_INFINITY;
   return [...found.values()].sort((a, b) => seqOf(a.requestId) - seqOf(b.requestId));
 }
 
