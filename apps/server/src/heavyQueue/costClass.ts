@@ -31,6 +31,9 @@ const workOf = (part: Part): ReadonlyArray<Part> => {
   return text === undefined ? [part] : workPartsOf(text);
 };
 
+const TEST_RUN = /\b(test|vitest|jest)\b/;
+const E2E_FOLDER = /(^|\/)e2e\//;
+
 /** A path as its own name: folder names (`src/build/`) say nothing about the work. */
 const nameOf = (value: string) => value.replace(/^(-[^=]*=)?.*\//, "$1");
 
@@ -41,6 +44,8 @@ const nameOf = (value: string) => value.replace(/^(-[^=]*=)?.*\//, "$1");
 const checks = (part: Part) => {
   const values = part.values.slice(part.remoteAt);
   const own = values.filter((value) => !isTarget(value.replace(/^-[^=]*=/, "")));
+  // An `e2e` folder is the one folder that says what its tests do: they run end to end.
+  if (TEST_RUN.test(own.join(" ")) && values.some((value) => E2E_FOLDER.test(value))) return false;
   if (kindOf({ label: own.join(" ") }) === "medium") return true;
   return kindOf({ label: values.map(nameOf).join(" ") }) === "medium";
 };
