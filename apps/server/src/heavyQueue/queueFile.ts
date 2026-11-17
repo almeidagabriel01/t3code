@@ -1498,6 +1498,7 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
       const moves = doc.entries.filter(
         (entry) =>
           entry.startedAt === null &&
+          !isOrphan(entry) &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
           !(runner === "linux" && (entry.where === "mac" || staysOnMac(doc, entry))),

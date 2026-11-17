@@ -615,6 +615,8 @@ describe("jobs stuck waiting", () => {
     ["short usual run, under the floor", waiting(STUCK_FLOOR_MS / MIN - 1), () => MIN, false],
     ["long usual run, under three runs", waiting(50), () => 20 * MIN, false],
     ["long usual run, past three runs", waiting(61), () => 20 * MIN, true],
+    // Its agent stopped it; it waits to be asked again, not for the machine.
+    ["an orphan", { ...waiting(61), orphanedAt: NOW }, () => 20 * MIN, false],
   ])("%s", (_name, job, usualMs, expected) => {
     expect(stuck({ entries: [job], usualMs })).toEqual(expected ? ["job-1"] : []);
   });

@@ -700,7 +700,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       break;
     }
     if (added !== "attached") process.exit(added.code);
-    while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
+    // An owner that stopped while waiting leaves an orphan, which the next enqueue adopts.
+    const owned = () =>
+      readDoc(dir).entries.some((each) => each.id === id && each.orphanedAt === undefined);
+    while (owned()) await pause(POLL_MS);
   }
   let orphaned = false;
   // The code a failure notice reports; every exit path ends here.

@@ -313,7 +313,10 @@ export const stuckJobs = (input: {
   readonly now: number;
 }): ReadonlyArray<StuckJob> =>
   input.entries.flatMap((entry) => {
-    if (entry.startedAt !== null || entry.ask !== undefined) return [];
+    // An orphan waits for its agent, not for the machine.
+    if (entry.startedAt !== null || entry.ask !== undefined || entry.orphanedAt !== undefined) {
+      return [];
+    }
     const runner = input.routes[entry.id] ?? "mac";
     const why =
       runner === "mac"
