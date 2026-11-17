@@ -748,6 +748,33 @@ describe("HeavyWorkSection", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("labels rows with their class and keeps a stopped agent's place with Stop", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) + 3 * 60_000 });
+    setup(
+      [entry("r", { startedAt: NOW }), entry("w"), entry("o", { orphanedAt: Date.parse(NOW) })],
+      {
+        reasons: { w: "all 3 slots busy" },
+        costs: {
+          r: { class: "quick", why: "usually 4 s" },
+          w: { class: "standard", why: "first run" },
+          o: { class: "service", why: "dev server" },
+        },
+      },
+    );
+    const view = await mount();
+    const text = view.host.textContent ?? "";
+    expect(text).toMatch(/Quick · .*Job · 1st · .*all 3 slots busy.*Keeps running · /s);
+    expect(text).toContain("Waiting for the agent to ask again · 7 min left");
+    // The running row's menu has its own Stop first.
+    await act(async () => view.button("Stop", 1).click());
+    alertButtons(0).find((b) => b.text === "Remove")!.onPress!();
+    expect(mocks.commands.cancel).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { id: "o" },
+    });
+    await view.unmount();
+  });
+
   // Built from askAnswers, as on the web: only where it may run, never a rerun before Linux confirms.
   it.each([
     ["an unconfirmed drop", { unconfirmed: true }, {}, ["Run on this Mac", "Wait for Linux"]],

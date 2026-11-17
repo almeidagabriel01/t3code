@@ -8,7 +8,9 @@ import {
   heavyItemsInProject,
   heavyWork,
   heavyWorkItems,
+  jobCost,
   jobPriority,
+  orphanLine,
   machineSummaries,
   moveTarget,
   ordinal,
@@ -468,6 +470,9 @@ function QueueRow(props: {
   const routes = routeActions(entry, state);
   const priority = jobPriority(entry);
   const reason = state.reasons[entry.id];
+  const cost = jobCost(state, entry);
+  const orphan = running ? null : orphanLine(entry, state.reclaimMinutes, now);
+  const classLabel = cost === null ? "" : `${cost.label} · `;
   const phase = entry.phase === undefined ? null : RUNNER_PHASE_LABEL[entry.phase];
   const machine = onLinux
     ? `Linux${state.linux === null ? "" : ` (${state.linux.host})`}`
@@ -495,7 +500,8 @@ function QueueRow(props: {
       : [{ label: "Run folder", value: `~/runs/${entry.remote.id}`, mono: true }]),
     running
       ? { label: "Running", value: ran }
-      : { label: "Waiting", value: `${ordinal(position ?? 0)} in line · ${waited}` },
+      : { label: "Waiting", value: orphan ?? `${ordinal(position ?? 0)} in line · ${waited}` },
+    ...(cost === null ? [] : [{ label: "Class", value: `${cost.label} · ${cost.why}` }]),
     {
       label: "Priority",
       value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, priority.label]
@@ -599,15 +605,31 @@ function QueueRow(props: {
         running
           ? onLinux && phase !== null && entry.phase !== "running"
             ? phase
-            : ran
-          : `${ordinal(position ?? 0)} · ${waited}`
+            : `${classLabel}${ran}`
+          : `${classLabel}${orphan === null ? `${ordinal(position ?? 0)} · ` : ""}${waited}`
       }
-      secondLine={running ? undefined : reason}
+      secondLine={running || orphan !== null ? undefined : reason}
       facts={facts}
       menu={<RowMenuButton label={`Actions for ${name}`} actions={menu} onAction={run} />}
     >
       {entry.ask === undefined ? null : (
         <RunnerAskRows entry={entry} ask={entry.ask} state={state} actions={actions} />
+      )}
+      {orphan === null ? null : (
+        <>
+          <ListRowLayout
+            icon="person.badge.clock"
+            label="Stopped agent's place"
+            description={orphan}
+          />
+          <SettingsActionRow
+            icon="stop.fill"
+            label="Stop"
+            tone="danger"
+            disabled={!actions.canChange}
+            onPress={() => actions.cancel(entry)}
+          />
+        </>
       )}
     </HeavyRow>
   );
