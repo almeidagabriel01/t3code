@@ -607,6 +607,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         ...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
         ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
         ClaudeAdapterV2.CLAUDE_GROUP_MEMBER_T3_MCP_TOOL,
+        ClaudeAdapterV2.CLAUDE_DECISION_T3_MCP_TOOL,
       ],
       mcpServers: T3_MCP_SERVERS,
     });

@@ -2068,6 +2068,8 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
  * group's chat and tasks inside T3, never the machine, so a read-only member can still take part.
  */
 export const CLAUDE_GROUP_MEMBER_T3_MCP_TOOL = "mcp__t3-code__t3_group";
+/** Asking the user with t3_decision changes only T3's own state too, so read-only agents ask freely. */
+export const CLAUDE_DECISION_T3_MCP_TOOL = "mcp__t3-code__t3_decision";
 
 // T3 waits can block for an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
@@ -2115,7 +2117,11 @@ export function claudeMcpQueryOverrides(input: {
     };
   }
   const mcpAllowedTools = input.readOnlySandbox
-    ? [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS, CLAUDE_GROUP_MEMBER_T3_MCP_TOOL]
+    ? [
+        ...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
+        CLAUDE_GROUP_MEMBER_T3_MCP_TOOL,
+        CLAUDE_DECISION_T3_MCP_TOOL,
+      ]
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(
