@@ -21,7 +21,9 @@ import {
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { getProviderSkillsForSlashMenu } from "@t3tools/client-runtime/providerSkills";
 import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
@@ -36,11 +38,16 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { ComposerActionButton } from "../../components/ComposerToolbar";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { FAILED_ATTACHMENT_BLOCK_REASON } from "../../lib/composerAttachmentUploadQueue";
+import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
@@ -57,7 +64,12 @@ import {
 } from "../../state/use-composer-drafts";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
-import { ComposerPopoverSurface } from "../threads/ComposerCommandPopover";
+import {
+  ComposerCommandPopover,
+  ComposerPopoverSurface,
+  type ComposerCommandItem,
+} from "../threads/ComposerCommandPopover";
+import { composerSkillItems, composerSlashSkillItems } from "../threads/composerSkillItems";
 import { ComposerSurface } from "../threads/ThreadComposer";
 import {
   ComposerDictationCancelAction,
@@ -69,12 +81,10 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
-import {
-  clearGroupAttachments,
-  GroupAttachmentChips,
-  useGroupAttachments,
-} from "./GroupAttachments";
+import { clearGroupAttachments, useGroupAttachments } from "./GroupAttachments";
+import { GroupContextMeter } from "./GroupContextMeter";
 import { AssistantAvatar } from "./assistantPresentation";
+import { useGroupDraftSkills } from "./useGroupDraftSkills";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
@@ -436,6 +446,8 @@ export function GroupComposer(props: {
   // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
   const sending = shown !== null && !shown.failed;
   const [error, setError] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once from that tab.
   const inFlight = useRef(new Set<AssistantGroupTabKey | null>());
@@ -480,6 +492,32 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
+  const skills = useGroupDraftSkills({
+    environmentId: props.environmentId,
+    text,
+    members: props.members,
+    lead,
+    replyTo: props.replyingTo?.to ?? null,
+    model: props.projectModel?.messageModel,
+  });
+  // `@` and `#` stay the group's; only the thread's skill triggers carry over.
+  // No context chips (file, thread, card): the group post has no `context` field yet (spec D3).
+  const detected =
+    collapsed && mention === null && projectMention === null && skills.length > 0
+      ? detectComposerTrigger(text, caret)
+      : null;
+  const skillAt =
+    detected?.kind === "skill" || detected?.kind === "slash-command" ? detected : null;
+  const skillOptions =
+    skillAt === null
+      ? []
+      : skillAt.kind === "skill"
+        ? composerSkillItems(skills, skillAt.query, false)
+        : composerSlashSkillItems(
+            getProviderSkillsForSlashMenu(skills, true),
+            skillAt.query.toLowerCase(),
+            false,
+          );
   const attached = useGroupAttachments(
     groupKey,
     props.environmentId,
@@ -518,6 +556,15 @@ export function GroupComposer(props: {
   ) => {
     const next = insertAssistantGroupMention(base, at, option);
     write(next.text, next.caret);
+  };
+
+  const pickSkill = (item: ComposerCommandItem) => {
+    if (skillAt === null || item.type !== "skill") return;
+    const replacement = `$${item.skill.name} `;
+    write(
+      text.slice(0, skillAt.rangeStart) + replacement + text.slice(skillAt.rangeEnd),
+      skillAt.rangeStart + replacement.length,
+    );
   };
 
   const pickProject = (project: GroupComposerProjectOption) => {
@@ -631,7 +678,8 @@ export function GroupComposer(props: {
   };
 
   const showsProject = elsewhere || lockedProject !== null || props.projects.length > 1;
-  const shownError = shown?.error ?? error;
+  const shownError =
+    shown?.error ?? error ?? (attached.failed ? FAILED_ATTACHMENT_BLOCK_REASON : null);
   const lineHeight = bodyText.lineHeight;
   const editorHeight =
     Math.min(Math.max(contentHeight, lineHeight), lineHeight * EDITOR_MAX_LINES) + 2 * EDITOR_INSET;
@@ -650,6 +698,14 @@ export function GroupComposer(props: {
           onPickProject={pickProject}
         />
       )}
+      {skillOptions.length === 0 ? null : (
+        <ComposerCommandPopover
+          items={skillOptions}
+          triggerKind="skill"
+          isLoading={false}
+          onSelect={pickSkill}
+        />
+      )}
       <ComposerSurface style={{ borderRadius: 24, borderCurve: "continuous", paddingVertical: 4 }}>
         <ComposerDictationError
           error={voice.state.phase === "error" ? voice.state.error : null}
@@ -664,10 +720,30 @@ export function GroupComposer(props: {
         )}
         {attached.items.length === 0 ? null : (
           <View className="px-3 pt-2">
-            <GroupAttachmentChips
-              items={attached.items}
+            <ComposerAttachmentStrip
+              attachments={attached.items.map((item) => item.source)}
+              ownUploads={attached.uploads}
               onRemove={attached.remove}
-              onRetry={attached.retry}
+              onPressPreview={(source) => {
+                setPreviewVideo(null);
+                setPreviewFile(source);
+              }}
+              onPressVideo={(attachment, sourceIdentifier) => {
+                setPreviewFile(null);
+                setPreviewVideo({ type: "local", attachment, sourceIdentifier });
+              }}
+              // No thread to open it in: the system viewer shows the local file.
+              onPressDocument={(attachment) => {
+                if (!isFileBackedComposerAttachment(attachment)) return;
+                setPreviewVideo(null);
+                setPreviewFile({
+                  kind: "document",
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  attachment,
+                  sourceIdentifier: `draft-file:${attachment.id}`,
+                });
+              }}
             />
           </View>
         )}
@@ -677,6 +753,7 @@ export function GroupComposer(props: {
             draftKey={draftKey}
             environmentId={props.environmentId}
             groupMentions={composerGroupMentions(props.members, props.projects, faces)}
+            skills={skills}
             multiline
             value={text}
             selection={selection}
@@ -838,6 +915,13 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
+            <GroupContextMeter
+              environmentId={props.environmentId}
+              chat={props.chat}
+              text={text}
+              members={props.members}
+              leadId={props.leadId}
+            />
             <View className="flex-1" />
             <ComposerDictationStartAction
               state={voice.state}
@@ -872,6 +956,8 @@ export function GroupComposer(props: {
           {shownError}
         </Text>
       )}
+      <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
     </View>
   );
 }

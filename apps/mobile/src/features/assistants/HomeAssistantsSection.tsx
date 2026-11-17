@@ -3,7 +3,12 @@ import { assistantGroupFoldKey, visibleAssistants } from "@t3tools/client-runtim
 import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProjectAccess";
 import { assistantFace, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { assistantSectionThreadKeys } from "@t3tools/client-runtime/assistantTasks";
-import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
+import {
+  folderIndicatorDetail,
+  folderIndicatorTarget,
+  zoneIndicatorLabel,
+  type ZoneIndicator,
+} from "@t3tools/client-runtime/sidebarZones";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -18,7 +23,7 @@ import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { cn } from "../../lib/cn";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { useNowMinuteMs } from "../../lib/clock";
-import { useQuietThreadShells } from "../../state/entities";
+import { useProjects, useQuietThreadShells } from "../../state/entities";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import {
   useAssistantLiveWork,
@@ -244,6 +249,66 @@ function IndicatorBadge(props: {
           {label}
         </Text>
       )}
+    </View>
+  );
+}
+
+/**
+ * A group's status. A long press says where it comes from (which tab waits, works or is unread);
+ * a tap on "needs you" opens the chat at the request that waits, else the chat.
+ */
+function FolderIndicator(props: {
+  readonly environmentId: AssistantTeamEntry["environmentId"];
+  readonly team: AssistantTeamEntry["team"];
+  readonly kind: ZoneIndicator["kind"];
+  readonly count: number;
+  readonly sidebar: boolean;
+  readonly narrow: boolean;
+}) {
+  const openTeam = useOpenAssistantTeam();
+  const projects = useProjects();
+  const { environmentId, team } = props;
+  const label = indicatorLabel({ kind: props.kind, count: props.count } as ZoneIndicator, false);
+  const detail =
+    team.chat === undefined
+      ? []
+      : folderIndicatorDetail({
+          chat: team.chat,
+          projects: projects.filter((project) => project.environmentId === environmentId),
+          groupProjectIds: team.projectIds,
+        });
+  const target = props.kind === "needs" ? folderIndicatorTarget(team.chat) : null;
+  return (
+    // The menu ignores layout classes, so the badge's place in the row sits on this view.
+    <View className="shrink-0">
+      <Menu
+        title={label}
+        actions={detail.map((line, index) => ({
+          id: `detail-${index}`,
+          title: line,
+          attributes: { disabled: true },
+        }))}
+        shouldOpenOnLongPress
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={[label, ...detail].join(". ")}
+          accessibilityHint={
+            target === null ? "Opens the chat" : "Opens the request that waits on you"
+          }
+          hitSlop={6}
+          onPress={() => openTeam.chat(environmentId, team.id, target)}
+          className="min-h-8 cursor-pointer justify-center rounded-full px-1 active:opacity-70"
+        >
+          <IndicatorBadge
+            kind={props.kind}
+            count={props.count}
+            assistant={false}
+            sidebar={props.sidebar}
+            narrow={props.narrow}
+          />
+        </Pressable>
+      </Menu>
     </View>
   );
 }
@@ -564,16 +629,17 @@ const FolderRow = memo(function FolderRow(props: {
             {EMPTY_GROUP_LABEL}
           </Text>
         ) : null}
-        {props.indicatorKind !== null ? (
-          <IndicatorBadge
-            kind={props.indicatorKind}
-            count={props.indicatorCount}
-            assistant={false}
-            sidebar={props.sidebar}
-            narrow={narrow}
-          />
-        ) : null}
       </Pressable>
+      {props.indicatorKind !== null ? (
+        <FolderIndicator
+          environmentId={environmentId}
+          team={team}
+          kind={props.indicatorKind}
+          count={props.indicatorCount}
+          sidebar={props.sidebar}
+          narrow={narrow}
+        />
+      ) : null}
       <RowMenuButton
         label={`${team.name} actions`}
         sidebar={props.sidebar}

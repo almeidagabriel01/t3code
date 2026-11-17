@@ -640,6 +640,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
+          "apps/mobile/src/features/threads/ComposerContextMeter.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/AssistantMarkdownContent.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",

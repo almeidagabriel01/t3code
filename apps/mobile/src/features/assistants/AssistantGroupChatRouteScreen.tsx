@@ -13,6 +13,8 @@ import {
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
+  assistantGroupMemberWork,
+  assistantGroupWaitingRequests,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
   assistantGroupLandedPick,
@@ -66,11 +68,19 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type ComponentProps,
+  type ReactNode,
   type Ref,
 } from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import Animated, { useReducedMotion, withTiming } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  ReduceMotion,
+  useReducedMotion,
+  withTiming,
+} from "react-native-reanimated";
 
 import { FoldableContent } from "../../components/FoldableContent";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -115,15 +125,20 @@ import {
   type MarkdownStyleSet,
 } from "../threads/AssistantMarkdownContent";
 import { ASSISTANT_FOLDED_HEIGHT } from "../threads/assistantMessageFold";
+import { FloatingScrollToEndButton } from "../threads/floating-working-control";
 import { TaskEventActivityRow } from "../threads/TaskEventActivityRow";
-import { useMarkdownStyles } from "../threads/ThreadFeed";
+import {
+  isMediaAttachment,
+  MessageAttachmentList,
+  useMarkdownStyles,
+  UserMessageMedia,
+} from "../threads/ThreadFeed";
 import {
   useMarkdownLinkHost,
   useMarkdownLinks,
   type MarkdownLinkContext,
 } from "../threads/useThreadMarkdownLinks";
 import { WorkedForFold } from "../threads/WorkedForFold";
-import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
   type GroupComposerProject,
@@ -132,7 +147,9 @@ import {
   type GroupSendResult,
   type GroupSendRouting,
 } from "./GroupComposer";
-import { GroupProjectTabs } from "./GroupProjectTabs";
+import { GroupMemberWorkStrip, RequestOwners, RequestTaskTree } from "./GroupMemberWork";
+import { GroupPinnedRows, GroupProjectTabs } from "./GroupProjectTabs";
+import { GroupWaitingStrip } from "./GroupWaitingStrip";
 import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
 import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
@@ -164,6 +181,10 @@ const mentionChip = (
 
 const NEW_JUMP_MIN_ROWS = 4;
 const HIGHLIGHT_MS = 1200;
+const NO_PENDING_ATTACHMENTS: ComponentProps<typeof UserMessageMedia>["pendingAttachments"] = [];
+const noop = () => {};
+const SCROLL_TO_END_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
+const SCROLL_TO_END_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 /** One line of a message, for a quote. */
 const groupMessageExcerpt = (text: string) =>
@@ -464,7 +485,7 @@ function FeedRow(
   const { message } = props.row;
   const styles = useMarkdownStyles();
   const { appearance } = useAppearancePreferences();
-  const { fontScale } = useWindowDimensions();
+  const { fontScale, width: windowWidth } = useWindowDimensions();
   const rowSizing = deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale });
   const iconColor = useUniwindTheme()["--color-icon-subtle"];
   const [workedOpen, setWorkedOpen] = useState(false);
@@ -536,6 +557,8 @@ function FeedRow(
     const parts = splitAssistantTransferText(message.text);
     const label =
       message.authorLabel ?? author?.name ?? (message.author === "routine" ? "Schedule" : "Agent");
+    const attachments = message.attachments ?? [];
+    const media = attachments.filter(isMediaAttachment);
     return (
       <View
         testID="group-request"
@@ -550,6 +573,18 @@ function FeedRow(
           </View>
         )}
         {quoted(fromUser ? "end" : "start")}
+        {media.length === 0 ? null : (
+          <View className="w-[85%]">
+            <UserMessageMedia
+              attachments={media}
+              pendingAttachments={NO_PENDING_ATTACHMENTS}
+              environmentId={props.environmentId}
+              maxWidth={(windowWidth - 32) * 0.85}
+              onPressPreview={props.onPreview}
+              onPlaybackStart={noop}
+            />
+          </View>
+        )}
         <View
           className={cn(
             "max-w-[85%] rounded-[20px] px-3.5 py-2.5",
@@ -574,12 +609,13 @@ function FeedRow(
               />
             </View>
           )}
+          <MessageAttachmentList
+            attachments={attachments.filter((attachment) => !isMediaAttachment(attachment))}
+            environmentId={props.environmentId}
+            onPressPreview={props.onPreview}
+            onPlaybackStart={noop}
+          />
         </View>
-        <GroupMessageAttachments
-          environmentId={props.environmentId}
-          attachments={message.attachments ?? []}
-          onPreview={props.onPreview}
-        />
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <Text testID="group-routing" className="text-xs text-foreground-muted">
             {props.lead === undefined
@@ -717,20 +753,25 @@ function RequestHeader(props: {
   readonly projectName: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  /** The request's owners, each opening its thread. */
+  readonly owners: ReactNode;
 }) {
   const { block } = props;
   if (!props.expanded) {
     const activity = assistantGroupActivity(block.status);
     return (
-      <View testID="group-request-line" className="mx-3 mt-4">
-        <TaskEventActivityRow
-          title={block.title}
-          status={activity.status}
-          label={activity.label}
-          project={props.projectName}
-          onOpen={props.onToggle}
-          action="Open request"
-        />
+      <View testID="group-request-line" className="mx-3 mt-4 flex-row items-center gap-1">
+        <View className="min-w-0 flex-1">
+          <TaskEventActivityRow
+            title={block.title}
+            status={activity.status}
+            label={activity.label}
+            project={props.projectName}
+            onOpen={props.onToggle}
+            action="Open request"
+          />
+        </View>
+        {props.owners}
       </View>
     );
   }
@@ -776,6 +817,7 @@ function RequestHeader(props: {
           )}
         </View>
       </View>
+      {props.owners}
     </Pressable>
   );
 }
@@ -786,19 +828,23 @@ function AllRequestLine(props: {
   readonly chip: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly owners: ReactNode;
 }) {
   const activity = assistantGroupActivity(props.block.status);
   return (
-    <View testID="group-request-line" className="mx-3 mt-4">
-      <TaskEventActivityRow
-        title={props.block.title}
-        status={activity.status}
-        label={activity.label}
-        {...(props.chip === null ? {} : { chip: { label: props.chip } })}
-        actionLabel={props.expanded ? "Collapse" : "Expand"}
-        action={props.expanded ? "Collapse request" : "Expand request"}
-        onOpen={props.onToggle}
-      />
+    <View testID="group-request-line" className="mx-3 mt-4 flex-row items-center gap-1">
+      <View className="min-w-0 flex-1">
+        <TaskEventActivityRow
+          title={props.block.title}
+          status={activity.status}
+          label={activity.label}
+          {...(props.chip === null ? {} : { chip: { label: props.chip } })}
+          actionLabel={props.expanded ? "Collapse" : "Expand"}
+          action={props.expanded ? "Collapse request" : "Expand request"}
+          onOpen={props.onToggle}
+        />
+      </View>
+      {props.owners}
     </View>
   );
 }
@@ -833,9 +879,12 @@ function RequestFooter(props: {
   readonly disabled: boolean;
   readonly onPickProject: (project: GroupComposerProject) => void;
   readonly onReply: () => void;
+  /** The request's tasks as a tree, when more than one member works it. */
+  readonly tree: ReactNode;
 }) {
   return (
     <View className="gap-2 px-4 pb-1 pt-1.5">
+      {props.tree}
       {props.block.status === "needs-project" && props.projects.length > 0 ? (
         <View testID="group-request-projects" className="gap-1.5">
           <Text className="text-xs text-foreground-muted">Pick a project for this request</Text>
@@ -910,14 +959,30 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
     groupProjectIds,
     environmentProjects,
   ).map((id) => ({ id, name: projectName(id) }));
-  return { team, everyone, byId, members, groupProjects, projectName };
+  // Only current members are named on work: anyone else shows as a removed member.
+  const memberById = new Map<string, Assistant>(members.map((member) => [member.id, member]));
+  return { team, everyone, byId, members, memberById, groupProjects, projectName };
+}
+
+/** Opens a member's thread by id, so the tablet sidebar's chat needs no route. */
+function useOpenGroupThread(environmentId: EnvironmentId) {
+  const selectDetail = useSelectWorkspaceDetail();
+  return (threadId: string) => {
+    const params = { environmentId: String(environmentId), threadId: ThreadId.make(threadId) };
+    selectDetail({ name: "Thread", params });
+  };
 }
 
 /** What the screen asks of its feed, which remounts per tab. */
 type GroupFeedHandle = {
   readonly jump: (id: AssistantGroupMessage["id"]) => void;
+  /** Pages back until the request shows, then opens it, or says it is gone. */
+  readonly goToRequest: (requestId: string) => void;
   readonly scrollToEnd: () => void;
 };
+
+/** A quoted message's row, or a request's title row. */
+type JumpTarget = { readonly kind: "message" | "request"; readonly id: string };
 
 /**
  * One tab's messages: its own pages, folds, New line and read marker. The screen keys it by tab,
@@ -935,14 +1000,14 @@ function GroupFeed({
   /** null when the group has no tabs: every request, as before tabs. */
   readonly tab: AssistantGroupTab | null;
   readonly live: AssistantGroupChatState | null;
-  /** The pinned tab row's height on iOS, added under the bar's own inset. */
+  /** The pinned rows' height on iOS, added under the bar's own inset. */
   readonly topInset: number | undefined;
   readonly onReply: (target: GroupReply) => void;
 }) {
   const { environmentId, team, tab, live, topInset } = props;
   const teamId = team.id;
-  const { byId, members, groupProjects, projectName } = props.people;
-  const selectDetail = useSelectWorkspaceDetail();
+  const { themeAppearance } = useAppearancePreferences();
+  const { byId, members, memberById, groupProjects, projectName } = props.people;
   const markdownStyles = useMarkdownStyles();
   const links = useMarkdownLinkHost({
     environmentId,
@@ -955,12 +1020,21 @@ function GroupFeed({
   const projects = useProjects();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  // A message to bring into view once the list holds it (its request may still be folded).
-  const pendingJump = useRef<AssistantGroupMessage["id"] | null>(null);
-  const [highlight, setHighlight] = useState<{
-    readonly id: AssistantGroupMessage["id"];
-    readonly nonce: number;
-  } | null>(null);
+  // One page read at a time, shared by "Load earlier" and a jump to a request.
+  const paging = useRef(false);
+  const mounted = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a jump that pages back must not act on a feed that left the screen
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // A message or request to bring into view once the list holds it (it may still be folded).
+  const pendingJump = useRef<JumpTarget | null>(null);
+  const [highlight, setHighlight] = useState<(JumpTarget & { readonly nonce: number }) | null>(
+    null,
+  );
   const highlightNonce = useRef(0);
   // The user's own fold or open of a request, over the default.
   const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -1017,11 +1091,12 @@ function GroupFeed({
   );
   const jumpTo =
     newIndex >= 0 && feedEntries.length - newIndex > NEW_JUMP_MIN_ROWS ? newIndex : null;
+  // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
+  const atEnd = scrolled ? atBottom : jumpTo === null;
   useGroupReadMarker({
     latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
     readSeq,
-    // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
-    atBottom: scrolled ? atBottom : jumpTo === null,
+    atBottom: atEnd,
     enabled: team.chat !== undefined && actions.canMarkRead && !isAll,
     markRead: (next) =>
       void actions.markRead(
@@ -1030,10 +1105,14 @@ function GroupFeed({
       ),
   });
 
-  const entryIndexOf = (id: AssistantGroupMessage["id"]) =>
-    feedEntries.findIndex((entry) => entry.kind === "row" && entry.row.message.id === id);
+  const entryIndexOf = (target: JumpTarget) =>
+    feedEntries.findIndex((entry) =>
+      target.kind === "request"
+        ? entry.kind === "header" && entry.block.requestId === target.id
+        : entry.kind === "row" && entry.row.message.id === target.id,
+    );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a quoted message once the request holding it has opened
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a quoted message or a request once the list holds it
   useEffect(() => {
     if (pendingJump.current === null) return;
     const index = entryIndexOf(pendingJump.current);
@@ -1041,6 +1120,18 @@ function GroupFeed({
     pendingJump.current = null;
     void list.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 });
   });
+
+  /** Scrolls to the target once the list holds it and tints it once. */
+  const bringIntoView = (target: JumpTarget) => {
+    pendingJump.current = target;
+    highlightNonce.current += 1;
+    const nonce = highlightNonce.current;
+    setHighlight({ ...target, nonce });
+    setTimeout(
+      () => setHighlight((current) => (current?.nonce === nonce ? null : current)),
+      HIGHLIGHT_MS,
+    );
+  };
 
   /** Brings a quoted message into view and tints it once, opening its request if folded. */
   const jump = (id: AssistantGroupMessage["id"]) => {
@@ -1055,24 +1146,60 @@ function GroupFeed({
     if (holder.kind === "request") {
       setToggles((current) => new Map(current).set(holder.block.requestId, true));
     }
-    pendingJump.current = id;
-    highlightNonce.current += 1;
-    const nonce = highlightNonce.current;
-    setHighlight({ id, nonce });
-    setTimeout(
-      () => setHighlight((current) => (current?.nonce === nonce ? null : current)),
-      HIGHLIGHT_MS,
-    );
+    bringIntoView({ kind: "message", id });
   };
+
+  const goToRequest = async (requestId: string) => {
+    if (chat === null || paging.current) return;
+    const holder = (state: AssistantGroupChatState) =>
+      [...state.messages.values()].find((message) => message.requestId === requestId);
+    // ponytail: pages one by one; a request far back would want a server read around it.
+    let state = chat;
+    let failed = false;
+    const loaded: AssistantGroupsHistoryResult[] = [];
+    paging.current = true;
+    setLoadingOlder(true);
+    while (holder(state) === undefined && state.hasMore) {
+      const reply = await actions.olderThan(teamId, state, scope);
+      if (!reply.ok) {
+        failed = true;
+        Dialog.alert("Could not load earlier messages", reply.message);
+        break;
+      }
+      loaded.push(reply.value);
+      state = applyAssistantGroupHistory(state, reply.value);
+    }
+    paging.current = false;
+    // The feed left the screen while it paged.
+    if (!mounted.current) return;
+    setLoadingOlder(false);
+    if (loaded.length > 0) setPages((current) => [...current, ...loaded]);
+    const held = holder(state);
+    if (held === undefined) {
+      if (!failed) Dialog.alert("Request not found", "It is no longer in this chat.");
+      return;
+    }
+    const projectId = assistantGroupRequestProject(state, held.requestId);
+    if (!assistantGroupInScope({ projectId }, scope)) {
+      return Dialog.alert("Request is in another tab", "Open its project's tab or All to see it.");
+    }
+    setToggles((current) => new Map(current).set(requestId, true));
+    bringIntoView({ kind: "request", id: requestId });
+  };
+
+  const scrollToEnd = () => list.current?.scrollToEnd({ animated: true });
   useImperativeHandle(ref, () => ({
     jump,
-    scrollToEnd: () => list.current?.scrollToEnd({ animated: true }),
+    goToRequest: (requestId) => void goToRequest(requestId),
+    scrollToEnd,
   }));
 
   const loadOlder = async () => {
-    if (chat === null || !chat.hasMore || loadingOlder) return;
+    if (chat === null || !chat.hasMore || paging.current) return;
+    paging.current = true;
     setLoadingOlder(true);
     const reply = await actions.olderThan(teamId, chat, scope);
+    paging.current = false;
     setLoadingOlder(false);
     if (!reply.ok) return Dialog.alert("Could not load earlier messages", reply.message);
     setPages((current) => [...current, reply.value]);
@@ -1091,10 +1218,7 @@ function GroupFeed({
     if (!reply.ok) Dialog.alert("Could not update the task", reply.message);
   };
 
-  const openThread = (threadId: string) => {
-    const params = { environmentId: String(environmentId), threadId: ThreadId.make(threadId) };
-    selectDetail({ name: "Thread", params });
-  };
+  const openThread = useOpenGroupThread(environmentId);
 
   const requestProject = (requestId: AssistantGroupMessage["requestId"]) =>
     chat === null ? null : assistantGroupRequestProject(chat, requestId);
@@ -1117,6 +1241,8 @@ function GroupFeed({
     if (!reply.ok) Dialog.alert("Could not set the project", reply.message);
   };
 
+  const work = { environmentId, members: memberById, onOpenThread: openThread };
+
   const toggle = (block: AssistantGroupRequestBlock, expanded: boolean) =>
     setToggles((current) => new Map(current).set(block.requestId, !expanded));
 
@@ -1129,7 +1255,7 @@ function GroupFeed({
           ref={list}
           renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
           className="flex-1"
-          // Added to the bar's automatic inset, so the pinned tab row covers nothing.
+          // Added to the bar's automatic inset, so the pinned rows cover nothing.
           contentInset={topInset === undefined ? undefined : { top: topInset }}
           scrollIndicatorInsets={topInset === undefined ? undefined : { top: topInset }}
           data={feedEntries}
@@ -1183,26 +1309,46 @@ function GroupFeed({
           }
           renderItem={({ item }) =>
             item.kind === "header" ? (
-              isAll ? (
-                <AllRequestLine
-                  block={item.block}
-                  chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
-                  expanded={item.expanded}
-                  onToggle={() => toggle(item.block, item.expanded)}
-                />
-              ) : (
-                <RequestHeader
-                  block={item.block}
-                  projectName={
-                    item.block.projectId === null ? null : projectName(item.block.projectId)
-                  }
-                  expanded={item.expanded}
-                  onToggle={() => toggle(item.block, item.expanded)}
-                />
-              )
+              <View>
+                {isAll ? (
+                  <AllRequestLine
+                    block={item.block}
+                    chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
+                    expanded={item.expanded}
+                    onToggle={() => toggle(item.block, item.expanded)}
+                    owners={
+                      <RequestOwners
+                        {...work}
+                        tasks={item.block.rows.flatMap((row) => row.tasks)}
+                      />
+                    }
+                  />
+                ) : (
+                  <RequestHeader
+                    block={item.block}
+                    projectName={
+                      item.block.projectId === null ? null : projectName(item.block.projectId)
+                    }
+                    expanded={item.expanded}
+                    onToggle={() => toggle(item.block, item.expanded)}
+                    owners={
+                      <RequestOwners
+                        {...work}
+                        tasks={item.block.rows.flatMap((row) => row.tasks)}
+                      />
+                    }
+                  />
+                )}
+                {highlight?.kind === "request" && highlight.id === item.block.requestId ? (
+                  <JumpHighlight key={highlight.nonce} />
+                ) : null}
+              </View>
             ) : item.kind === "footer" ? (
               <RequestFooter
                 block={item.block}
+                tree={
+                  <RequestTaskTree {...work} tasks={item.block.rows.flatMap((row) => row.tasks)} />
+                }
                 projects={groupProjects}
                 disabled={archived || !actions.canPost}
                 onPickProject={(project) => void pickProject(item.block, project)}
@@ -1249,7 +1395,7 @@ function GroupFeed({
                     onOpenConversation={(task) => openThread(task.threadId)}
                     onOpenThread={openThread}
                   />
-                  {highlight?.id === item.row.message.id ? (
+                  {highlight?.kind === "message" && highlight.id === item.row.message.id ? (
                     <JumpHighlight key={highlight.nonce} />
                   ) : null}
                 </View>
@@ -1257,6 +1403,19 @@ function GroupFeed({
             )
           }
         />
+        {chat === null || atEnd ? null : (
+          <Animated.View
+            pointerEvents="box-none"
+            className="absolute bottom-2 left-0 right-0 items-center"
+            entering={SCROLL_TO_END_ENTERING}
+            exiting={SCROLL_TO_END_EXITING}
+          >
+            <FloatingScrollToEndButton
+              colorScheme={themeAppearance === "dark" ? "dark" : "light"}
+              onPress={scrollToEnd}
+            />
+          </Animated.View>
+        )}
         <VideoPreviewModal source={links.expandedVideo} onRequestClose={links.closeVideoPreview} />
         <FilePreviewModal source={links.expandedFile} onRequestClose={links.closeFilePreview} />
       </View>
@@ -1271,6 +1430,8 @@ export function AssistantGroupChatRouteScreen({
   readonly teamId: string;
   /** The tab a push opens, from its link. */
   readonly tab?: string;
+  /** A request to bring into view once the tab shows, as a needs-you indicator asks. */
+  readonly request?: string;
 }>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const teamId = AssistantTeamId.make(route.params.teamId);
@@ -1283,6 +1444,7 @@ export function AssistantGroupChatRouteScreen({
   const openInfo = useOpenAssistantInfo();
   const projects = useProjects();
   const people = useGroupPeople(environmentId, teamId);
+  const openThread = useOpenGroupThread(environmentId);
   const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
   const navigation = useNavigation();
@@ -1318,13 +1480,23 @@ export function AssistantGroupChatRouteScreen({
   );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
+  const pushedRequest = route.params.request;
+  const focusRequest = useEffectEvent((requestId: string) => {
+    feed.current?.goToRequest(requestId);
+    navigation.setParams({ request: undefined } as never);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link's one-shot intent: once its tab shows with its chat, the feed pages to the request
+  useEffect(() => {
+    if (pushedRequest === undefined || pushedTab !== undefined || pending || live === null) return;
+    focusRequest(pushedRequest);
+  }, [pushedRequest, pushedTab, pending, live]);
   // The reply being written, for the tab it was opened in.
   const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<GroupReply> | null>(null);
   // The composer's own project pick, until a send or another tab.
   const [projectPick, setProjectPick] = useState<AssistantGroupProjectPick | null>(null);
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
-  const [tabsHeight, setTabsHeight] = useState(0);
+  const [pinnedHeight, setPinnedHeight] = useState(0);
   // Another tab, chosen or not (the saved one loading, a removed one), drops the picks for good,
   // and an open reply, which would answer a request out of view; the draft itself stays.
   if (assistantGroupTabPick(projectPick, tabKey) !== projectPick) setProjectPick(null);
@@ -1432,14 +1604,40 @@ export function AssistantGroupChatRouteScreen({
   const converseDisabled = !flows.canConverse || team.chat?.working === true;
   // The server refuses these while tasks run; the menu says why instead of only greying them out.
   const converseHint = team.chat?.working === true ? { subtitle: "Stop its tasks first" } : {};
-  const tabRow =
-    tabs === null || tab === null ? null : (
-      <GroupProjectTabs
-        tabs={tabs}
-        activeKey={tab.key}
-        onSelect={selectTab}
-        onHeight={setTabsHeight}
-      />
+  const memberWork = live === null ? [] : assistantGroupMemberWork(live);
+  const waiting =
+    live === null
+      ? []
+      : assistantGroupWaitingRequests(live, team.chat?.scopes).filter((item) =>
+          assistantGroupInScope(item, scope ?? undefined),
+        );
+  const resume = async (task: AssistantGroupTask) => {
+    const reply = await actions.taskAction({ taskId: task.id, action: "resume" });
+    if (!reply.ok) Dialog.alert("Could not update the task", reply.message);
+  };
+  const pinned =
+    (tabs === null || tab === null) && memberWork.length === 0 && waiting.length === 0 ? null : (
+      <GroupPinnedRows onHeight={setPinnedHeight}>
+        {tabs === null || tab === null ? null : (
+          <GroupProjectTabs tabs={tabs} activeKey={tab.key} onSelect={selectTab} />
+        )}
+        <GroupWaitingStrip
+          environmentId={environmentId}
+          items={waiting}
+          members={people.memberById}
+          lead={members.find((member) => member.id === team.leadId)}
+          canResume={actions.canAct && !archived}
+          onOpen={(requestId) => feed.current?.goToRequest(requestId)}
+          onResume={(task) => void resume(task)}
+        />
+        <GroupMemberWorkStrip
+          environmentId={environmentId}
+          members={people.memberById}
+          work={memberWork}
+          projectName={projectName}
+          onOpenThread={openThread}
+        />
+      </GroupPinnedRows>
     );
   return (
     <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
@@ -1615,7 +1813,7 @@ export function AssistantGroupChatRouteScreen({
           },
         ]}
       />
-      {Platform.OS === "ios" ? null : tabRow}
+      {Platform.OS === "ios" ? null : pinned}
       {pending ? (
         <View className="flex-1" />
       ) : (
@@ -1628,11 +1826,11 @@ export function AssistantGroupChatRouteScreen({
           actions={actions}
           tab={tab}
           live={live}
-          topInset={tabRow !== null && Platform.OS === "ios" ? tabsHeight : undefined}
+          topInset={pinned !== null && Platform.OS === "ios" ? pinnedHeight : undefined}
           onReply={setReplyTo}
         />
       )}
-      {Platform.OS === "ios" ? tabRow : null}
+      {Platform.OS === "ios" ? pinned : null}
       {archived ? (
         <View
           accessibilityRole="alert"
