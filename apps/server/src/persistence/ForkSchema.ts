@@ -928,8 +928,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
           AS open_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           WHERE k.team_id = t.team_id AND k.status = 'running') AS running_tasks,
+        -- Only current members: a task left running by a removed member is not theirs to show.
         (SELECT json_group_array(g.owner_id) FROM (SELECT DISTINCT k.owner_id
-            FROM assistant_group_tasks k WHERE k.team_id = t.team_id AND k.status = 'running'
+            FROM assistant_group_tasks k
+            JOIN json_each(t.member_ids_json) member ON member.value = k.owner_id
+            WHERE k.team_id = t.team_id AND k.status = 'running'
             ORDER BY k.owner_id) g) AS running_member_ids_json,
         (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'

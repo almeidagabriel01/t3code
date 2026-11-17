@@ -1140,6 +1140,14 @@ it.effect("the team chat names the preview's project and counts every tab's runn
         [],
       ],
       [[[OTHER_TEAM, "ada", "running"]], []],
+      // A member removed from the team while its task still runs.
+      [
+        [
+          [TEAM, "gone", "running"],
+          [TEAM, "beto", "running"],
+        ],
+        ["beto"],
+      ],
     ];
     for (const [tasks, expected] of cases) {
       assert.deepEqual(yield* runningMembers(tasks), expected);
