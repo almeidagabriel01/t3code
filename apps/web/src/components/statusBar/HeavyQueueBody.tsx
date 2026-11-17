@@ -16,7 +16,9 @@ import {
   heavyWork,
   heavyWorkItems,
   heavyRowUsage,
+  jobCost,
   jobPriority,
+  orphanLine,
   machineSummaries,
   moveTarget,
   PRIORITY_CHANGE,
@@ -105,20 +107,21 @@ const ASK_REFRESH_MS = 1_000;
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 
 /** Ticks once a second only while `active`, so an idle list never repaints. */
-function useAskClock(active: boolean) {
+/** Ticks every `refreshMs` while a row counts down; null leaves the clock still. */
+function useRowClock(refreshMs: number | null) {
   const [now, setNow] = useState(() => Date.now());
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one-second timer for the ask countdown, running only while a question is shown
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer for the ask and orphan countdowns, running only while one is shown
   useEffect(() => {
-    if (!active) return;
+    if (refreshMs === null) return;
     const tick = () => setNow(Date.now());
     // The first tick catches up a clock that sat idle since mount.
     const first = setTimeout(tick, 0);
-    const timer = setInterval(tick, ASK_REFRESH_MS);
+    const timer = setInterval(tick, refreshMs);
     return () => {
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [active]);
+  }, [refreshMs]);
   return now;
 }
 
@@ -379,6 +382,9 @@ function QueueRow({
   const { threadId } = entry;
   const cpuLabel = jobPriority(entry).label;
   const reason = state.reasons[entry.id];
+  const cost = jobCost(state, entry);
+  const orphan = running ? null : orphanLine(entry, state.reclaimMinutes, now);
+  const classLabel = cost === null ? null : `${cost.label} · `;
   const machine = onLinux
     ? `Linux${state.linux === null ? "" : ` (${state.linux.host})`}`
     : MACHINE.mac.name;
@@ -403,12 +409,13 @@ function QueueRow({
       ? { label: "Running", value: <Elapsed since={entry.startedAt ?? entry.createdAt} /> }
       : {
           label: "Waiting",
-          value: (
+          value: orphan ?? (
             <>
               {ordinal(position ?? 0)} in line · <Elapsed since={entry.createdAt} />
             </>
           ),
         },
+    ...(cost === null ? [] : [{ label: "Class", value: `${cost.label} · ${cost.why}` }]),
     {
       label: "Priority",
       value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, cpuLabel]
@@ -465,16 +472,21 @@ function QueueRow({
           onLinux && entry.phase !== undefined && entry.phase !== "running" ? (
             RUNNER_PHASE_LABEL[entry.phase]
           ) : (
-            <Elapsed since={entry.startedAt ?? entry.createdAt} />
+            <>
+              {classLabel}
+              <Elapsed since={entry.startedAt ?? entry.createdAt} />
+            </>
           )
         ) : (
           <>
-            {ordinal(position ?? 0)} · <Elapsed since={entry.createdAt} />
+            {classLabel}
+            {orphan === null ? `${ordinal(position ?? 0)} · ` : null}
+            <Elapsed since={entry.createdAt} />
           </>
         )
       }
       usage={usage}
-      secondLine={running ? undefined : reason}
+      secondLine={running || orphan !== null ? undefined : reason}
       facts={facts}
       menu={
         <RowMenu
@@ -490,6 +502,24 @@ function QueueRow({
     >
       {entry.ask === undefined ? null : (
         <AskPrompt entry={entry} ask={entry.ask} state={state} actions={actions} now={now} />
+      )}
+      {orphan === null ? null : (
+        <div
+          role="group"
+          aria-label="Stopped agent's place"
+          className="mr-3 mb-2 ml-9 flex items-center gap-1.5 rounded-md border border-foreground/12 px-2 py-1.5 text-3xs"
+        >
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{orphan}</span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!actions.canChange}
+            onClick={() => void actions.cancel(entry.id, false)}
+          >
+            <CircleStopIcon aria-hidden />
+            Stop
+          </Button>
+        </div>
       )}
     </HeavyRow>
   );
@@ -598,7 +628,14 @@ export function HeavyWorkList({
           projects: projects.filter((project) => project.environmentId === environmentId),
           projectIdOfThread: threads.projectIdOfThread,
         });
-  const now = useAskClock(state.entries.some((entry) => entry.ask !== undefined));
+  // An orphan's countdown is in minutes, so it needs no per-second ticks.
+  const now = useRowClock(
+    state.entries.some((entry) => entry.ask !== undefined)
+      ? ASK_REFRESH_MS
+      : state.entries.some((entry) => entry.orphanedAt !== undefined)
+        ? 30_000
+        : null,
+  );
   const machineCpuCount = state.machine?.cpuCount ?? cpuCount;
   const groups = (["mac", "linux"] as const)
     .map((runner) => {
@@ -629,7 +666,7 @@ export function HeavyWorkList({
       position={position}
       state={state}
       actions={actions}
-      now={entry.ask === undefined ? 0 : now}
+      now={entry.ask === undefined && entry.orphanedAt === undefined ? 0 : now}
       cpuCount={machineCpuCount}
       threads={threads}
       scopeProjectId={projectId}

@@ -342,6 +342,7 @@ describe("heavyLimitIdle", () => {
   const QUEUE_OFF =
     "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.";
   const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
+  const QUEUE_ONLY = "Only applies while the heavy work queue is on.";
   it.each([
     ["macCpuCeilingPercent", true, false, "mac", null],
     ["macCpuCeilingPercent", false, true, "automatic", null],
@@ -354,6 +355,12 @@ describe("heavyLimitIdle", () => {
     ["heavyOverLimitSeconds", false, true, "linux", null],
     ["heavyOverLimitSeconds", true, false, "mac", null],
     ["heavyOverLimitSeconds", false, false, "automatic", BOTH_OFF],
+    ["headPatienceMinutes", true, false, "mac", null],
+    ["headPatienceMinutes", false, true, "automatic", QUEUE_ONLY],
+    ["quickSeconds", false, true, "automatic", QUEUE_ONLY],
+    ["quickSlots", false, true, "macFirst", QUEUE_ONLY],
+    ["serviceIdleMinutes", false, null, null, QUEUE_ONLY],
+    ["reclaimMinutes", false, false, "mac", QUEUE_ONLY],
   ] as const)(
     "%s with queue %s, Runner %s, %s",
     (key, queueEnabled, runnerEnabled, runnerWhere, idle) => {

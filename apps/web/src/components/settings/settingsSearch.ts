@@ -1609,6 +1609,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue head of line patience wait backfill pass skip minutes"],
   },
   {
+    id: "heavy-work-quick-seconds",
+    title: HEAVY_LIMIT_COPY.quickSeconds.title,
+    description: HEAVY_LIMIT_COPY.quickSeconds.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue quick job short fast lane seconds length"],
+  },
+  {
+    id: "heavy-work-quick-slots",
+    title: HEAVY_LIMIT_COPY.quickSlots.title,
+    description: HEAVY_LIMIT_COPY.quickSlots.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue quick jobs at once slots lane parallel"],
+  },
+  {
+    id: "heavy-work-service-idle",
+    title: HEAVY_LIMIT_COPY.serviceIdleMinutes.title,
+    description: HEAVY_LIMIT_COPY.serviceIdleMinutes.description,
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue keeps running dev server watcher service idle background minutes",
+    ],
+  },
+  {
+    id: "heavy-work-reclaim",
+    title: HEAVY_LIMIT_COPY.reclaimMinutes.title,
+    description: HEAVY_LIMIT_COPY.reclaimMinutes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue stopped agent orphan keep place reclaim minutes"],
+  },
+  {
     id: "heavy-work-claude-hook",
     title: "Claude Code hook for the heavy work queue",
     description:

@@ -1,6 +1,7 @@
 import {
   heavyHoldText,
   type HeavyCommand,
+  type HeavyQueueCostClass,
   type HeavyQueueEntry,
   type HeavyQueueHold,
   type HeavyQueueRule,
@@ -371,10 +372,11 @@ export function heavyWork(
 } {
   const machineOf = (entry: HeavyQueueEntry): HeavyRunner =>
     runnerBadge(entry, state)?.runner ?? "mac";
+  // An orphan holds no place in line, so it sits after every waiter and leaves their places alone.
   const of = (runner: HeavyRunner, started: boolean) =>
-    state.entries.filter(
-      (entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner,
-    );
+    state.entries
+      .filter((entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner)
+      .sort((a, b) => Number(a.orphanedAt !== undefined) - Number(b.orphanedAt !== undefined));
   const jobPids = new Set(
     state.entries.flatMap((entry) =>
       entry.startedAt !== null && entry.server !== true ? [entry.pid] : [],
@@ -393,6 +395,34 @@ export function heavyWork(
     linux: { running: of("linux", true), direct: [], waiting: of("linux", false) },
     detached: commands.filter((command) => command.source === "detached"),
   };
+}
+
+const COST_LABEL: Record<HeavyQueueCostClass, string> = {
+  quick: "Quick",
+  standard: "Job",
+  service: "Keeps running",
+};
+
+/** The class a row's job runs as, and why, as the queue's admission sees it. */
+export function jobCost(
+  state: Pick<HeavyQueueState, "costs">,
+  entry: HeavyQueueEntry,
+): { readonly class: HeavyQueueCostClass; readonly label: string; readonly why: string } | null {
+  const cost = state.costs?.[entry.id];
+  return cost === undefined
+    ? null
+    : { class: cost.class, label: COST_LABEL[cost.class], why: cost.why };
+}
+
+/** What an orphaned waiter's row says instead of its place; null for any other row. */
+export function orphanLine(
+  entry: HeavyQueueEntry,
+  reclaimMinutes: number,
+  now: number,
+): string | null {
+  if (entry.orphanedAt === undefined) return null;
+  const left = Math.max(1, Math.ceil((entry.orphanedAt + reclaimMinutes * 60_000 - now) / 60_000));
+  return `Waiting for the agent to ask again · ${left} min left`;
 }
 
 /** Every row of the heavy work, both machines: what its count and a project's share count. */
@@ -427,12 +457,16 @@ export interface MachineBarRow {
   readonly memory: MachineGauge | null;
   readonly offline: { readonly text: string; readonly hint: string } | null;
   /** Null on the Mac while the queue is off; `queueOff` then holds its note. */
-  readonly slots: {
-    readonly running: number;
-    readonly slots: number;
-    readonly hint: string;
-  } | null;
+  readonly slots: MachineSlots | null;
+  /** Quick jobs run in slots of their own; null while none runs. */
+  readonly quick: MachineSlots | null;
   readonly queueOff: string | null;
+}
+
+interface MachineSlots {
+  readonly running: number;
+  readonly slots: number;
+  readonly hint: string;
 }
 
 const NO_GAUGE = (hint: string): MachineGauge => ({ share: null, value: "--", warn: false, hint });
@@ -493,7 +527,9 @@ export function machineBar(
   const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
   const cpuWarning = warning("cpu");
   const memoryWarning = warning("memory");
-  const macRunning = work.mac.running.length;
+  const classOf = (entry: HeavyQueueEntry) => state.costs?.[entry.id]?.class ?? "standard";
+  const macRunning = work.mac.running.filter((entry) => classOf(entry) === "standard").length;
+  const quickRunning = work.mac.running.filter((entry) => classOf(entry) === "quick").length;
   const mac: MachineBarRow = {
     runner: "mac",
     online: true,
@@ -533,6 +569,14 @@ export function machineBar(
           ),
         }
       : null,
+    quick:
+      quickRunning === 0
+        ? null
+        : {
+            running: quickRunning,
+            slots: state.quickSlots,
+            hint: `${quickRunning} of ${state.quickSlots} quick jobs running on this Mac`,
+          },
     queueOff: state.enabled ? null : (note ?? ""),
   };
   if (linux === null) return { mac, linux: null };
@@ -578,6 +622,7 @@ export function machineBar(
         slots: linux.slots,
         hint: `${linuxRunning} of ${linux.slots} running on Linux${state.enabled && state.paused ? " · paused" : ""}`,
       },
+      quick: null,
       queueOff: null,
     },
   };

@@ -10,6 +10,8 @@ import {
   dropTarget,
   formatDuration,
   formatFreeMemory,
+  jobCost,
+  orphanLine,
   heavyCommandKey,
   heavyWork,
   jobPriority,
@@ -494,6 +496,12 @@ describe("heavyWork", () => {
       expected: { mac: [], linux: ["l"], detached: [] },
     },
     {
+      name: "an orphan sits after every waiter, so their places stay as the queue counts them",
+      entries: [job("o", { orphanedAt: 1 }), job("w1"), job("w2")],
+      commands: [],
+      expected: { mac: ["w1", "w2", "o"], linux: [], detached: [] },
+    },
+    {
       name: "a queue command whose entry already finished shows nothing",
       entries: [],
       commands: [cmd({ source: "queue", entryId: "gone", pid: 32 })],
@@ -577,6 +585,39 @@ describe("macNoteGauge", () => {
   });
 });
 
+describe("jobCost and orphanLine", () => {
+  it.each([
+    ["quick", "staged files", "Quick"],
+    ["standard", "first run", "Job"],
+    ["service", "dev server", "Keeps running"],
+  ] as const)("names the %s class %s", (cls, why, label) => {
+    expect(jobCost({ costs: { a: { class: cls, why } } }, e("a"))).toEqual({
+      class: cls,
+      label,
+      why,
+    });
+  });
+
+  it("says nothing for a row the state has no class for", () => {
+    expect(jobCost({}, e("a"))).toBeNull();
+    expect(jobCost({ costs: {} }, e("a"))).toBeNull();
+  });
+
+  it.each([
+    { name: "a fresh orphan has the whole window", at: 0, expected: "10 min left" },
+    { name: "a part minute counts as one", at: 9 * 60_000 + 1, expected: "1 min left" },
+    { name: "a late read never says zero", at: 11 * 60_000, expected: "1 min left" },
+  ])("$name", ({ at, expected }) => {
+    expect(orphanLine({ ...e("o"), orphanedAt: 0 }, 10, at)).toBe(
+      `Waiting for the agent to ask again · ${expected}`,
+    );
+  });
+
+  it("leaves any other row alone", () => {
+    expect(orphanLine(e("w"), 10, 0)).toBeNull();
+  });
+});
+
 describe("machineBar", () => {
   const GiB = 1024 ** 3;
   const LINUX = {
@@ -635,6 +676,24 @@ describe("machineBar", () => {
     );
     expect(bar.mac.slots).toEqual({ running: 1, slots: 3, hint: "1 of 3 running on this Mac" });
     expect(bar.linux?.slots).toEqual({ running: 2, slots: 2, hint: "2 of 2 running on Linux" });
+  });
+
+  it("counts quick jobs apart from the job slots, and only while one runs", () => {
+    const costs = {
+      q: { class: "quick" as const, why: "usually 4 s" },
+      s: { class: "service" as const, why: "dev server" },
+    };
+    const bar = machineBar(
+      state({ entries: [e("q", true), e("s", true), e("j", true)], costs }),
+      null,
+    ).mac;
+    expect(bar.slots).toMatchObject({ running: 1, slots: 3 });
+    expect(bar.quick).toEqual({
+      running: 1,
+      slots: 2,
+      hint: "1 of 2 quick jobs running on this Mac",
+    });
+    expect(machineBar(state({ entries: [e("j", true)], costs }), null).mac.quick).toBeNull();
   });
 
   it("reads the Mac from the queue's sample, and the host only without one", () => {

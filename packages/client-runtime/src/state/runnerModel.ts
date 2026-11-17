@@ -488,6 +488,15 @@ export function runnerWhereLine(where: RunnerWhere | null, everything: boolean |
     : RUNNER_WHERE_DESCRIPTION[where];
 }
 
+/** The queue's own limits: passing the head and its lanes; the rest also steer Hybrid on the Mac. */
+const QUEUE_ONLY_LIMITS: ReadonlyArray<HeavyQueueLimitKey> = [
+  "headPatienceMinutes",
+  "quickSeconds",
+  "quickSlots",
+  "serviceIdleMinutes",
+  "reclaimMinutes",
+];
+
 export interface HeavyLimitChoices {
   readonly queueEnabled: boolean;
   readonly runnerEnabled: boolean | null;
@@ -501,6 +510,7 @@ export interface HeavyLimitChoices {
  */
 export function heavyLimitIdle(key: HeavyQueueLimitKey, choices: HeavyLimitChoices): string | null {
   if (choices.queueEnabled) return null;
+  if (QUEUE_ONLY_LIMITS.includes(key)) return "Only applies while the heavy work queue is on.";
   const runnerOn = choices.runnerEnabled !== false;
   if (key === "heavyOverLimitSeconds") {
     return runnerOn ? null : "Only applies while the heavy work queue or the Runner is on.";

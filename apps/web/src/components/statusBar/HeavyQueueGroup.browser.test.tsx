@@ -563,6 +563,29 @@ describe("HeavyWorkSection", () => {
     expect(mocks.actions.cancel).toHaveBeenCalledWith("w", false);
   });
 
+  it("labels each row with its class and why, and keeps a stopped agent's place with Stop", async () => {
+    setup([entry("run", { startedAt: STARTED }), entry("w"), entry("o", { orphanedAt: 0 })], {
+      reasons: { w: "all 3 slots busy" },
+      costs: {
+        run: { class: "quick", why: "usually 4 s" },
+        w: { class: "standard", why: "first run" },
+        o: { class: "service", why: "dev server" },
+      },
+    });
+    using _timers = fakeTimers({ now: new Date(3 * 60_000) });
+    await using screen = await render(group());
+    const text = screen.container.textContent ?? "";
+    expect(text).toMatch(
+      /pnpm run.*Quick · .*pnpm w.*Job · 1st · .*all 3 slots busy.*pnpm o.*Keeps running · /s,
+    );
+    const kept = screen.getByRole("group", { name: "Stopped agent's place" }).element();
+    expect(kept.textContent).toContain("Waiting for the agent to ask again · 7 min left");
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(mocks.actions.cancel).toHaveBeenCalledWith("o", false);
+    await expand(screen, "pnpm w");
+    await expect.element(screen.getByText("Job · first run")).toBeVisible();
+  });
+
   it("answers a dropped, unconfirmed job pinned to Linux without forcing a rerun", async () => {
     setup(
       [
@@ -666,6 +689,15 @@ describe("MachineBar", () => {
     expect(screen.container.textContent).not.toContain("8.0 GB");
     await userEvent.hover(screen.getByText(shown, { exact: true }));
     await expect.element(screen.getByText(hint).last()).toBeVisible();
+  });
+
+  it("counts a running quick job apart from the job slots", async () => {
+    setup([entry("q", { startedAt: STARTED }), entry("j", { startedAt: STARTED })], {
+      machine: MACHINE,
+      costs: { q: { class: "quick", why: "staged files" } },
+    });
+    await using screen = await render(machineBar());
+    expect(screen.container.textContent).toMatch(/quick 1\/2.*1\/3/s);
   });
 
   it("says the queue is off on the Mac's slots, and shows no Linux without the Runner", async () => {

@@ -142,18 +142,25 @@ function Gauge({
   );
 }
 
-/** Running jobs against slots, as pips while they fit and always as "1/3". */
+/** Running jobs against slots, as pips while they fit and always as "1/3"; quick jobs apart. */
 function Slots({
   running,
   slots,
   hint,
+  quick,
 }: {
   readonly running: number;
   readonly slots: number;
   readonly hint: string;
+  readonly quick: MachineBarRow["quick"];
 }) {
   return (
-    <Reading hint={hint} className="justify-end gap-1">
+    <Reading hint={quick === null ? hint : `${hint} · ${quick.hint}`} className="justify-end gap-1">
+      {quick === null ? null : (
+        <span aria-label={quick.hint} className="text-2xs tabular-nums text-muted-foreground">
+          quick {quick.running}/{quick.slots}
+        </span>
+      )}
       {slots > MAX_PIPS ? null : (
         <span aria-hidden className="flex gap-0.5">
           {Array.from({ length: slots }, (_, index) => (
@@ -222,7 +229,12 @@ function MachineSlots({ row }: { readonly row: MachineBarRow }) {
       <span className="text-2xs text-muted-foreground">Off</span>
     </Reading>
   ) : (
-    <Slots running={row.slots.running} slots={row.slots.slots} hint={row.slots.hint} />
+    <Slots
+      running={row.slots.running}
+      slots={row.slots.slots}
+      hint={row.slots.hint}
+      quick={row.quick}
+    />
   );
 }
 
