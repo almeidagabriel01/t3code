@@ -469,6 +469,35 @@ describe("heavy queue file", () => {
     expect(Queue.readPlan(dir, now + 7_000).plan.room).toBe(true);
   });
 
+  it("a running job's idle clock starts on a low reading, holds when unread, and stops on work", () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-01-01T00:10:00.000Z");
+    Queue.enqueue(dir, { ...entry("a"), label: "node server.js" });
+    Queue.enqueue(dir, { ...entry("dev"), label: "Open iPhone 17", server: true });
+    Queue.tryStart(dir, "a", now);
+    Queue.tryStart(dir, "dev", now);
+    const machine = { busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 };
+    const idleOf = () => Queue.read(dir).map((e) => [e.id, e.idleSince]);
+    const low = { cpu: 0.1, memoryBytes: 10 };
+    Queue.recordSample(dir, { ...machine, at: now }, { a: low, dev: low });
+    expect(idleOf()).toEqual([
+      ["a", now],
+      ["dev", undefined],
+    ]);
+    Queue.recordSample(dir, { ...machine, at: now + 5_000 }, { a: low });
+    Queue.recordSample(dir, { ...machine, at: now + 9_000 }, { a: { cpu: null, memoryBytes: 10 } });
+    expect(idleOf()[0]).toEqual(["a", now]);
+    Queue.recordSample(dir, { ...machine, at: now + 13_000 }, { a: { cpu: 2, memoryBytes: 10 } });
+    expect(idleOf()[0]).toEqual(["a", undefined]);
+    // Never read: unknown, not idle.
+    Queue.recordSample(
+      dir,
+      { ...machine, at: now + 17_000 },
+      { a: { cpu: null, memoryBytes: 10 } },
+    );
+    expect(idleOf()[0]).toEqual(["a", undefined]);
+  });
+
   it("learns a command's cost from a finished run, whichever way it leaves the queue", () => {
     const dir = tempDir();
     const now = Date.parse("2026-01-01T00:10:00.000Z");

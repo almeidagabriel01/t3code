@@ -116,6 +116,8 @@ export const HeavyQueueEntry = Schema.Struct({
   /** Peak cores and resident bytes of its process tree so far, sampled while it runs. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Since when its tree's CPU stayed near zero; past a long run it then counts as a service. */
+  idleSince: Schema.optionalKey(Schema.Number),
   /** Peak of its own tree alone, without the build daemons counted in `peakMemory`. */
   peakTreeMemory: Schema.optionalKey(Schema.Number),
   /** Pids of build daemons outside its tree that work for it (Gradle's, Kotlin's), counted in its usage. */

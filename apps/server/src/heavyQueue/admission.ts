@@ -373,12 +373,18 @@ export const QUICK_SLOTS = 2;
 export type Lane = "standard" | "quick" | "commit" | "service";
 
 export const laneOf = (
-  input: Pick<PlanInput, "history" | "quickSeconds">,
-  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
+  input: Pick<PlanInput, "history" | "quickSeconds"> & { readonly now?: number },
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & {
+    readonly line?: string;
+    readonly startedAt?: string | null;
+    readonly idleSince?: number;
+  },
 ): Lane => {
   if (commitOnly(entry.line ?? entry.label) !== null) return "commit";
   const runs = runsOf(input.history, entry);
-  const cost = costOf(entry, medianDuration(runs), input.quickSeconds ?? QUICK_SECONDS).class;
+  // A server-held slot (a device open) is never idle work: its CPU is T3's own.
+  const now = entry.server === true ? undefined : input.now;
+  const cost = costOf(entry, medianDuration(runs), input.quickSeconds ?? QUICK_SECONDS, now).class;
   // A device open or a job that runs alone is never quick, however short it usually is.
   return cost === "quick" && kindOf(entry) === "exclusive" ? "standard" : cost;
 };

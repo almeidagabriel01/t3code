@@ -93,18 +93,48 @@ const classOf = (line: string, durationMs: number | null, quickSeconds: number):
   };
 };
 
+/** Below this many cores, a running job's tree counts as doing nothing. */
+export const IDLE_CORES = 0.25;
+const IDLE_WINDOW_MS = 2 * 60_000;
+const SERVICE_IDLE_MINUTES = 10;
+
+/** How long a job that has run past `serviceIdleMinutes` has sat idle, or null while it works. */
+const idleFor = (
+  entry: { readonly startedAt?: string | null; readonly idleSince?: number },
+  now: number,
+  serviceIdleMinutes: number,
+) => {
+  if (entry.idleSince === undefined || entry.startedAt == null) return null;
+  const idle = now - entry.idleSince;
+  const ran = now - Date.parse(entry.startedAt);
+  return idle >= IDLE_WINDOW_MS && ran >= serviceIdleMinutes * 60_000 ? idle : null;
+};
+
 /**
  * `durationMs`: the command's usual run on the machine it goes to, null without one. Anything the
- * parser trips on is a standard job, as every job was before cost classes.
+ * parser trips on is a standard job, as every job was before cost classes. With `now`, a running
+ * standard job that sat idle long enough is a service: it holds a slot while doing nothing.
  */
 export const costOf = (
-  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
+  entry: Pick<HeavyQueueEntry, "label"> & {
+    readonly line?: string;
+    readonly startedAt?: string | null;
+    readonly idleSince?: number;
+  },
   durationMs: number | null,
   quickSeconds: number,
+  now?: number,
+  serviceIdleMinutes = SERVICE_IDLE_MINUTES,
 ): Cost => {
+  let cost: Cost;
   try {
-    return classOf(entry.line ?? entry.label, durationMs, quickSeconds);
+    cost = classOf(entry.line ?? entry.label, durationMs, quickSeconds);
   } catch {
-    return { class: "standard", why: "first run" };
+    cost = { class: "standard", why: "first run" };
   }
+  const idle =
+    cost.class === "standard" && now !== undefined ? idleFor(entry, now, serviceIdleMinutes) : null;
+  return idle === null
+    ? cost
+    : { class: "service", why: `idle for ${duration(idle)}, treated as long-running` };
 };

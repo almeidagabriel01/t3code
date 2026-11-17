@@ -36,6 +36,7 @@ import {
   sustain,
   workersFor,
 } from "./admission.ts";
+import { IDLE_CORES } from "./costClass.ts";
 import { sourceCheckout } from "./claudeSettingsHook.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
 import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from "./heavyHook.ts";
@@ -1074,11 +1075,21 @@ export const recordSample = (
       // On Linux the local tree is only `remoto`'s wrapper, not the job. Null: processes not read.
       if (peaks === null || entry.startedAt === null || entry.runner === "linux") return entry;
       const peak = peaks[entry.id];
-      const { daemons: _daemons, cpu: _cpu, memory: _memory, ...rest } = entry;
+      const { daemons: _daemons, cpu: _cpu, memory: _memory, idleSince, ...rest } = entry;
       // A job this sample could not read keeps its peaks but shows no current usage.
-      if (peak === undefined) return rest;
+      if (peak === undefined) return idleSince === undefined ? rest : { ...rest, idleSince };
+      // Idle only on a reading: unread CPU never starts the idle clock, and work stops it.
+      const idle =
+        entry.server === true
+          ? undefined
+          : peak.cpu === null
+            ? idleSince
+            : peak.cpu < IDLE_CORES
+              ? (idleSince ?? reading.at)
+              : undefined;
       return {
         ...rest,
+        ...(idle === undefined ? {} : { idleSince: idle }),
         ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
         ...(peak.cpu === null
           ? {}

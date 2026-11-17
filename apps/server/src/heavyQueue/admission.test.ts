@@ -747,6 +747,31 @@ describe("admission by real capacity", () => {
     expect(plan({ ...sized, history: books, entries, sample: alive }).admits).toEqual(["t"]);
   });
 
+  it("row 17: a job idle long enough is a service and frees its slot", () => {
+    const idle = {
+      ...entry("srv", "node server.js", 13 * 60_000),
+      idleSince: NOW - 12 * 60_000,
+    };
+    const result = plan({
+      ...sized,
+      sample: { ...q2, availableMemoryBytes: 8 * GIB },
+      history,
+      maxRunning: 1,
+      entries: [idle, entry("w", "vp run compile")],
+    });
+    expect(result.admits).toEqual(["w"]);
+    const busy = { ...idle, idleSince: NOW - 60_000 };
+    expect(
+      plan({
+        ...sized,
+        sample: { ...q2, availableMemoryBytes: 8 * GIB },
+        history,
+        maxRunning: 1,
+        entries: [busy, entry("w", "vp run compile")],
+      }).admits,
+    ).toEqual([]);
+  });
+
   it("starts the aged head as soon as its room appears", () => {
     const entries = [
       entry("r1", "vp run e2e", 60_000),

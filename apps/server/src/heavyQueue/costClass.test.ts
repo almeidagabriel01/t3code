@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import * as DateTime from "effect/DateTime";
+
 import { costOf } from "./costClass.ts";
 
 const QUICK_SECONDS = 30;
@@ -54,6 +56,27 @@ describe("cost class", () => {
     ["glob", "vp fmt 'src/**/*.ts'", null, "standard", "first run"],
   ])("row %s: %s", (_row, line, durationMs, kind, why) => {
     expect(cost(line, durationMs)).toEqual({ class: kind, why });
+  });
+
+  const NOW = Date.parse("2026-01-01T01:00:00.000Z");
+  const running = (ranMin: number, idleMin: number | null) => ({
+    label: "node server.js",
+    startedAt: DateTime.formatIso(DateTime.makeUnsafe(NOW - ranMin * 60_000)),
+    ...(idleMin === null ? {} : { idleSince: NOW - idleMin * 60_000 }),
+  });
+  it.each([
+    [
+      17,
+      "idle 12 of 13 minutes",
+      running(13, 12),
+      "service",
+      "idle for 12 min, treated as long-running",
+    ],
+    ["17b", "idle, but has run only 5 minutes", running(5, 4), "standard", "first run"],
+    ["17c", "a long run idle only a minute", running(30, 1), "standard", "first run"],
+    ["17d", "a long run that never went idle", running(30, null), "standard", "first run"],
+  ])("row %s: %s", (_row, _name, entry, kind, why) => {
+    expect(costOf(entry, null, QUICK_SECONDS, NOW)).toEqual({ class: kind, why });
   });
 
   it("an unparseable line is a standard job", () => {
