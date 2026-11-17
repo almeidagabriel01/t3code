@@ -1,6 +1,6 @@
 import {
   ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS,
-  type AssistantId,
+  AssistantId,
   type AssistantTeam,
   type AssistantTeamId,
   AssistantTeamChatWaitingRequest,
@@ -29,6 +29,7 @@ export interface AssistantTeamRow {
   readonly unread_count?: number;
   readonly open_tasks?: number;
   readonly running_tasks?: number;
+  readonly running_member_ids_json?: string | null;
   readonly preview?: string | null;
   readonly paused_tasks?: number;
   readonly failed_tasks?: number;
@@ -40,10 +41,11 @@ export interface AssistantTeamRow {
   readonly updated_at: string;
 }
 
-const MemberIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
-const decodeMemberIds = Schema.decodeOption(MemberIdsJson);
-export const encodeMemories = Schema.encodeSync(MemberIdsJson);
-export const encodeMemberIds = Schema.encodeSync(MemberIdsJson);
+const StringsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeStrings = Schema.decodeOption(StringsJson);
+export const encodeMemories = Schema.encodeSync(StringsJson);
+export const encodeMemberIds = Schema.encodeSync(StringsJson);
+const decodeMemberIds = Schema.decodeOption(Schema.fromJsonString(Schema.Array(AssistantId)));
 const decodeScopes = Schema.decodeOption(
   Schema.fromJsonString(
     Schema.Array(
@@ -102,14 +104,14 @@ export const encodeModelSelectionJson = (selection: ModelSelection | null) =>
 export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   id: row.team_id as AssistantTeamId,
   name: row.name,
-  memberIds: Option.getOrElse(decodeMemberIds(row.member_ids_json), () => []) as AssistantId[],
+  memberIds: Option.getOrElse(decodeMemberIds(row.member_ids_json), () => []),
   leadId: row.lead_id as AssistantId | null,
   archivedAt: row.archived_at ?? null,
   instructions: row.instructions ?? "",
-  memories: Option.getOrElse(decodeMemberIds(row.memories_json ?? "[]"), () => []),
+  memories: Option.getOrElse(decodeStrings(row.memories_json ?? "[]"), () => []),
   defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
   projectIds: Option.getOrElse(
-    decodeMemberIds(row.project_ids_json ?? "[]"),
+    decodeStrings(row.project_ids_json ?? "[]"),
     () => [],
   ) as ProjectId[],
   ...(row.latest_seq === undefined
@@ -121,16 +123,20 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           unreadCount: row.unread_count ?? 0,
           working: (row.open_tasks ?? 0) > 0,
           runningCount: row.running_tasks ?? 0,
+          runningMemberIds: Option.getOrElse(
+            decodeMemberIds(row.running_member_ids_json ?? "[]"),
+            () => [],
+          ),
           preview: row.preview ?? null,
           pausedTasks: row.paused_tasks ?? 0,
           failedTasks: row.failed_tasks ?? 0,
           threadIds: Option.getOrElse(
-            decodeMemberIds(row.thread_ids_json ?? "[]"),
+            decodeStrings(row.thread_ids_json ?? "[]"),
             () => [],
           ) as ThreadId[],
           previewProjectId: (row.preview_project_id ?? null) as ProjectId | null,
           removedProjectIds: Option.getOrElse(
-            decodeMemberIds(row.removed_project_ids_json ?? "[]"),
+            decodeStrings(row.removed_project_ids_json ?? "[]"),
             () => [],
           ) as ProjectId[],
           scopes: Option.getOrElse(decodeScopes(row.scopes_json ?? "[]"), () => []).map(

@@ -1066,6 +1066,14 @@ it.effect("the team chat names the preview's project and counts every tab's runn
     const running = (yield* h.tasks).filter((task) => task.status === "running").length;
     assert.isAbove(running, 0);
     assert.equal(chat.runningCount, running);
+    assert.deepEqual(chat.runningMemberIds, [
+      ...new Set(
+        (yield* h.tasks)
+          .filter((task) => task.status === "running")
+          .map((task) => AssistantId.make(task.owner_id))
+          .toSorted(),
+      ),
+    ]);
     // Each tab counts its own open work: p1's is done, p2's still runs, and a task with no
     // request is General's, so the tabs always add up to the group's.
     yield* sql`INSERT INTO assistant_group_tasks
@@ -1093,6 +1101,66 @@ it.effect("the team chat names the preview's project and counts every tab's runn
       SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
     const general = toAssistantTeam(ended!).chat?.scopes?.find((scope) => scope.projectId === null);
     assert.deepEqual([general?.doneTasks, general?.hasRequests], [1, false]);
+    // The members with a task running now, once each: only `running` counts, and only this team's.
+    const runningMembers = (tasks: ReadonlyArray<readonly [string, string, string]>) =>
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM assistant_group_tasks`;
+        for (const [index, [team, owner, status]] of tasks.entries()) {
+          yield* sql`INSERT INTO assistant_group_tasks
+            (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+              created_at, updated_at)
+            VALUES (${`gt:${index}`}, ${team}, 'gt:r', 'root', 'gm:r', ${owner}, 'do', ${status},
+              't', 't')`;
+        }
+        const [state] = yield* sql<AssistantTeamRow>`
+          SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+        return toAssistantTeam(state!).chat?.runningMemberIds;
+      });
+    const cases: ReadonlyArray<
+      readonly [ReadonlyArray<readonly [string, string, string]>, ReadonlyArray<string>]
+    > = [
+      [[], []],
+      [
+        [
+          [TEAM, "ada", "running"],
+          [TEAM, "ada", "running"],
+        ],
+        ["ada"],
+      ],
+      [
+        [
+          [TEAM, "cy", "running"],
+          [TEAM, "ada", "running"],
+        ],
+        ["ada", "cy"],
+      ],
+      [
+        [
+          [TEAM, "ada", "queued"],
+          [TEAM, "beto", "waiting"],
+          [TEAM, "cy", "completed"],
+        ],
+        [],
+      ],
+      [[[OTHER_TEAM, "ada", "running"]], []],
+      // A member removed from the team while its task still runs.
+      [
+        [
+          [TEAM, "gone", "running"],
+          [TEAM, "beto", "running"],
+        ],
+        ["beto"],
+      ],
+    ];
+    for (const [tasks, expected] of cases) {
+      assert.deepEqual(yield* runningMembers(tasks), expected);
+    }
+    for (const json of ["not json", null]) {
+      assert.deepEqual(
+        toAssistantTeam({ ...ended!, running_member_ids_json: json }).chat?.runningMemberIds,
+        [],
+      );
+    }
   }).pipe(Effect.provide(h.layer));
 });
 

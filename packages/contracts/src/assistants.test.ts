@@ -398,18 +398,21 @@ describe("assistantTeamProblem", () => {
     else expect(found).toContain(problem);
   });
 
-  it("an old team with leader fields decodes with no lead", () => {
+  it("an old team with leader fields and an old chat decodes with no lead", () => {
     const team = decodeTeam({
       id: "t1",
       name: "Core",
       memberIds: ["a"],
       leaderId: "a",
       leaderTitle: "CEO",
+      chat: { latestSeq: 2, readSeq: 1, unreadCount: 1, working: true, preview: null },
       createdAt: "2026-10-01T00:00:00.000Z",
       updatedAt: "2026-10-01T00:00:00.000Z",
     });
     expect(team.leadId).toBeNull();
     expect(team).not.toHaveProperty("leaderId");
+    expect(team.chat?.working).toBe(true);
+    expect(team.chat).not.toHaveProperty("runningMemberIds");
   });
 
   it("reads a group's conversation mode when sent, and accepts only the known modes", () => {
