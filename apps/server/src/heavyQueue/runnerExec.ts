@@ -44,6 +44,15 @@ const macPath = (word: Word, value: string, home: string, tilde: boolean) => {
   return value.startsWith("/") && word.vars.length === 0 ? value : null;
 };
 
+/** One `:`-separated part of an unquoted `NAME=` value as a Mac path, or null when it is not one. */
+const listPath = (part: string, home: string) => {
+  const fromHome = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(part);
+  const rest = fromHome === null ? part : part.slice(fromHome[0].length);
+  if (rest.includes("$")) return null;
+  if (fromHome !== null) return home + rest;
+  return part.startsWith("/") ? part : null;
+};
+
 /**
  * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` or `NAME=`
  * value, or a redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper
@@ -52,20 +61,36 @@ const macPath = (word: Word, value: string, home: string, tilde: boolean) => {
  */
 const shellTextInCopy = (text: string, root: string, home: string) => {
   const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
+  const inCopy = (path: string) => {
+    const relative = NodePath.relative(root, NodePath.normalize(path));
+    if (relative.startsWith("..") || NodePath.isAbsolute(relative)) return null;
+    return `"$T3_COPY"${relative === "" ? "" : shellQuote(`/${relative}`)}`;
+  };
   for (const command of parseLine(text).commands) {
     const targets = command.redirects.flatMap((redirect) =>
       redirect.target === null ? [] : [redirect.target],
     );
     for (const word of [...command.assigns, ...command.words, ...targets]) {
       const name = /^[A-Za-z_]\w*=/.exec(word.value)?.[0];
+      const raw = text.slice(word.start, word.end);
+      // Unquoted, bash expands `~` after an identifier's `=` and after each `:` of its value.
+      if (name !== undefined && raw.startsWith(name) && !/['"\\`]/.test(raw)) {
+        const parts = raw.slice(name.length).split(":");
+        const moved = parts.map((part) => {
+          const path = listPath(part, home);
+          return (path === null ? null : inCopy(path)) ?? part;
+        });
+        if (moved.some((part, at) => part !== parts[at])) {
+          edits.push({ start: word.start, end: word.end, text: name + moved.join(":") });
+        }
+        continue;
+      }
       const flag = name ?? /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
-      // Bash expands an unquoted `~` after an identifier's `=`, not after a flag's.
+      // Quoted, bash expands `~` only right after an identifier's `=`, never after a flag's.
       const tilde = name === undefined ? word.tilde : text.startsWith(`${name}~`, word.start);
       const path = macPath(word, word.value.slice(flag.length), home, tilde);
-      if (path === null) continue;
-      const relative = NodePath.relative(root, NodePath.normalize(path));
-      if (relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
-      const copy = `"$T3_COPY"${relative === "" ? "" : shellQuote(`/${relative}`)}`;
+      const copy = path === null ? null : inCopy(path);
+      if (copy === null) continue;
       edits.push({
         start: word.start,
         end: word.end,

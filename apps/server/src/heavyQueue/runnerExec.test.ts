@@ -151,6 +151,11 @@ describe("running on Linux through remoto", () => {
       "FOO=~/wt/x BAR=/Users/me/wt/y env BAZ=$HOME/wt vp test",
       `FOO="$T3_COPY"'/x' BAR="$T3_COPY"'/y' env BAZ="$T3_COPY" vp test`,
     ],
+    // And after each `:` of that value: a PATH-like list.
+    [
+      "PATH=/x:~/wt/bin:$PATH env P=/Users/me/wt/a:$HOME/wt/b:~other:~/wt vp test",
+      `PATH=/x:"$T3_COPY"'/bin':$PATH env P="$T3_COPY"'/a':"$T3_COPY"'/b':~other:"$T3_COPY" vp test`,
+    ],
     // Not the checkout, a quoted `~`, another home or variable: left as written.
     [
       "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
