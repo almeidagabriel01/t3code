@@ -305,6 +305,8 @@ export const HeavyQueueCost = Schema.Struct({
   class: HeavyQueueCostClass,
   /** Short and plain: "2 files", "usually 4 s", "keeps running". */
   why: Schema.String,
+  /** A hooked commit: it runs in its own slot, never a quick one. */
+  commit: Schema.optionalKey(Schema.Boolean),
 });
 export type HeavyQueueCost = typeof HeavyQueueCost.Type;
 
@@ -503,6 +505,8 @@ export const HeavyCommand = Schema.Struct({
   reason: Schema.optionalKey(Schema.String),
   /** Where a queue row runs; absent means this Mac. A Linux row carries no usage. */
   runner: Schema.optionalKey(HeavyRunner),
+  /** A dev server or watcher, which never finishes by itself. */
+  keepsRunning: Schema.optionalKey(Schema.Boolean),
 });
 export type HeavyCommand = typeof HeavyCommand.Type;
 

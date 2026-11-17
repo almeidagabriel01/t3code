@@ -100,6 +100,13 @@ describe("moveTarget and dropTarget", () => {
     expect(moveTarget(entries, id, action)).toBe(expected);
   });
 
+  it("leaves an orphan out of the line: it never moves, and nothing lands next to it", () => {
+    const withOrphan = [...entries, { ...e("o"), orphanedAt: 0 }];
+    expect(moveTarget(withOrphan, "o", "next")).toBeUndefined();
+    expect(moveTarget(withOrphan, "d", "end")).toBeUndefined();
+    expect(dropTarget(withOrphan, "a", "o")).toBeUndefined();
+  });
+
   it.each([
     ["d", "b", "b"],
     ["a", "c", "d"],
@@ -682,9 +689,11 @@ describe("machineBar", () => {
     const costs = {
       q: { class: "quick" as const, why: "usually 4 s" },
       s: { class: "service" as const, why: "dev server" },
+      // A hooked commit runs in its own slot, not a quick one.
+      c: { class: "quick" as const, why: "staged files", commit: true },
     };
     const bar = machineBar(
-      state({ entries: [e("q", true), e("s", true), e("j", true)], costs }),
+      state({ entries: [e("q", true), e("s", true), e("j", true), e("c", true)], costs }),
       null,
     ).mac;
     expect(bar.slots).toMatchObject({ running: 1, slots: 3 });

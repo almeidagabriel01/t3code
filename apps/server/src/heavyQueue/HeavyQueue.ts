@@ -24,6 +24,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   costFor,
+  laneOf,
   estimate,
   hasHeadroom,
   learnedCpu,
@@ -257,7 +258,14 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const { quickSeconds, quickSlots, serviceIdleMinutes, reclaimMinutes } = doc;
     // The class admission itself uses, with the same inputs and clock.
     const costs = Object.fromEntries(
-      entries.map((entry) => [entry.id, costFor({ ...doc, now }, entry)] as const),
+      entries.map((entry) => {
+        const input = { ...doc, now };
+        const cost = costFor(input, entry);
+        return [
+          entry.id,
+          laneOf(input, entry) === "commit" ? { ...cost, commit: true } : cost,
+        ] as const;
+      }),
     );
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};

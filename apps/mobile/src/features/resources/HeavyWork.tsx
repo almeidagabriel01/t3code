@@ -8,6 +8,7 @@ import {
   heavyItemsInProject,
   heavyWork,
   heavyWorkItems,
+  commandCostLabel,
   jobCost,
   jobPriority,
   orphanLine,
@@ -521,7 +522,7 @@ function QueueRow(props: {
   const can = (action: MoveAction) =>
     actions.canChange && moveTarget(line, entry.id, action) !== undefined;
   const menu: MenuAction[] = [
-    ...(entry.ask === undefined
+    ...(entry.ask === undefined && orphan === null
       ? routes.map((route) =>
           menuItem(
             `route:${route.runner}`,
@@ -531,7 +532,7 @@ function QueueRow(props: {
           ),
         )
       : []),
-    ...(running
+    ...(running || orphan !== null
       ? []
       : [
           menuItem("next", "Run next", "arrow.up.circle", !can("next")),
@@ -559,7 +560,11 @@ function QueueRow(props: {
       ? []
       : [
           {
-            ...menuItem("cancel", running ? "Stop" : "Remove", running ? "xmark" : "trash"),
+            ...menuItem(
+              "cancel",
+              running || orphan !== null ? "Stop" : "Remove",
+              running || orphan !== null ? "xmark" : "trash",
+            ),
             attributes: { disabled: !actions.canChange, destructive: true },
           },
         ]),
@@ -693,7 +698,7 @@ function HeavyCommandRow(props: {
       project={
         inScope ? undefined : (project?.title ?? command.cwd?.split(/[\\/]/).findLast(Boolean))
       }
-      state={ran}
+      state={commandCostLabel(command) === null ? ran : `${commandCostLabel(command)} · ${ran}`}
       facts={facts}
       menu={
         menu.length === 0 ? null : (

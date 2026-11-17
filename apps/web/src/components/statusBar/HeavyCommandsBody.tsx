@@ -1,4 +1,5 @@
 import {
+  commandCostLabel,
   formatDuration,
   HEAVY_COMMAND_SOURCE_LABEL,
   heavyCommandKey,
@@ -264,7 +265,12 @@ export function HeavyCommandRow({
           <ProjectChip project={project} folder={command.cwd} />
         )
       }
-      state={<Elapsed since={command.startedAt} />}
+      state={
+        <>
+          {commandCostLabel(command) === null ? null : `${commandCostLabel(command)} · `}
+          <Elapsed since={command.startedAt} />
+        </>
+      }
       usage={usage}
       facts={facts}
       menu={

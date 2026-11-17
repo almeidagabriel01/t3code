@@ -78,6 +78,15 @@ const summary = (result: ReturnType<typeof classify>) =>
 
 describe("classifyHeavyCommands", () => {
   it.each([
+    ["pnpm run dev", true],
+    ["vitest --watch", true],
+    ["vp test run", undefined],
+  ] as const)("marks %s as keeping running: %s", (command, keepsRunning) => {
+    const processes = [SERVER, CLAUDE, WRAPPER, proc(12, 11, "node", { cpu: 400 }, command)];
+    expect(classify({ processes }).commands[0]?.keepsRunning).toBe(keepsRunning);
+  });
+
+  it.each([
     {
       name: "sums a command's whole tree under the agent's shell wrapper",
       processes: [

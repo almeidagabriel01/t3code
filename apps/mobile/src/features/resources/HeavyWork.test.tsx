@@ -765,6 +765,8 @@ describe("HeavyWorkSection", () => {
     const text = view.host.textContent ?? "";
     expect(text).toMatch(/Quick · .*Job · 1st · .*all 3 slots busy.*Keeps running · /s);
     expect(text).toContain("Waiting for the agent to ask again · 7 min left");
+    // Only the waiter in line can start now; the orphan holds no place.
+    expect(view.host.textContent?.match(/Start now/g)).toHaveLength(1);
     // The running row's menu has its own Stop first.
     await act(async () => view.button("Stop", 1).click());
     alertButtons(0).find((b) => b.text === "Remove")!.onPress!();

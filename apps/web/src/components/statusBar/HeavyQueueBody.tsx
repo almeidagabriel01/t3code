@@ -152,6 +152,7 @@ function RowMenu({
   readonly onOpenThread: (() => void) | null;
 }) {
   const running = entry.startedAt !== null;
+  const orphaned = !running && entry.orphanedAt !== undefined;
   const move = (action: MoveAction) => {
     const target = moveTarget(entries, entry.id, action);
     if (target !== undefined) void actions.move(entry.id, target);
@@ -167,7 +168,7 @@ function RowMenu({
         <EllipsisIcon aria-hidden />
       </MenuTrigger>
       <MenuPopup side="top" align="end">
-        {running ? null : (
+        {running || orphaned ? null : (
           <MenuGroup>
             <MenuItem disabled={!actions.canChange} onClick={() => void actions.startNow(entry.id)}>
               <RocketIcon aria-hidden />
@@ -203,7 +204,7 @@ function RowMenu({
             </MenuItem>
           </MenuGroup>
         )}
-        {routeActions(entry, state).map((action) => (
+        {(orphaned ? [] : routeActions(entry, state)).map((action) => (
           <MenuItem
             key={action.runner}
             disabled={!actions.canRoute}
@@ -262,8 +263,8 @@ function RowMenu({
           disabled={!actions.canChange || (running && entry.server === true)}
           onClick={() => void actions.cancel(entry.id, running)}
         >
-          {running ? <CircleStopIcon aria-hidden /> : <Trash2Icon aria-hidden />}
-          {running ? "Stop" : "Remove from the queue"}
+          {running || orphaned ? <CircleStopIcon aria-hidden /> : <Trash2Icon aria-hidden />}
+          {running || orphaned ? "Stop" : "Remove from the queue"}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -377,7 +378,10 @@ function QueueRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: entry.id, disabled: running || !actions.canChange });
+  } = useSortable({
+    id: entry.id,
+    disabled: running || entry.orphanedAt !== undefined || !actions.canChange,
+  });
   const label = heavyEntryName(entry);
   const { threadId } = entry;
   const cpuLabel = jobPriority(entry).label;

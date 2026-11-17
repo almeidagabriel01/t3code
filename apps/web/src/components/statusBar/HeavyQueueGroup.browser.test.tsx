@@ -586,6 +586,18 @@ describe("HeavyWorkSection", () => {
     await expect.element(screen.getByText("Job · first run")).toBeVisible();
   });
 
+  it("offers an orphan no start, move or route, only Stop", async () => {
+    setup([entry("w"), entry("o", { orphanedAt: 0 })]);
+    await using screen = await render(group());
+    await openMenu(screen, "o");
+    await expect.element(screen.getByRole("menuitem", { name: "Stop" })).toBeVisible();
+    for (const name of ["Start now", "Run next", "Move up", "Move to end"]) {
+      expect(screen.getByRole("menuitem", { name }).elements()).toHaveLength(0);
+    }
+    await userEvent.click(screen.getByRole("menuitem", { name: "Stop" }));
+    expect(mocks.actions.cancel).toHaveBeenCalledWith("o", false);
+  });
+
   it("answers a dropped, unconfirmed job pinned to Linux without forcing a rerun", async () => {
     setup(
       [

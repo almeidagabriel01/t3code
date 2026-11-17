@@ -63,6 +63,10 @@ export function jobPriority(entry: HeavyQueueEntry): {
 
 export type MoveAction = "next" | "up" | "down" | "end";
 
+/** A waiter holding a place in line; an orphan only keeps its slot for the agent to reclaim. */
+const inLine = (entry: HeavyQueueEntry) =>
+  entry.startedAt === null && entry.orphanedAt === undefined;
+
 /**
  * The `beforeId` for a move RPC, or undefined when the move would change nothing.
  * `null` means to the end; only waiting entries take part.
@@ -72,7 +76,7 @@ export function moveTarget(
   id: string,
   action: MoveAction,
 ): string | null | undefined {
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  const waiting = entries.filter(inLine);
   const index = waiting.findIndex((entry) => entry.id === id);
   if (index < 0) return undefined;
   switch (action) {
@@ -93,7 +97,7 @@ export function dropTarget(
   id: string,
   overId: string,
 ): string | null | undefined {
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  const waiting = entries.filter(inLine);
   const from = waiting.findIndex((entry) => entry.id === id);
   const to = waiting.findIndex((entry) => entry.id === overId);
   if (from < 0 || to < 0 || from === to) return undefined;
@@ -414,6 +418,10 @@ export function jobCost(
     : { class: cost.class, label: COST_LABEL[cost.class], why: cost.why };
 }
 
+/** The class a direct command shows: only one that never finishes by itself has one. */
+export const commandCostLabel = (command: HeavyCommand) =>
+  command.keepsRunning === true ? COST_LABEL.service : null;
+
 /** What an orphaned waiter's row says instead of its place; null for any other row. */
 export function orphanLine(
   entry: HeavyQueueEntry,
@@ -529,7 +537,9 @@ export function machineBar(
   const memoryWarning = warning("memory");
   const classOf = (entry: HeavyQueueEntry) => state.costs?.[entry.id]?.class ?? "standard";
   const macRunning = work.mac.running.filter((entry) => classOf(entry) === "standard").length;
-  const quickRunning = work.mac.running.filter((entry) => classOf(entry) === "quick").length;
+  const quickRunning = work.mac.running.filter(
+    (entry) => classOf(entry) === "quick" && state.costs?.[entry.id]?.commit !== true,
+  ).length;
   const mac: MachineBarRow = {
     runner: "mac",
     online: true,
