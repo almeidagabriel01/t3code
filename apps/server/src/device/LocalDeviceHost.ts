@@ -56,6 +56,8 @@ import {
 
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
+// `daemon stop` waits up to 10 s after SIGTERM and 2 s after SIGKILL.
+const DAEMON_STOP_TIMEOUT_MS = 15_000;
 const DAEMON_POLL_MS = 100;
 const DAEMON_TERM_GRACE_MS = 5_000;
 const DAEMON_KILL_GRACE_MS = 2_000;
@@ -332,9 +334,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     ]);
     const running = yield* Ref.get(runningRef);
-    const daemon = running?.agentDevice
-      ? yield* readDaemonFile().pipe(Effect.option)
-      : Option.none();
+    const daemon = yield* readDaemonFile().pipe(Effect.option);
     const hubAlive = running
       ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
       : false;
@@ -778,7 +778,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         agentDeviceStateDir(path, config.stateDir),
       ],
       env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-      timeout: Duration.seconds(10),
+      timeout: Duration.millis(DAEMON_STOP_TIMEOUT_MS),
       timeoutBehavior: "timedOutResult",
     });
   }).pipe(
