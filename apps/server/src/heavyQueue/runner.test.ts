@@ -1256,10 +1256,12 @@ describe("runtime toggles", () => {
     const commits = "Commits run here: the pre-commit edits this Mac's repository";
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
-      commit: `${commits} · the one slot is busy`,
-      build: "Not on the Can run on Linux list: vp run build · the one slot is busy",
-      moved: "Moved to this Mac · the one slot is busy",
-      back: "Uses a file outside the project: /x · the one slot is busy",
+      commit: `${commits} · a commit is running`,
+      // A running commit holds its own slot, not the standard one; its load is still counted.
+      build:
+        "Not on the Can run on Linux list: vp run build · waiting for room: a job just started",
+      moved: "Moved to this Mac · waiting for room: a job just started",
+      back: "Uses a file outside the project: /x · waiting for room: a job just started",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
@@ -1269,7 +1271,7 @@ describe("runtime toggles", () => {
     const hook = "Commit hook runs checks";
     expect(at({}, { runnerEnabled: false })).toEqual({
       run: hook,
-      commit: `${hook} · the one slot is busy`,
+      commit: `${hook} · a commit is running`,
       build: "the one slot is busy",
       moved: "the one slot is busy",
       back: "the one slot is busy",
@@ -1983,6 +1985,83 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     expect(plan.reasons.a).toBe(
       "Hybrid: shorter queue here · memory floor: 1.0 GB room, needs 1.5 GB",
     );
+  });
+});
+
+describe("quick work never waits for Linux", () => {
+  const quick = (id: string, cwd = `/work/${id}`) =>
+    job(id, "vp test run a.test.ts b.test.ts", { cwd });
+  it.each([
+    {
+      row: 30,
+      name: "the same worktree runs on Linux: here at once",
+      entries: [runningOn("l", "linux", "/work/w"), quick("q", "/work/w")],
+      over: { health: READ },
+      runner: "mac",
+      why: "Linux busy (this worktree is already running on Linux): running here",
+    },
+    {
+      row: 31,
+      name: "another job just started on Linux: no wait for a fresh reading",
+      entries: [
+        job("l", "vp test run", { startedAt: ago(500), runner: "linux" as const }),
+        quick("q"),
+      ],
+      over: { health: READ },
+      runner: "linux",
+      why: undefined,
+    },
+    {
+      row: 25,
+      name: "Linux offline under ask: here at once, nobody asked",
+      entries: [quick("q")],
+      over: { health: OFFLINE },
+      config: { runnerUnavailable: "ask" as const },
+      runner: "mac",
+      why: "Linux is unavailable: running here",
+    },
+    {
+      row: "8",
+      name: "every Linux slot busy: here, beside a job that runs alone",
+      entries: [
+        ...Array.from({ length: DEFAULT_MACHINE_CONFIG.runnerLinuxSlots }, (_, i) =>
+          runningOn(`l${i}`, "linux"),
+        ),
+        job("boot", "xcrun simctl boot x", { startedAt: ago(60_000) }),
+        quick("q"),
+      ],
+      over: { health: READ },
+      runner: "mac",
+      why: `Linux busy (all ${DEFAULT_MACHINE_CONFIG.runnerLinuxSlots} Linux slots are busy): running here`,
+    },
+  ])("row $row: $name", ({ entries, over, config, runner, why }) => {
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "linux", ...config }, { ...over, runnerOn: true }),
+    );
+    expect(plan.admits.q).toEqual({ runner, ungated: false });
+    expect(plan.asks.q).toBeUndefined();
+    expect(plan.reasons.q).toBe(why);
+  });
+
+  it("a standard job in the same spots still waits for Linux", () => {
+    const entries = [
+      runningOn("l", "linux", "/work/w"),
+      job("s", "vp test run", { cwd: "/work/w" }),
+    ];
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "linux" }, { health: READ, runnerOn: true }),
+    );
+    expect(plan.admits.s).toBeUndefined();
+    expect(plan.reasons.s).toBe("waiting for Linux: this worktree is already running on Linux");
+  });
+
+  it("a service holds no Mac slot and never makes others run alone", () => {
+    const entries = [
+      job("dev", "vp run dev:desktop", { startedAt: ago(60_000) }),
+      job("w", "vp run build"),
+    ];
+    const plan = planRoutes(input(entries, { runnerWhere: "mac" }, { maxRunning: 1 }));
+    expect(plan.admits.w).toEqual({ runner: "mac", ungated: false });
   });
 });
 

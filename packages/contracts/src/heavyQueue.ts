@@ -209,6 +209,10 @@ export const HeavyQueueHold = Schema.Literals([
   "draining",
   /** Room is there once the jobs that just started show their load. */
   "committed",
+  /** Every quick slot is busy. */
+  "quick-slots",
+  /** A commit runs; one at a time. */
+  "commit-slot",
 ]);
 export type HeavyQueueHold = typeof HeavyQueueHold.Type;
 
@@ -225,6 +229,7 @@ export const heavyHoldText = (
     readonly swapInBytesPerSecond?: number | null;
   } | null,
   maxRunning: number,
+  quickSlots = 2,
 ): string => {
   switch (hold) {
     case "paused":
@@ -255,6 +260,10 @@ export const heavyHoldText = (
       return "waiting for the job that runs alone to start";
     case "committed":
       return "waiting for room: a job just started";
+    case "quick-slots":
+      return `${quickSlots} quick jobs running`;
+    case "commit-slot":
+      return "a commit is running";
   }
 };
 

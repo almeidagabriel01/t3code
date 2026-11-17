@@ -1676,13 +1676,13 @@ describe("Runner in the queue file", () => {
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
       expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();
-      // It would go ahead of an agent's waiting build.
+      // Its own slot: it starts beside a running job, ahead of an agent's waiting build.
       Queue.enqueue(dir, test("busy"));
       expect(Queue.tryStart(dir, "busy", NOW)).toMatchObject({ status: "started" });
       Queue.enqueue(dir, { ...test("build"), priority: "low" });
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toMatchObject({
         runsOn: "mac",
-        startsNow: false,
+        startsNow: true,
       });
       expect(Queue.read(dir).map((e) => e.id)).toEqual(["busy", "build"]);
     });

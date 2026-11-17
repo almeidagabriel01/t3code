@@ -25,6 +25,7 @@ import {
   hasHeadroom,
   HISTORY_RUNS,
   estimate,
+  laneOf as admissionLaneOf,
   medianDuration,
   runsOf,
   signatureOf,
@@ -664,8 +665,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
           started,
           ...entries.filter((e) => e.startedAt === null && e.id !== id),
         ],
-        // Only a gated Mac start makes the next Mac waiter let it ramp up.
-        lastStartAt: gated ? now : doc.lastStartAt,
+        // Only a gated standard Mac start makes an older build's next Mac waiter let it ramp up.
+        lastStartAt: gated && admissionLaneOf(doc, entry) === "standard" ? now : doc.lastStartAt,
         holding: decision.holding,
         events: withRecord(doc.events, record),
       },

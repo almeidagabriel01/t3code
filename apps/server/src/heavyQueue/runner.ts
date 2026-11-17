@@ -17,6 +17,7 @@ import {
 import {
   budgetOf,
   jobVerdict,
+  laneOf,
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
@@ -896,7 +897,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
   let linuxCount = linuxRunning.length;
-  let macCount = macRunning.length;
+  /** A service holds no slot and never runs alone: it is load in the reading, nothing more. */
+  const isQuick = (entry: HeavyQueueEntry) => laneOf(input, entry) === "quick";
+  const holdsSlot = (entry: HeavyQueueEntry) => laneOf(input, entry) === "standard";
+  let macCount = macRunning.filter(holdsSlot).length;
   let lastLinuxStart = Math.max(
     -Infinity,
     ...linuxRunning.map((entry) => Date.parse(entry.startedAt!)),
@@ -904,7 +908,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
-  const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
+  const macExclusive =
+    queueOn && macRunning.some((entry) => holdsSlot(entry) && kindOf(entry) === "exclusive");
   const reading = health.load1 !== null || health.availableMemoryBytes !== null;
   /** The Mac's room this pass: jobs routed there spend it, so two that fit alone don't both go. */
   let macBudget = fresh ? budgetOf(input, sample, macRunning) : null;
@@ -924,7 +929,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
-    macCount += 1;
+    if (holdsSlot(entry)) macCount += 1;
     // Only what fits spends it, as in `plan`: a waiter too big to start takes no one's room.
     const verdict = macBudget === null ? null : jobVerdict(input, sample!, entry, macBudget);
     if (macBudget !== null && verdict !== null && verdict.hold === null) {
@@ -952,14 +957,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * limits, which only the sustained ones may turn into a move.
    */
   const macRoom = (entry: HeavyQueueEntry) =>
-    !macOver &&
-    !macExclusive &&
-    (!queueOn ||
-      (macCount < Math.max(1, input.maxRunning) &&
-        (macCount === 0 ||
-          macBudget === null ||
-          machineHold(sample!, input) !== null ||
-          jobVerdict(input, sample!, entry, macBudget).hold === null)));
+    isQuick(entry)
+      ? // Quick work passes the slots and a job that runs alone; only its memory can keep it off.
+        !macOver &&
+        (macBudget === null || jobVerdict(input, sample!, entry, macBudget).hold !== "job-memory")
+      : !macOver &&
+        !macExclusive &&
+        (!queueOn ||
+          (macCount < Math.max(1, input.maxRunning) &&
+            (macCount === 0 ||
+              macBudget === null ||
+              machineHold(sample!, input) !== null ||
+              jobVerdict(input, sample!, entry, macBudget).hold === null)));
   /** Why Linux cannot take a job of `worktree` now, or null when it can. */
   const linuxBusy = (worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0) {
@@ -986,6 +995,14 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return { kind: "reading", why: "a fresh reading since the last job started there" };
     }
     return null;
+  };
+  /**
+   * Why Linux cannot take `entry` now, for quick work: a fresh-reading wait never applies to it,
+   * and anything else sends it to this Mac's quick slots instead of waiting.
+   */
+  const busyFor = (entry: HeavyQueueEntry, worktree: string) => {
+    const busy = linuxBusy(worktree);
+    return busy !== null && busy.kind === "reading" && isQuick(entry) ? null : busy;
   };
   /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
   const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
@@ -1072,6 +1089,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     const retry = linkRetry(health, entry, machine, now);
     const up =
       (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, health, now);
+    // Quick work never waits for Linux: offline or busy, it runs here in its own slots. Before the
+    // first heartbeat Linux is not known to be down, so it waits for that answer like any job.
+    if (isQuick(entry) && !up && health.online === false && entry.route !== "linux") {
+      toMac(entry, "Linux is unavailable: running here");
+      continue;
+    }
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
@@ -1090,7 +1113,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(entry, `${mode}: Linux is unavailable`);
         continue;
       }
-      const busy = linuxBusy(worktree);
+      const busy = busyFor(entry, worktree);
+      if (busy !== null && isQuick(entry) && !startsOnLinux(entry, busy)) {
+        toMac(entry, `Linux busy (${busy.why}): running here`);
+        continue;
+      }
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";
         linuxCount += 1;
@@ -1135,8 +1162,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     if (up) {
-      const busy = linuxBusy(worktree);
-      if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
+      const busy = busyFor(entry, worktree);
+      if (busy !== null && isQuick(entry) && !startsOnLinux(entry, busy)) {
+        toMac(entry, `Linux busy (${busy.why}): running here`);
+      } else if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
       else toLinuxNow(entry, worktree);
       continue;
     }

@@ -5,8 +5,8 @@
 import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
 
 import { kindOf, runTarget } from "./commandShapes.ts";
-import { filesOf, workPartsOf } from "./costClass.ts";
-import { heavyRoute } from "./heavyHook.ts";
+import { costOf, filesOf, workPartsOf } from "./costClass.ts";
+import { commitOnly, heavyRoute } from "./heavyHook.ts";
 
 export interface Sample {
   readonly at: number;
@@ -267,6 +267,10 @@ export interface PlanInput extends MacLimits, SizingLimits {
   /** Pressure or swapping held admission last time, so memory must reach the higher reopen level. */
   readonly holding: boolean;
   readonly now: number;
+  /** A command that usually ends within this many seconds is quick. */
+  readonly quickSeconds?: number;
+  /** Quick jobs that may run beside the standard slots. */
+  readonly quickSlots?: number;
 }
 
 export interface Plan {
@@ -354,17 +358,43 @@ export const jobVerdict = (
   return { cost, hold: null, why: "" };
 };
 
-const HELD_ROOM = new Set<HeavyQueueHold | null>([null, "slots", "committed"]);
+const HELD_ROOM = new Set<HeavyQueueHold | null>([
+  null,
+  "slots",
+  "committed",
+  "quick-slots",
+  "commit-slot",
+]);
+
+const QUICK_SECONDS = 30;
+export const QUICK_SLOTS = 2;
+
+/** How a queue entry is admitted: its cost class, with a hooked commit in its own slot. */
+export type Lane = "standard" | "quick" | "commit" | "service";
+
+export const laneOf = (
+  input: Pick<PlanInput, "history" | "quickSeconds">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
+): Lane => {
+  if (commitOnly(entry.line ?? entry.label) !== null) return "commit";
+  const runs = runsOf(input.history, entry);
+  const cost = costOf(entry, medianDuration(runs), input.quickSeconds ?? QUICK_SECONDS).class;
+  // A device open or a job that runs alone is never quick, however short it usually is.
+  return cost === "quick" && kindOf(entry) === "exclusive" ? "standard" : cost;
+};
 
 /**
- * Pure: decides for one machine from its own sample and the entries it runs, so a second runner
- * plans by calling this with its own reading and its own entries. Every waiter that fits the room
- * left starts in the same pass, in queue order; a head that waited past its patience reserves its
- * room so the jobs behind it never starve it.
+ * Pure, for one machine's own sample and entries. Standard waiters that fit start in queue order,
+ * an aged head reserving its room; quick jobs and a hooked commit then start in their own slots,
+ * and a service is neither a slot nor a reason to wait.
  */
 export const plan = (input: PlanInput): Plan => {
   const { entries, now } = input;
-  const running = entries.filter((entry) => entry.startedAt !== null);
+  const lanes = new Map(entries.map((entry) => [entry.id, laneOf(input, entry)]));
+  const lane = (entry: HeavyQueueEntry) => lanes.get(entry.id)!;
+  // A service that just started still loads the Mac before the reading shows it.
+  const loaded = entries.filter((entry) => entry.startedAt !== null);
+  const running = loaded.filter((entry) => lane(entry) !== "service");
   const waiting = entries.filter((entry) => entry.startedAt === null);
   if (waiting.length === 0 || heavyRoute(input) === "direct") {
     return {
@@ -376,78 +406,197 @@ export const plan = (input: PlanInput): Plan => {
     };
   }
 
-  // The user released these: they start whatever holds the rest.
-  const admits = waiting.filter((entry) => entry.forced === true).map((entry) => entry.id);
-  const rest = waiting.filter((entry) => entry.forced !== true);
+  // The user released these, and a service holds no slot: they start whatever holds the rest.
+  const admits = waiting
+    .filter((entry) => entry.forced === true || lane(entry) === "service")
+    .map((entry) => entry.id);
+  const rest = waiting.filter((entry) => !admits.includes(entry.id));
   const head = rest[0];
   const reasons: Record<string, string> = {};
+  const quickSlots = input.quickSlots ?? QUICK_SLOTS;
   const holdText = (hold: HeavyQueueHold) =>
     hold === "job-memory" || hold === "job-cpu"
       ? "next in line"
-      : heavyHoldText(hold, input.sample, input.maxRunning);
-  const finish = (
-    hold: HeavyQueueHold | null,
-    holding: boolean,
-    /** Waiters that were tried and did not fit, with their own reason. */
-    tried: Readonly<Record<string, string>> = {},
-  ): Plan => {
-    const headHold = head === undefined || admits.includes(head.id) ? null : hold;
+      : heavyHoldText(hold, input.sample, input.maxRunning, quickSlots);
+  const tried: Record<string, string> = {};
+  let headHold: HeavyQueueHold | null = null;
+  const hold = (entry: HeavyQueueEntry, reason: HeavyQueueHold, why?: string) => {
+    if (entry.id === head?.id) headHold = reason;
+    tried[entry.id] = why ?? holdText(reason);
+  };
+  const finish = (holding: boolean): Plan => {
+    const held = head === undefined || admits.includes(head.id) ? null : headHold;
     for (const waiter of rest) {
       if (admits.includes(waiter.id)) continue;
-      reasons[waiter.id] =
-        tried[waiter.id] ??
-        (waiter.id === head!.id && hold !== null ? holdText(hold) : "waiting its turn");
+      reasons[waiter.id] = tried[waiter.id] ?? "waiting its turn";
     }
-    return { admits, reasons, room: HELD_ROOM.has(headHold), holding, hold: headHold };
+    return { admits, reasons, room: HELD_ROOM.has(held), holding, hold: held };
   };
-  if (head === undefined) return finish(null, input.holding);
-  if (input.paused) return finish("paused", input.holding);
-  if (running.some((entry) => kindOf(entry) === "exclusive")) {
-    return finish("exclusive", input.holding);
+  if (head === undefined) return finish(input.holding);
+  if (input.paused) {
+    hold(head, "paused");
+    return finish(input.holding);
   }
-  // One job always runs: holding the only one back on pressure from elsewhere would starve agents.
-  const first = running.length === 0 && admits.length === 0;
-  if (first) {
-    admits.push(head.id);
-    if (kindOf(head) === "exclusive") return finish("exclusive", false);
-  }
+
   const { sample } = input;
+  const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+  const critical = fresh && (sample.pressureLevel ?? 0) >= 4;
+  const machineLimit = fresh ? machineHold(sample, input) : null;
+  const holding = machineLimit === "pressure" || machineLimit === "swap-in" ? true : input.holding;
+  const estimateOf = (entry: HeavyQueueEntry) =>
+    estimate(input.history, entry, sample?.cpuCount ?? 1, input, sample?.buildDaemonsAlive);
+  /** What this pass started, which the reading does not show yet. */
+  let spent = 0;
+  const admit = (entry: HeavyQueueEntry) => {
+    admits.push(entry.id);
+    spent += estimateOf(entry).memoryBytes;
+  };
+  for (const id of admits)
+    spent += estimateOf(waiting.find((entry) => entry.id === id)!).memoryBytes;
+
+  // One job always runs, quick and commit included: holding the only one back on pressure from
+  // elsewhere would starve agents. Critical pressure still holds a quick job or a commit.
+  if (running.length === 0 && admits.length === 0 && !(critical && lane(head) !== "standard")) {
+    admit(head);
+  }
+
+  const standard = standardPass(input, {
+    head,
+    waiters: rest.filter((entry) => lane(entry) === "standard"),
+    running,
+    loaded,
+    standardRunning: running.filter((entry) => lane(entry) === "standard").length,
+    admitted: admits.flatMap((id) => {
+      const entry = waiting.find((waiter) => waiter.id === id)!;
+      return lane(entry) === "standard" ? [entry] : [];
+    }),
+    spent,
+    holding,
+    hold,
+    admit,
+  });
+  const aged = (entry: HeavyQueueEntry, times: number) =>
+    now - Date.parse(entry.createdAt) >= times * input.headPatienceMinutes * 60_000;
+
+  // A quick job passes everything that holds standard jobs back but the pause, critical pressure,
+  // its own memory and the quick slots; the head's reservation only once the head waited twice its
+  // patience.
+  const quickRoom = () =>
+    fresh
+      ? budgetOf({ ...input, holding: false }, sample, loaded).memoryBytes -
+        spent -
+        (standard.reservedFor !== null && aged(standard.reservedFor, 2) ? standard.reserved : 0)
+      : Infinity;
+  let quickRunning = running.filter((entry) => lane(entry) === "quick").length;
+  let commitRunning = running.filter((entry) => lane(entry) === "commit").length;
+  for (const entry of rest) {
+    if (admits.includes(entry.id)) {
+      if (lane(entry) === "quick") quickRunning += 1;
+      if (lane(entry) === "commit") commitRunning += 1;
+    }
+  }
+  for (const entry of rest) {
+    const kind = lane(entry);
+    if (admits.includes(entry.id) || (kind !== "quick" && kind !== "commit")) continue;
+    if (critical) {
+      hold(entry, "pressure");
+      continue;
+    }
+    if (kind === "commit") {
+      if (commitRunning >= 1) hold(entry, "commit-slot");
+      else {
+        admit(entry);
+        commitRunning += 1;
+      }
+      continue;
+    }
+    if (quickRunning >= quickSlots) {
+      hold(entry, "quick-slots");
+      continue;
+    }
+    const need = estimateOf(entry).memoryBytes;
+    const room = quickRoom();
+    if (need > room) {
+      hold(
+        entry,
+        standard.reserved > 0 && need <= room + standard.reserved ? "reserved" : "job-memory",
+        standard.reserved > 0 && need <= room + standard.reserved
+          ? undefined
+          : `memory floor: ${gb(room)} room, needs ${gb(need)}`,
+      );
+      continue;
+    }
+    admit(entry);
+    quickRunning += 1;
+  }
+  return finish(admits.includes(head.id) ? false : standard.holding);
+};
+
+/**
+ * The standard waiters' pass: the machine's own limits, the slots, the job's fit and the aged
+ * head's reservation, in queue order. Returns the reservation for the quick pass to respect.
+ */
+const standardPass = (
+  input: PlanInput,
+  pass: {
+    readonly head: HeavyQueueEntry;
+    readonly waiters: ReadonlyArray<HeavyQueueEntry>;
+    readonly running: ReadonlyArray<HeavyQueueEntry>;
+    readonly loaded: ReadonlyArray<HeavyQueueEntry>;
+    readonly standardRunning: number;
+    readonly admitted: ReadonlyArray<HeavyQueueEntry>;
+    readonly spent: number;
+    readonly holding: boolean;
+    readonly hold: (entry: HeavyQueueEntry, reason: HeavyQueueHold, why?: string) => void;
+    readonly admit: (entry: HeavyQueueEntry) => void;
+  },
+): {
+  readonly holding: boolean;
+  readonly reserved: number;
+  readonly reservedFor: HeavyQueueEntry | null;
+} => {
+  const { now, sample } = input;
+  const { running, hold } = pass;
+  const none = { holding: pass.holding, reserved: 0, reservedFor: null };
+  const waiters = pass.waiters.filter((entry) => !pass.admitted.includes(entry));
+  const head = waiters[0];
+  if (head === undefined) return none;
+  if (
+    running.some((entry) => kindOf(entry) === "exclusive") ||
+    pass.admitted.some((entry) => kindOf(entry) === "exclusive")
+  ) {
+    hold(head, "exclusive");
+    return none;
+  }
   if (sample === null || now - sample.at > SAMPLE_FRESH_MS) {
-    return finish("no-reading", first ? false : input.holding);
+    hold(head, "no-reading");
+    return none;
   }
   const limit = machineHold(sample, input);
   const steady = sample.headroomSince !== null && now - sample.headroomSince >= HEADROOM_MS;
   const machine = limit ?? (steady ? null : ("steadying" as const));
-  const holding = limit === "pressure" || limit === "swap-in" ? true : input.holding;
   // Short memory holds back only what would add to it; a busy CPU or critical pressure, everyone.
   const critical = (sample.pressureLevel ?? 0) >= 4;
   const passesMachine = (entry: HeavyQueueEntry) =>
     machine === null || (machine !== "cpu" && !critical && isLight(input, entry));
 
-  const admitted = waiting.filter((entry) => admits.includes(entry.id));
-  const plain = { ...input, holding };
+  const plain = { ...input, holding: pass.holding };
+  const cost = (entry: HeavyQueueEntry) =>
+    estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive);
   /** Room after the recent starts only, to tell "a job just started" from a full machine. */
-  const settled = budgetOf({ ...plain, now: Infinity }, sample, running);
-  let budget = admitted.reduce(
-    (left, entry) =>
-      spend(left, estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive)),
-    budgetOf(plain, sample, running),
-  );
-  let slots = Math.max(1, input.maxRunning) - running.length - admitted.length;
+  const settled = budgetOf({ ...plain, now: Infinity }, sample, pass.loaded);
+  let budget = spend(budgetOf(plain, sample, pass.loaded), {
+    cpu: pass.admitted.reduce((sum, entry) => sum + cost(entry).cpu, 0),
+    memoryBytes: pass.spent,
+  });
+  let slots = Math.max(1, input.maxRunning) - pass.standardRunning - pass.admitted.length;
   const aged = (entry: HeavyQueueEntry) =>
     now - Date.parse(entry.createdAt) >= input.headPatienceMinutes * 60_000;
-  /** Room the aged head keeps for itself; the others start only in what is left. */
-  let reserved = false;
+  let reserved = 0;
+  let reservedFor: HeavyQueueEntry | null = null;
   let draining = false;
-  let headHold: HeavyQueueHold | null = null;
-  const tried: Record<string, string> = {};
-  const hold = (entry: HeavyQueueEntry, reason: HeavyQueueHold, why?: string) => {
-    if (entry.id === head.id) headHold = reason;
-    tried[entry.id] = why ?? holdText(reason);
-  };
 
-  for (const entry of rest) {
-    if (admits.includes(entry.id)) continue;
+  for (const entry of waiters) {
     const isHead = entry.id === head.id;
     if (kindOf(entry) === "exclusive") {
       // It starts once nothing runs; aged at the head, nothing new joins what runs before it.
@@ -469,30 +618,25 @@ export const plan = (input: PlanInput): Plan => {
     }
     const verdict = jobVerdict(input, sample, entry, budget);
     if (verdict.hold === null) {
-      admits.push(entry.id);
+      pass.admit(entry);
       budget = spend(budget, verdict.cost);
       slots -= 1;
       continue;
     }
     const fitsSettled = jobVerdict(input, sample, entry, settled).hold === null;
-    if (reserved) hold(entry, "reserved");
+    if (reservedFor !== null) hold(entry, "reserved");
     else if (fitsSettled) hold(entry, "committed");
     else hold(entry, verdict.hold, verdict.why);
     // An aged head keeps its room only when the queue's own jobs ending would make it fit: a
-    // shortage from load outside the queue blocks no one.
+    // shortage from load outside the queue, or from a service that never ends, blocks no one.
     if (isHead && aged(entry) && !fitsSettled) {
-      const ours = running.reduce(
-        (sum, job) =>
-          sum +
-          estimate(input.history, job, sample.cpuCount, input, sample.buildDaemonsAlive)
-            .memoryBytes,
-        0,
-      );
+      const ours = running.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
       if (verdict.cost.memoryBytes <= budget.memoryBytes + ours) {
         budget = spend(budget, verdict.cost);
-        reserved = true;
+        reserved = verdict.cost.memoryBytes;
+        reservedFor = entry;
       }
     }
   }
-  return finish(headHold, admits.includes(head.id) ? false : holding, tried);
+  return { holding: pass.holding, reserved, reservedFor };
 };

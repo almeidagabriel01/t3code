@@ -4,8 +4,10 @@ import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   estimate,
+  laneOf,
   machineHold,
   plan,
+  QUICK_SLOTS,
   signatureOf,
   sustain,
   workersFor,
@@ -448,7 +450,8 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
       change: {
         sample: { ...sixteen, pressureLevel: 2 },
-        history: { "vp run lint": [run(0.5, 400 / 1024, 5_000)] },
+        // Two minutes: a standard job, which the machine's limits hold; a quick one would pass.
+        history: { "vp run lint": [run(0.5, 400 / 1024, 120_000)] },
         lightJobMegabytes: 256,
       },
       admit: null,
@@ -484,7 +487,7 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
       change: {
         sample: { ...sixteen, busyCores: 9.5 },
-        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
       },
       admit: null,
       hold: "cpu",
@@ -754,35 +757,212 @@ describe("admission by real capacity", () => {
     expect(plan({ ...sized, history, entries, sample: roomy }).admits).toEqual(["head"]);
   });
 
-  it("never admits past the room or the slots, whatever the order of waiters", () => {
-    const labels = Object.keys(history);
+  it("never admits past the room or the slots, whatever the order and class of waiters", () => {
+    const labels = [
+      ...Object.keys(history),
+      "vp fmt a.ts",
+      "vp lint a.ts b.ts",
+      "git commit -m x a.ts",
+      "vp run dev",
+    ];
+    const pick = () => labels[Math.floor(next() * labels.length)]!;
     let seed = 7;
     const next = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
-    for (let round = 0; round < 300; round++) {
-      const running = Array.from({ length: Math.floor(next() * 3) }, (_, i) =>
-        entry(`r${i}`, labels[Math.floor(next() * labels.length)]!, 1_000 + next() * 60_000),
+    const lanes = { ...sized, history };
+    for (let round = 0; round < 500; round++) {
+      const running = Array.from({ length: Math.floor(next() * 4) }, (_, i) =>
+        entry(`r${i}`, pick(), 1_000 + next() * 60_000),
       );
-      const waiters = Array.from({ length: 1 + Math.floor(next() * 6) }, (_, i) =>
-        entry(`w${i}`, labels[Math.floor(next() * labels.length)]!, null, next() * 2 * aged),
+      const waiters = Array.from({ length: 1 + Math.floor(next() * 7) }, (_, i) =>
+        entry(`w${i}`, pick(), null, next() * 2 * aged),
       );
       const sample = { ...q2, availableMemoryBytes: (3.5 + next() * 4) * GIB };
       const input = { ...sized, history, sample, maxRunning: 3, entries: [...running, ...waiters] };
       const result = plan(input);
-      if (running.length === 0) continue;
+      const admitted = result.admits.map((id) => waiters.find((waiter) => waiter.id === id)!);
+      const count = (jobs: ReadonlyArray<HeavyQueueEntry>, lane: string) =>
+        jobs.filter((job) => laneOf(lanes, job) === lane).length;
+      for (const [lane, cap] of [
+        ["standard", 3],
+        ["quick", QUICK_SLOTS],
+        ["commit", 1],
+      ] as const) {
+        expect(count(running, lane) + count(admitted, lane)).toBeLessThanOrEqual(
+          Math.max(
+            cap,
+            count(running, lane) +
+              (count(running, "standard") + count(running, "quick") + count(running, "commit") === 0
+                ? 1
+                : 0),
+          ),
+        );
+      }
+      // Outside the exceptions (nothing running, the commit slot), nothing passes the room.
+      if (running.every((job) => laneOf(lanes, job) === "service")) continue;
+      const fresh = running.filter((job) => NOW - Date.parse(job.startedAt!) < 15_000);
+      const cost = (job: HeavyQueueEntry) => estimate(history, job, q2.cpuCount, base);
       const room =
         sample.availableMemoryBytes -
         0.2 * sample.totalMemoryBytes -
-        running
-          .filter((job) => NOW - Date.parse(job.startedAt!) < 15_000)
-          .reduce((sum, job) => sum + estimate(history, job, 10, base).memoryBytes, 0);
-      const used = result.admits
-        .map((id) => waiters.find((waiter) => waiter.id === id)!)
-        .reduce((sum, waiter) => sum + estimate(history, waiter, 10, base).memoryBytes, 0);
-      expect(used).toBeLessThanOrEqual(Math.max(0, room) + 1);
-      expect(running.length + result.admits.length).toBeLessThanOrEqual(
-        Math.max(3, running.length),
+        fresh.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
+      const counted = admitted.filter((job) => !["commit", "service"].includes(laneOf(lanes, job)));
+      expect(counted.reduce((sum, job) => sum + cost(job).memoryBytes, 0)).toBeLessThanOrEqual(
+        Math.max(0, room) + 1,
       );
+      // CPU binds standard jobs; a quick job passes it by design.
+      const cpuRoom =
+        q2.cpuCount * 0.7 - q2.busyCores - fresh.reduce((sum, job) => sum + cost(job).cpu, 0);
+      const standardCpu = admitted
+        .filter((job) => laneOf(lanes, job) === "standard")
+        .reduce((sum, job) => sum + cost(job).cpu, 0);
+      expect(standardCpu).toBeLessThanOrEqual(Math.max(0, cpuRoom) + 1e-9);
     }
+  });
+
+  const fmt = (id: string, startedMsAgo: number | null = null) =>
+    entry(id, `vp fmt ${id}.ts`, startedMsAgo);
+  const roomy = { ...q2, availableMemoryBytes: 8 * GIB };
+
+  it.each([
+    {
+      row: 19,
+      name: "a device boot starts beside a running service",
+      entries: [
+        entry("dev", "vp run dev", 60_000),
+        { ...entry("boot", "Open iPhone 17"), server: true },
+      ],
+      admits: ["boot"],
+    },
+    {
+      row: 21,
+      name: "critical pressure holds a quick job, even with only a service running",
+      entries: [entry("dev", "vp run dev", 60_000), fmt("q")],
+      sample: { ...q2, pressureLevel: 4 },
+      admits: [],
+      reasons: { q: "memory pressure critical" },
+    },
+    {
+      row: 22,
+      name: "the pause holds a quick job",
+      entries: [entry("r", "vp run e2e", 60_000), fmt("q")],
+      paused: true,
+      admits: [],
+      reasons: { q: "paused" },
+    },
+    {
+      row: 23,
+      name: "two quick jobs start and the third waits only for them",
+      entries: [entry("r", "vp run e2e", 60_000), fmt("a"), fmt("b"), fmt("c")],
+      sample: roomy,
+      admits: ["a", "b"],
+      reasons: { c: "2 quick jobs running" },
+    },
+    {
+      row: "23b",
+      name: "a standard head that fits starts before the quick jobs behind it",
+      entries: [entry("r", "vp run e2e", 60_000), entry("head", "vp run compile"), fmt("a")],
+      sample: roomy,
+      admits: ["head", "a"],
+    },
+    {
+      row: "5",
+      name: "a quick job passes a full set of standard slots and a settling start",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("r3", "vp run compile", 2_000),
+        entry("w", "vp run build"),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+      reasons: { w: "all 3 slots busy" },
+    },
+    {
+      row: "5",
+      name: "a quick job passes a job that runs alone, running or at the head",
+      entries: [
+        { ...entry("boot", "Open iPhone 17", 60_000), server: true },
+        entry("next", "xcrun simctl boot y"),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+    },
+    {
+      row: "6",
+      name: "a quick job too big for the room waits with its own reason; the next one starts",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("big", "vp test run big.test.ts"),
+        fmt("q"),
+      ],
+      history: { "vp test run big.test.ts": [run(1, 2, 5_000)] },
+      admits: ["q"],
+      reasons: { big: "memory floor: 1.0 GB room, needs 2.0 GB" },
+    },
+    {
+      row: 32,
+      name: "a hooked commit fifth in line starts in its own slot whatever its memory",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        ...["w1", "w2", "w3", "w4"].map((id) => entry(id, "vp run build")),
+        entry("commit", "git commit -m x a.ts"),
+      ],
+      history: { [signatureOf("git commit -m x a.ts")]: [run(2, 3.6, 120_000)] },
+      admits: ["commit"],
+    },
+    {
+      row: 8,
+      name: "a second commit waits for the one running",
+      entries: [entry("c1", "git commit -m x a.ts", 5_000), entry("c2", "git commit -m y b.ts")],
+      admits: [],
+      reasons: { c2: "a commit is running" },
+    },
+    {
+      row: 35,
+      name: "a quick job starts past the aged head's reservation within twice its patience",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, 6 * 60_000),
+        entry("w", "vp run bundle"),
+        fmt("q"),
+      ],
+      admits: ["q"],
+      reasons: { w: "waiting for room for the head job" },
+    },
+    {
+      row: 49,
+      name: "past twice the head's patience a quick job respects its reservation",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        fmt("q"),
+      ],
+      admits: [],
+      reasons: { q: "waiting for room for the head job" },
+    },
+  ] as ReadonlyArray<{
+    row: number | string;
+    name: string;
+    entries: ReadonlyArray<HeavyQueueEntry>;
+    sample?: typeof q2;
+    paused?: boolean;
+    history?: Record<string, ReadonlyArray<Run>>;
+    admits: ReadonlyArray<string>;
+    reasons?: Record<string, string>;
+  }>)("row $row: $name", ({ entries, sample, paused, admits, reasons, ...rest }) => {
+    const result = plan({
+      ...sized,
+      history: { ...history, ...rest.history },
+      entries,
+      sample: sample ?? q2,
+      paused: paused ?? false,
+    });
+    expect(result.admits).toEqual(admits);
+    for (const [id, text] of Object.entries(reasons ?? {})) expect(result.reasons[id]).toBe(text);
   });
 });
 

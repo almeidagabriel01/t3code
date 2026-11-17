@@ -325,6 +325,8 @@ const HOLD_GAUGE: Record<HeavyQueueHold, "cpu" | "memory" | null> = {
   "runs-alone": null,
   draining: null,
   committed: null,
+  "quick-slots": null,
+  "commit-slot": null,
   reserved: "memory",
   slots: null,
   settling: null,
