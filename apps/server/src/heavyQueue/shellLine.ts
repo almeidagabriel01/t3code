@@ -46,6 +46,8 @@ export interface ParsedLine {
   readonly commands: ReadonlyArray<Command>;
   /** Why the line cannot be followed exactly, or null. */
   readonly unsafe: string | null;
+  /** `for x in a b`: each loop variable's items; null for a name two loops use. */
+  readonly loops: ReadonlyMap<string, ReadonlyArray<Word> | null>;
 }
 
 const META = new Set([" ", "\t", "\n", ";", "&", "|", "<", ">", "(", ")"]);
@@ -66,6 +68,7 @@ interface Context {
 export const parseLine = (source: string): ParsedLine => {
   const commands: Command[] = [];
   let unsafe: string | null = null;
+  const loops = new Map<string, ReadonlyArray<Word> | null>();
   const flag = (why: string) => {
     unsafe ??= why;
   };
@@ -223,6 +226,7 @@ export const parseLine = (source: string): ParsedLine => {
     let piped = false;
     /** `for x in a b`: words that are not a command. */
     let header = false;
+    let headerWords: Word[] = [];
     const mark = (from: number) => {
       if (start < 0) start = from;
       end = at;
@@ -243,7 +247,12 @@ export const parseLine = (source: string): ParsedLine => {
         });
       }
       piped = next === "|" || next === "|&";
+      const [name, keyword, ...items] = headerWords;
+      if (header && name !== undefined) {
+        loops.set(name.value, loops.has(name.value) || keyword?.value !== "in" ? null : items);
+      }
       header = false;
+      headerWords = [];
       start = -1;
       assigns = [];
       words = [];
@@ -320,6 +329,7 @@ export const parseLine = (source: string): ParsedLine => {
           // A keyword: the next word starts the command.
         } else if (header) {
           // `for x in a b c`
+          headerWords.push(word);
         } else if (words.length === 0 && ASSIGN.test(plain)) {
           assigns.push(word);
           mark(word.start);
@@ -337,5 +347,5 @@ export const parseLine = (source: string): ParsedLine => {
   };
 
   parseList({ scope: [], substituted: false, conditional: 0, until: null });
-  return { commands, unsafe };
+  return { commands, unsafe, loops };
 };
