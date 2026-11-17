@@ -24,6 +24,8 @@ import {
   matchesAny,
   mayPublish,
   nextHealth,
+  CALLS_RUNNER,
+  CHECKED_BY_TEXT,
   NEEDS_GIT,
   PYTHON_HERE,
   NO_PROGRESS,
@@ -1483,6 +1485,47 @@ describe("patterns and eligibility", () => {
           { "/private/tmp/x/show.sh": "vp test run" },
         ],
         ["S=apps/x; $S/run.sh", "linux", null, { "apps/x/run.sh": "vp test run" }],
+        // Linux runs a program outside the checkout by its name: only an installed tool is the same there.
+        ["/opt/homebrew/bin/vp test run", "linux", null],
+        [
+          "/private/tmp/x/run-tests",
+          "mac-only",
+          "Uses a program outside the project: /private/tmp/x/run-tests",
+        ],
+        [
+          "S=/private/tmp/x; $S/run-tests --all",
+          "mac-only",
+          "Uses a program outside the project: /private/tmp/x/run-tests",
+        ],
+        ["../other/tool test", "mac-only", "Uses a program outside the project: /other/tool"],
+        // A `.sh` whose shebang names another interpreter is no shell script: it can't go as text.
+        [
+          "remoto /private/tmp/x/run.sh",
+          "mac-only",
+          "Uses a program outside the project: /private/tmp/x/run.sh",
+          { "/private/tmp/x/run.sh": "#!/usr/bin/env node\nvp test run\n" },
+        ],
+        // A script that goes as its text has no folder there: its own path or a call home stays here.
+        ...(
+          [
+            'cd "$(dirname "$0")" && vp test run',
+            'vp test run "${BASH_SOURCE[0]%/*}/a.test.ts"',
+            "vp test run && remoto vp lint",
+            "vp test run && t3 heavy -- vp lint",
+          ] as const
+        ).map(
+          (body) =>
+            [
+              "/private/tmp/x/gate.sh",
+              "mac-only",
+              body.includes("remoto")
+                ? "Nothing in it runs on Linux"
+                : body.includes("t3 heavy")
+                  ? CALLS_RUNNER
+                  : "Reads its own folder, which Linux doesn't have: /private/tmp/x",
+              { "/private/tmp/x/gate.sh": `#!/bin/sh\n${body}\n` },
+            ] as const,
+        ),
         ["S=$(pwd); $S/run.sh", "mac-only", UNREADABLE_SCRIPT, { "apps/x/run.sh": "vp test run" }],
         // A body the parser can't follow is checked by its text for what really ties it here.
         [
@@ -1490,14 +1533,54 @@ describe("patterns and eligibility", () => {
           "linux",
           null,
           { "scripts/gate.sh": '#!/bin/bash\nfiles=(a b)\ncheck() { vp test run "$@"; }\ncheck' },
+          CHECKED_BY_TEXT,
         ],
+        // Text that never runs ties nothing: comments, `case` patterns, echo and printf words.
+        ...(
+          [
+            'case "$1" in\n  /*) vp test run "$1";;\n  */x) vp test run;;\nesac',
+            'case "$1" in\n  *.ts|*/x) vp test run;;\n  (a|b) vp lint;;\nesac',
+            "# git and coverage live on the Mac\ncheck() { vp test run; } # git\ncheck",
+            `check() { echo "git: done"; printf 'coverage %s\\n' ok; echo running git status; }\ncheck`,
+            'check() { :; }\necho "#$(date)" /private/tmp/x >&2',
+          ] as const
+        ).map(
+          (body) =>
+            [
+              "remoto scripts/gate.sh",
+              "linux",
+              null,
+              { "scripts/gate.sh": body },
+              CHECKED_BY_TEXT,
+            ] as const,
+        ),
+        // What does run in that text still ties.
+        ...(
+          [
+            ['echo "a # b"; git diff', NEEDS_GIT],
+            ['echo "$(git rev-parse HEAD)"', NEEDS_GIT],
+            ["echo `git rev-parse HEAD`", NEEDS_GIT],
+            ["case $1 in a) git status;; esac", NEEDS_GIT],
+            ["case $1 in (a) echo x;;\n*) git status\nesac", NEEDS_GIT],
+            ["n=${#arr[@]}; git diff", NEEDS_GIT],
+            ["echo x > /private/tmp/o", "Uses a file outside the project: /private/tmp/o"],
+          ] as const
+        ).map(
+          ([inside, reason]) =>
+            [
+              "remoto scripts/gate.sh",
+              "mac-only",
+              reason,
+              { "scripts/gate.sh": `check() { :; }\n${inside}` },
+            ] as const,
+        ),
         ...(
           [
             ["xcrun simctl list", "exclusive", "Always on this Mac: xcrun simctl list"],
             ["instruments -s", "mac-only", "Always on this Mac: instruments"],
             ["git diff", "mac-only", NEEDS_GIT],
             ["python3 x.py", "mac-only", PYTHON_HERE],
-            ["pnpm install", "mac-only", "Always on this Mac: pnpm install"],
+            ["pnpm install", "mac-only", "Install runs on this Mac: pnpm install"],
             [
               "vp test run > /private/tmp/o",
               "mac-only",
@@ -1525,21 +1608,36 @@ describe("patterns and eligibility", () => {
         [
           "zsh /private/tmp/s/contracts-gate.sh",
           "mac-only",
-          "Always on this Mac: vp i",
+          "Install runs on this Mac: vp i",
           {
             "/private/tmp/s/contracts-gate.sh":
               'vp i\nfor f in a.ts; do vp fmt --stdin-filepath="$f" < "$f"; done',
           },
         ],
       ] as ReadonlyArray<
-        readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
+        readonly [
+          string,
+          string,
+          string | null,
+          Readonly<Record<string, string | null>>?,
+          typeof CHECKED_BY_TEXT?,
+        ]
       >
-    ).map(([label, eligibility, reason, scripts]) => ({ label, eligibility, reason, scripts })),
-  )("$label is $eligibility from the Linux copy", ({ label, eligibility, reason, scripts }) => {
-    expect(
-      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
-    ).toEqual({ eligibility, reason });
-  });
+    ).map(([label, eligibility, reason, scripts, note]) => ({
+      label,
+      eligibility,
+      reason,
+      scripts,
+      note,
+    })),
+  )(
+    "$label is $eligibility from the Linux copy",
+    ({ label, eligibility, reason, scripts, note }) => {
+      expect(
+        eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
+      ).toEqual({ eligibility, reason, ...(note === undefined ? {} : { note }) });
+    },
+  );
 
   // A body the parser can't follow ties exactly where a plain one does.
   it.each([
@@ -1567,11 +1665,12 @@ describe("patterns and eligibility", () => {
     config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
   };
   it.each([
-    ["pnpm install", "pnpm install"],
-    ["vp i", "vp i"],
-    ["npm ci", "npm ci"],
-    ["yarn add react", "yarn add react"],
-    ["pnpm --filter web remove lodash", "pnpm web remove"],
+    // An install says so: it is no entry on the user's Always on this Mac list.
+    ["pnpm install", "Install runs on this Mac: pnpm install"],
+    ["vp i", "Install runs on this Mac: vp i"],
+    ["npm ci", "Install runs on this Mac: npm ci"],
+    ["yarn add react", "Install runs on this Mac: yarn add react"],
+    ["pnpm --filter web remove lodash", "Install runs on this Mac: pnpm web remove"],
     ["xcodebuild -scheme App test", "xcodebuild App test"],
     ["adb install app.apk", "adb install app.apk"],
     ["pnpm exec next start", "pnpm exec next"],
@@ -1580,10 +1679,14 @@ describe("patterns and eligibility", () => {
     ["npm run watch:css", "npm run watch:css"],
     ["npx vite", "npx vite"],
     ["npx next dev", "npx next dev"],
+    // A workspace selector's value is no script: the dev server after it still stays.
+    ["remoto pnpm --filter web dev", "pnpm web dev"],
+    ["pnpm -F web run dev", "pnpm web run"],
+    ["npm --workspace web start", "npm web start"],
   ])("%s stays on this Mac whatever the lists say", (label, name) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
-      reason: `Always on this Mac: ${name}`,
+      reason: name.startsWith("Install") ? name : `Always on this Mac: ${name}`,
     });
   });
   it.each(["vp test run", "npx vite build", "pnpm run build", "./scripts/ci.sh"])(
@@ -2194,13 +2297,52 @@ describe("quick work never waits for Linux", () => {
       runner: "mac",
       why: `Linux busy (all ${DEFAULT_MACHINE_CONFIG.runnerLinuxSlots} Linux slots are busy): running here`,
     },
+    // Only "unavailable" changes for quick work: a run Linux dropped follows its own policy.
+    ...(["agent", "mac"] as const).map((policy) => ({
+      row: "25b",
+      name: `dropped with the PC gone, If dropped: ${policy}`,
+      entries: [
+        job("q", "vp test run a.test.ts b.test.ts", {
+          cwd: "/work/q",
+          dropped: true,
+          linkFailures: 3,
+          linuxFailedAt: NOW - 500,
+        } as never),
+      ],
+      over: { health: OFFLINE },
+      config: { runnerDropped: policy },
+      runner: policy === "agent" ? ("cancel" as const) : ("mac" as const),
+      why: policy === "agent" ? undefined : "Linux dropped it mid-run: running here",
+    })),
   ])("row $row: $name", ({ entries, over, config, runner, why }) => {
     const plan = planRoutes(
       input(entries, { runnerWhere: "linux", ...config }, { ...over, runnerOn: true }),
     );
+    if (runner === "cancel") {
+      expect(plan.cancels.q).toBeDefined();
+      expect(plan.admits.q).toBeUndefined();
+      return;
+    }
     expect(plan.admits.q).toEqual({ runner, ungated: false });
     expect(plan.asks.q).toBeUndefined();
     expect(plan.reasons.q).toBe(why);
+  });
+
+  it("a Linux row says when its script was checked by text", () => {
+    const body = '#!/bin/bash\nfiles=(a b)\ncheck() { vp test run "$@"; }\ncheck';
+    const entries = [
+      job("t", "remoto scripts/gate.sh", {
+        startedAt: ago(500),
+        runner: "linux" as const,
+        scripts: { "scripts/gate.sh": body },
+      } as never),
+      job("p", "remoto vp test run", { startedAt: ago(500), runner: "linux" as const }),
+    ];
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "linux" }, { health: READ, runnerOn: true }),
+    );
+    expect(plan.reasons).toMatchObject({ t: CHECKED_BY_TEXT });
+    expect(plan.reasons.p).toBeUndefined();
   });
 
   it("a standard job in the same spots still waits for Linux", () => {

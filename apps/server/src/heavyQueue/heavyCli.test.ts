@@ -237,6 +237,22 @@ describe("t3 heavy", () => {
     expect(await kept.exited).toBe(0);
   });
 
+  it("a Linux part outside a Linux job ends with a clear error, running nothing", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "ran");
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      [BIN, "heavy", "linux-part", "--queue-dir", dir, "--", "touch", marker],
+      { env: { ...process.env, T3CODE_HEAVY_JOB: undefined, T3CODE_REMOTO: undefined } },
+    );
+    let err = "";
+    child.stderr.on("data", (chunk) => (err += chunk));
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    expect(code).toBe(2);
+    expect(err).toBe("[t3 heavy] linux-part runs only inside a Linux job.\n");
+    expect(NodeFS.existsSync(marker)).toBe(false);
+  });
+
   it("inside a queue job runs at once without queuing, so it never waits on its own slot", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "m");
@@ -588,22 +604,27 @@ describe("t3 heavy", () => {
 
     // A tool or file Linux lacks (126, 127) is its environment's: "If a Linux run fails" decides,
     // and Tell the agent hands back Linux's code and error without rerunning anywhere.
+    // Silent too: a 127 with no error line still names the cause and follows the policy.
     it.each([
-      [127, "agent", 127, ""],
-      [126, "agent", 126, ""],
+      [127, "agent", 127, "", "sh: 1: tsgo: not found"],
+      [126, "agent", 126, "", "sh: 1: tsgo: not found"],
       // The whole line runs again here; under Tell the agent nothing after the failure runs.
-      [127, "mac", 0, "vp on mac: test run\nafter\n"],
-    ] as const)("exit %i, %s: ends %i", async (code, policy, exit, stdout) => {
-      const error = "sh: 1: tsgo: not found";
+      [127, "mac", 0, "vp on mac: test run\nafter\n", "sh: 1: tsgo: not found"],
+      [127, "agent", 127, "", ""],
+      [126, "mac", 0, "vp on mac: test run\nafter\n", ""],
+    ] as const)("exit %i, %s: ends %i (%j)", async (code, policy, exit, stdout, error) => {
       const { dir, env } = setup(
-        `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=${code}\\n' >&2; exit ${code}`,
+        `printf '${M} phase=running pgid=4\\n' >&2; ${error === "" ? "" : `echo '${error}' >&2; `}printf '${M} exit=${code}\\n' >&2; exit ${code}`,
         { runnerDropped: policy },
       );
       const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
       expect(await run.exited).toBe(exit);
       expect(run.stdout()).toBe(stdout);
-      expect(run.stderr()).toContain(`${error}\n`);
-      expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}\n`);
+      const why =
+        error !== ""
+          ? error
+          : `A command ${code === 127 ? "Linux doesn't have" : "Linux can't run"} (exit ${code})`;
+      expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${why}\n`);
       expect(Queue.read(dir)).toEqual([]);
     });
 
@@ -689,16 +710,48 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe(`bash|-c|${real(body)}| in ${NodePath.join(dir, folder)}\n`);
     });
 
-    it("sends a script outside the checkout to Linux as its text", async () => {
+    // Named literally or through a variable, the text goes: the file is not on Linux.
+    it.each([
+      (path: string) => `bash ${path} --fast`,
+      (path: string) => `${path} --fast`,
+      (path: string) => `S=${NodePath.dirname(path)}; $S/verify.sh --fast`,
+    ])("sends a script outside the checkout to Linux as its text (%#)", async (line) => {
       const { dir, env } = setup(echoArgs);
-      const scratch = tempDir();
-      const path = NodePath.join(scratch, "verify.sh");
-      NodeFS.writeFileSync(path, "vp test run");
-      const run = heavyHere(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
-      expect(await run.exited).toBe(0);
+      const path = NodePath.join(tempDir(), "verify.sh");
+      NodeFS.writeFileSync(path, "#!/bin/sh\nvp test run\n", { mode: 0o755 });
+      const run = heavyHere(dir, ["/bin/sh", "-c", line(path)], env, ["--"], dir);
+      expect(await run.exited, run.stderr()).toBe(0);
       expect(run.stdout()).toBe(
-        `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
+        `bash|-c|#!/bin/sh\nvp test run\n|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
       );
+    });
+
+    // What only the shell knew is judged before it leaves: each of these would fail there.
+    it.each([
+      [
+        "a script reading its own folder",
+        '#!/bin/sh\ncd "$(dirname "$0")" && vp test run\n',
+        (path: string) => `S=${NodePath.dirname(path)}; $S/verify.sh`,
+        (path: string) =>
+          `Reads its own folder, which Linux doesn't have: ${NodePath.dirname(path)}`,
+      ],
+      [
+        "a program outside the checkout",
+        "#!/usr/bin/env node\n",
+        // Only the shell knows it: judged as it leaves.
+        (path: string) => `S=$(echo ${NodePath.dirname(path)}); $S/vitest run`,
+        (path: string) => `Uses a program outside the project: ${NodePath.dirname(path)}/vitest`,
+      ],
+    ])("keeps %s on this Mac", async (_, body, line, why) => {
+      const { dir, env } = setup(echoArgs);
+      const scratch = NodeFS.realpathSync(tempDir());
+      const path = NodePath.join(scratch, "verify.sh");
+      NodeFS.writeFileSync(NodePath.join(scratch, "vitest"), body, { mode: 0o755 });
+      NodeFS.writeFileSync(path, body, { mode: 0o755 });
+      const run = heavyHere(dir, ["/bin/sh", "-c", line(path)], env, ["--"], dir);
+      await run.exited;
+      expect(run.stdout()).not.toContain(" in ");
+      expect(run.stderr()).toContain(`${why(path)}; running the line on this Mac`);
     });
 
     it("judges the whole line, not the label cut short for the row", async () => {

@@ -216,6 +216,46 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     expect(result.code).toBe(3);
   });
 
+  // Linux has no such file: the script's text goes with the job, named literally or by a variable.
+  it.each([
+    (dir: string) => `${dir}/show.sh --fast`,
+    (dir: string) => `S=${dir}; $S/show.sh --fast`,
+    (dir: string) => `bash ${dir}/show.sh --fast`,
+  ])("`t3 heavy` runs a script outside the checkout on Linux from its text (%#)", async (line) => {
+    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-it-script-"));
+    NodeFS.writeFileSync(
+      NodePath.join(scratch, "show.sh"),
+      // `a.txt` is only in the checkout's copy there, and the script's own path is on no Linux.
+      '#!/bin/sh\necho "from-$(uname) $*"; cat a.txt\n',
+      { mode: 0o755 },
+    );
+    const result = await finished(heavy(project(), queueWith({}), line(scratch)));
+    expect(result.stdout, result.stderr).toBe("from-Linux --fast\nhello\n");
+    expect(result.code).toBe(0);
+  });
+
+  // Each of these would fail there (its folder, a program by that name): it runs here instead.
+  it.each([
+    // Seen only once the shell expanded it: the job says why as it leaves the line.
+    [
+      "show.sh",
+      '#!/bin/sh\ncd "$(dirname "$0")" && echo "from-$(uname)"\n',
+      "running the line on this Mac",
+    ],
+    // Not a shell script, so no text to send: Linux would run its own `vitest`, or none. Judged as
+    // it is queued; the hook tells the agent why (`REMOTO_HERE`).
+    ["vitest", "#!/usr/bin/env -S sh\necho from-$(uname)\n", ""],
+  ])("`t3 heavy` keeps %s from outside the checkout on this Mac", async (name, body, says) => {
+    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-it-script-"));
+    NodeFS.writeFileSync(NodePath.join(scratch, name), body, { mode: 0o755 });
+    const result = await finished(
+      heavy(project(), queueWith({ runnerDropped: "agent" }), `S=${scratch}; $S/${name} run`),
+    );
+    expect(result.stdout, result.stderr).toBe("from-Darwin\n");
+    expect(result.stderr).toContain(says);
+    expect(result.code).toBe(0);
+  });
+
   // A lost link is Linux's to recover: whatever "If a Linux run fails" says, the job goes back there.
   it("`t3 heavy` reruns a dropped job on Linux once it confirms it stopped and the link is back", async () => {
     const cwd = project();
@@ -281,7 +321,7 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     const result = await finished(
       heavy(project(), queueDir, "echo from-$(uname)", downEnvironment),
     );
-    expect(result.stdout).toBe("from-Darwin\n");
+    expect(result.stdout, result.stderr).toBe("from-Darwin\n");
     expect(result.code).toBe(0);
   });
 });

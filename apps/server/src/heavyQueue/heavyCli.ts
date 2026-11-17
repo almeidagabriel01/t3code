@@ -1092,8 +1092,21 @@ const runLinuxPart = async (
     .find((why) => why !== null);
   if (tie !== undefined && tie !== null) return endLine(dir, id, { kind: "mac", reason: tie });
   let command = { program, args };
-  if (script !== null && outsideTie(NodePath.resolve(cwd, script.word), cwd, root) !== null) {
+  const scriptAt = script === null ? null : NodePath.resolve(cwd, script.word);
+  if (script !== null && outsideTie(scriptAt!, cwd, root) !== null) {
     if (script.body === null) return endLine(dir, id, { kind: "mac", reason: UNREADABLE_SCRIPT });
+    // Read now, so it is the text that leaves that is judged.
+    const verdict = bodyVerdict(
+      script.body,
+      cwd,
+      root,
+      { config: configFor(doc, cwd), home, rootOf: gitRootOf, synced: syncedInCopy },
+      undefined,
+      scriptAt!,
+    );
+    if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") {
+      return endLine(dir, id, { kind: "mac", reason: verdict.reason! });
+    }
     const rest = script.word === program ? args : args.slice(args.indexOf(script.word) + 1);
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }
@@ -1187,9 +1200,11 @@ const runLinuxPart = async (
     }
     fault({ kind: "exit", code: outcome.code, program: command.program });
     // A tool or file Linux lacks is its environment's failure, which the policy decides.
-    const error = lastError as string | null;
-    if ((outcome.code === 126 || outcome.code === 127) && error !== null) {
-      return endLine(dir, id, { kind: "environment", reason: error, code: outcome.code });
+    if (outcome.code === 126 || outcome.code === 127) {
+      const reason =
+        (lastError as string | null) ??
+        `A command ${outcome.code === 127 ? "Linux doesn't have" : "Linux can't run"} (exit ${outcome.code})`;
+      return endLine(dir, id, { kind: "environment", reason, code: outcome.code });
     }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(

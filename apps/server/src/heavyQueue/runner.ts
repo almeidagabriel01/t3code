@@ -28,7 +28,7 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
-import { isDevServer, kindOf, PACKAGE_MANAGERS, runTarget } from "./commandShapes.ts";
+import { isDevServer, kindOf, PACKAGE_MANAGERS, runnableText, runTarget } from "./commandShapes.ts";
 import {
   commitOnly,
   FOLDER_FLAGS,
@@ -36,6 +36,7 @@ import {
   nameOf,
   readLine,
   REMOTO_HERE,
+  scriptOf,
   TYPE_CHECKERS,
   UNREADABLE_SCRIPT,
   workParts,
@@ -153,7 +154,11 @@ export interface Verdict {
   readonly eligibility: Eligibility;
   /** For people, on the Resource Manager row; null when Linux can take it. */
   readonly reason: string | null;
+  /** For people, on a Linux row: how it was judged fit when the parser could not follow it all. */
+  readonly note?: string;
 }
+
+export const CHECKED_BY_TEXT = "checked by text";
 
 /**
  * Fields only the queue file keeps: a job's full command line (the label is cut short for the
@@ -225,6 +230,9 @@ const BOTH_AT_LIMITS = "Both machines are at their limits";
 const COMMIT_HOOK = "Commit hook runs checks";
 
 export const NEEDS_GIT = "Needs git, which the Linux copy doesn't have";
+export const CALLS_RUNNER = "Calls the Runner itself: Linux has neither remoto nor t3";
+/** `$0` or `BASH_SOURCE`: a script finding files beside itself. */
+const OWN_FOLDER = /\$(\{#?)?(0\b|BASH_SOURCE)/;
 
 // ponytail: words only; a script that calls git inside (`ci.sh`) can't be seen from its line.
 const GIT_DRIVEN = /(^|[^a-z])(only)?(changed|staged)(since)?($|[^a-z])/i;
@@ -254,13 +262,26 @@ const MAC_TOOLS = new Set(["xcodebuild", "xcrun", "simctl", "emulator", "adb", "
 const alwaysMac = (part: Part): boolean => {
   // `npx vite`, `pnpm exec next dev`: the tool they run decides.
   const { program, words } = runTarget(part.program, part.words);
-  const [first = "", second = ""] = words;
+  const [first = ""] = words;
   if (MAC_TOOLS.has(program)) return true;
   if (program === "expo" && first.startsWith("run")) return true;
-  if (isDevServer(program, words)) return true;
+  if (isDevServer(program, words, part.flags)) return true;
+  return installs(part);
+};
+
+/** A package install: it changes this Mac's `node_modules`, which the Linux copy rebuilds itself. */
+const installs = (part: Part) => {
+  const { program, words } = runTarget(part.program, part.words);
+  const [first = "", second = ""] = words;
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
   return PACKAGE_MANAGERS.has(program) && (INSTALLS.test(first) || INSTALLS.test(second));
 };
+
+const INSTALL_HERE = "Install runs on this Mac: ";
+
+/** Why a part `alwaysMac` holds stays here; "Always on this Mac" also names the user's own list. */
+const macTie = (part: Part, text: string) =>
+  `${installs(part) ? INSTALL_HERE : "Always on this Mac: "}${nameOf(text)}`;
 
 /** Shell a body can use that the parser does not follow; its text is checked instead. */
 const CONSTRUCTS = new Set([
@@ -286,8 +307,7 @@ const textTie = (
 ): string | null => {
   const pattern = config.runnerMacOnly.find((each) => matchesAny(body, [each]));
   if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
-  const tokens = body
-    .replace(/^#!.*\n/, "")
+  const tokens = runnableText(body)
     .split(/[\s;|&()<>`"'=]+/)
     .filter((token) => token !== "");
   for (const [at, token] of tokens.entries()) {
@@ -297,7 +317,7 @@ const textTie = (
     if (PYTHON.test(name)) return PYTHON_HERE;
     const install = tokens.slice(at + 1, at + 3).find((next) => INSTALLS.test(next));
     if (PACKAGE_MANAGERS.has(name) && install !== undefined) {
-      return `Always on this Mac: ${name} ${install}`;
+      return `${INSTALL_HERE}${name} ${install}`;
     }
   }
   if (root === null) return null;
@@ -346,6 +366,19 @@ export const programTie = (
   const name = programName(program);
   if (PYTHON.test(name) || PYTHON_ENV.test(program)) return PYTHON_HERE;
   if (program.includes("/") && PYTHON_SHEBANG.test(read?.(program) ?? "")) return PYTHON_HERE;
+  // Linux runs a program outside the checkout by its name: only an installed tool's is the same
+  // program there. A shell script goes as its text instead.
+  // A glob is no program path: a `case` pattern the parser read as one (`/*)`).
+  const at = program.includes("/") && !/[*?[]/.test(program) ? resolvePath(cwd, program) : null;
+  if (
+    at !== null &&
+    !inside(at, root) &&
+    !SYSTEM.test(at) &&
+    !/\/bin\/[^/]+$/.test(at) &&
+    scriptOf(values, 0, read) === null
+  ) {
+    return `Uses a program outside the project: ${at}`;
+  }
   if (synced === undefined) return null;
   const script =
     INTERPRETERS.has(name) && !args.some((arg) => INLINE_CODE.test(arg))
@@ -379,7 +412,7 @@ const tieOf = (
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
   if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
-  if (alwaysMac(part)) return `Always on this Mac: ${nameOf(text)}`;
+  if (alwaysMac(part)) return macTie(part, text);
   if (part.program === "git" && part.words[0] === "commit") {
     return "Commits run here: the pre-commit edits this Mac's repository";
   }
@@ -497,7 +530,18 @@ export const bodyVerdict = (
   root: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
   where?: RunnerWhere,
+  /** The script's path when its text goes instead of the file, which Linux doesn't have. */
+  travelsFrom?: string,
 ): Verdict => {
+  if (travelsFrom !== undefined && OWN_FOLDER.test(body)) {
+    return {
+      eligibility: "mac-only",
+      reason: `Reads its own folder, which Linux doesn't have: ${travelsFrom.slice(0, travelsFrom.lastIndexOf("/")) || "/"}`,
+    };
+  }
+  if (readLine(body).parts.some((part) => part.program === "t3" || part.remoto !== null)) {
+    return { eligibility: "mac-only", reason: CALLS_RUNNER };
+  }
   const verdict = eligibilityOf(
     { label: body, cwd, ...(where === undefined ? {} : { where }) },
     {
@@ -572,7 +616,7 @@ export const eligibilityOf = (
   if (elsewhere !== undefined) {
     return {
       eligibility: "mac-only",
-      reason: `Always on this Mac: ${nameOf(elsewhere.values.join(" "))}`,
+      reason: macTie(elsewhere, elsewhere.values.join(" ")),
     };
   }
   const cwds = new Map<string, string | null>([["", entry.cwd]]);
@@ -587,6 +631,8 @@ export const eligibilityOf = (
     return cwds.get(key)!;
   };
   let notListed: string | null = null;
+  /** A body in it was judged by its text. */
+  let byText = false;
   // What a sourced file sets up lives in this Mac's shell; Linux runs the work without it.
   let sourced: string | null = null;
   for (const part of parts) {
@@ -619,15 +665,20 @@ export const eligibilityOf = (
         part.script?.body ?? shellTextOf(moved?.values ?? part.values.slice(part.programAt));
       if (body !== undefined) {
         // It runs in this part's copy, so a folder outside that checkout is not there.
+        const root = at === null ? null : rootOf(at);
+        const scriptAt =
+          part.script === null || at === null ? null : resolvePath(at, part.script.word);
         const inner = bodyVerdict(
           body,
           at ?? entry.cwd,
-          at === null ? null : rootOf(at),
+          root,
           context,
           entry.where,
+          scriptAt !== null && (root === null || !inside(scriptAt, root)) ? scriptAt : undefined,
         );
         if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;
+        if (inner.note !== undefined) byText = true;
       } else if (
         notListed === null &&
         !config.runnerLinuxEverything &&
@@ -672,9 +723,10 @@ export const eligibilityOf = (
   }
   const textual = unfollowed ? textTie(line, entry.cwd, rootOf(entry.cwd), config) : null;
   if (textual !== null) return { eligibility: "mac-only", reason: textual };
+  const note = unfollowed || byText ? { note: CHECKED_BY_TEXT } : {};
   return notListed === null
-    ? { eligibility: "linux", reason: null }
-    : { eligibility: "not-listed", reason: notListed };
+    ? { eligibility: "linux", reason: null, ...note }
+    : { eligibility: "not-listed", reason: notListed, ...note };
 };
 
 export interface LinuxHealth extends Sustained {
@@ -939,7 +991,7 @@ const dropHolds = (
 export const intentOf = (
   entry: HeavyQueueEntry,
   context: WorkContext,
-): { readonly intent: RunnerWhere; readonly reason: string } => {
+): { readonly intent: RunnerWhere; readonly reason: string; readonly note?: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
     // Only a commit whose hook runs is queued, so the queue can say why it waits.
@@ -950,10 +1002,11 @@ export const intentOf = (
     return mac(entry.where === "linux" ? `${REMOTO_HERE}${verdict.reason}` : verdict.reason!);
   }
   if (entry.route === "mac") return mac((entry as QueuedEntry).routeReason ?? "Moved to this Mac");
-  if (entry.route === "linux") return { intent: "linux", reason: "" };
+  const note = verdict.note === undefined ? {} : { note: verdict.note };
+  if (entry.route === "linux") return { intent: "linux", reason: "", ...note };
   // `--runner` (an agent's own `remoto` call) speaks for the job; otherwise only listed work leaves.
   const where = entry.where ?? (verdict.reason === null ? context.config.runnerWhere : "mac");
-  if (where !== "mac") return { intent: where, reason: "" };
+  if (where !== "mac") return { intent: where, reason: "", ...note };
   return mac(
     verdict.reason ??
       (entry.where === "mac"
@@ -1004,7 +1057,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const cancels: Record<string, string> = {};
   const linuxOver: Record<string, string> = {};
   const macWaiters: HeavyQueueEntry[] = [];
-  /** Why each job runs on this Mac, shown with what it waits for there. */
+  /** Why each job runs on this Mac, shown with what it waits for there; how a Linux one was judged. */
   const macWhy: Record<string, string> = {};
 
   /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
@@ -1152,6 +1205,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     const { intent, reason } = intentOf(entry, input.contextOf(entry.cwd));
     if (intent === "mac" && shows(reason)) macWhy[entry.id] = reason;
   }
+  for (const entry of linuxRunning) {
+    const { note } = intentOf(entry, input.contextOf(entry.cwd));
+    if (note !== undefined) macWhy[entry.id] = note;
+  }
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);
     const { config, worktree } = context;
@@ -1182,7 +1239,14 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, health, now);
     // Quick work never waits for Linux: offline or busy, it runs here in its own slots. Before the
     // first heartbeat Linux is not known to be down, so it waits for that answer like any job.
-    if (isQuick(entry) && !up && health.online === false && entry.route !== "linux") {
+    // A run Linux dropped or failed follows "If a Linux run fails" like any job.
+    if (
+      isQuick(entry) &&
+      !up &&
+      health.online === false &&
+      entry.route !== "linux" &&
+      entry.dropped !== true
+    ) {
       toMac(entry, "Linux is unavailable: running here");
       continue;
     }

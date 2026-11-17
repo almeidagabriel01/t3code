@@ -322,7 +322,9 @@ export const scriptOf = (
   const word = read === undefined ? null : scriptWord(values, at);
   if (word === null) return null;
   const body = read!(word);
-  const sure = SHELLS.has(base(values[at]!)) || word.endsWith(".sh");
+  // A `.sh` whose shebang names another interpreter (`#!/usr/bin/env node`) is not a shell's.
+  const foreign = body !== null && body.startsWith("#!") && !SHEBANG.test(body);
+  const sure = SHELLS.has(base(values[at]!)) || (word.endsWith(".sh") && !foreign);
   if (body !== null && (sure || SHEBANG.test(body))) return { word, body };
   return sure && body === null ? { word, body: null } : null;
 };
