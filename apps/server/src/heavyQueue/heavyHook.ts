@@ -393,12 +393,25 @@ export const readLine = (
   read?: ReadScript,
 ): { readonly unsafe: string | null; readonly parts: Part[] } => {
   const { commands, unsafe } = parseLine(line);
-  return {
-    unsafe,
-    parts: commands
-      .map((command) => partOf(command, read))
-      .toSorted((a, b) => a.command.start - b.command.start),
-  };
+  // `S=/x; $S/run.sh`: a script is read through what the line set its variables to, literally.
+  const vars = new Map<string, string>();
+  const through =
+    read === undefined
+      ? undefined
+      : (word: string) =>
+          read(word.replace(/\$\{(\w+)\}|\$(\w+)/g, (all, a, b) => vars.get(a ?? b) ?? all));
+  const parts: Part[] = [];
+  for (const command of commands.toSorted((a, b) => a.start - b.start)) {
+    parts.push(partOf(command, through));
+    if (command.words.length > 0 || command.substituted) continue;
+    for (const word of command.assigns) {
+      const name = word.value.slice(0, word.value.indexOf("="));
+      if (word.vars.length === 0 && !word.tilde && !command.conditional) {
+        vars.set(name, word.value.slice(name.length + 1));
+      } else vars.delete(name);
+    }
+  }
+  return { unsafe, parts };
 };
 
 const BUILTINS = new Set([

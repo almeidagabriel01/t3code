@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { UNREADABLE_SCRIPT } from "./heavyHook.ts";
 import {
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
@@ -1436,6 +1437,63 @@ describe("patterns and eligibility", () => {
           "Sets up its shell here first: direnv exec . vp test run",
         ],
         ["nvm ls && vp test run", "linux", null],
+        // 43–46: a script read through a variable goes like its literal path: as its text.
+        ["/private/tmp/x/show.sh", "linux", null, { "/private/tmp/x/show.sh": "vp test run" }],
+        [
+          "S=/private/tmp/x; $S/show.sh",
+          "linux",
+          null,
+          { "/private/tmp/x/show.sh": "vp test run" },
+        ],
+        ["S=apps/x; $S/run.sh", "linux", null, { "apps/x/run.sh": "vp test run" }],
+        ["S=$(pwd); $S/run.sh", "mac-only", UNREADABLE_SCRIPT, { "apps/x/run.sh": "vp test run" }],
+        // A body the parser can't follow is checked by its text for what really ties it here.
+        [
+          "remoto scripts/gate.sh",
+          "linux",
+          null,
+          { "scripts/gate.sh": '#!/bin/bash\nfiles=(a b)\ncheck() { vp test run "$@"; }\ncheck' },
+        ],
+        ...(
+          [
+            ["xcrun simctl list", "exclusive", "Always on this Mac: xcrun simctl list"],
+            ["instruments -s", "mac-only", "Always on this Mac: instruments"],
+            ["git diff", "mac-only", NEEDS_GIT],
+            ["python3 x.py", "mac-only", PYTHON_HERE],
+            ["pnpm install", "mac-only", "Always on this Mac: pnpm install"],
+            [
+              "vp test run > /private/tmp/o",
+              "mac-only",
+              "Uses a file outside the project: /private/tmp/o",
+            ],
+            ["vp test run --config=/etc/../x", "mac-only", "Uses a file outside the project: /x"],
+          ] as const
+        ).map(
+          ([inside, eligibility, reason]) =>
+            [
+              "remoto scripts/gate.sh",
+              eligibility,
+              reason,
+              {
+                "scripts/gate.sh": `#!/usr/bin/env bash\n${inside}\ncheck() { :; }\n/usr/bin/true`,
+              },
+            ] as const,
+        ),
+        // Parsed, a body's redirects run there too: a file it writes outside stays out of reach.
+        [
+          "sh -c 'vp test run > /private/tmp/o.txt'",
+          "mac-only",
+          "Uses a file outside the project: /private/tmp/o.txt",
+        ],
+        [
+          "zsh /private/tmp/s/contracts-gate.sh",
+          "mac-only",
+          "Always on this Mac: vp i",
+          {
+            "/private/tmp/s/contracts-gate.sh":
+              'vp i\nfor f in a.ts; do vp fmt --stdin-filepath="$f" < "$f"; done',
+          },
+        ],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >

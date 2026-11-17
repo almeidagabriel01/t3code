@@ -259,6 +259,53 @@ const alwaysMac = (part: Part): boolean => {
   return PACKAGE_MANAGERS.has(program) && (INSTALLS.test(first) || INSTALLS.test(second));
 };
 
+/** Shell a body can use that the parser does not follow; its text is checked instead. */
+const CONSTRUCTS = new Set([
+  "function or array",
+  "function",
+  "case",
+  "eval",
+  "coproc",
+  "process substitution",
+]);
+/** Programs Linux has at the same path: naming them ties nothing. */
+const SYSTEM = /^\/(usr|bin|sbin|dev|etc|proc)\//;
+
+/**
+ * The hard ties a body's text shows when its shell can't be followed word by word: Always on this
+ * Mac patterns, Mac tools, installs, Python, `git`, and absolute paths outside `root`.
+ */
+const textTie = (
+  body: string,
+  cwd: string,
+  root: string | null,
+  config: RunnerProjectConfig,
+): string | null => {
+  const pattern = config.runnerMacOnly.find((each) => matchesAny(body, [each]));
+  if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
+  const tokens = body
+    .replace(/^#!.*\n/, "")
+    .split(/[\s;|&()<>`"'=]+/)
+    .filter((token) => token !== "");
+  for (const [at, token] of tokens.entries()) {
+    const name = programName(token);
+    if (MAC_TOOLS.has(name)) return `Always on this Mac: ${name}`;
+    if (name === "git") return NEEDS_GIT;
+    if (PYTHON.test(name)) return PYTHON_HERE;
+    const install = tokens.slice(at + 1, at + 3).find((next) => INSTALLS.test(next));
+    if (PACKAGE_MANAGERS.has(name) && install !== undefined) {
+      return `Always on this Mac: ${name} ${install}`;
+    }
+  }
+  if (root === null) return null;
+  for (const token of tokens) {
+    if (SYSTEM.test(resolvePath(cwd, token))) continue;
+    const tie = outsideTie(token, cwd, root);
+    if (tie !== null) return tie;
+  }
+  return null;
+};
+
 const PYTHON =
   /^(python[\d.]*|i?python[\d.]*|pytest|py\.test|pip[\d.]*|pipx|poetry|pipenv|tox|nox|uvx?|pdm|hatch|rye|conda|mamba|micromamba|pixi|jupyter(-[\w-]+)?|virtualenv|coverage|mypy|pylint|flake8|black|isort|behave|nosetests)$/;
 /** A program inside a Python environment: a venv, tox or nox env, conda install, or `site-packages`. */
@@ -337,11 +384,13 @@ const tieOf = (
   const { command } = part;
   // The job's one slot, Stop and requeue follow a single run at a time.
   if (command.next === "&") return `Runs in the background: ${nameOf(text)}`;
-  // Inside a text that runs there whole, a file it reads is judged like a path argument below.
+  // Inside a text that runs there whole, a redirect's file is judged like a path argument below.
   // Elsewhere the redirect stays here, and `remoto` gives the command no input but `/dev/null`.
   const fromFile = (redirect: Redirect) =>
     /^\d*<>?$/.test(redirect.op) && (inText === true || redirect.target?.value === "/dev/null");
-  const files = command.redirects.filter(fromFile).flatMap((each) => each.target ?? []);
+  const files = command.redirects
+    .filter((each) => fromFile(each) || (inText === true && !each.op.includes("<")))
+    .flatMap((each) => each.target ?? []);
   if (command.piped || command.redirects.some((each) => each.op.includes("<") && !fromFile(each))) {
     return `Reads its input from this Mac: ${nameOf(text)}`;
   }
@@ -507,11 +556,26 @@ export const eligibilityOf = (
   const read: ReadScript | undefined =
     scripts === undefined ? undefined : (word) => scripts[word] ?? null;
   const { unsafe, parts } = readLine(line, read);
+  if (unsafe !== null && context.inText === true && CONSTRUCTS.has(unsafe)) {
+    const tie = textTie(line, entry.cwd, rootOf(entry.cwd), config);
+    if (tie !== null) return { eligibility: "mac-only", reason: tie };
+    return config.runnerLinuxEverything || matchesAny(line, config.runnerLinuxCommands)
+      ? { eligibility: "linux", reason: null }
+      : { eligibility: "not-listed", reason: `Not on the Can run on Linux list: ${nameOf(line)}` };
+  }
   if (unsafe !== null) {
     return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
   }
   const work = new Set(workParts(parts));
   if (work.size === 0) return { eligibility: "mac-only", reason: "Nothing in it runs on Linux" };
+  // A text runs there whole, so what else it runs goes too: an install in it is still this Mac's.
+  const elsewhere = context.inText === true ? parts.find((part) => alwaysMac(part)) : undefined;
+  if (elsewhere !== undefined) {
+    return {
+      eligibility: "mac-only",
+      reason: `Always on this Mac: ${nameOf(elsewhere.values.join(" "))}`,
+    };
+  }
   const cwds = new Map<string, string | null>([["", entry.cwd]]);
   const vars = new Map<string, string | null>([["HOME", home]]);
   const cwdAt = (scope: ReadonlyArray<number>): string | null => {
