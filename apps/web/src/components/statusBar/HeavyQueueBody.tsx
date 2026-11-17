@@ -760,7 +760,7 @@ export function HeavyWorkSection({
           <span className="pointer-events-none mr-1 flex items-center gap-1 text-2xs tabular-nums text-muted-foreground">
             <MachineCount
               runner="mac"
-              running={work.mac.running.length}
+              running={summaries.mac.running}
               slots={state.enabled ? state.maxRunning : null}
             />
             {showLinux ? (

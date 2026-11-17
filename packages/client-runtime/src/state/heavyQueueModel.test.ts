@@ -692,11 +692,14 @@ describe("machineBar", () => {
       // A hooked commit runs in its own slot, not a quick one.
       c: { class: "quick" as const, why: "staged files", commit: true },
     };
-    const bar = machineBar(
-      state({ entries: [e("q", true), e("s", true), e("j", true), e("c", true)], costs }),
-      null,
-    ).mac;
+    const busy = state({
+      entries: [e("q", true), e("s", true), e("j", true), e("c", true)],
+      costs,
+    });
+    const bar = machineBar(busy, null).mac;
     expect(bar.slots).toMatchObject({ running: 1, slots: 3 });
+    // The section header's "Mac n/m" reads the same count.
+    expect(machineSummaries(busy).mac.running).toBe(1);
     expect(bar.quick).toEqual({
       running: 1,
       slots: 2,

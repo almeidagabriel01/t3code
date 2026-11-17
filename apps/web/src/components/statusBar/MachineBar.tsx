@@ -8,7 +8,7 @@ import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { LaptopIcon, ServerIcon } from "lucide-react";
+import { LaptopIcon, ServerIcon, ZapIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
@@ -157,8 +157,12 @@ function Slots({
   return (
     <Reading hint={quick === null ? hint : `${hint} · ${quick.hint}`} className="justify-end gap-1">
       {quick === null ? null : (
-        <span aria-label={quick.hint} className="text-2xs tabular-nums text-muted-foreground">
-          quick {quick.running}/{quick.slots}
+        <span
+          aria-label={quick.hint}
+          className="flex items-center text-2xs tabular-nums text-muted-foreground"
+        >
+          <ZapIcon aria-hidden className="size-3" />
+          {quick.running}/{quick.slots}
         </span>
       )}
       {slots > MAX_PIPS ? null : (

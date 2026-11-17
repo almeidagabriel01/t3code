@@ -838,13 +838,14 @@ function HeavyWorkList(props: {
 
 /** "Mac 1/3 · Linux 2/2": each machine's running jobs against its slots, as the rows count them. */
 function heavyWorkCounts(state: HeavyQueueState, work: ReturnType<typeof heavyWork>) {
-  const linuxSlots = machineSummaries(state).linux?.slots ?? null;
+  const summaries = machineSummaries(state);
+  const linuxSlots = summaries.linux?.slots ?? null;
   const showLinux =
     linuxSlots !== null || work.linux.running.length + work.linux.waiting.length > 0;
   const count = (name: string, running: number, slots: number | null) =>
     `${name} ${running}${slots === null ? "" : `/${slots}`}`;
   return [
-    count("Mac", work.mac.running.length, state.enabled ? state.maxRunning : null),
+    count("Mac", summaries.mac.running, state.enabled ? state.maxRunning : null),
     ...(showLinux ? [count("Linux", work.linux.running.length, linuxSlots)] : []),
   ].join(" · ");
 }

@@ -259,7 +259,7 @@ type SummaryState = Pick<
   HeavyQueueState,
   "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
 > &
-  Partial<Pick<HeavyQueueState, "linux" | "quickSlots">>;
+  Partial<Pick<HeavyQueueState, "linux" | "quickSlots" | "costs">>;
 
 function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
@@ -273,8 +273,13 @@ function macSummary(state: SummaryState): MachineSummary {
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
         : heavyHoldText(hold, machine, state.maxRunning, state.quickSlots);
   return {
-    running: state.entries.filter((entry) => entry.startedAt !== null && entry.runner !== "linux")
-      .length,
+    // Quick, commit and service jobs have their own lanes, so only standard work fills the slots.
+    running: state.entries.filter(
+      (entry) =>
+        entry.startedAt !== null &&
+        entry.runner !== "linux" &&
+        (state.costs?.[entry.id]?.class ?? "standard") === "standard",
+    ).length,
     slots: state.maxRunning,
     cpuPercent:
       machine === null
@@ -530,13 +535,14 @@ export function machineBar(
         };
   const memory = machine ?? host ?? null;
   const work = heavyWork(state, []);
-  const note = machineSummaries(state).mac.note;
+  const summary = machineSummaries(state).mac;
+  const note = summary.note;
   const gauge = macNoteGauge(state);
   const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
   const cpuWarning = warning("cpu");
   const memoryWarning = warning("memory");
   const classOf = (entry: HeavyQueueEntry) => state.costs?.[entry.id]?.class ?? "standard";
-  const macRunning = work.mac.running.filter((entry) => classOf(entry) === "standard").length;
+  const macRunning = summary.running;
   const quickRunning = work.mac.running.filter(
     (entry) => classOf(entry) === "quick" && state.costs?.[entry.id]?.commit !== true,
   ).length;

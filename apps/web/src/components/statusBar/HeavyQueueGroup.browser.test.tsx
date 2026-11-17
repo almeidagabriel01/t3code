@@ -709,7 +709,10 @@ describe("MachineBar", () => {
       costs: { q: { class: "quick", why: "staged files" } },
     });
     await using screen = await render(machineBar());
-    expect(screen.container.textContent).toMatch(/quick 1\/2.*1\/3/s);
+    await expect
+      .element(screen.getByLabelText("1 of 2 quick jobs running on this Mac", { exact: true }))
+      .toHaveTextContent("1/2");
+    expect(screen.container.textContent).toMatch(/1\/2.*1\/3/s);
   });
 
   it("says the queue is off on the Mac's slots, and shows no Linux without the Runner", async () => {
