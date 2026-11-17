@@ -27,7 +27,7 @@ import {
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
-import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
+import { faultOf, type FaultSeen, startFailureOf, unreachableLine } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -687,7 +687,15 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
   }
   // The code a failure notice reports; every exit path ends here.
-  process.on("exit", (code) => finish(dir, id, code));
+  process.on("exit", (code) =>
+    finish(
+      dir,
+      id,
+      code,
+      Date.now(),
+      startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
+    ),
+  );
 
   /** What a signal does right now: exit while waiting, or stop the running attempt. */
   let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>

@@ -150,6 +150,29 @@ describe("t3 heavy", () => {
     expect(await Promise.all([first.exited, now.exited])).toEqual([0, 0]);
   });
 
+  // A job whose script was missing once logged only its --name and 127.
+  it("a named job whose script is missing logs its line and the missing path", async () => {
+    const dir = tempDir();
+    const script = NodePath.join(dir, "fmt.sh");
+    const run = heavy(dir, [script, "a.ts"], {}, [
+      "--name",
+      "web fmt",
+      "--runner",
+      "mac",
+      "--now",
+      "--",
+    ]);
+    expect(await run.exited).toBe(127);
+    expect(Queue.readDoc(dir).results).toEqual([
+      expect.objectContaining({
+        code: 127,
+        name: "web fmt",
+        line: `'${script}' 'a.ts'`,
+        error: `script not found: ${script}`,
+      }),
+    ]);
+  });
+
   it("frees the place of a killed waiter and exits 125 when the user removes one", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "marker.txt");

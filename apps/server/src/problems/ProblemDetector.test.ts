@@ -870,6 +870,14 @@ describe("sources (PRO-30, PRO-32)", () => {
         assert.equal(byTitle["Environment: spawn codex ENOENT"]!.problem?.count, 1);
         // Its worktree broke the install: the job ended telling the agent the fix, at any phase.
         assert.isNull(runnerReport(record({ code: 1, phase: "running", worktree: "run vp i" })));
+        const missing = { runner: "mac", name: "web fmt", label: "/s/fmt.sh a", threadId: "t1" };
+        assert.deepInclude(
+          runnerReport(
+            record({ error: "script not found: /s/fmt.sh", job: { id: "m", ...missing } }),
+          ),
+          { command: "/s/fmt.sh a", error: "script not found: /s/fmt.sh" },
+        );
+
         const exit = byTitle["Environment: Exit code 127"]!.description;
         assert.include(exit, "`bash /tmp/tests.sh`");
         assert.notInclude(exit, "remoto tests parity");

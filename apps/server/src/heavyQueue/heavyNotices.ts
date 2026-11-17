@@ -5,6 +5,8 @@
  * module turns those records, plus Linux health and long waits, into grouped toasts.
  */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import type {
   HeavyNotice,
   HeavyNoticesMode,
@@ -24,6 +26,8 @@ export type HeavyEvent =
   | {
       readonly kind: "ended";
       readonly code: number;
+      /** Why it could not start, when the CLI can tell (a missing script). */
+      readonly error?: string;
       readonly phase?: HeavyRunnerPhase;
       /** What in its worktree kept Linux from installing it, and the fix. */
       readonly worktree?: string;
@@ -184,7 +188,9 @@ export const faultOf = (
 
 /** The record of a fault, beside the job's own `ended` or `linux-lost` record. */
 export const faultRecord = (
-  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner">,
+  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner"> & {
+    readonly line?: string;
+  },
   fault: Fault,
   now: number,
 ): HeavyEventRecord => recordOf(entry, { kind: "t3-fault", ...fault }, now);
@@ -195,7 +201,7 @@ export type HeavyEventRecord = HeavyEvent & {
   readonly job: {
     readonly id: string;
     readonly name: string;
-    /** The command it ran; absent in records written before it was kept. */
+    /** The full command line when `name` is not it; absent in records written before it was kept. */
     readonly label?: string;
     readonly threadId: string | null;
     readonly runner: HeavyRunner;
@@ -207,29 +213,66 @@ export const EVENT_LOG_SIZE = 50;
 /** Exit codes that mean someone stopped it: removed (125) or a signal. */
 const STOPPED_CODES = new Set([0, 125, 129, 130, 143]);
 
+/**
+ * Why a job exited 126/127 when a file it runs is the cause: those codes alone don't say a script
+ * was missing. `scripts` are the files its line runs (`sh -c './fmt.sh'`); a bare program name is
+ * a PATH lookup, and an existing script that exits 127 itself is left to its own output.
+ */
+export const startFailureOf = (
+  program: string,
+  scripts: ReadonlyArray<string>,
+  cwd: string,
+  code: number,
+  exists: (path: string) => boolean = NodeFS.existsSync,
+) => {
+  if (code !== 126 && code !== 127) return undefined;
+  const own = program.includes("/") ? NodePath.resolve(cwd, program) : null;
+  const files = [
+    ...(own === null ? [] : [own]),
+    ...scripts.map((each) => NodePath.resolve(cwd, each)),
+  ];
+  const missing = files.find((file) => !exists(file));
+  if (missing !== undefined) return `script not found: ${missing}`;
+  return code === 126 && own !== null ? `not executable: ${own}` : undefined;
+};
+
+const LINE_CHARS = 1000;
+
+/** The line a job ran, cut where a card or the queue file would carry only noise (a heredoc). */
+export const lineOf = (entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string }) => {
+  const line = entry.line ?? entry.label;
+  return line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS - 1)}…` : line;
+};
+
 const recordOf = (
-  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner">,
+  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner"> & {
+    readonly line?: string;
+  },
   event: HeavyEvent,
   now: number,
-): HeavyEventRecord => ({
-  ...event,
-  id: NodeCrypto.randomUUID(),
-  at: now,
-  job: {
-    id: entry.id,
-    name: entry.name ?? entry.label,
-    // `name` is already the command unless --name gave it another.
-    ...(entry.name === undefined ? {} : { label: entry.label }),
-    threadId: entry.threadId,
-    runner: entry.runner ?? "mac",
-  },
-});
+): HeavyEventRecord => {
+  // The full line, kept apart from `name`: `label` drops the script's folder and is cut short.
+  const line = entry.line === undefined && entry.name === undefined ? undefined : lineOf(entry);
+  return {
+    ...event,
+    id: NodeCrypto.randomUUID(),
+    at: now,
+    job: {
+      id: entry.id,
+      name: entry.name ?? entry.label,
+      ...(line === undefined ? {} : { label: line }),
+      threadId: entry.threadId,
+      runner: entry.runner ?? "mac",
+    },
+  };
+};
 
 /** A job's own process ending; null for success, a stop, or an entry already gone. */
 export const endedRecord = (
-  entry: (HeavyQueueEntry & { readonly worktree?: string }) | undefined,
+  entry: (HeavyQueueEntry & { readonly worktree?: string; readonly line?: string }) | undefined,
   code: number,
   now: number,
+  error?: string,
 ): HeavyEventRecord | null =>
   entry === undefined || STOPPED_CODES.has(code)
     ? null
@@ -238,6 +281,7 @@ export const endedRecord = (
         {
           kind: "ended",
           code,
+          ...(error === undefined ? {} : { error }),
           ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
           ...(entry.runner === "linux" && entry.worktree !== undefined
             ? { worktree: entry.worktree }
@@ -465,7 +509,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
           machine: job.runner,
           one: `${name} could not start on ${on}`,
           many: (n) => `${jobs(n)} could not start on ${on}`,
-          description: `Command not found or not executable (exit ${record.code})`,
+          description: record.error ?? `Command not found or not executable (exit ${record.code})`,
         });
       }
       if (record.phase === "syncing" || record.phase === "installing") {

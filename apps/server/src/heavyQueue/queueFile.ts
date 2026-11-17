@@ -50,6 +50,7 @@ import {
   type Fault,
   faultRecord,
   type HeavyEventRecord,
+  lineOf,
   parseLog,
   requeueRecord,
   startRecord,
@@ -215,6 +216,10 @@ interface JobResult {
   readonly id: string;
   readonly code: number;
   readonly at: number;
+  /** What it ran, its `--name`, and why it could not start: what someone reading the file needs. */
+  readonly line?: string;
+  readonly name?: string;
+  readonly error?: string;
 }
 const MAX_RESULTS = 200;
 const RESULT_TTL_MS = 3_600_000;
@@ -1071,28 +1076,37 @@ export const remove = (dir: string, id: string) =>
   }));
 
 /** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
-export const finish = (dir: string, id: string, code: number, now = Date.now()) =>
+export const finish = (dir: string, id: string, code: number, now = Date.now(), error?: string) =>
   mutate(
     dir,
-    (doc) => ({
-      doc: {
-        ...doc,
-        entries: doc.entries.filter((entry) => entry.id !== id),
-        results: [
-          ...doc.results.filter((each) => each.id !== id && now - each.at < RESULT_TTL_MS),
-          { id, code, at: now },
-        ].slice(-MAX_RESULTS),
-        events: withRecord(
-          doc.events,
-          endedRecord(
-            doc.entries.find((entry) => entry.id === id),
-            code,
-            now,
-          ),
-        ),
-      },
-      result: undefined,
-    }),
+    (doc) => {
+      const entry: (HeavyQueueEntry & { readonly line?: string }) | undefined = doc.entries.find(
+        (each) => each.id === id,
+      );
+      const line = entry === undefined ? undefined : lineOf(entry);
+      // The CLI checked the files on this Mac: a Linux run's 127 is Linux's to explain.
+      const reason = (entry?.runner ?? "mac") === "mac" ? error : undefined;
+      const result: JobResult = {
+        id,
+        code,
+        at: now,
+        ...(line === undefined ? {} : { line }),
+        ...(entry?.name === undefined ? {} : { name: entry.name }),
+        ...(reason === undefined ? {} : { error: reason }),
+      };
+      return {
+        doc: {
+          ...doc,
+          entries: doc.entries.filter((each) => each.id !== id),
+          results: [
+            ...doc.results.filter((each) => each.id !== id && now - each.at < RESULT_TTL_MS),
+            result,
+          ].slice(-MAX_RESULTS),
+          events: withRecord(doc.events, endedRecord(entry, code, now, reason)),
+        },
+        result: undefined,
+      };
+    },
     now,
   );
 

@@ -18,6 +18,7 @@ import {
   rawNotices,
   requeueRecord,
   shownIn,
+  startFailureOf,
   startRecord,
   STUCK_FLOOR_MS,
   STUCK_NO_HISTORY_MS,
@@ -508,6 +509,31 @@ describe("notices for each problem", () => {
     ]);
   });
 
+  // The problem card shows the line that ran: the label drops the script's folder and is cut.
+  it.each([
+    [
+      "named, with a line",
+      { name: "web fmt", label: "fmt.sh a", line: "/s/fmt.sh a" },
+      "/s/fmt.sh a",
+    ],
+    ["named, label is the line", { name: "web fmt", label: "vp fmt a.ts" }, "vp fmt a.ts"],
+    ["unnamed, with a line", { label: "fmt.sh a", line: "/s/fmt.sh a" }, "/s/fmt.sh a"],
+    ["unnamed, label is the line", { label: "vp lint" }, undefined],
+    ["with a heredoc", { name: "gate", line: "x".repeat(1200) }, `${"x".repeat(999)}…`],
+  ])("keeps the command line of a job %s", (_case, fields, label) => {
+    expect(endedRecord({ ...mac, ...fields }, 127, NOW)!.job.label).toBe(label);
+  });
+
+  it("a job that could not start says what was missing", () => {
+    const missing = record(endedRecord(mac, 127, NOW, "script not found: /s/fmt.sh"));
+    expect(rawNotices(tick({ records: [missing] }))[0]!.description).toBe(
+      "script not found: /s/fmt.sh",
+    );
+    expect(
+      rawNotices(tick({ records: [record(endedRecord(mac, 127, NOW))] }))[0]!.description,
+    ).toBe("Command not found or not executable (exit 127)");
+  });
+
   it("names a job by its --name and shortens long ones", () => {
     const named = record(endedRecord({ ...mac, name: "Web tests" }, 1, NOW));
     const long = record(endedRecord({ ...mac, label: "x".repeat(80) }, 1, NOW));
@@ -865,3 +891,26 @@ describe("grouping", () => {
     expect(groupNotices([], new Map(), NOW).batch).toEqual([]);
   });
 });
+
+describe("startFailureOf", () => {
+  const files = new Set(["/w/run.sh", "/w/locked.sh"]);
+  const exists = (path: string) => files.has(path);
+  it.each([
+    ["/w/fmt.sh", [], 127, "script not found: /w/fmt.sh"],
+    ["./fmt.sh", [], 127, "script not found: /w/fmt.sh"],
+    ["../fmt.sh", [], 126, "script not found: /fmt.sh"],
+    ["/w/locked.sh", [], 126, "not executable: /w/locked.sh"],
+    // The script inside a shell line, by path or by bare name as `sh backend.sh` gives it.
+    ["sh", ["./fmt.sh"], 127, "script not found: /w/fmt.sh"],
+    ["sh", ["backend.sh"], 127, "script not found: /w/backend.sh"],
+    // A script that exists and exits 127 itself, a bare name, or a plain failure: its own output says why.
+    ["/w/run.sh", [], 127, undefined],
+    ["sh", ["./run.sh"], 127, undefined],
+    ["sh", [], 126, undefined],
+    ["vp", [], 127, undefined],
+    ["/w/fmt.sh", [], 1, undefined],
+  ] as const)("%s %j exiting %i", (program, scripts, code, reason) => {
+    expect(startFailureOf(program, scripts, "/w", code, exists)).toBe(reason);
+  });
+});
+

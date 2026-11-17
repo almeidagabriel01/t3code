@@ -90,6 +90,32 @@ describe("heavy queue file", () => {
     },
   );
 
+  it.each([
+    [
+      "named, with its line",
+      { name: "web fmt", line: "/s/fmt.sh a" },
+      { line: "/s/fmt.sh a", name: "web fmt" },
+    ],
+    ["named, label is the line", { name: "web fmt" }, { line: "r1", name: "web fmt" }],
+    ["unnamed", {}, { line: "r1" }],
+  ])("a result keeps the line it ran, %s, and why it could not start", (_case, fields, kept) => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), ...fields }, at);
+    Queue.finish(dir, "r1", 127, at, "script not found: /s/fmt.sh");
+    const error = "script not found: /s/fmt.sh";
+    expect(Queue.readDoc(dir).results).toEqual([{ id: "r1", code: 127, at, ...kept, error }]);
+    expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 127, error });
+  });
+
+  it("a Linux run's 127 keeps its line but not a reason checked on this Mac", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), runner: "linux" }, at);
+    Queue.finish(dir, "r1", 127, at, "script not found: /s/fmt.sh");
+    expect(Queue.readDoc(dir).results).toEqual([{ id: "r1", code: 127, at, line: "r1" }]);
+  });
+
   it("keeps the last 200 results", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");
