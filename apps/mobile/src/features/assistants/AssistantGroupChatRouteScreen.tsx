@@ -410,6 +410,7 @@ type TaskHandlers = {
     ownerId?: Assistant["id"],
   ) => void;
   readonly onOpenConversation: (task: AssistantGroupTask) => void;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 };
 
 /** A finished task as the thread's activity line, titled by its member thread when known. */
@@ -459,6 +460,7 @@ function TaskCards(
         canAct={props.canAct}
         onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
         onOpenConversation={() => props.onOpenConversation(task)}
+        onOpenThread={props.onOpenThread}
       />
     ),
   );
@@ -476,7 +478,6 @@ function FeedRow(
     readonly onReply: (message: AssistantGroupMessage, name: string) => void;
     readonly onJump: (messageId: AssistantGroupMessage["id"]) => void;
     readonly onPreview: (source: FilePreviewSource) => void;
-    readonly onOpenThread: (threadId: ThreadId) => void;
     readonly linkHost: LinkHost;
     /** The root of the request's project, for the message's file links. */
     readonly workspaceRoot: string | null;
