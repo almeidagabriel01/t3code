@@ -433,8 +433,24 @@ vi.mock("../agent-awareness/notificationNavigation", () => ({
   showAgentNotificationGroupTab: mocks.showTab,
 }));
 vi.mock("../../components/ui/AppText", () => ({
-  AppText: (props: { children?: ReactNode; testID?: string }) => (
-    <span data-testid={props.testID}>{props.children}</span>
+  // Laid out one line per newline, like text that never wraps.
+  AppText: (props: {
+    children?: ReactNode;
+    testID?: string;
+    onTextLayout?: (event: { nativeEvent: { lines: object[] } }) => void;
+  }) => (
+    <span
+      data-testid={props.testID}
+      ref={
+        props.onTextLayout &&
+        ((node) => {
+          const lines = (node?.textContent ?? "").split("\n").map(() => ({}));
+          if (node) props.onTextLayout?.({ nativeEvent: { lines } });
+        })
+      }
+    >
+      {props.children}
+    </span>
   ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -1026,7 +1042,7 @@ describe("group chat feed", () => {
     );
   });
 
-  it("shows a task's expected result and resources, and why a queued one waits", () => {
+  it("shows a task's expected result and resources, and why a queued one waits", async () => {
     mocks.live = snapshot(
       [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
       [
@@ -1035,16 +1051,33 @@ describe("group chat feed", () => {
           expectedResult: "the build is green",
           resources: ["folder:/w/app", "browser"],
         }),
-        task("t22", "running", "bo"),
-        task("t333", "usage_limited", "beto", { resetAt: "2099-01-01T09:30Z" }),
+        task("t22", "running", "bo", { instruction: "step 1\nstep 2\nstep 3\nstep 4" }),
+        task("t333", "usage_limited", "beto", {
+          resetAt: "2099-01-01T09:30Z",
+          expectedResult: "a\nlong\nreport",
+        }),
         task("t4444", "usage_limited", "jarvis"),
       ],
     );
     render();
-    expect(container.querySelectorAll('[data-testid="group-task-expected"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="group-task-expected"]')?.textContent).toBe(
-      "Expected: the build is green",
+    // Only a request its clamp cuts, in the instruction or the expected result, gets the toggle.
+    const toggles = () =>
+      Array.from(container.querySelectorAll('[data-testid="group-task-card"]'), (card) =>
+        card.querySelector('button[aria-label^="Show"]')?.getAttribute("aria-label"),
+      );
+    expect(toggles()).toEqual([undefined, "Show more", "Show more", undefined]);
+    await act(async () =>
+      container.querySelectorAll<HTMLElement>('button[aria-label="Show more"]')[1]!.click(),
     );
+    expect(toggles()).toEqual([undefined, "Show more", "Show less", undefined]);
+    await click("Show less");
+    expect(toggles()).toEqual([undefined, "Show more", "Show more", undefined]);
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-testid="group-task-expected"]'),
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Expected: the build is green", "Expected: a\nlong\nreport"]);
     expect(container.querySelector('[data-testid="group-task-resources"]')?.textContent).toBe(
       "folder:/w/appbrowser",
     );

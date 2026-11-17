@@ -696,10 +696,40 @@ it("shows a task's expected result and resources, and why a queued or limited on
         resetAt,
         createdAt: "2026-03-17T19:02:00.000Z",
       }),
+      task("long", 1, {
+        instruction: Array.from({ length: 6 }, (_, index) => `step ${index}`).join("\n"),
+        expectedResult: "a report",
+        createdAt: "2026-03-17T19:03:00.000Z",
+      }),
+      task("detailed", 1, {
+        expectedResult: "every page ".repeat(60),
+        createdAt: "2026-03-17T19:04:00.000Z",
+      }),
     ],
   );
   await using _screen = await openChat();
   const cards = main().getByTestId("group-task-card");
+  // Only a request cut by its clamp gets the toggle, and it opens the expected result with it.
+  await expect.element(cards.nth(3).getByRole("button", { name: "Show more" })).toBeVisible();
+  await expect
+    .element(cards.first().getByRole("button", { name: "Show more" }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(cards.nth(1).getByRole("button", { name: "Show more" }))
+    .not.toBeInTheDocument();
+  const detailed = cards.nth(4);
+  await userEvent.click(detailed.getByRole("button", { name: "Show more" }));
+  await expect
+    .element(detailed.getByTestId("group-task-request"))
+    .toHaveAttribute("data-expanded", "true");
+  const expected = detailed.getByTestId("group-task-expected").element();
+  expect(expected.scrollHeight).toBeLessThanOrEqual(expected.clientHeight + 1);
+  expect(expected.clientHeight).toBeGreaterThan(40);
+  await userEvent.click(detailed.getByRole("button", { name: "Show less" }));
+  await expect
+    .element(detailed.getByTestId("group-task-request"))
+    .toHaveAttribute("data-expanded", "false");
+  await expect.element(detailed.getByRole("button", { name: "Show more" })).toBeVisible();
   await expect
     .element(cards.nth(2).getByTestId("group-task-waiting"))
     .toHaveTextContent(

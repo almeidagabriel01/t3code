@@ -1,4 +1,5 @@
 import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { foldToggleLabel } from "@t3tools/client-runtime/messageFold";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
@@ -13,7 +14,9 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { MessageSquareIcon } from "lucide-react";
+import { useId, useState } from "react";
 
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { useThreadShell } from "../../state/entities";
 import { RelativeTime } from "../RelativeTime";
@@ -64,6 +67,18 @@ export function GroupTaskCard(props: {
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
+  const requestId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  // Measured only while clamped: expanded text always fits, which would drop its own Show less.
+  const measureClip = (request: HTMLDivElement | null) => {
+    if (request === null || expanded) return;
+    const measure = () =>
+      setClipped([...request.children].some((line) => line.scrollHeight > line.clientHeight + 1));
+    // Measured before paint too, so the toggle lands in the first frame, not in an observer pass.
+    measure();
+    return observeResize(request, measure);
+  };
   return (
     <div
       data-testid="group-task-card"
@@ -91,12 +106,37 @@ export function GroupTaskCard(props: {
           <RelativeTime timestamp={task.updatedAt} />
         </span>
       </div>
-      <p className="line-clamp-3 text-sm wrap-anywhere text-foreground">{task.instruction}</p>
-      {task.expectedResult === undefined ? null : (
-        <p data-testid="group-task-expected" className="truncate text-muted-foreground">
-          Expected: {task.expectedResult}
+      <div
+        id={requestId}
+        ref={measureClip}
+        data-testid="group-task-request"
+        data-expanded={expanded}
+        className="flex min-w-0 flex-col gap-1.5 whitespace-pre-wrap wrap-anywhere"
+      >
+        <p className={cn("text-sm text-foreground", !expanded && "line-clamp-3")}>
+          {task.instruction}
         </p>
-      )}
+        {task.expectedResult === undefined ? null : (
+          <p
+            data-testid="group-task-expected"
+            className={cn("text-muted-foreground", !expanded && "line-clamp-1")}
+          >
+            Expected: {task.expectedResult}
+          </p>
+        )}
+      </div>
+      {clipped ? (
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          aria-expanded={expanded}
+          aria-controls={requestId}
+          onClick={() => setExpanded((value) => !value)}
+          className="-ms-2 self-start"
+        >
+          {foldToggleLabel(expanded)}
+        </Button>
+      ) : null}
       {task.resources === undefined ? null : (
         <div data-testid="group-task-resources" className="flex flex-wrap gap-1">
           {task.resources.map((resource) => (
