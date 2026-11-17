@@ -59,7 +59,7 @@ function at(offsetMs: number): DateTime.Utc {
 type SettlementShell = OrchestrationV2ThreadShell &
   Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "latestUserAuthoredMessageAt" | "subagentHandoff" | "assistantTaskDismissed"
+    "latestUserAuthoredMessageAt" | "subagentHandoff" | "assistantTaskDismissed" | "waitsOnDecision"
   >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
@@ -110,6 +110,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     pinnedAt: null,
     subagentHandoff: null,
     assistantTaskDismissed: false,
+    waitsOnDecision: false,
     ...overrides,
   };
 }
@@ -153,6 +154,12 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+  });
+
+  it("never settles a thread whose question to the user is open", () => {
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(shell({ waitsOnDecision: true }), NOW_MS),
+    ).toBe(false);
   });
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {

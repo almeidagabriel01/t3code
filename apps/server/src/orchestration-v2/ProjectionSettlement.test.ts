@@ -508,6 +508,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
     const delegated = yield* createThread("delegated", asChild(parent, "/worktrees/delegated"));
     const orphan = yield* createThread("orphan", asChild(settledParent, null));
     const task = yield* createThread("task");
+    const asking = yield* createThread("asking");
     const parentRun = yield* createRun(parent, "running");
     const record = (
       childThreadId: ThreadId,
@@ -552,6 +553,15 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
     yield* record(delegated, "app_owned", "delivered");
     yield* sql`INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at, dismissed_at)
       VALUES (${task}, 'jarvis', 'project:settlement', 'task', ${DateTime.formatIso(old)}, ${DateTime.formatIso(now)})`;
+    const decision = (thread: ThreadId, id: string, clientRequestId: string, status = "open") =>
+      sql`INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id,
+          thread_title, title, context, options_json, status, created_at)
+        VALUES (${id}, ${thread}, 'project:settlement', ${clientRequestId}, 't', 'Ship it?', '',
+          '[{"id":"yes","label":"Yes"}]', ${status}, ${DateTime.formatIso(old)})`;
+    yield* decision(asking, "d-open", "ask-1");
+    // Answered questions and autonomy's own notices wait on nobody.
+    yield* decision(task, "d-answered", "ask-2", "answered");
+    yield* decision(task, "d-notice", "autonomy:notice-1");
 
     const byId = new Map((yield* store.getSettlementCandidates()).map((row) => [row.id, row]));
     assert.deepEqual(byId.get(native)?.subagentHandoff, {
@@ -584,6 +594,8 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
     assert.equal(byId.get(task)?.subagentHandoff, null);
     assert.equal(byId.get(task)?.assistantTaskDismissed, true);
     assert.equal(byId.get(native)?.assistantTaskDismissed, false);
+    assert.equal(byId.get(asking)?.waitsOnDecision, true);
+    assert.equal(byId.get(task)?.waitsOnDecision, false);
     // A parent turn that ends once the child finished is the one that read its result.
     yield* createRun(parent, "completed", 2);
     const read = (yield* store.getSettlementCandidates(native))[0];

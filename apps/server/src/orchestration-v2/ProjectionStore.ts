@@ -233,6 +233,8 @@ export type ProjectionSettlementCandidate = Pick<
     readonly subagentHandoff: ProjectionSubagentHandoff | null;
     /** An assistant task thread whose task was dismissed from the assistant's list. */
     readonly assistantTaskDismissed: boolean;
+    /** A question it asked the user with t3_decision is still open. */
+    readonly waitsOnDecision: boolean;
   };
 
 export interface ProjectionSubagentHandoff {
@@ -1118,6 +1120,7 @@ type SettlementThreadRow = Pick<
   readonly parent_read_result: number | null;
   readonly parent_worktree_path: string | null;
   readonly assistant_task_dismissed: number;
+  readonly waits_on_decision: number;
 };
 
 type ShellRunItemCountRow = {
@@ -6870,7 +6873,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               EXISTS (
                 SELECT 1 FROM assistant_tasks task
                 WHERE task.thread_id = t.thread_id AND task.dismissed_at IS NOT NULL
-              ) AS assistant_task_dismissed
+              ) AS assistant_task_dismissed,
+              -- An approval mirror's request holds it already; autonomy notices (NOTICE_REQUEST_PREFIX) never wait.
+              EXISTS (
+                SELECT 1 FROM decisions decision
+                WHERE decision.from_thread_id = t.thread_id AND decision.status = 'open'
+                  AND decision.client_request_id NOT LIKE 'autonomy:%'
+              ) AS waits_on_decision
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -6988,6 +6997,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         }
                       : null,
                   assistantTaskDismissed: row.assistant_task_dismissed === 1,
+                  waitsOnDecision: row.waits_on_decision === 1,
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,

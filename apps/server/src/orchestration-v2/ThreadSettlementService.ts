@@ -154,7 +154,7 @@ export function isAutoSettlementCandidate(
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
-  if (thread.pendingRuntimeRequest !== null) return false;
+  if (thread.pendingRuntimeRequest !== null || thread.waitsOnDecision) return false;
   // A guest is waiting on the owner; settling would hide the Request.
   if (guestWaitsOnUser(thread)) return false;
   if (thread.activityRunStatus != null) return false;
