@@ -3187,6 +3187,12 @@ const make = Effect.gen(function* () {
     const named = yield* sql<{ readonly reason: string }>`
       SELECT reason FROM assistant_group_tasks
       WHERE status = 'waiting' AND instr(reason, ${threadId}) > 0`.pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("assistant groups: the tasks waiting on a launch could not be read", {
+          threadId,
+          cause,
+        }),
+      ),
       Effect.orElseSucceed(() => []),
     );
     if (!named.some((row) => workInReason(row.reason).threads.includes(threadId))) return false;
