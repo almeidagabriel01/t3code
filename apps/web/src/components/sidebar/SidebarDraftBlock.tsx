@@ -20,7 +20,7 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
-import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import { draftPenClassName, draftSurfaceClassName } from "./SidebarDraftIndicator";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;

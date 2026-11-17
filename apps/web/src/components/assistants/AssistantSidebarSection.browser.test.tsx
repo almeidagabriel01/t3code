@@ -1,10 +1,13 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { assistantGroupDraftThreadId } from "@t3tools/client-runtime/assistantGroupChat";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AssistantTeamId, EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
 
 import { render } from "../../../test/render";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { useThreadTabsStore } from "../../threadTabsStore";
 import { useUiStateStore } from "../../uiStateStore";
 import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "../chat/threadContextDrag";
@@ -145,6 +148,14 @@ vi.mock("./assistantTeamState", () => ({
   openAssistantGroupRoutines: state.openGroupRoutines,
 }));
 vi.mock("./assistantDialogState", () => ({ openAssistantDialog: state.openDialog }));
+// The real discard raises an undo toast that outlives the test and covers later menus.
+vi.mock("~/lib/discardComposerDraft", async () => {
+  const { useComposerDraftStore } = await import("../../composerDraftStore");
+  return {
+    discardComposerDraft: (ref: ScopedThreadRef) =>
+      useComposerDraftStore.getState().clearComposerContent(ref),
+  };
+});
 vi.mock("./assistantInfoState", () => ({ openAssistantInfo: state.openInfo }));
 vi.mock("./DescribeAssistantDialog", () => ({
   DescribeAssistantDialog: (props: { open: boolean }) => (props.open ? <p>describe-open</p> : null),
@@ -841,6 +852,32 @@ describe("AssistantSidebarSection", () => {
       name: "Growth",
       memberIds: ["jarvis"],
     });
+  });
+
+  it("marks an assistant and a group holding an unsent draft, and discards it from the menu", async () => {
+    setup(["Jarvis"]);
+    state.teams = [team("t1", "Growth", [])];
+    const env = EnvironmentId.make("env");
+    const assistantRef = scopeThreadRef(env, ThreadId.make(threadOf("Jarvis")));
+    const groupRef = scopeThreadRef(env, assistantGroupDraftThreadId(AssistantTeamId.make("t1")));
+    useComposerDraftStore.setState({ draftsByThreadKey: {} });
+    useComposerDraftStore.getState().setPrompt(assistantRef, "for jarvis");
+    useComposerDraftStore.getState().setPrompt(groupRef, "for the group");
+    await using screen = await render(element());
+    const pens = () =>
+      [...screen.container.querySelectorAll('[aria-label="Unsent draft"]')].map((node) =>
+        node.getAttribute("data-testid"),
+      );
+    expect(pens()).toEqual([
+      `sidebar-draft-indicator-${threadOf("Jarvis")}`,
+      "sidebar-draft-indicator-assistant-group:t1",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Discard draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Jarvis actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Discard draft" }));
+    await vi.waitFor(() => expect(pens()).toEqual([]));
+    expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
   });
 
   it("runs the group menu", async () => {

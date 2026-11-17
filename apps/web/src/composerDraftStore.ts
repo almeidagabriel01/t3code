@@ -4417,9 +4417,11 @@ export function useComposerThreadDraft(threadRef: ComposerThreadTarget): Compose
   });
 }
 
-export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
-  return useComposerDraftStore((state) =>
-    composerDraftHasUserContent(getComposerDraftState(state, threadRef)),
+/** Threads, assistant chats and groups (`assistantGroupDraftThreadId`) all read their draft here. */
+export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef | null): boolean {
+  return useComposerDraftStore(
+    (state) =>
+      threadRef !== null && composerDraftHasUserContent(getComposerDraftState(state, threadRef)),
   );
 }
 
