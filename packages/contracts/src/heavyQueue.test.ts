@@ -1,9 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { HeavyCommandsState, heavyHoldText } from "./heavyQueue.ts";
+import {
+  HeavyCommandsState,
+  fillsStandardSlot,
+  heavyHoldText,
+  HeavyQueueHold,
+} from "./heavyQueue.ts";
 
 const decode = Schema.decodeUnknownSync(HeavyCommandsState);
+const decodeHold = Schema.decodeSync(HeavyQueueHold);
 
 const row = {
   pid: 12,
@@ -34,7 +40,29 @@ describe("heavyHoldText", () => {
     ["committed", "waiting for room: a job just started"],
     ["quick-slots", "2 quick jobs running"],
     ["commit-slot", "a commit is running"],
+    ["other", "waiting for room"],
   ] as const)("names the %s hold", (hold, text) => {
     expect(heavyHoldText(hold, null, 3, 2)).toBe(text);
+  });
+
+  // An older client still decodes a newer server's state: a hold it does not know reads as "other".
+  it.each([
+    ["committed", "committed"],
+    ["a-hold-from-a-newer-server", "other"],
+  ])("decodes the %s hold as %s", (hold, decoded) => {
+    expect(decodeHold(hold)).toBe(decoded);
+  });
+});
+
+describe("fillsStandardSlot", () => {
+  it.each([
+    ["an entry without a class, from an older server", undefined, true],
+    ["a standard job", { class: "standard", why: "" }, true],
+    ["a commit classed standard", { class: "standard", why: "", commit: true }, false],
+    ["a quick commit", { class: "quick", why: "", commit: true }, false],
+    ["a quick job", { class: "quick", why: "" }, false],
+    ["a service", { class: "service", why: "" }, false],
+  ] as const)("%s", (_name, cost, fills) => {
+    expect(fillsStandardSlot(cost)).toBe(fills);
   });
 });

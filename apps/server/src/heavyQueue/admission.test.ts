@@ -74,6 +74,13 @@ describe("command kinds and signatures", () => {
     ["vp run check:changed", "medium"],
     ["xcrun simctl boot iPhone", "exclusive"],
     ["vp run dev:desktop", "heavy"],
+    // A file's folders say nothing about the work; its own name and a folder argument do.
+    ["vp lint src/build/x.ts", "medium"],
+    ["vp fmt apps/web/src/browser/Foo.tsx", "medium"],
+    ["vp test run apps/compile/a.test.ts", "medium"],
+    ["vp test run src/a.browser.test.tsx", "heavy"],
+    ["vp test -c apps/web/playwright.config.ts", "heavy"],
+    ["cd apps/build && vp lint", "heavy"],
   ])("%s is %s", (label, kind) => {
     expect(kindOf({ label })).toBe(kind);
   });
@@ -457,6 +464,46 @@ describe("admission plan", () => {
       hold: "pressure",
     },
     {
+      name: "below the memory floor a light job starts: the floor is what it may pass",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.18 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+      },
+      admit: "a",
+    },
+    {
+      name: "holding for the reopen level, a light job still starts above the floor",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.22 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+        holding: true,
+      },
+      admit: "a",
+      holding: true,
+    },
+    {
+      name: "below the memory floor a light quick job starts",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.18 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+      },
+      admit: "a",
+    },
+    {
+      name: "a light job past the floor still needs the memory it uses",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.3 * GIB },
+        history: { "vp run lint": [run(0.5, 0.4, 120_000)] },
+      },
+      admit: null,
+      hold: "job-memory",
+      reason: { a: "memory floor: 0.3 GB room, needs 0.4 GB" },
+    },
+    {
       name: "28% free on 16 GB: a 4 GB guess holds a medium job never seen",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: { sample: sixteen, unseenMediumMegabytes: 4096 },
@@ -515,9 +562,12 @@ describe("admission plan", () => {
     admit: string | null;
     admits?: ReadonlyArray<string>;
     hold?: string;
+    holding?: boolean;
     reason?: Record<string, string>;
-  }>)("$name", ({ entries, change, admit, admits, hold, reason }) => {
+  }>)("$name", ({ entries, change, admit, admits, hold, reason, holding }) => {
     const result = plan({ ...base, ...change, entries });
+    // A light job past the floor leaves memory short of the reopen level.
+    if (holding !== undefined) expect(result.holding).toBe(holding);
     expect(result.admits).toEqual(admits ?? (admit === null ? [] : [admit]));
     // Every held case names its enumerable reason; an admitted head has none.
     expect(result.hold).toBe(hold ?? null);
@@ -693,6 +743,19 @@ describe("admission by real capacity", () => {
       reasons: { w: "waiting for room for the head job" },
     },
     {
+      row: 35,
+      name: "a light job behind the aged head does not take the floor it keeps",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("light", "vp run docker"),
+      ],
+      admits: [],
+      hold: "job-memory",
+      reasons: { light: "waiting for room for the head job" },
+    },
+    {
       row: 48,
       name: "an aged head short on room from load outside the queue blocks no one",
       entries: [
@@ -843,8 +906,16 @@ describe("admission by real capacity", () => {
         0.2 * sample.totalMemoryBytes -
         fresh.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
       const counted = admitted.filter((job) => !["commit", "service"].includes(laneOf(lanes, job)));
-      expect(counted.reduce((sum, job) => sum + cost(job).memoryBytes, 0)).toBeLessThanOrEqual(
+      const memory = (jobs: ReadonlyArray<HeavyQueueEntry>) =>
+        jobs.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
+      // A light job may also use the floor; the others never pass the room.
+      const light = (job: HeavyQueueEntry) =>
+        Object.hasOwn(history, signatureOf(job.label)) && cost(job).memoryBytes < 512 * 1024 ** 2;
+      expect(memory(counted.filter((job) => !light(job)))).toBeLessThanOrEqual(
         Math.max(0, room) + 1,
+      );
+      expect(memory(counted)).toBeLessThanOrEqual(
+        Math.max(0, room) + 0.2 * sample.totalMemoryBytes + 1,
       );
       // CPU binds standard jobs; a quick job passes it by design.
       const cpuRoom =
@@ -980,6 +1051,65 @@ describe("admission by real capacity", () => {
       ],
       admits: [],
       reasons: { q: "waiting for room for the head job" },
+    },
+    {
+      row: 48,
+      name: "an aged head short on CPU from load outside the queue blocks no one",
+      entries: [
+        entry("r", "vp run docker", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run compile"),
+      ],
+      sample: { ...roomy, busyCores: 6 },
+      admits: ["w"],
+      reasons: { head: "needs ~2.0 cores; CPU 60%, limit 70%" },
+    },
+    {
+      row: 37,
+      name: "within twice its patience an aged exclusive head lets quick jobs pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, 6 * 60_000),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+    },
+    {
+      row: 37,
+      name: "past twice its patience an aged exclusive head holds quick jobs too",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, aged),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: [],
+      reasons: { q: "waiting for the job that runs alone to start" },
+    },
+    {
+      row: 23,
+      name: "a forced quick job takes a quick slot in the same pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        fmt("q1", 5_000),
+        { ...fmt("f"), forced: true },
+        fmt("q2"),
+      ],
+      sample: roomy,
+      admits: ["f"],
+      reasons: { q2: "2 quick jobs running" },
+    },
+    {
+      row: 8,
+      name: "a forced commit takes the commit slot in the same pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        { ...entry("c1", "git commit -m x a.ts"), forced: true },
+        entry("c2", "git commit -m y b.ts"),
+      ],
+      admits: ["c1"],
+      reasons: { c2: "a commit is running" },
     },
   ] as ReadonlyArray<{
     row: number | string;

@@ -48,6 +48,8 @@ describe("jobPriority", () => {
     ["waiting agent job", { priority: "low" }, false, null, ["high-now"]],
     ["waiting user job", { priority: "normal" }, false, null, ["high-now"]],
     ["waiter already released", { priority: "high" }, false, null, []],
+    // The server refuses it: a stopped agent's place keeps its priority until the agent asks again.
+    ["orphaned waiter", { priority: "low", orphanedAt: 1 }, false, null, []],
     ["running agent job at normal QoS", { priority: "low", qos: "normal" }, true, null, ["lower"]],
     [
       "running job lowered",
@@ -248,6 +250,23 @@ describe("summary and formatting", () => {
           : "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare",
     };
     expect(mac({ paused: hold === "paused", machine: reading, hold, reasons }).note).toBe(text);
+  });
+
+  // The plan's head skips these, so the hold and its reason belong to the waiter after them.
+  it.each([
+    ["an orphaned place", { orphanedAt: 1 }, {}],
+    ["a released waiter", { forced: true }, {}],
+    ["a service", {}, { costs: { top: { class: "service" as const, why: "dev server" } } }],
+  ] as const)("reads the next job's reason past %s at the top", (_name, top, over) => {
+    const text = "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare";
+    const note = mac({
+      entries: [e("r", true), { ...e("top"), ...top }, e("a")],
+      machine,
+      hold: "job-memory",
+      reasons: { a: text },
+      ...over,
+    }).note;
+    expect(note).toBe(`waiting: ${text}`);
   });
 
   it("names a limit without claiming anything waits when nothing does", () => {
@@ -691,9 +710,10 @@ describe("machineBar", () => {
       s: { class: "service" as const, why: "dev server" },
       // A hooked commit runs in its own slot, not a quick one.
       c: { class: "quick" as const, why: "staged files", commit: true },
+      cs: { class: "standard" as const, why: "staged files", commit: true },
     };
     const busy = state({
-      entries: [e("q", true), e("s", true), e("j", true), e("c", true)],
+      entries: [e("q", true), e("s", true), e("j", true), e("c", true), e("cs", true)],
       costs,
     });
     const bar = machineBar(busy, null).mac;

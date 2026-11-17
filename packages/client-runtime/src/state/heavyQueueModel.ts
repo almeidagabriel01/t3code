@@ -1,4 +1,5 @@
 import {
+  fillsStandardSlot,
   heavyHoldText,
   type HeavyCommand,
   type HeavyQueueCostClass,
@@ -55,7 +56,8 @@ export function jobPriority(entry: HeavyQueueEntry): {
   readonly changes: ReadonlyArray<PriorityChange>;
 } {
   if (entry.startedAt === null) {
-    return { label: null, changes: entry.priority === "high" ? [] : ["high-now"] };
+    const fixed = entry.priority === "high" || entry.orphanedAt !== undefined;
+    return { label: null, changes: fixed ? [] : ["high-now"] };
   }
   if (entry.qos === "background") return { label: "Low priority", changes: ["normal"] };
   return { label: null, changes: entry.qos === "normal" ? ["lower"] : [] };
@@ -263,8 +265,13 @@ type SummaryState = Pick<
 
 function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
+  // The plan's head: a released waiter or a service starts whatever holds the rest.
   const next = state.entries.find(
-    (entry) => entry.startedAt === null && state.routes[entry.id] !== "linux",
+    (entry) =>
+      inLine(entry) &&
+      entry.forced !== true &&
+      state.costs?.[entry.id]?.class !== "service" &&
+      state.routes[entry.id] !== "linux",
   );
   const holdText =
     hold === null
@@ -273,12 +280,11 @@ function macSummary(state: SummaryState): MachineSummary {
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
         : heavyHoldText(hold, machine, state.maxRunning, state.quickSlots);
   return {
-    // Quick, commit and service jobs have their own lanes, so only standard work fills the slots.
     running: state.entries.filter(
       (entry) =>
         entry.startedAt !== null &&
         entry.runner !== "linux" &&
-        (state.costs?.[entry.id]?.class ?? "standard") === "standard",
+        fillsStandardSlot(state.costs?.[entry.id]),
     ).length,
     slots: state.maxRunning,
     cpuPercent:
@@ -337,6 +343,7 @@ const HOLD_GAUGE: Record<HeavyQueueHold, "cpu" | "memory" | null> = {
   committed: null,
   "quick-slots": null,
   "commit-slot": null,
+  other: null,
   reserved: "memory",
   slots: null,
   settling: null,

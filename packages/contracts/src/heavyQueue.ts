@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { RunnerWhere } from "./runner.ts";
 
@@ -209,8 +210,7 @@ export const HeavyQueueMachine = Schema.Struct({
 });
 export type HeavyQueueMachine = typeof HeavyQueueMachine.Type;
 
-/** What holds the next waiter back. */
-export const HeavyQueueHold = Schema.Literals([
+const HOLDS = Schema.Literals([
   "paused",
   "exclusive",
   "runs-alone",
@@ -234,7 +234,20 @@ export const HeavyQueueHold = Schema.Literals([
   "quick-slots",
   /** A commit runs; one at a time. */
   "commit-slot",
+  /** A hold this build does not know, from a newer server. */
+  "other",
 ]);
+const isKnownHold = Schema.is(HOLDS);
+/** What holds the next waiter back. Decodes a hold it does not know as `other` (remote ready). */
+export const HeavyQueueHold = Schema.String.pipe(
+  Schema.decodeTo(
+    HOLDS,
+    SchemaTransformation.transform<typeof HOLDS.Type, string>({
+      decode: (hold) => (isKnownHold(hold) ? hold : "other"),
+      encode: (hold) => hold,
+    }),
+  ),
+);
 export type HeavyQueueHold = typeof HeavyQueueHold.Type;
 
 const MB = 1024 ** 2;
@@ -285,6 +298,8 @@ export const heavyHoldText = (
       return `${quickSlots} quick jobs running`;
     case "commit-slot":
       return "a commit is running";
+    case "other":
+      return "waiting for room";
   }
 };
 
@@ -309,6 +324,10 @@ export const HeavyQueueCost = Schema.Struct({
   commit: Schema.optionalKey(Schema.Boolean),
 });
 export type HeavyQueueCost = typeof HeavyQueueCost.Type;
+
+/** Whether a job fills one of its machine's `maxRunning` slots; a cost an older server never sent does. */
+export const fillsStandardSlot = (cost: HeavyQueueCost | undefined) =>
+  cost?.commit !== true && (cost?.class ?? "standard") === "standard";
 
 export const HeavyQueueState = Schema.Struct({
   /** Usual usage of each waiting entry that has history, by entry id. */
