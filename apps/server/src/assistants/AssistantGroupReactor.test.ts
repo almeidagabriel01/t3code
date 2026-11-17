@@ -31,7 +31,7 @@ it.effect(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.fromIterable(events),
+              subscribeDomainEvents: Effect.succeed(Stream.fromIterable(events)),
             }),
             Layer.mock(DecisionService.DecisionService)({
               // The first subscription fails; the retry gets the decisions.
@@ -50,6 +50,7 @@ it.effect(
             Layer.mock(AssistantGroups)({
               member: {} as never,
               start: Effect.sync(() => void watching.push("started")),
+              settleWaiting: Effect.sync(() => void watching.push("settled")),
               syncWaitingThread: (threadId) =>
                 Effect.sync(() => void synced.push(threadId)).pipe(
                   Effect.andThen(Deferred.succeed(decided, undefined)),
@@ -77,7 +78,8 @@ it.effect(
         yield* TestClock.adjust("1 minute");
         yield* Deferred.await(decided);
         assert.equal(subscriptions, 2);
-        assert.deepEqual(watching, ["started"]);
+        // Subscribing checks the waiting tasks once the stream is anchored.
+        assert.deepEqual(watching, ["started", "settled"]);
         assert.deepEqual(handled, ["run.updated", "thread.created"]);
         assert.deepEqual(synced, ["assistant:ada:g-0123456789abcdef"]);
       }).pipe(Effect.provide(layer));

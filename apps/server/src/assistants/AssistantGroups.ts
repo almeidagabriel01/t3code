@@ -1114,6 +1114,12 @@ const make = Effect.gen(function* () {
     if (task.status === "running") return yield* stopRun(task);
     if (task.status !== "waiting" && task.status !== "usage_limited") return;
     const threadId = (yield* wireTasks([task]))[0]!.threadId;
+    if (
+      task.status === "waiting" &&
+      !(yield* nativeSubagents(threadId)).some((row) => row.live === 1)
+    ) {
+      return;
+    }
     yield* engine
       .dispatch({
         type: "thread.stop",
@@ -2088,7 +2094,12 @@ const make = Effect.gen(function* () {
       revision: task.revision + 1,
       result_text: null,
       followup: [
-        ...(followup === null ? [] : [launchResultsText(followup)]),
+        ...(followup !== null
+          ? [launchResultsText(followup)]
+          : workReason(waitedOn) !== null
+            ? // What it named is gone without a trace (its rows were removed).
+              [launchResultsText("What you waited on can no longer be found.")]
+            : []),
         ...(results.length === 0 ? [] : [childResultsText(results)]),
       ].join("\n\n"),
     });
@@ -3172,6 +3183,13 @@ const make = Effect.gen(function* () {
   const settleLaunch: AssistantGroups["Service"]["settleLaunch"] = Effect.fn(
     "AssistantGroups.settleLaunch",
   )(function* (threadId) {
+    // Every run end of every launched thread lands here: only one a waiting task names goes on.
+    const named = yield* sql<{ readonly reason: string }>`
+      SELECT reason FROM assistant_group_tasks
+      WHERE status = 'waiting' AND instr(reason, ${threadId}) > 0`.pipe(
+      Effect.orElseSucceed(() => []),
+    );
+    if (!named.some((row) => workInReason(row.reason).threads.includes(threadId))) return false;
     const origin = yield* launchOrigin(threadId).pipe(
       Effect.tapError((cause) =>
         Effect.logWarning("assistant groups: a launched thread's origin could not be read", {

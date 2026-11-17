@@ -2752,6 +2752,8 @@ it.effect.each<{
   readonly release: (
     h: ReturnType<typeof harness>,
   ) => Effect.Effect<unknown, never, SqlClient.SqlClient>;
+  /** Gone without an event: only the sweep sees it, and the task reads that it is gone. */
+  readonly gone?: true;
 }>([
   {
     way: "dismissed",
@@ -2772,7 +2774,12 @@ it.effect.each<{
     way: "unreadable (another environment's)",
     release: (h) => Effect.sync(() => void h.fakeThreads.delete("thread:api")),
   },
-])("a launched thread $way stops holding the task", ({ release }) => {
+  {
+    way: "removed from the task list",
+    release: (h) => h.sqlRows("DELETE FROM assistant_tasks RETURNING thread_id").pipe(Effect.orDie),
+    gone: true,
+  },
+])("a launched thread $way stops holding the task", ({ release, gone }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
@@ -2781,9 +2788,10 @@ it.effect.each<{
     yield* h.finish(0, "completed", "Started.");
     assert.equal((yield* h.tasks)[0]!.status, "waiting");
     yield* release(h);
-    yield* groups.settleLaunch(ThreadId.make("thread:api"));
+    yield* gone ? groups.settleWaiting : groups.settleLaunch(ThreadId.make("thread:api"));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
     assert.include(h.sent[1]!.text, "The work you started for this request is done:");
+    if (gone) assert.include(h.sent[1]!.text, "What you waited on can no longer be found.");
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -3076,34 +3084,40 @@ it.effect("a task handed over with a thread still running waits for it with its 
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("stop and cancel take a task out of its wait and leave its threads running", () => {
-  const h = harness();
-  return Effect.gen(function* () {
-    const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
-    const ada = h.threadOf("ada");
-    yield* h.launch("thread:api", ada);
-    yield* nativeSubagent(ada, "thread:sub", "running");
-    yield* h.finish(0, "completed", "Started.");
-    const [task] = yield* h.tasks;
-    yield* groups.taskAction({ taskId: task!.task_id as never, action: "stop" });
-    assert.deepInclude((yield* h.tasks)[0], { status: "paused", reason: "stopped" });
-    // Ada's conversation stops, its native subagents with it; what she launched keeps running.
-    assert.deepEqual(
-      h.dispatched.flatMap((command) =>
-        command.type === "thread.stop" ? [[command.threadId, command.stopDelegatedTasks]] : [],
-      ),
-      [[ada, false]],
-    );
-    // Its end reports the usual way (false) and never reopens the stopped task.
-    assert.isFalse(yield* h.endLaunch("thread:api", "completed", "API fixed."));
-    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:paused"]);
-    yield* groups.taskAction({ taskId: task!.task_id as never, action: "cancel" });
-    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:cancelled"]);
-    assert.isFalse(h.dispatched.some((command) => command.threadId === "thread:api"));
-    assert.lengthOf(h.sent, 1);
-  }).pipe(Effect.provide(h.layer));
-});
+it.effect.each([
+  { subagent: "a live native subagent", live: true },
+  { subagent: "no native subagent", live: false },
+])(
+  "stop and cancel with $subagent take a task out of its wait, its threads running",
+  ({ live }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      const ada = h.threadOf("ada");
+      yield* h.launch("thread:api", ada);
+      if (live) yield* nativeSubagent(ada, "thread:sub", "running");
+      yield* h.finish(0, "completed", "Started.");
+      const [task] = yield* h.tasks;
+      yield* groups.taskAction({ taskId: task!.task_id as never, action: "stop" });
+      assert.deepInclude((yield* h.tasks)[0], { status: "paused", reason: "stopped" });
+      // Ada's conversation stops only for native subagents to end; what she launched keeps running.
+      assert.deepEqual(
+        h.dispatched.flatMap((command) =>
+          command.type === "thread.stop" ? [[command.threadId, command.stopDelegatedTasks]] : [],
+        ),
+        live ? [[ada, false]] : [],
+      );
+      // Its end reports the usual way (false) and never reopens the stopped task.
+      assert.isFalse(yield* h.endLaunch("thread:api", "completed", "API fixed."));
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:paused"]);
+      yield* groups.taskAction({ taskId: task!.task_id as never, action: "cancel" });
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:cancelled"]);
+      assert.isFalse(h.dispatched.some((command) => command.threadId === "thread:api"));
+      assert.lengthOf(h.sent, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 // A usage limit nothing will continue on its own (auto-resume off) fails the task as before.
 it.effect.each([
