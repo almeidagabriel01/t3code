@@ -45,7 +45,8 @@ describe("heavyHoldText", () => {
     expect(heavyHoldText(hold, null, 3, 2)).toBe(text);
   });
 
-  // An older client still decodes a newer server's state: a hold it does not know reads as "other".
+  // Only this build and newer map an unknown hold to "other". Older clients stay safe because the
+  // server never emits a hold literal they lack.
   it.each([
     ["committed", "committed"],
     ["a-hold-from-a-newer-server", "other"],

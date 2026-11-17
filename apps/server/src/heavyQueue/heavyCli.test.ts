@@ -591,19 +591,24 @@ describe("t3 heavy", () => {
           : [],
       );
 
-    it("keeps a job on the Mac when Linux's pre-flight finds its tool missing", async () => {
-      const { dir, env } = setup(
-        `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
-        { runnerDropped: "mac" },
-      );
-      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
-      expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run\n");
-      expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
-      expect(faults(dir)).toEqual([
-        { reason: "command-not-found", cause: "command-not-found:vp", command: "vp test run" },
-      ]);
-    });
+    // Only the wrapper's marker means Linux lacks the job's program: the Mac runs it, whatever the
+    // policy. A 127 from inside the job follows "If a Linux run fails" (the exit 127 rows below).
+    it.each(["mac", "agent"] as const)(
+      "keeps a job on the Mac when Linux's pre-flight finds its tool missing (%s)",
+      async (policy) => {
+        const { dir, env } = setup(
+          `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
+          { runnerDropped: policy },
+        );
+        const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(0);
+        expect(run.stdout()).toBe("vp on mac: test run\n");
+        expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+        expect(faults(dir)).toEqual([
+          { reason: "command-not-found", cause: "command-not-found:vp", command: "vp test run" },
+        ]);
+      },
+    );
 
     it.each([1, 2, 3])(
       "returns a plain failure's exit %i unchanged, never rerunning it",
