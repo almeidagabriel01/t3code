@@ -921,6 +921,14 @@ it("says a linked request lies in another tab instead of losing it, and leaves t
   await expect.element(tab("render")).toHaveAttribute("aria-pressed", "true");
   await userEvent.click(tab("All"));
   await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  await eventually(() => expect(screen.router.state.location.search).toEqual({}));
+  // The same link again moves the tab again.
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+    search: { tab: `project:${PROJECT_ID}`, request: "m3" },
+  });
+  await expect.element(tab("render")).toHaveAttribute("aria-pressed", "true");
 });
 
 it("opens the request a group's Needs you indicator points at, from the sidebar", async () => {

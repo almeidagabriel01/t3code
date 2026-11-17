@@ -1954,7 +1954,11 @@ export function AssistantGroupChat(props: {
   const movedTabFor = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link's one-shot intent from the URL
   useEffect(() => {
-    if (focusRequest === undefined || pending || live === null) return;
+    if (focusRequest === undefined) {
+      movedTabFor.current = null;
+      return;
+    }
+    if (pending || live === null) return;
     if (tabKey !== null && tabKey !== wantedTab && movedTabFor.current !== focusRequest) {
       movedTabFor.current = focusRequest;
       setSavedTab(wantedTab);
