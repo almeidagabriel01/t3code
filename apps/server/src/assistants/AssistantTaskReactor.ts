@@ -13,6 +13,7 @@ import {
 import {
   backgroundWorkHoldsCompletion,
   isPullRequestWatchTask,
+  turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
@@ -129,6 +130,20 @@ const make = Effect.gen(function* () {
   )(
     function* (event) {
       if (event.type === "thread.deleted" || event.type === "thread.archived") {
+        const task = yield* tasks.forThread(event.threadId);
+        yield* forRequest(task, groups.settleLaunch(event.threadId));
+        return;
+      }
+      // Background work ending, with no run after it, is the only sign a launched thread is done.
+      if (
+        (event.type === "provider-thread.updated" &&
+          !backgroundWorkHoldsCompletion(
+            (event.payload.pendingBackgroundTasks ?? []).filter(
+              (task) => !isPullRequestWatchTask(task),
+            ),
+          )) ||
+        (event.type === "turn-item.updated" && turnItemUpdateCanEndBackgroundWork(event.payload))
+      ) {
         const task = yield* tasks.forThread(event.threadId);
         yield* forRequest(task, groups.settleLaunch(event.threadId));
         return;
@@ -286,7 +301,14 @@ const make = Effect.gen(function* () {
       yield* forkParked(
         keepRunning(
           "assistant task run stream",
-          Stream.runForEach(engine.streamDomainEvents, handle),
+          // Subscribed before the waiting tasks are checked, so work that ended while no stream
+          // listened is caught up and an end seen both ways settles once.
+          Stream.runForEach(
+            Stream.unwrap(
+              engine.subscribeDomainEvents.pipe(Effect.tap(() => groups.settleWaiting)),
+            ),
+            handle,
+          ),
         ),
       );
       // `changes` opens with what already waits, so a start also catches up.

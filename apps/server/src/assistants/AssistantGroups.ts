@@ -624,6 +624,8 @@ export class AssistantGroups extends Context.Service<
     readonly handleAssistantEvent: (event: AssistantsEvent) => Effect.Effect<void>;
     /** Brings group state in line with the teams now stored, for changes made while down. */
     readonly reconcile: Effect.Effect<void>;
+    /** Checks every waiting task again: work can end with no event reaching the group. */
+    readonly settleWaiting: Effect.Effect<void>;
     /**
      * These projects' default or per-assistant model changed: open requests' threads working in
      * them that still run on the model the project gave them move to the one it gives now.
@@ -1433,6 +1435,8 @@ const make = Effect.gen(function* () {
     next: ServerSettingsValue,
   ) {
     if ((yield* sql`SELECT 1 FROM assistant_group_request_threads LIMIT 1`).length === 0) return;
+    // A limited launch holds a task only while auto-resume would continue it.
+    if (previous.autoResumeLimitedThreads !== next.autoResumeLimitedThreads) yield* settleWaiting;
     const projects = yield* sql<{ readonly project_id: string; readonly workspace_root: string }>`
       SELECT project_id, workspace_root FROM projection_projects WHERE deleted_at IS NULL`;
     yield* followProjectModels(
@@ -1943,7 +1947,10 @@ const make = Effect.gen(function* () {
     const last = latestExecutedRun(runs);
     if (last === null || !ENDED_RUN.has(last.status)) return removed;
     const limit = last.status === "failed" ? yield* usageLimitOf(last) : undefined;
-    if (limit?.resumes === true) return { live: true, threadId, title, status: null } as const;
+    // A thread settled by hand is never continued at the reset (UsageLimitRecoveryWorker).
+    if (limit?.resumes === true && shell.settledOverride !== "settled") {
+      return { live: true, threadId, title, status: null } as const;
+    }
     return {
       live: false,
       threadId,
@@ -3188,6 +3195,27 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /** Every waiting task checked again; one that fails never keeps the others from settling. */
+  const settleAllWaiting = Effect.gen(function* () {
+    const waiting = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks WHERE status = 'waiting' ORDER BY rowid ASC`;
+    for (const task of waiting) {
+      yield* settleWait(task).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: a waiting task could not be settled", {
+            taskId: task.task_id,
+            cause,
+          }),
+        ),
+      );
+    }
+    for (const teamId of new Set(waiting.map((task) => task.team_id))) yield* pump(teamId);
+  });
+
+  const settleWaiting: AssistantGroups["Service"]["settleWaiting"] = lock
+    .withPermits(1)(settleAllWaiting)
+    .pipe(quietly("waiting tasks could not be settled"));
+
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",
   )(
@@ -4059,6 +4087,8 @@ const make = Effect.gen(function* () {
         );
         for (const row of owners)
           if (!existing.has(row.assistant_id)) yield* removeAssistant(row.assistant_id);
+        // Work that ended while the server was down wakes the tasks it held.
+        yield* settleAllWaiting;
         // A message the lead was still routing when the server stopped is routed again.
         for (const team of teams) yield* routePending(team);
       }),
@@ -4278,6 +4308,7 @@ const make = Effect.gen(function* () {
     settleLaunch,
     handleAssistantEvent,
     reconcile,
+    settleWaiting,
     followProjectModels,
     start,
     idle: FiberSet.awaitEmpty(routing),

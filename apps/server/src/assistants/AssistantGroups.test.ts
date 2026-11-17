@@ -143,6 +143,8 @@ const harness = (options: Options = {}) => {
   const answers = new Map<string, string>();
   /** Background work a thread's shell reports, by thread. */
   const background = new Map<string, ReadonlyArray<Record<string, unknown>>>();
+  /** Threads the user settled by hand. */
+  const settled = new Set<string>();
   /** Runs that failed on a usage limit, with the limit's reset time. */
   const limits = new Map<string, string>();
   const sent: Array<{
@@ -222,6 +224,7 @@ const harness = (options: Options = {}) => {
                 title: thread.title,
                 archivedAt: thread.archivedAt,
                 pendingBackgroundTasks: background.get(threadId) ?? [],
+                settledOverride: settled.has(threadId) ? "settled" : null,
               }
             : null,
         );
@@ -614,6 +617,7 @@ const harness = (options: Options = {}) => {
     finish,
     finishTask,
     background,
+    settled,
     launch,
     endLaunch,
     tasks,
@@ -2951,6 +2955,59 @@ it.effect.each([
     assert.deepEqual(statusesOf(yield* h.tasks), [holds ? "ada:waiting" : "ada:completed"]);
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect.each<{
+  readonly end: string;
+  readonly status: string;
+  readonly autoResume?: boolean;
+  readonly hold: (h: ReturnType<typeof harness>) => void;
+  readonly release: (h: ReturnType<typeof harness>) => void;
+}>([
+  {
+    end: "ended its run",
+    status: "ada:running",
+    hold: () => {},
+    release: (h) => void (h.runs.get("thread:api")![0]!.status = "completed"),
+  },
+  {
+    end: "had its background task cancelled",
+    status: "ada:running",
+    hold: (h) => {
+      h.runs.get("thread:api")![0]!.status = "completed";
+      h.background.set("thread:api", [{ taskId: "bg-1", kind: "background_task" }]);
+    },
+    release: (h) => void h.background.set("thread:api", []),
+  },
+  {
+    end: "was settled by hand at a usage limit it would continue after",
+    status: "ada:failed",
+    autoResume: true,
+    hold: (h) => {
+      Object.assign(h.runs.get("thread:api")![0]!, {
+        status: "failed",
+        completedAt: DateTime.makeUnsafe(0),
+      });
+      h.limits.set("run:thread:api", "2026-01-01T12:00:00.000Z");
+    },
+    release: (h) => void h.settled.add("thread:api"),
+  },
+])(
+  "a launched thread that $end with no event reaching the group is caught up at reconcile",
+  ({ status, autoResume, hold, release }) => {
+    const h = harness(autoResume === undefined ? {} : { autoResume });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
+      yield* h.launch("thread:api", h.threadOf("ada"));
+      hold(h);
+      yield* h.finish(0, "completed", "Started.");
+      assert.equal((yield* h.tasks)[0]!.status, "waiting");
+      release(h);
+      yield* groups.reconcile;
+      assert.deepEqual(statusesOf(yield* h.tasks), [status]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("a task waits for both what it assigned and what it launched", () => {
   const h = harness();

@@ -188,6 +188,7 @@ const harness = (
         SqlitePersistence.layerMemory,
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           getThreadShell: () =>
             Effect.succeed({
               title: "Add retry",
@@ -215,6 +216,7 @@ const harness = (
               toGroup.push(`settle:${threadId}`);
               return options.requestLaunches?.includes(threadId) === true;
             }),
+          settleWaiting: Effect.void,
           syncWaitingThread: (threadId) =>
             Effect.sync(() => {
               toGroup.push(`wait:${threadId}`);
@@ -301,10 +303,17 @@ it.effect.each([
     yield* reactor.handle(runEvent(taskThread, "completed"));
     yield* reactor.handleWait(requestChange(taskThread, "command")!);
     yield* reactor.handle({ type: "thread.deleted", threadId: taskThread } as never);
+    // Background work ending with no run after it is asked too, and never wakes anyone itself.
+    yield* reactor.handle({
+      type: "provider-thread.updated",
+      threadId: taskThread,
+      payload: { pendingBackgroundTasks: [] },
+    } as never);
     // The group is always asked; only a request's thread keeps the direct conversation out of it.
     assert.deepEqual(toGroup, [
       `settle:${taskThread}`,
       `wait:${taskThread}`,
+      `settle:${taskThread}`,
       `settle:${taskThread}`,
     ]);
     assert.lengthOf(notices, forRequest ? 0 : 1);
