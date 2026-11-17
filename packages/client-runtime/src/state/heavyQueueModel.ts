@@ -254,7 +254,7 @@ type SummaryState = Pick<
   HeavyQueueState,
   "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
 > &
-  Partial<Pick<HeavyQueueState, "linux">>;
+  Partial<Pick<HeavyQueueState, "linux" | "quickSlots">>;
 
 function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
@@ -266,7 +266,7 @@ function macSummary(state: SummaryState): MachineSummary {
       ? null
       : hold === "job-memory" || hold === "job-cpu"
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
-        : heavyHoldText(hold, machine, state.maxRunning);
+        : heavyHoldText(hold, machine, state.maxRunning, state.quickSlots);
   return {
     running: state.entries.filter((entry) => entry.startedAt !== null && entry.runner !== "linux")
       .length,

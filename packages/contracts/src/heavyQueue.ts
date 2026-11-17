@@ -13,6 +13,10 @@ export const HEAVY_QUEUE_LIMITS = {
   unseenMediumMegabytes: { min: 128, max: 8192, unit: "MB" },
   historyCommands: { min: 50, max: 10000, unit: "commands" },
   headPatienceMinutes: { min: 1, max: 60, unit: "minutes" },
+  quickSeconds: { min: 5, max: 300, unit: "seconds" },
+  quickSlots: { min: 1, max: 8, unit: "jobs" },
+  serviceIdleMinutes: { min: 2, max: 120, unit: "minutes" },
+  reclaimMinutes: { min: 1, max: 60, unit: "minutes" },
 } as const;
 export type HeavyQueueLimitKey = keyof typeof HEAVY_QUEUE_LIMITS;
 
@@ -26,6 +30,13 @@ export const HEAVY_QUEUE_DEFAULTS: Record<HeavyQueueLimitKey, number> = {
   unseenMediumMegabytes: 512,
   historyCommands: 1000,
   headPatienceMinutes: 5,
+  // A command that usually ends this fast runs in its own slots, beside long jobs.
+  quickSeconds: 30,
+  quickSlots: 2,
+  // A job that ran this long and sat idle counts as a service: load, not a slot.
+  serviceIdleMinutes: 10,
+  // An agent's stopped waiter keeps its place this long for the agent to ask again.
+  reclaimMinutes: 10,
 };
 
 /** How admission sizes jobs and lets them pass the head of the queue; set together in one call. */
@@ -35,6 +46,10 @@ export const HEAVY_QUEUE_ADMISSION_KEYS = [
   "unseenMediumMegabytes",
   "historyCommands",
   "headPatienceMinutes",
+  "quickSeconds",
+  "quickSlots",
+  "serviceIdleMinutes",
+  "reclaimMinutes",
 ] as const satisfies ReadonlyArray<HeavyQueueLimitKey>;
 export type HeavyQueueAdmissionKey = (typeof HEAVY_QUEUE_ADMISSION_KEYS)[number];
 
@@ -282,6 +297,17 @@ export const HeavyQueueEstimate = Schema.Struct({
   durationMs: Schema.Number,
 });
 
+/** How a job is admitted: quick and service work never waits behind a standard job. */
+export const HeavyQueueCostClass = Schema.Literals(["quick", "standard", "service"]);
+export type HeavyQueueCostClass = typeof HeavyQueueCostClass.Type;
+
+export const HeavyQueueCost = Schema.Struct({
+  class: HeavyQueueCostClass,
+  /** Short and plain: "2 files", "usually 4 s", "keeps running". */
+  why: Schema.String,
+});
+export type HeavyQueueCost = typeof HeavyQueueCost.Type;
+
 export const HeavyQueueState = Schema.Struct({
   /** Usual usage of each waiting entry that has history, by entry id. */
   estimates: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueEstimate)),
@@ -319,6 +345,20 @@ export const HeavyQueueState = Schema.Struct({
   headPatienceMinutes: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
   ),
+  quickSeconds: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.quickSeconds)),
+  ),
+  quickSlots: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.quickSlots)),
+  ),
+  serviceIdleMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.serviceIdleMinutes)),
+  ),
+  reclaimMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.reclaimMinutes)),
+  ),
+  /** Each entry's cost class and why, by entry id; absent from older servers. */
+  costs: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueCost)),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -388,6 +428,10 @@ export const HeavyQueueSetAdmissionLimitsInput = Schema.Struct({
   unseenMediumMegabytes: Schema.optionalKey(limit("unseenMediumMegabytes")),
   historyCommands: Schema.optionalKey(limit("historyCommands")),
   headPatienceMinutes: Schema.optionalKey(limit("headPatienceMinutes")),
+  quickSeconds: Schema.optionalKey(limit("quickSeconds")),
+  quickSlots: Schema.optionalKey(limit("quickSlots")),
+  serviceIdleMinutes: Schema.optionalKey(limit("serviceIdleMinutes")),
+  reclaimMinutes: Schema.optionalKey(limit("reclaimMinutes")),
 });
 export type HeavyQueueSetAdmissionLimitsInput = typeof HeavyQueueSetAdmissionLimitsInput.Type;
 

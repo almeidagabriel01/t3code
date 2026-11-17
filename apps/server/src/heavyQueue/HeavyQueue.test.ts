@@ -469,6 +469,8 @@ describe("HeavyQueue", () => {
         expect(started()).toEqual(["a", "b", "c"]);
         yield* TestClock.setTime(LATER + 16_000);
         expect((yield* queue.state).reasons).toEqual({ d: "all 3 slots busy" });
+        // Each row's class, as admission sees it: a typecheck never run here is a standard job.
+        expect((yield* queue.state).costs?.d).toEqual({ class: "standard", why: "first run" });
 
         Queue.remove(dir, "b");
         Queue.remove(dir, "c");

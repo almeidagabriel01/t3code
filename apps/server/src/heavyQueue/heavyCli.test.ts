@@ -8,8 +8,6 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
   heavyLaunch,
-  jobOf,
-  labelOf,
   launchOf,
   linuxLine,
   parseHeavyArgs,
@@ -17,6 +15,7 @@ import {
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
+import { jobOf, labelOf } from "./jobEntry.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,

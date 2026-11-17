@@ -7,7 +7,6 @@ import {
   laneOf,
   machineHold,
   plan,
-  QUICK_SLOTS,
   signatureOf,
   sustain,
   workersFor,
@@ -809,7 +808,7 @@ describe("admission by real capacity", () => {
         jobs.filter((job) => laneOf(lanes, job) === lane).length;
       for (const [lane, cap] of [
         ["standard", 3],
-        ["quick", QUICK_SLOTS],
+        ["quick", HEAVY_QUEUE_DEFAULTS.quickSlots],
         ["commit", 1],
       ] as const) {
         expect(count(running, lane) + count(admitted, lane)).toBeLessThanOrEqual(

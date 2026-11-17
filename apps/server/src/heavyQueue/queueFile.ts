@@ -25,6 +25,7 @@ import {
   hasHeadroom,
   HISTORY_RUNS,
   estimate,
+  costFor,
   laneOf as admissionLaneOf,
   medianDuration,
   runsOf,
@@ -36,7 +37,8 @@ import {
   sustain,
   workersFor,
 } from "./admission.ts";
-import { IDLE_CORES } from "./costClass.ts";
+import { IDLE_CORES, type CostClass } from "./costClass.ts";
+import { jobEntryOf, jobLine, jobOf } from "./jobEntry.ts";
 import { sourceCheckout } from "./claudeSettingsHook.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
 import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from "./heavyHook.ts";
@@ -216,6 +218,10 @@ interface QueueDoc {
   /** Commands the file remembers runs of; the one run longest ago goes first. */
   readonly historyCommands: number;
   readonly headPatienceMinutes: number;
+  readonly quickSeconds: number;
+  readonly quickSlots: number;
+  readonly serviceIdleMinutes: number;
+  readonly reclaimMinutes: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
@@ -403,6 +409,10 @@ const loadDoc = (dir: string): QueueDoc => {
       ),
       historyCommands: limitOf(record, "historyCommands"),
       headPatienceMinutes: limitOf(record, "headPatienceMinutes"),
+      quickSeconds: limitOf(record, "quickSeconds"),
+      quickSlots: limitOf(record, "quickSlots"),
+      serviceIdleMinutes: limitOf(record, "serviceIdleMinutes"),
+      reclaimMinutes: limitOf(record, "reclaimMinutes"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
       copyRemovals: Array.isArray(parsed?.copyRemovals)
@@ -461,16 +471,14 @@ const save = (dir: string, doc: QueueDoc) => {
   NodeFS.renameSync(temp, queuePath(dir));
 };
 
-export const RECLAIM_MINUTES = 10;
-
 /**
  * Drops entries whose process died, except an agent's waiter: it turns orphan and keeps its place
- * for `RECLAIM_MINUTES`, so the agent asking again does not land at the back.
+ * for `reclaimMinutes`, so the agent asking again does not land at the back.
  */
-const prune = (entries: ReadonlyArray<HeavyQueueEntry>, now: number) =>
+const prune = ({ entries, reclaimMinutes }: QueueDoc, now: number) =>
   entries.flatMap((entry): ReadonlyArray<HeavyQueueEntry> => {
     if (entry.orphanedAt !== undefined) {
-      return now - entry.orphanedAt < RECLAIM_MINUTES * 60_000 ? [entry] : [];
+      return now - entry.orphanedAt < reclaimMinutes * 60_000 ? [entry] : [];
     }
     if (isAlive(entry.pid)) return [entry];
     return entry.startedAt === null && entry.requestKey !== undefined
@@ -634,6 +642,9 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     unseenHeavyMegabytes: doc.unseenHeavyMegabytes,
     unseenMediumMegabytes: doc.unseenMediumMegabytes,
     headPatienceMinutes: doc.headPatienceMinutes,
+    quickSeconds: doc.quickSeconds,
+    quickSlots: doc.quickSlots,
+    serviceIdleMinutes: doc.serviceIdleMinutes,
     now,
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
@@ -934,7 +945,7 @@ export const usualMs = (
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
     const loaded = loadDoc(dir);
-    const decided = decide({ ...loaded, entries: prune(loaded.entries, now) });
+    const decided = decide({ ...loaded, entries: prune(loaded, now) });
     save(dir, withFinishedRuns(loaded, decided.doc, now));
     return decided.result;
   });
@@ -942,7 +953,7 @@ const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Dat
 /** Pruned view; never writes, tolerates a missing or corrupt file. */
 export const readDoc = (dir: string, now = Date.now()): QueueDoc => {
   const doc = loadDoc(dir);
-  return { ...doc, entries: prune(doc.entries, now) };
+  return { ...doc, entries: prune(doc, now) };
 };
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
@@ -1000,11 +1011,16 @@ export const readPlan = (dir: string, now = Date.now()) => {
  * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
  * and waiters ahead fill its slots.
  */
+const classOf = (cost: { readonly class: CostClass; readonly why: string }) => ({
+  class: cost.class,
+  classWhy: cost.why,
+});
+
 export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
   const doc = readDoc(dir);
-  const parts = lineParts(line);
-  const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
-  const commit = commitRoute(parts.command, at);
+  // The job the hook would queue: `$SHELL -c '<line>'`, built as `t3 heavy` builds it.
+  const job = jobOf("/bin/sh", ["-c", line], cwd, NodeOS.homedir());
+  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
   if (commit === "direct") {
     return {
       runsOn: "direct" as const,
@@ -1012,21 +1028,26 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       startsNow: true,
       position: null,
       linuxFull: false,
+      ...classOf(costFor(doc, { label: jobLine(job.program, job.args) })),
     };
   }
   const id = `probe-${now}`;
-  const withProbe = insertNew(doc, {
-    id,
-    pid: process.pid,
-    threadId: null,
-    label: parts.command,
-    cwd: at,
-    createdAt: new Date(now).toISOString(),
-    startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
-    priority: commit === "first" ? "high" : "low",
-    ...(parts.remoto ? { where: "linux" as const } : {}),
-  });
+  const probed = jobEntryOf(
+    {
+      id,
+      pid: process.pid,
+      threadId: null,
+      program: job.program,
+      args: job.args,
+      cwd: job.cwd,
+      createdAt: new Date(now).toISOString(),
+      // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
+      priority: commit === "first" ? "high" : "low",
+      ...(job.remoto ? { where: "linux" as const } : {}),
+    },
+    scriptReader(job.cwd),
+  );
+  const withProbe = insertNew(doc, probed);
   const plan = planOf(withProbe, now);
   const waiters = withProbe.entries.filter((e) => e.startedAt === null && !isOrphan(e));
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
@@ -1043,6 +1064,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     startsNow: plan.admits[id] !== undefined,
     position: waiters.findIndex((e) => e.id === id) + 1,
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
+    // The class admission gives it, by the same rules and clock.
+    ...classOf(costFor({ ...doc, now }, probed)),
   };
 };
 
@@ -1197,7 +1220,7 @@ export const remove = (dir: string, id: string) =>
 
 /**
  * An agent's waiter stopping before it starts: its entry keeps its place for a retry. Returns its
- * position, or null when it was not waiting.
+ * position and how long it is kept, or null when it was not waiting.
  */
 export const orphan = (dir: string, id: string, now = Date.now()) =>
   mutate(
@@ -1216,7 +1239,7 @@ export const orphan = (dir: string, id: string, now = Date.now()) =>
                 entry.id === id ? { ...entry, orphanedAt: now } : entry,
               ),
             },
-            result: position,
+            result: { position, minutes: doc.reclaimMinutes },
           };
     },
     now,

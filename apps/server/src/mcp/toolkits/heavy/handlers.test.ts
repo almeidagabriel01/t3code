@@ -212,6 +212,14 @@ describe("heavyStatus", () => {
       askUser: false,
       reason: "No commit hook",
     },
+    ...(["quick", "service"] as const).map((cost) => ({
+      name: `a ${cost} command under pressure never waits: never ask`,
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, class: cost, classWhy: "2 files" },
+      },
+      askUser: false,
+    })),
     {
       name: "Mac-bound: Linux jobs never fill this Mac's slots",
       change: {
@@ -379,6 +387,8 @@ const callTool = (
                     startsNow: false,
                     position: 1,
                     linuxFull: true,
+                    class: "standard" as const,
+                    classWhy: "first run",
                   };
                 }),
           promote: (id, note) =>

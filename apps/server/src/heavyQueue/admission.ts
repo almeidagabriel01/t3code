@@ -2,10 +2,15 @@
  * Who may start now. Pure: the queue file feeds it the document, a clock reading and the latest
  * machine sample, so every waiter (CLI or server) reaches the same answer under the file lock.
  */
-import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  heavyHoldText,
+  type HeavyQueueEntry,
+  type HeavyQueueHold,
+} from "@t3tools/contracts";
 
 import { kindOf, runTarget } from "./commandShapes.ts";
-import { costOf, filesOf, workPartsOf } from "./costClass.ts";
+import { costOf, filesOf, workPartsOf, type Cost as JobCost } from "./costClass.ts";
 import { commitOnly, heavyRoute } from "./heavyHook.ts";
 
 export interface Sample {
@@ -271,6 +276,8 @@ export interface PlanInput extends MacLimits, SizingLimits {
   readonly quickSeconds?: number;
   /** Quick jobs that may run beside the standard slots. */
   readonly quickSlots?: number;
+  /** A job that ran this long and then sat idle counts as a service. */
+  readonly serviceIdleMinutes?: number;
 }
 
 export interface Plan {
@@ -366,28 +373,38 @@ const HELD_ROOM = new Set<HeavyQueueHold | null>([
   "commit-slot",
 ]);
 
-const QUICK_SECONDS = 30;
-export const QUICK_SLOTS = 2;
-
 /** How a queue entry is admitted: its cost class, with a hooked commit in its own slot. */
 export type Lane = "standard" | "quick" | "commit" | "service";
 
-export const laneOf = (
-  input: Pick<PlanInput, "history" | "quickSeconds"> & { readonly now?: number },
-  entry: Pick<HeavyQueueEntry, "label" | "server"> & {
-    readonly line?: string;
-    readonly startedAt?: string | null;
-    readonly idleSince?: number;
-  },
-): Lane => {
-  if (commitOnly(entry.line ?? entry.label) !== null) return "commit";
+type CostInput = Pick<PlanInput, "history" | "quickSeconds" | "serviceIdleMinutes"> & {
+  readonly now?: number;
+};
+type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
+  readonly line?: string;
+  readonly startedAt?: string | null;
+  readonly idleSince?: number;
+};
+
+/** The cost class admission uses for `entry`, with its why; the one the Resource Manager shows. */
+export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
   const runs = runsOf(input.history, entry);
   // A server-held slot (a device open) is never idle work: its CPU is T3's own.
   const now = entry.server === true ? undefined : input.now;
-  const cost = costOf(entry, medianDuration(runs), input.quickSeconds ?? QUICK_SECONDS, now).class;
+  const cost = costOf(
+    entry,
+    medianDuration(runs),
+    input.quickSeconds ?? HEAVY_QUEUE_DEFAULTS.quickSeconds,
+    now,
+    input.serviceIdleMinutes ?? HEAVY_QUEUE_DEFAULTS.serviceIdleMinutes,
+  );
   // A device open or a job that runs alone is never quick, however short it usually is.
-  return cost === "quick" && kindOf(entry) === "exclusive" ? "standard" : cost;
+  return cost.class === "quick" && kindOf(entry) === "exclusive"
+    ? { class: "standard", why: "runs alone" }
+    : cost;
 };
+
+export const laneOf = (input: CostInput, entry: CostEntry): Lane =>
+  commitOnly(entry.line ?? entry.label) !== null ? "commit" : costFor(input, entry).class;
 
 /**
  * Pure, for one machine's own sample and entries. Standard waiters that fit start in queue order,
@@ -419,7 +436,7 @@ export const plan = (input: PlanInput): Plan => {
   const rest = waiting.filter((entry) => !admits.includes(entry.id));
   const head = rest[0];
   const reasons: Record<string, string> = {};
-  const quickSlots = input.quickSlots ?? QUICK_SLOTS;
+  const quickSlots = input.quickSlots ?? HEAVY_QUEUE_DEFAULTS.quickSlots;
   const holdText = (hold: HeavyQueueHold) =>
     hold === "job-memory" || hold === "job-cpu"
       ? "next in line"
@@ -619,7 +636,7 @@ const standardPass = (
       continue;
     }
     if (!passesMachine(entry)) {
-      hold(entry, machine!, heavyHoldText(machine!, sample, input.maxRunning));
+      hold(entry, machine!, heavyHoldText(machine!, sample, input.maxRunning, input.quickSlots));
       continue;
     }
     const verdict = jobVerdict(input, sample, entry, budget);

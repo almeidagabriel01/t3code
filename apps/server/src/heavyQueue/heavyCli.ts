@@ -17,7 +17,6 @@ import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
 import {
   HEAVY_JOB_ENV,
   heavyRoute,
-  lineParts,
   readLine,
   rewriteLine,
   scriptOf,
@@ -26,6 +25,7 @@ import {
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import { costOf } from "./costClass.ts";
+import { isShellLine, jobEntryOf, jobLine, jobOf, labelOf } from "./jobEntry.ts";
 import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
@@ -35,7 +35,6 @@ import {
   defaultQueueDir,
   enqueue,
   orphan,
-  RECLAIM_MINUTES,
   finish,
   gitRootOf,
   syncedInCopy,
@@ -64,7 +63,6 @@ import {
   programTie,
   outsideTie,
   shellTextOf,
-  startFolder,
 } from "./runner.ts";
 import {
   bringBack,
@@ -106,14 +104,12 @@ export const launchOf = (
       : { program, args, qos: "normal" as const };
 
 const POLL_MS = 1000;
-const LABEL_CHARS = 200;
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGINT: 130,
   SIGTERM: 143,
   SIGHUP: 129,
 };
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
@@ -173,37 +169,6 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   };
 };
 
-/**
- * The job a command really is. A shell line's leading `cd <dir> &&` steps become the folder it
- * starts from, so the queue, its project settings and Linux all see that folder, and an agent's own
- * `remoto` around the command is dropped.
- */
-export const jobOf = (
-  program: string,
-  args: ReadonlyArray<string>,
-  cwd: string,
-  home: string,
-): {
-  readonly cwd: string;
-  readonly program: string;
-  readonly args: ReadonlyArray<string>;
-  readonly remoto: boolean;
-} => {
-  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
-    return { cwd, program: args[0], args: args.slice(1), remoto: true };
-  }
-  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
-    return { cwd, program, args, remoto: false };
-  }
-  const parts = lineParts(args[1]);
-  return {
-    cwd: startFolder(parts.dirs, cwd, home),
-    program,
-    args: ["-c", parts.command, ...args.slice(2)],
-    remoto: parts.remoto,
-  };
-};
-
 export type HeavyLaunch =
   | { readonly kind: "direct"; readonly service?: true }
   | {
@@ -253,23 +218,6 @@ export const heavyLaunch = (
     ...(commit === "first" ? { priority: "high" as const } : {}),
   };
 };
-
-/**
- * A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it.
- * Any other program by its name, as Linux runs it (`remoteCommand`).
- */
-export const labelOf = (program: string, args: ReadonlyArray<string>) =>
-  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
-    0,
-    LABEL_CHARS,
-  );
-
-const isShellLine = (program: string, args: ReadonlyArray<string>) =>
-  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
-
-/** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
-const jobLine = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
 
 /**
  * The shell and line a Linux job runs here: each work part goes through `executor`, the rest
@@ -662,36 +610,24 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       : `req-${NodeCrypto.createHash("sha1").update(requestId).digest("hex").slice(0, 16)}`;
   const threadId = process.env.T3CODE_THREAD_ID ?? null;
   const agent = threadId !== null || process.env.CLAUDECODE === "1";
-  const label = labelOf(launch.program, launch.args);
-  const line = jobLine(launch.program, launch.args);
-  // The scripts it runs travel with the job: the Runner judges them by their text.
-  const scripts: Record<string, string | null> = {};
-  const readScript = scriptReader(launch.cwd);
-  readLine(line, (word) => (scripts[word] = readScript(word)));
-  const entry: QueuedEntry = {
-    id,
-    pid: process.pid,
-    threadId,
-    label,
-    ...(line === label ? {} : { line }),
-    ...(name === undefined ? {} : { name }),
-    ...(Object.keys(scripts).length === 0 ? {} : { scripts }),
-    ...(routeReason === undefined ? {} : { routeReason }),
-    cwd: process.cwd(),
-    createdAt: new Date().toISOString(),
-    startedAt: null,
-    // Agents' jobs wait behind the user's own.
-    priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
-    ...(launch.where === undefined ? {} : { where: launch.where }),
-    ...(now ? { forced: true } : {}),
-    ...(threadId === null
-      ? {}
-      : {
-          requestKey: NodeCrypto.createHash("sha1")
-            .update(`${threadId}|${process.cwd()}|${line}`)
-            .digest("hex"),
-        }),
-  };
+  const entry = jobEntryOf(
+    {
+      id,
+      pid: process.pid,
+      threadId,
+      program: launch.program,
+      args: launch.args,
+      cwd: process.cwd(),
+      createdAt: new Date().toISOString(),
+      // Agents' jobs wait behind the user's own.
+      priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
+      ...(name === undefined ? {} : { name }),
+      ...(routeReason === undefined ? {} : { routeReason }),
+      ...(launch.where === undefined ? {} : { where: launch.where }),
+      ...(now ? { forced: true } : {}),
+    },
+    scriptReader(launch.cwd),
+  );
   // Another process owns this request's job: wait for it to end and answer with its code. An
   // owner that died without one leaves no result, so this process runs the job itself.
   for (let added = enqueue(dir, entry); added !== "added"; added = enqueue(dir, entry)) {
@@ -713,11 +649,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 
   // An agent's waiter keeps its place for the agent's retry; the user's own Ctrl-C leaves.
   const whileWaiting = (signal: (typeof SIGNALS)[number]) => {
-    const position = threadId === null ? null : orphan(dir, id);
-    if (position !== null) {
+    const kept = threadId === null ? null : orphan(dir, id);
+    if (kept !== null) {
       orphaned = true;
       process.stderr.write(
-        `[t3 heavy] stopped while waiting (position ${position}); run the same command again within ${RECLAIM_MINUTES} min to keep this place.\n`,
+        `[t3 heavy] stopped while waiting (position ${kept.position}); run the same command again within ${kept.minutes} min to keep this place.\n`,
       );
     }
     process.exit(WAITING_EXIT[signal]);

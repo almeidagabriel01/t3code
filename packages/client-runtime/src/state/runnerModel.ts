@@ -187,6 +187,25 @@ export const HEAVY_LIMIT_COPY: Record<
     description:
       "While the first job in line does not fit, smaller ones behind it may start. Once it has waited this long, nothing passes it.",
   },
+  quickSeconds: {
+    title: "Quick job length",
+    description:
+      "A command that usually ends this fast, or names only a few files, starts in its own slots instead of waiting behind long jobs.",
+  },
+  quickSlots: {
+    title: "Quick jobs at once",
+    description: "How many quick jobs may run beside the regular job slots.",
+  },
+  serviceIdleMinutes: {
+    title: "Idle job counts as running in the background after",
+    description:
+      "A job that has run this long and then sits idle stops holding a slot: its load still counts in this Mac's reading.",
+  },
+  reclaimMinutes: {
+    title: "Keep a stopped agent's place for",
+    description:
+      "When an agent's command stops while waiting, its place in line is kept this long for the agent to ask again.",
+  },
 };
 
 /** A limit's description as drawn; the memory floor's exception follows the light job size. */

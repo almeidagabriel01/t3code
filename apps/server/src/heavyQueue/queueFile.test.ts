@@ -14,6 +14,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, renameSync: vi.fn(actual.renameSync) };
 });
 
+import { jobEntryOf, jobOf } from "./jobEntry.ts";
 import * as Queue from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -142,7 +143,11 @@ describe("heavy queue file", () => {
 
     it.each([
       // 28: stopped by a signal, its handler marks it.
-      ["a signal", (dir: string) => expect(Queue.orphan(dir, "a", NOW)).toBe(1), "a"],
+      [
+        "a signal",
+        (dir: string) => expect(Queue.orphan(dir, "a", NOW)).toEqual({ position: 1, minutes: 10 }),
+        "a",
+      ],
       // 28b: killed without its handler, the next mutate marks it.
       ["SIGKILL", () => undefined, "dead"],
     ])("after %s keeps its place for the same request's retry", (_why, stop, id) => {
@@ -791,6 +796,22 @@ describe("heavy queue file", () => {
     const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
     NodeFS.writeFileSync(file, JSON.stringify({ ...doc, unseenHeavyMegabytes: 1024 }));
     expect(sizing()).toEqual([256, 1024, 1024, 1000, 60]);
+    // The lanes' own limits: defaults, clamped into range, and a bad file value reads as default.
+    const lanes = () => {
+      const { quickSeconds, quickSlots, serviceIdleMinutes, reclaimMinutes } = Queue.readDoc(dir);
+      return [quickSeconds, quickSlots, serviceIdleMinutes, reclaimMinutes];
+    };
+    expect(lanes()).toEqual([30, 2, 10, 10]);
+    Queue.setLimits(dir, {
+      quickSeconds: 1,
+      quickSlots: 99,
+      serviceIdleMinutes: 5,
+      reclaimMinutes: 999,
+    });
+    expect(lanes()).toEqual([5, 8, 5, 60]);
+    const lanesDoc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    NodeFS.writeFileSync(file, JSON.stringify({ ...lanesDoc, quickSlots: 0, reclaimMinutes: "x" }));
+    expect(lanes()).toEqual([5, 2, 5, 10]);
   });
 
   it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {
@@ -1743,6 +1764,39 @@ describe("Runner in the queue file", () => {
     });
   });
 
+  // The probe builds the job as `t3 heavy` does (label, line, scripts), so it agrees with the plan
+  // the real job gets; the evidence lines 3 and 5, and a script the job carries.
+  it.each([
+    "vp fmt apps/a.ts",
+    'for f in a.ts; do vp fmt --stdin-filepath="$f" < "$f" | diff -q - "$f"; done',
+    "./check.sh",
+  ])("probe agrees with the queued job for %s", (line) => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    const at = checkout("c");
+    NodeFS.writeFileSync(NodePath.join(at, "check.sh"), "#!/bin/sh\nvp test run\n");
+    const probed = Queue.probe(dir, line, at, NOW);
+    const job = jobOf("/bin/zsh", ["-c", line], at, NodeOS.homedir());
+    const real = jobEntryOf(
+      {
+        id: "real",
+        pid: process.pid,
+        threadId: "thread-1",
+        program: job.program,
+        args: job.args,
+        cwd: job.cwd,
+        createdAt: new Date(NOW).toISOString(),
+        priority: "low",
+      },
+      Queue.scriptReader(job.cwd),
+    );
+    Queue.enqueue(dir, real, NOW);
+    const { plan } = Queue.readPlan(dir, NOW);
+    expect({ runsOn: probed.runsOn, startsNow: probed.startsNow }).toEqual({
+      runsOn: plan.routes.real ?? "mac",
+      startsNow: plan.admits.real !== undefined,
+    });
+  });
+
   describe("the one gate every Bash hook goes through", () => {
     const call = (command: string, cwd = "/w/p") => ({
       tool_name: "Bash",
@@ -1817,6 +1871,8 @@ describe("Runner in the queue file", () => {
         reason: "No commit hook in this repository: runs directly",
         startsNow: true,
         linuxFull: false,
+        class: "quick",
+        classWhy: "staged files",
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
       expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();

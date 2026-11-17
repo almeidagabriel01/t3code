@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  costFor,
   estimate,
   hasHeadroom,
   learnedCpu,
@@ -253,6 +254,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
     const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = doc;
     const { historyCommands, headPatienceMinutes } = doc;
+    const { quickSeconds, quickSlots, serviceIdleMinutes, reclaimMinutes } = doc;
+    // The class admission itself uses, with the same inputs and clock.
+    const costs = Object.fromEntries(
+      entries.map((entry) => [entry.id, costFor({ ...doc, now }, entry)] as const),
+    );
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
@@ -293,6 +299,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       unseenMediumMegabytes,
       historyCommands,
       headPatienceMinutes,
+      quickSeconds,
+      quickSlots,
+      serviceIdleMinutes,
+      reclaimMinutes,
+      costs,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
       room: plan.room && (!fresh || hasHeadroom(sample, doc)),

@@ -1,5 +1,6 @@
 import type {
   HeavyCommand,
+  HeavyQueueCostClass,
   HeavyQueueEntry,
   HeavyQueueState,
   HeavyRunner,
@@ -20,6 +21,9 @@ export interface Destination {
   readonly startsNow: boolean;
   /** Linux is offline, over its limits or out of slots. */
   readonly linuxFull: boolean;
+  /** How the queue admits it: quick and service work never waits behind a long job. */
+  readonly class?: HeavyQueueCostClass;
+  readonly classWhy?: string;
 }
 
 /** Each machine answers for itself: Linux jobs never count against this Mac, nor its pressure against them. */
@@ -85,7 +89,10 @@ export const heavyStatus = (input: {
   const runnerOfEntry = new Map(input.entries.map((entry) => [entry.id, runnerOf(entry)]));
   return {
     askUser:
-      destination?.runsOn === "direct"
+      // Quick work runs in its own slots and a service outside the queue: neither waits.
+      destination?.runsOn === "direct" ||
+      destination?.class === "quick" ||
+      destination?.class === "service"
         ? false
         : destination?.runsOn === "linux"
           ? !destination.startsNow && destination.linuxFull
@@ -95,6 +102,9 @@ export const heavyStatus = (input: {
       : {
           runsOn: destination.runsOn,
           ...(destination.reason === null ? {} : { reason: destination.reason }),
+          ...(destination.class === undefined
+            ? {}
+            : { class: destination.class, classWhy: destination.classWhy }),
         }),
     mac: {
       pressure: {
