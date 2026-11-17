@@ -27,7 +27,13 @@ import {
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
-import { faultOf, type FaultSeen, startFailureOf, unreachableLine } from "./heavyNotices.ts";
+import {
+  errorLineOf,
+  faultOf,
+  type FaultSeen,
+  startFailureOf,
+  unreachableLine,
+} from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -1131,16 +1137,22 @@ const runLinuxPart = async (
   }
   let recorded: string | null = null;
   let lastError: string | null = null;
+  /** The first line naming a failure: what a card quotes when no exit code explains it. */
+  let failure: string | null = null;
   let unreachable: string | null = null;
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
   const fault = (seen: FaultSeen) => {
-    const found = faultOf(seen, seen.kind === "exit" ? lastError : (unreachable ?? lastError), {
-      command: labelOf(program, args),
-      projectFolder: root,
-    });
+    const found = faultOf(
+      seen,
+      seen.kind === "exit" ? lastError : (unreachable ?? failure ?? lastError),
+      {
+        command: labelOf(program, args),
+        projectFolder: root,
+      },
+    );
     if (found !== null) recordFault(dir, id, found);
   };
   const start = () => {
@@ -1160,7 +1172,9 @@ const runLinuxPart = async (
       stdout: (chunk) => process.stdout.write(chunk),
       stderr: (text) => {
         process.stderr.write(text);
-        lastError = lastLineOf(text) ?? lastError;
+        const lines = errorLineOf(text);
+        lastError = lines.last ?? lastError;
+        failure ??= lines.failure;
         unreachable ??= unreachableLine(text);
       },
       onProgress: (progress) => {
@@ -1195,11 +1209,16 @@ const runLinuxPart = async (
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
     recorded = null;
+    failure = null;
     run = start();
     ({ outcome, progress, platform, install, worktree } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
-      return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
+      return endLine(dir, id, {
+        kind: "environment",
+        reason: INSTALL_FAILED,
+        code: outcome.code ?? 1,
+      });
     }
   }
   if (stopped) process.exit(143);
@@ -1250,13 +1269,6 @@ const runLinuxPart = async (
   }
   endLine(dir, id, outcome);
 };
-
-/** The last line of Linux's output worth showing: not T3's own notes, not blank. */
-const lastLineOf = (text: string) =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .findLast((line) => line !== "" && !line.startsWith("[t3 heavy]")) ?? null;
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {

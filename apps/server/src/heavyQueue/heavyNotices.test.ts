@@ -5,6 +5,7 @@ import type { HeavyNoticesMode, HeavyQueueEntry } from "@t3tools/contracts";
 import {
   deadlineRecord,
   endedRecord,
+  errorLineOf,
   EVENT_LOG_SIZE,
   faultOf,
   unreachableLine,
@@ -914,3 +915,43 @@ describe("startFailureOf", () => {
   });
 });
 
+// The card once quoted vitest's `⎯⎯⎯[50/62]⎯` rule, ANSI codes and all.
+describe("errorLineOf", () => {
+  const VITEST = [
+    "\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m src/heavyQueue/runner.test.ts\x1b[2m > \x1b[22mLinux health\x1b[2m > \x1b[22ma PC idle under a high load takes an eligible job",
+    "\x1b[31m\x1b[1mAssertionError\x1b[22m: expected 'linux-wait' to be 'linux-start' // Object.is equality\x1b[39m",
+    "",
+    '    \x1b[90m1851|\x1b[39m     expect(outcomeOf(plan, "a")).toBe("linux-start");',
+    "",
+    "\x1b[31m\x1b[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[50/62]⎯\x1b[22m\x1b[39m",
+    "",
+  ].join("\n");
+  it.each([
+    [
+      "a vitest failure",
+      VITEST,
+      "FAIL  src/heavyQueue/runner.test.ts > Linux health > a PC idle under a high load takes an eligible job",
+      '1851|     expect(outcomeOf(plan, "a")).toBe("linux-start");',
+    ],
+    [
+      "an install that fails",
+      "Progress: resolved 1678, reused 1674\n ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404\n",
+      "ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404",
+      "ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found - 404",
+    ],
+    [
+      "only ANSI and rules",
+      "\x1b[31m\x1b[2m⎯⎯⎯[50/62]⎯\x1b[22m\x1b[39m\n\x1b[2m────\x1b[22m\n",
+      null,
+      null,
+    ],
+    [
+      "a plain last line",
+      "rsync: connection unexpectedly closed\n[t3 heavy] Linux: syncing\n",
+      null,
+      "rsync: connection unexpectedly closed",
+    ],
+  ])("%s", (_case, text, failure, last) => {
+    expect(errorLineOf(text)).toEqual({ failure, last });
+  });
+});

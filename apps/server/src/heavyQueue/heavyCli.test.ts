@@ -615,19 +615,20 @@ describe("t3 heavy", () => {
       ["output", 2, "mac", 0, 2, "vp on mac: test run\n"],
       ["marker", 1, "mac", 0, 2, "linux-ok\n"],
       ["marker", 2, "mac", 0, 2, "vp on mac: test run\n"],
-      ["output", 2, "agent", 75, 2, ""],
+      ["output", 2, "agent", 1, 2, ""],
     ] as const)(
       "an install failure seen in the %s %i time(s), %s, ends %i after %i Linux runs",
       async (seen, fails, policy, code, runs, output) => {
+        // Output counts only before the command runs: its own output may quote the same error.
         const failure =
           seen === "output"
-            ? "echo 'Error: Electron failed to install correctly.' >&2"
-            : `printf '${M} install=electron\\n' >&2`;
+            ? `printf '${M} phase=installing\\n' >&2; echo 'Error: Electron failed to install correctly.' >&2`
+            : `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} install=electron\\n' >&2`;
         const { dir, env } = setup(
           [
             `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
-            `printf '${M} phase=running pgid=4\\n' >&2`,
             `if [ $n -le ${fails} ]; then ${failure}; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
             "echo linux-ok",
             `printf '${M} exit=0\\n' >&2`,
           ].join("\n"),
@@ -648,6 +649,26 @@ describe("t3 heavy", () => {
         );
       },
     );
+
+    // The incident behind four 75s: failing tests whose output quotes an install error.
+    it("a failing command that quotes an install error ends with its own code, once", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=installing\\n${M} phase=running pgid=4\\n' >&2`,
+          "echo ' FAIL  src/a.test.ts > reads sharp: Could not load the \"sharp\" module' >&2",
+          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} exit=1\\n' >&2`,
+          "exit 1",
+        ].join("\n"),
+        { runnerDropped: "agent" },
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(1);
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
+      expect(run.stderr()).not.toContain("Dependency install on Linux failed");
+      expect(faults(dir).map((fault) => fault.cause)).toEqual([]);
+    });
 
     // An install the worktree's own state breaks fails everywhere: the job ends with the fix,
     // never reruns, and files no problem card.

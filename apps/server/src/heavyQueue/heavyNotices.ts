@@ -236,6 +236,31 @@ export const startFailureOf = (
   return code === 126 && own !== null ? `not executable: ${own}` : undefined;
 };
 
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+/** Decoration only: rules and counters such as vitest's `⎯⎯⎯[50/62]⎯`. */
+const RULE = /^[\s\-=_*~·.⎯─━═│|[\]\d/]*$/u;
+
+/** The lines of command output that say something: no colour codes, blanks, rules or counters. */
+export const meaningfulLines = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.replace(ANSI, "").trim())
+    .filter((line) => !RULE.test(line));
+
+const FAILURE = /\bFAIL\b|\bERR_[A-Z0-9_]+|\bERR!|[A-Za-z]*Error\b|\berror TS\d+/;
+
+/**
+ * The lines of a chunk of output worth quoting on a card: the first one that names a failure, and
+ * the last meaningful one, both without ANSI codes, rules, or T3's own notes.
+ */
+export const errorLineOf = (text: string) => {
+  const lines = meaningfulLines(text).filter((line) => !line.startsWith("[t3 heavy]"));
+  return {
+    failure: lines.find((line) => FAILURE.test(line)) ?? null,
+    last: lines.at(-1) ?? null,
+  };
+};
+
 const LINE_CHARS = 1000;
 
 /** The line a job ran, cut where a card or the queue file would carry only noise (a heredoc). */

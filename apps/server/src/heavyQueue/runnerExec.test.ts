@@ -358,12 +358,42 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     },
   );
 
-  it("notes an install failure the command's own output reports", async () => {
+  // A failing vitest run once quoted an install error in a test name and was filed as an install.
+  it.each([
+    [
+      "a vitest failure quoting one",
+      "running",
+      [
+        "printf '\\033[41m\\033[1m FAIL \\033[22m\\033[49m src/a.test.ts > EEXIST row\\n' >&2",
+        "echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2",
+        "printf '\\033[31m\\033[2m⎯⎯⎯⎯[50/62]⎯\\033[22m\\033[39m\\n' >&2",
+      ],
+      null,
+    ],
+    [
+      "Electron's error printed by the command",
+      "running",
+      ["echo 'Error: Electron failed to install correctly.' >&2"],
+      null,
+    ],
+    [
+      "output that is only ANSI",
+      "running",
+      ["printf '\\033[31m\\033[2m⎯⎯⎯\\033[22m\\033[39m\\n' >&2"],
+      null,
+    ],
+    [
+      "an install that really fails",
+      "installing",
+      ["echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2"],
+      "sharp",
+    ],
+  ] as const)("%s while %s is an install failure of %j", async (_case, phase, lines, install) => {
     const { run } = runWith(
       fake(
         [
-          `printf '${M} phase=running pgid=4\\n' >&2`,
-          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} phase=${phase} pgid=4\\n' >&2`,
+          ...lines,
           `printf '${M} exit=1\\n' >&2`,
           "exit 1",
         ].join("\n"),
@@ -371,7 +401,7 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     );
     const result = await run.done;
     expect(result.outcome).toEqual({ kind: "finished", code: 1 });
-    expect(result.install).toBe("electron");
+    expect(result.install).toBe(install);
   });
 
   it("runs with the env it is handed, ahead of the command", () => {
