@@ -190,12 +190,22 @@ describe("running on Linux through remoto", () => {
     ["the repo root", "", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test`],
     ["a subfolder", "", "/apps/web", "'/apps'", `cd "$T3_COPY"'/apps' && vp test`],
     ["a folder outside git", "plain", "", "/a.ts", `vp test "$T3_COPY"'/a.ts' /etc/x`],
-  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, sent) => {
+    // A git worktree's `.git` is a file; its main checkout is another folder, left as written.
+    ["a git worktree", "worktree", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test MAIN/a`],
+  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, given) => {
     const repo = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(dir, "t3-repo-")));
+    const main = `${repo}.main`;
+    const sent = given.replace("MAIN", main);
     if (kind === "") NodeFS.mkdirSync(NodePath.join(repo, ".git"));
+    if (kind === "worktree") {
+      NodeFS.writeFileSync(NodePath.join(repo, ".git"), `gitdir: ${main}/.git/worktrees/w\n`);
+    }
     NodeFS.mkdirSync(NodePath.join(repo, "apps", "web"), { recursive: true });
     const quoted = path.startsWith("'") ? `'${repo}${path.slice(1)}` : `${repo}${path}`;
-    const line = kind === "" ? `cd ${quoted} && vp test` : `vp test ${quoted} /etc/x`;
+    const line =
+      kind === "plain"
+        ? `vp test ${quoted} /etc/x`
+        : `cd ${quoted} && vp test${kind === "worktree" ? ` ${main}/a` : ""}`;
     const stdout: Buffer[] = [];
     const run = startLinuxRun({
       // Past the PATH wrapper, to the command it runs.
