@@ -118,6 +118,10 @@ export const HeavyQueueEntry = Schema.Struct({
   peakMemory: Schema.optionalKey(Schema.Number),
   /** Since when its tree's CPU stayed near zero; past a long run it then counts as a service. */
   idleSince: Schema.optionalKey(Schema.Number),
+  /** An agent's request (sha1 of thread, folder and line): a retry of it takes back an orphaned place. */
+  requestKey: Schema.optionalKey(Schema.String),
+  /** When its agent's waiter stopped before starting; it keeps its place until reclaimed or expired. */
+  orphanedAt: Schema.optionalKey(Schema.Number),
   /** Peak of its own tree alone, without the build daemons counted in `peakMemory`. */
   peakTreeMemory: Schema.optionalKey(Schema.Number),
   /** Pids of build daemons outside its tree that work for it (Gradle's, Kotlin's), counted in its usage. */

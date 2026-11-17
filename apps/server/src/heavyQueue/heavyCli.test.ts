@@ -179,7 +179,7 @@ describe("t3 heavy", () => {
     expect(await Promise.all([first.exited, third.exited])).toEqual([0, 0]);
   });
 
-  it("passes the program's exit code through, and a waiter interrupted leaves the queue", async () => {
+  it("passes the exit code through; an interrupted waiter leaves, an agent's keeps its place", async () => {
     const dir = tempDir();
     const failing = heavy(dir, [process.execPath, "-e", "process.exit(7)"]);
     expect(await failing.exited).toBe(7);
@@ -191,8 +191,26 @@ describe("t3 heavy", () => {
     waiter.child.kill("SIGTERM");
     expect(await waiter.exited).toBe(143);
     expect(Queue.read(dir)).toHaveLength(1);
+
+    // An agent's waiter keeps its place instead, and the same command run again takes it back.
+    const asAgent = { T3CODE_THREAD_ID: "thread-1" };
+    const agent = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await agent.until("err", "position 1");
+    agent.child.kill("SIGTERM");
+    expect(await agent.exited).toBe(143);
+    expect(agent.stderr()).toContain(
+      "[t3 heavy] stopped while waiting (position 1); run the same command again within 10 min to keep this place.",
+    );
+    const kept = Queue.read(dir)[1]!;
+    expect(kept.orphanedAt).toBeDefined();
+    const retry = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await retry.until("err", "position 1");
+    expect(Queue.read(dir).map((entry) => [entry.id, entry.pid])).toEqual([
+      [Queue.read(dir)[0]!.id, holder.child.pid],
+      [kept.id, retry.child.pid],
+    ]);
     holder.child.stdin.end();
-    expect(await holder.exited).toBe(0);
+    expect(await Promise.all([holder.exited, retry.exited])).toEqual([0, 0]);
   });
 
   it("reports a missing program and a program that cannot start", async () => {

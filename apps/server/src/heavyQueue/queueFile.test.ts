@@ -122,6 +122,62 @@ describe("heavy queue file", () => {
     expect(Queue.isAlive(deadPid()!)).toBe(false);
   });
 
+  describe("an agent's waiter that stops before it starts", () => {
+    const MIN = 60_000;
+    const NOW = Date.parse("2026-01-01T00:10:00.000Z");
+    /** Read at `at`: an orphan's place expires on the queue's clock. */
+    const rows = (dir: string, at = NOW + 3 * MIN) => Queue.readDoc(dir, at).entries;
+    const ids = (dir: string, at?: number) => rows(dir, at).map((e) => e.id);
+    const agent = (id: string, pid = process.pid) => ({ ...entry(id, pid), requestKey: "key" });
+    /** A running job, then an agent's waiter and another waiter behind it. */
+    const lined = (waiter: HeavyQueueEntry) => {
+      const dir = tempDir();
+      Queue.enqueue(dir, entry("run"), NOW);
+      expect(Queue.tryStart(dir, "run", NOW)).toMatchObject({ status: "started" });
+      Queue.setPaused(dir, true);
+      Queue.enqueue(dir, waiter, NOW);
+      Queue.enqueue(dir, entry("next"), NOW);
+      return dir;
+    };
+
+    it.each([
+      // 28: stopped by a signal, its handler marks it.
+      ["a signal", (dir: string) => expect(Queue.orphan(dir, "a", NOW)).toBe(1), "a"],
+      // 28b: killed without its handler, the next mutate marks it.
+      ["SIGKILL", () => undefined, "dead"],
+    ])("after %s keeps its place for the same request's retry", (_why, stop, id) => {
+      const dir = lined(agent(id, id === "dead" ? deadPid() : process.pid));
+      stop(dir);
+      Queue.enqueue(dir, entry("later"), NOW + MIN);
+      expect(rows(dir).find((e) => e.id === id)?.orphanedAt).toBeDefined();
+      // Skipped while orphaned: the waiter behind it is first now.
+      expect(Queue.tryStart(dir, "next", NOW + MIN)).toMatchObject({ position: 1 });
+      expect(Queue.enqueue(dir, agent("retry"), NOW + 3 * MIN)).toEqual({ adopted: id });
+      expect(ids(dir)).toEqual(["run", id, "next", "later"]);
+      expect(rows(dir)[1]).not.toHaveProperty("orphanedAt");
+      expect(rows(dir)[1]!.pid).toBe(process.pid);
+    });
+
+    it("lets a retry past the reclaim window queue anew at the back (29)", () => {
+      const dir = lined(agent("a"));
+      Queue.orphan(dir, "a", NOW);
+      expect(Queue.enqueue(dir, agent("retry"), NOW + 11 * MIN)).toBe("added");
+      expect(ids(dir, NOW + 11 * MIN)).toEqual(["run", "next", "retry"]);
+    });
+
+    it("drops a dead waiter that no agent asked for (29b)", () => {
+      const dir = lined(entry("user", deadPid()));
+      expect(ids(dir)).toEqual(["run", "next"]);
+    });
+
+    it("never orphans a running job, and a retry of the same id adopts its orphan", () => {
+      const dir = lined(agent("a"));
+      expect(Queue.orphan(dir, "run", NOW)).toBeNull();
+      Queue.orphan(dir, "a", NOW);
+      expect(Queue.enqueue(dir, entry("a"), NOW + MIN)).toEqual({ adopted: "a" });
+    });
+  });
+
   it("startNow lets every chosen waiter start past the pause and full slots", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));

@@ -461,8 +461,24 @@ const save = (dir: string, doc: QueueDoc) => {
   NodeFS.renameSync(temp, queuePath(dir));
 };
 
-const prune = (entries: ReadonlyArray<HeavyQueueEntry>) =>
-  entries.filter((entry) => isAlive(entry.pid));
+export const RECLAIM_MINUTES = 10;
+
+/**
+ * Drops entries whose process died, except an agent's waiter: it turns orphan and keeps its place
+ * for `RECLAIM_MINUTES`, so the agent asking again does not land at the back.
+ */
+const prune = (entries: ReadonlyArray<HeavyQueueEntry>, now: number) =>
+  entries.flatMap((entry): ReadonlyArray<HeavyQueueEntry> => {
+    if (entry.orphanedAt !== undefined) {
+      return now - entry.orphanedAt < RECLAIM_MINUTES * 60_000 ? [entry] : [];
+    }
+    if (isAlive(entry.pid)) return [entry];
+    return entry.startedAt === null && entry.requestKey !== undefined
+      ? [{ ...entry, orphanedAt: now }]
+      : [];
+  });
+
+const isOrphan = (entry: HeavyQueueEntry) => entry.orphanedAt !== undefined;
 
 const runningOf = (entries: ReadonlyArray<HeavyQueueEntry>) =>
   entries.filter((entry) => entry.startedAt !== null);
@@ -604,7 +620,7 @@ const runnerOn = (doc: QueueDoc) =>
 
 const planOf = (doc: QueueDoc, now: number): RoutePlan =>
   planRoutes({
-    entries: doc.entries,
+    entries: doc.entries.filter((entry) => !isOrphan(entry)),
     maxRunning: doc.maxRunning,
     enabled: doc.enabled,
     paused: doc.paused,
@@ -762,7 +778,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     doc: { ...doc, entries: asked, holding: decision.holding },
     result: {
       status: "waiting",
-      position: there.filter((e) => e.startedAt === null).findIndex((e) => e.id === id) + 1,
+      position:
+        there.filter((e) => e.startedAt === null && !isOrphan(e)).findIndex((e) => e.id === id) + 1,
       ...(runningThere === undefined ? {} : { running: runningThere }),
       ...(runnerOn(doc) ? { runner } : {}),
       ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
@@ -917,27 +934,48 @@ export const usualMs = (
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
     const loaded = loadDoc(dir);
-    const decided = decide({ ...loaded, entries: prune(loaded.entries) });
+    const decided = decide({ ...loaded, entries: prune(loaded.entries, now) });
     save(dir, withFinishedRuns(loaded, decided.doc, now));
     return decided.result;
   });
 
 /** Pruned view; never writes, tolerates a missing or corrupt file. */
-export const readDoc = (dir: string): QueueDoc => {
+export const readDoc = (dir: string, now = Date.now()): QueueDoc => {
   const doc = loadDoc(dir);
-  return { ...doc, entries: prune(doc.entries) };
+  return { ...doc, entries: prune(doc.entries, now) };
 };
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
 
 /**
  * Adds `entry`, or, for an id already known, attaches to its job: still waiting or running, or
- * ended recently with the code it returns again.
+ * ended recently with the code it returns again. An orphan of the same request is adopted: same
+ * id and place, now owned by this process.
  */
 export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
   mutate(
     dir,
-    (doc): Decided<"added" | "attached" | { readonly code: number }> => {
+    (
+      doc,
+    ): Decided<"added" | "attached" | { readonly code: number } | { readonly adopted: string }> => {
+      const orphan = doc.entries.find(
+        (each) =>
+          isOrphan(each) &&
+          (each.id === entry.id ||
+            (entry.requestKey !== undefined && each.requestKey === entry.requestKey)),
+      );
+      if (orphan !== undefined) {
+        const { orphanedAt: _, ...kept } = orphan;
+        return {
+          doc: {
+            ...doc,
+            entries: doc.entries.map((each) =>
+              each === orphan ? { ...kept, pid: entry.pid } : each,
+            ),
+          },
+          result: { adopted: orphan.id },
+        };
+      }
       if (doc.entries.some((each) => each.id === entry.id)) return { doc, result: "attached" };
       const ended = doc.results.find(
         (each) => each.id === entry.id && now - each.at < RESULT_TTL_MS,
@@ -990,7 +1028,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(withProbe, now);
-  const waiters = withProbe.entries.filter((e) => e.startedAt === null);
+  const waiters = withProbe.entries.filter((e) => e.startedAt === null && !isOrphan(e));
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
   const ahead = withProbe.entries
@@ -1156,6 +1194,33 @@ export const remove = (dir: string, id: string) =>
     doc: { ...doc, entries: doc.entries.filter((entry) => entry.id !== id) },
     result: undefined,
   }));
+
+/**
+ * An agent's waiter stopping before it starts: its entry keeps its place for a retry. Returns its
+ * position, or null when it was not waiting.
+ */
+export const orphan = (dir: string, id: string, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const position =
+        doc.entries
+          .filter((entry) => entry.startedAt === null && !isOrphan(entry))
+          .findIndex((entry) => entry.id === id) + 1;
+      return position === 0
+        ? { doc, result: null }
+        : {
+            doc: {
+              ...doc,
+              entries: doc.entries.map((entry) =>
+                entry.id === id ? { ...entry, orphanedAt: now } : entry,
+              ),
+            },
+            result: position,
+          };
+    },
+    now,
+  );
 
 /** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
 export const finish = (dir: string, id: string, code: number, now = Date.now()) =>

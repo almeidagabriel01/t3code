@@ -34,6 +34,8 @@ import {
   configFor,
   defaultQueueDir,
   enqueue,
+  orphan,
+  RECLAIM_MINUTES,
   finish,
   gitRootOf,
   syncedInCopy,
@@ -653,7 +655,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     return;
   }
   // A repeated request (same tool call, same agent retry) lands on the same job.
-  const id =
+  let id =
     requestId === undefined
       ? NodeCrypto.randomUUID()
       : `req-${NodeCrypto.createHash("sha1").update(requestId).digest("hex").slice(0, 16)}`;
@@ -681,19 +683,43 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
+    ...(threadId === null
+      ? {}
+      : {
+          requestKey: NodeCrypto.createHash("sha1")
+            .update(`${threadId}|${process.cwd()}|${line}`)
+            .digest("hex"),
+        }),
   };
   // Another process owns this request's job: wait for it to end and answer with its code. An
   // owner that died without one leaves no result, so this process runs the job itself.
   for (let added = enqueue(dir, entry); added !== "added"; added = enqueue(dir, entry)) {
+    if (typeof added === "object" && "adopted" in added) {
+      id = added.adopted;
+      break;
+    }
     if (added !== "attached") process.exit(added.code);
     while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
   }
+  let orphaned = false;
   // The code a failure notice reports; every exit path ends here.
-  process.on("exit", (code) => finish(dir, id, code));
+  process.on("exit", (code) => {
+    if (!orphaned) finish(dir, id, code);
+  });
 
-  /** What a signal does right now: exit while waiting, or stop the running attempt. */
-  let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
+  // An agent's waiter keeps its place for the agent's retry; the user's own Ctrl-C leaves.
+  const whileWaiting = (signal: (typeof SIGNALS)[number]) => {
+    const position = threadId === null ? null : orphan(dir, id);
+    if (position !== null) {
+      orphaned = true;
+      process.stderr.write(
+        `[t3 heavy] stopped while waiting (position ${position}); run the same command again within ${RECLAIM_MINUTES} min to keep this place.\n`,
+      );
+    }
     process.exit(WAITING_EXIT[signal]);
+  };
+  /** What a signal does right now: exit while waiting, or stop the running attempt. */
+  let onSignal: (signal: (typeof SIGNALS)[number]) => void = whileWaiting;
   for (const signal of SIGNALS) process.on(signal, () => onSignal(signal));
 
   const readHost = makeHostReader();
@@ -722,7 +748,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
             (handler) => (onSignal = handler),
           );
     if (outcome.kind === "exit") process.exit(outcome.code);
-    onSignal = (signal) => process.exit(WAITING_EXIT[signal]);
+    onSignal = whileWaiting;
   }
 };
 
