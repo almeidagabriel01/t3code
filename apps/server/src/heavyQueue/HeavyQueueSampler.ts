@@ -246,7 +246,7 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           daemons,
         );
         const at = yield* Clock.currentTimeMillis;
-        const doc = QueueFile.recordSample(
+        const written = QueueFile.recordSample(
           dir,
           {
             at,
@@ -266,7 +266,9 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           },
           running ? peaksOf(entries, processes, footprints.jobs, daemons) : {},
         );
-        if (platform !== "darwin") return;
+        // Only the primary writer slows jobs down, so two servers never fight over one job's QoS.
+        if (platform !== "darwin" || written === null || !written.primary) return;
+        const { doc } = written;
         const step = slowdownStep(doc, processes, at);
         if (isNoop(step, doc.slowedDaemons)) return;
         yield* applySlowdown(step);

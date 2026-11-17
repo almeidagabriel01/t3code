@@ -45,9 +45,12 @@ export interface Sustained {
   readonly underLimitSince: number | null;
 }
 
-/** Folds one reading in; `previous` null after a gap in readings, which starts from "has room". */
+/**
+ * Folds one reading in; `previous` null after a gap in readings, which starts from "has room". An
+ * older build's sample has only `headroomSince`: the run of readings under the limit goes on from it.
+ */
 export const sustain = (
-  previous: Partial<Sustained> | null,
+  previous: (Partial<Sustained> & { readonly headroomSince?: number | null }) | null,
   over: boolean,
   at: number,
   windowMs: number,
@@ -61,7 +64,7 @@ export const sustain = (
       underLimitSince: null,
     };
   }
-  const since = previous?.underLimitSince ?? at;
+  const since = previous?.underLimitSince ?? previous?.headroomSince ?? at;
   return { overLimit: was && at - since < windowMs, overLimitSince: null, underLimitSince: since };
 };
 

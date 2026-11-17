@@ -42,6 +42,7 @@ import {
   recordHealth,
   recordSampleIfStale,
   requeue,
+  SAMPLE_STALE_MS,
   scriptReader,
   setProgress,
   setQos,
@@ -101,8 +102,6 @@ export const launchOf = (
       : { program, args, qos: "normal" as const };
 
 const POLL_MS = 1000;
-/** A server writes readings every 2 s; past this a waiter takes over sampling. */
-const SAMPLE_STALE_MS = 5000;
 const LABEL_CHARS = 200;
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {

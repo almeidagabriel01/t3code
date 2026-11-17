@@ -829,7 +829,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
   let changed = false;
   for (const gone of before.entries) {
     if (gone.startedAt === null || kept.has(gone.id)) continue;
-    const signature = signatureOf((gone as QueuedEntry).line ?? gone.label);
+    const signature = signatureOf(gone.line ?? gone.label);
     const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
@@ -947,7 +947,49 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   };
 };
 
-/** A server publishes the machine reading and each running job's process-tree peak. */
+/** Past this, any server or waiter takes over writing the reading; under `SAMPLE_GAP_MS`. */
+export const SAMPLE_STALE_MS = 5_000;
+
+/** The reading folded into the sustained limits, after `doc`'s sample and with `entries` running. */
+const sampled = (
+  doc: QueueDoc,
+  reading: Omit<Sample, "headroomSince">,
+  entries: ReadonlyArray<HeavyQueueEntry> = doc.entries,
+): Sample => {
+  const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
+  const limit = sustain(
+    continuous ? doc.sample : null,
+    !hasHeadroom(reading, doc),
+    reading.at,
+    doc.heavyOverLimitSeconds * 1000,
+  );
+  // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
+  const comeback = entries
+    .filter((entry) => entry.slowed === true)
+    .reduce((sum, entry) => {
+      const full = Math.max(
+        entry.peakCpu ?? 0,
+        estimate(doc.history, entry, reading.cpuCount, doc).cpu,
+      );
+      // An unread job counts as using nothing now, so restoring waits rather than flaps.
+      return sum + Math.max(0, full - (entry.cpu ?? 0));
+    }, 0);
+  const slow = sustain(
+    continuous ? (doc.sample?.slow ?? null) : null,
+    reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
+    reading.at,
+    doc.heavyOverLimitSeconds * 1000,
+  );
+  // Admission's short headroom check uses the same unbroken run of readings under the limits.
+  return { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+};
+
+/**
+ * A server publishes the machine reading and each running job's process-tree peak. Only the live
+ * publisher writes every tick, so servers of different builds never restart each other's windows;
+ * another writes once the reading is stale. `primary`: this writer also runs the CPU slowdown.
+ * Null when it left the reading to the publisher.
+ */
 export const recordSample = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
@@ -962,15 +1004,14 @@ export const recordSample = (
       }
     >
   > | null,
+  writer = process.pid,
 ) =>
-  mutate(dir, (doc) => {
-    const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
-    const limit = sustain(
-      continuous ? doc.sample : null,
-      !hasHeadroom(reading, doc),
-      reading.at,
-      doc.heavyOverLimitSeconds * 1000,
-    );
+  mutate(dir, (doc): Decided<{ readonly doc: QueueDoc; readonly primary: boolean } | null> => {
+    const publisher = doc.runner?.publisher.pid;
+    const primary = publisher === undefined || publisher === writer || !isAlive(publisher);
+    if (!primary && doc.sample !== null && reading.at - doc.sample.at < SAMPLE_STALE_MS) {
+      return { doc, result: null };
+    }
     const entries = doc.entries.map((entry): HeavyQueueEntry => {
       // On Linux the local tree is only `remoto`'s wrapper, not the job. Null: processes not read.
       if (peaks === null || entry.startedAt === null || entry.runner === "linux") return entry;
@@ -988,27 +1029,9 @@ export const recordSample = (
         peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
       };
     });
-    // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
-    const comeback = entries
-      .filter((entry) => entry.slowed === true)
-      .reduce((sum, entry) => {
-        const full = Math.max(
-          entry.peakCpu ?? 0,
-          estimate(doc.history, entry, reading.cpuCount, doc).cpu,
-        );
-        // An unread job counts as using nothing now, so restoring waits rather than flaps.
-        return sum + Math.max(0, full - (entry.cpu ?? 0));
-      }, 0);
-    const slow = sustain(
-      continuous ? (doc.sample?.slow ?? null) : null,
-      reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
-      reading.at,
-      doc.heavyOverLimitSeconds * 1000,
-    );
-    // Admission's short headroom check uses the same unbroken run of readings under the limits.
-    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+    const sample = sampled(doc, reading, entries);
     const next: QueueDoc = { ...doc, sample, entries };
-    return { doc: next, result: next };
+    return { doc: next, result: { doc: next, primary } };
   });
 
 /** Records a slowdown step the sampler applied: entries slowed or restored, daemons held lowered. */
@@ -1041,12 +1064,11 @@ export const recordSampleIfStale = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
   staleMs: number,
-) => {
-  const current = readDoc(dir).sample;
-  if (current !== null && reading.at - current.at < staleMs) return false;
-  recordSample(dir, reading, null);
-  return true;
-};
+) =>
+  mutate(dir, (doc) => {
+    if (doc.sample !== null && reading.at - doc.sample.at < staleMs) return { doc, result: false };
+    return { doc: { ...doc, sample: sampled(doc, reading) }, result: true };
+  });
 
 export const setMaxRunning = (dir: string, maxRunning: number) =>
   mutate(dir, (doc) => ({

@@ -804,6 +804,65 @@ describe("heavy queue file", () => {
     expect(Queue.recordSampleIfStale(dir, reading(7_000), 5_000)).toBe(true);
     expect(Queue.readDoc(dir).sample?.at).toBe(7_000);
   });
+
+  describe("one sample writer", () => {
+    const reading = (at: number) => ({
+      at,
+      busyCores: 1,
+      cpuCount: 10,
+      availableMemoryBytes: 24 * 1024 ** 3,
+      totalMemoryBytes: 32 * 1024 ** 3,
+    });
+    const published = (pid: number) => {
+      const dir = tempDir();
+      Queue.publishRunner(dir, {
+        global: DEFAULT_PROJECT_CONFIG,
+        machine: DEFAULT_MACHINE_CONFIG,
+        projects: [],
+        publisher: { pid, home: "/home", primary: true },
+      });
+      Queue.enqueue(dir, entry("a"));
+      return dir;
+    };
+    /** A build from before sustained limits: it keeps `headroomSince` and drops the rest. */
+    const oldWrite = (dir: string, at: number) => {
+      const file = NodePath.join(dir, "queue.json");
+      const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+      doc.sample = { ...reading(at), headroomSince: doc.sample?.headroomSince ?? at };
+      NodeFS.writeFileSync(file, JSON.stringify(doc));
+    };
+
+    it("keeps the headroom window when an older build writes between readings", () => {
+      const dir = published(process.pid);
+      Queue.recordSample(dir, reading(1_000), {});
+      for (let at = 2_000; at <= 9_000; at += 2_000) {
+        oldWrite(dir, at);
+        Queue.recordSample(dir, reading(at + 1_000), {});
+      }
+      // Six seconds of headroom held across both builds' writes: admission is steady again.
+      expect(Queue.readDoc(dir).sample).toMatchObject({ at: 9_000, headroomSince: 1_000 });
+    });
+
+    it("lets only the publisher write each tick; another server writes once the sample is stale", () => {
+      const other = process.ppid;
+      const dir = published(process.pid);
+      expect(Queue.recordSample(dir, reading(1_000), {})).toMatchObject({ primary: true });
+      expect(Queue.recordSample(dir, reading(3_000), {}, other)).toBeNull();
+      expect(Queue.readDoc(dir).sample?.at).toBe(1_000);
+      // The primary stopped writing: the next reading past 5 s takes over, inside the 10 s gap.
+      expect(Queue.recordSample(dir, reading(6_000), {}, other)).toMatchObject({ primary: false });
+      expect(Queue.readDoc(dir).sample).toMatchObject({ at: 6_000, headroomSince: 1_000 });
+    });
+
+    it("lets every server write, and slow jobs down, while no publisher is alive", () => {
+      const dir = published(deadPid());
+      expect(Queue.recordSample(dir, reading(1_000), {}, process.ppid)).toMatchObject({
+        primary: true,
+      });
+      expect(Queue.recordSample(dir, reading(3_000), {})).toMatchObject({ primary: true });
+      expect(Queue.readDoc(dir).sample?.headroomSince).toBe(1_000);
+    });
+  });
 });
 
 describe("Runner in the queue file", () => {
