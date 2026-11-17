@@ -1,4 +1,16 @@
-import type { AssistantId, AssistantTask, ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  AssistantId,
+  AssistantTask,
+  OrchestrationV2ThreadShell,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { assistantTaskStatusOf } from "@t3tools/shared/assistantTaskStatus";
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +30,7 @@ interface TaskRow {
   readonly created_at: string;
   readonly dismissed_at?: string | null;
   readonly auto_dismissed_run_id?: string | null;
+  readonly source_thread_id?: string | null;
 }
 
 const toTask = (row: TaskRow): AssistantTask => ({
@@ -27,7 +40,31 @@ const toTask = (row: TaskRow): AssistantTask => ({
   title: row.title,
   createdAt: row.created_at,
   dismissedAt: row.dismissed_at ?? null,
+  sourceThreadId: (row.source_thread_id ?? null) as ThreadId | null,
 });
+
+/** A task thread's state, read from its shell: parked on background work counts as running. */
+export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
+  const parked =
+    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
+  const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
+  return assistantTaskStatusOf({
+    needsUser: shell.pendingRuntimeRequest !== null || guestWaitsOnUser(shell),
+    runtimeStatus: status === "idle" && !parked ? null : status,
+  });
+};
+
+/** Work that still ends in a run: a pull request watch ends silently on merge, so it holds nothing. */
+export const threadStillWorking = (shell: OrchestrationV2ThreadShell | null) => {
+  if (shell === null) return false;
+  const status = taskStatusOf({
+    ...shell,
+    pendingBackgroundTasks: (shell.pendingBackgroundTasks ?? []).filter(
+      (task) => !isPullRequestWatchTask(task),
+    ),
+  });
+  return status === "running" || status === "waiting";
+};
 
 /**
  * The link between an assistant and a thread it launched for real work. A task thread is an
@@ -41,6 +78,10 @@ export class AssistantTasks extends Context.Service<
     /** Undoes a link whose launch then failed. */
     readonly unlink: (threadId: ThreadId) => Effect.Effect<void>;
     readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<AssistantTask>>;
+    /** The tasks a conversation launched and nobody dismissed. */
+    readonly launchedFrom: (
+      sourceThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<AssistantTask>>;
     /**
      * Dismissing keeps the first time; restoring clears it and records `handledRunId`, so that
      * run's delivery never dismisses the task again. None when the thread is no task.
@@ -83,8 +124,10 @@ const make = Effect.gen(function* () {
   return AssistantTasks.of({
     link: Effect.fn("AssistantTasks.link")(function* (task) {
       yield* sql`
-        INSERT OR IGNORE INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at)
-        VALUES (${task.threadId}, ${task.assistantId}, ${task.projectId}, ${task.title}, ${task.createdAt})`;
+        INSERT OR IGNORE INTO assistant_tasks
+          (thread_id, assistant_id, project_id, title, created_at, source_thread_id)
+        VALUES (${task.threadId}, ${task.assistantId}, ${task.projectId}, ${task.title},
+          ${task.createdAt}, ${task.sourceThreadId ?? null})`;
       const stored = yield* forThread(task.threadId);
       if (Option.isSome(stored)) yield* PubSub.publish(changes, stored.value);
     }, Effect.orDie),
@@ -92,6 +135,12 @@ const make = Effect.gen(function* () {
       yield* sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`;
     }, Effect.orDie),
     forThread,
+    launchedFrom: Effect.fn("AssistantTasks.launchedFrom")(function* (sourceThreadId) {
+      const rows = yield* sql<TaskRow>`
+        SELECT * FROM assistant_tasks
+        WHERE source_thread_id = ${sourceThreadId} AND dismissed_at IS NULL`;
+      return rows.map(toTask);
+    }, Effect.orDie),
     setDismissed: Effect.fn("AssistantTasks.setDismissed")(function* (
       threadId,
       dismissedAt,
@@ -167,6 +216,7 @@ export const linkTaskLaunch = Effect.fn("AssistantTasks.linkLaunch")(function* (
     projectId: input.projectId,
     title: input.title,
     createdAt: yield* nowIso,
+    sourceThreadId: input.callerThreadId,
   });
   return true;
 });

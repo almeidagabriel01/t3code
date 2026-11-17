@@ -33,8 +33,8 @@ import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { deliveredRunOf, taskStatusOf } from "./AssistantService.ts";
-import { AssistantTasks } from "./AssistantTasks.ts";
+import { deliveredRunOf } from "./AssistantService.ts";
+import { AssistantTasks, taskStatusOf } from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
 
 const TERMINAL = new Set<string>([

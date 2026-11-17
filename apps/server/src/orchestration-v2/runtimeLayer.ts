@@ -446,6 +446,7 @@ const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
       layerProjectModelSelectionProvided,
       ProjectionStore.layer,
       AssistantDirectory.layer,
+      AssistantTasks.layer,
     ),
   ),
 );

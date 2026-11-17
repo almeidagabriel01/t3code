@@ -6893,6 +6893,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE active.thread_id = t.thread_id
                   AND active.status IN ('preparing', 'starting', 'running', 'waiting')
               )
+              -- Native children have no runs of their own: the parent's record is their activity.
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_subagents native
+                WHERE native.child_thread_id = t.thread_id
+                  AND native.origin = 'provider_native'
+                  AND native.status IN ('pending', 'running', 'waiting')
+              )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id AND request.status = 'pending'
