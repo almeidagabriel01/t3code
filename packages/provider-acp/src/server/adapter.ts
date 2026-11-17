@@ -5969,10 +5969,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const waiting = turnAttached;
           turnAttached = yield* Deferred.make<boolean>();
           yield* Deferred.succeed(waiting, false);
-          const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
-            [...current.values()],
-            new Map<string, PendingRuntimeRequest>(),
-          ]);
+          yield* cancelRuntimeRequests(() => true);
+        });
+
+        const cancelRuntimeRequests = Effect.fnUntraced(function* (
+          matches: (request: PendingRuntimeRequest) => boolean,
+        ) {
+          const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => {
+            const kept = new Map<string, PendingRuntimeRequest>();
+            const taken: Array<PendingRuntimeRequest> = [];
+            for (const [key, request] of current) {
+              if (matches(request)) taken.push(request);
+              else kept.set(key, request);
+            }
+            return [taken, kept] as const;
+          });
           if (requests.length === 0) return;
 
           const now = yield* DateTime.now;
@@ -7717,6 +7728,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               terminalizeSubagents: directStopQuarantine,
             });
           }
+          // An agent can end its prompt with a permission request still open; nothing answers it after.
+          yield* cancelRuntimeRequests(
+            (request) => request.runtimeRequest.providerTurnId === context.providerTurnId,
+          );
           yield* closeTextStreams(context);
           if (settledStatus !== "failed") {
             yield* emitProviderRetry(context, settledStatus);
