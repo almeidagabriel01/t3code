@@ -614,7 +614,8 @@ export class AssistantGroups extends Context.Service<
     readonly syncWaitingThread: (threadId: ThreadId) => Effect.Effect<boolean>;
     /**
      * A thread launched from a request's conversation ended a run, or was dismissed or removed: the
-     * task waiting on it runs again once nothing else holds it. False when no request launched it.
+     * task waiting on it runs again once nothing else holds it. True only when a waiting task named
+     * it; otherwise nobody waits on it and the caller reports it the usual way.
      */
     readonly settleLaunch: (threadId: ThreadId) => Effect.Effect<boolean>;
     /** A member's run on a group thread ended or changed; moves its task along. */
@@ -1097,11 +1098,14 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** Ends a task's live run, or disarms the continuation a usage-limited one waits for. */
+  /**
+   * Ends a task's live run; or, for a task waiting on work, its conversation's native subagents;
+   * or the continuation a usage-limited one waits for. Threads launched from the request keep
+   * running by decision: their end only reports (`settleLaunch`), never reopening the task.
+   */
   const haltTask = Effect.fn("AssistantGroups.haltTask")(function* (task: TaskRow) {
     if (task.status === "running") return yield* stopRun(task);
-    if (task.status === "waiting") return yield* stopLaunches(task);
-    if (task.status !== "usage_limited") return;
+    if (task.status !== "waiting" && task.status !== "usage_limited") return;
     const threadId = (yield* wireTasks([task]))[0]!.threadId;
     yield* engine
       .dispatch({
@@ -1109,22 +1113,17 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`group-stop:${task.task_id}:${task.revision}`),
         threadId,
         reason: "Stopped from the group",
+        ...(task.status === "waiting" ? { stopDelegatedTasks: false } : {}),
       })
       .pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("assistant groups: could not stop a limited thread", {
+          Effect.logWarning("assistant groups: could not stop a task's thread", {
             taskId: task.task_id,
             cause,
           }),
         ),
       );
   });
-
-  /**
-   * Stopping a task that waits on launched threads leaves those threads running for now: whether
-   * stopping the request stops them too is the user's decision still to make.
-   */
-  const stopLaunches = (_task: TaskRow): Effect.Effect<void> => Effect.void;
 
   /** Pauses a task that is in flight, ending its run first. */
   const pauseTask = Effect.fn("AssistantGroups.pauseTask")(function* (
@@ -3154,12 +3153,15 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
     if (origin?.request_id == null) return false;
-    yield* settleConversation(origin);
-    return true;
+    return yield* settleConversation(origin, threadId);
   });
 
-  /** Work under a member's request conversation ended: the tasks it held may run again. */
-  const settleConversation = (row: ThreadRow) =>
+  /**
+   * Work under a member's request conversation ended: the tasks it held may run again. True when
+   * a waiting task named `ended`, so its result reaches the request; otherwise nobody waits on it
+   * and the caller reports it the usual way.
+   */
+  const settleConversation = (row: ThreadRow, ended?: string) =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
@@ -3168,11 +3170,23 @@ const make = Effect.gen(function* () {
             WHERE request_id = ${row.request_id} AND owner_id = ${row.assistant_id}
               AND status = 'waiting'
             ORDER BY rowid ASC`;
-          for (const task of waiting) yield* settleWait(task);
+          let absorbed = false;
+          for (const task of waiting) {
+            absorbed ||= ended !== undefined && workInReason(task.reason).threads.includes(ended);
+            yield* settleWait(task);
+          }
           yield* pump(row.team_id);
+          return absorbed;
         }),
       )
-      .pipe(quietly("work that ended under a request conversation could not be settled"));
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            "assistant groups: work that ended under a request conversation could not be settled",
+            { cause },
+          ).pipe(Effect.as(false)),
+        ),
+      );
 
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",

@@ -157,8 +157,13 @@ const harness = (options: Options = {}) => {
     attachments: ReadonlyArray<{ id: string; type: string; name: string }>;
   }> = [];
   const cleaned: string[] = [];
-  const dispatched: Array<{ type: string; threadId: string; commandId: string; runId?: string }> =
-    [];
+  const dispatched: Array<{
+    type: string;
+    threadId: string;
+    commandId: string;
+    runId?: string;
+    stopDelegatedTasks?: boolean;
+  }> = [];
   const launched: Array<{
     commandId: string;
     threadId: string;
@@ -2722,6 +2727,15 @@ it.effect("a task waits for the threads it launched, then runs again with their 
     yield* h.endLaunch("thread:api", "completed", "Fix in.");
     yield* h.finish(2, "completed", "Build fixed and reviewed.");
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+    // A follow-up after the request is done has nobody waiting: it reports the usual way.
+    h.runs.get("thread:api")!.push({
+      id: "run:api-3",
+      userMessageId: "m:api-3",
+      status: "running",
+      ordinal: 3,
+    });
+    assert.isFalse(yield* h.endLaunch("thread:api", "completed", "Follow-up done."));
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
     assert.deepEqual(
       (yield* h.messages).flatMap((row) => (row.author === "assistant" ? [row.text] : [])),
       ["Build fixed and reviewed."],
@@ -2799,8 +2813,8 @@ it.effect(
       const groups = yield* h.setup;
       yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
       yield* h.launch("thread:fast", h.threadOf("ada"));
-      // Ends while Ada still works: nothing waits on it, and her turn ends the task.
-      assert.isTrue(yield* h.endLaunch("thread:fast", "completed", "Done fast."));
+      // Ends while Ada still works: nothing waits on it, so it reports the usual way.
+      assert.isFalse(yield* h.endLaunch("thread:fast", "completed", "Done fast."));
       assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running"]);
       yield* h.finish(0, "completed", "Fixed.");
       assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
@@ -2989,13 +3003,22 @@ it.effect("stop and cancel take a task out of its wait and leave its threads run
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
-    yield* h.launch("thread:api", h.threadOf("ada"));
+    const ada = h.threadOf("ada");
+    yield* h.launch("thread:api", ada);
+    yield* nativeSubagent(ada, "thread:sub", "running");
     yield* h.finish(0, "completed", "Started.");
     const [task] = yield* h.tasks;
     yield* groups.taskAction({ taskId: task!.task_id as never, action: "stop" });
     assert.deepInclude((yield* h.tasks)[0], { status: "paused", reason: "stopped" });
-    // Its end no longer wakes the stopped task.
-    yield* h.endLaunch("thread:api", "completed", "API fixed.");
+    // Ada's conversation stops, its native subagents with it; what she launched keeps running.
+    assert.deepEqual(
+      h.dispatched.flatMap((command) =>
+        command.type === "thread.stop" ? [[command.threadId, command.stopDelegatedTasks]] : [],
+      ),
+      [[ada, false]],
+    );
+    // Its end reports the usual way (false) and never reopens the stopped task.
+    assert.isFalse(yield* h.endLaunch("thread:api", "completed", "API fixed."));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:paused"]);
     yield* groups.taskAction({ taskId: task!.task_id as never, action: "cancel" });
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:cancelled"]);
