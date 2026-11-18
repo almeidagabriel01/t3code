@@ -189,7 +189,9 @@ export const withProjectBins = (
   const passthrough = `b="\${T3_COPY%/*}/.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
   // Bring results back: what the command writes after this is newer than the marker.
   const mark =
-    startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
+    startMarker === null
+      ? ""
+      : ` ${touchStartMarker(`"$T3_COPY"${shellQuote(markerSuffix(startMarker))}`)};`;
   return [
     "bash",
     "-c",
@@ -221,6 +223,14 @@ const envHeader = (env: ReadonlyArray<string>, input: boolean) => {
 const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
 /** Beside the copy (`runs/<id>.t3-start-<job>`), so `remoto`'s sync never deletes it. */
+/**
+ * Shell that stamps a run's start marker (a shell word) for `bringBack`'s `find -cnewer`. Linux
+ * stamps files from a coarse clock, so a file written in the marker's tick would look no newer:
+ * it waits for the clock to tick past the marker first (bash compares nanoseconds).
+ */
+export const touchStartMarker = (marker: string) =>
+  `touch -- ${marker} && until touch -- ${marker}.tick && [ ${marker}.tick -nt ${marker} ]; do :; done; rm -f -- ${marker}.tick`;
+
 const markerSuffix = (job: string) => {
   if (!SAFE_NAME.test(job)) throw new Error(`Unsafe job id: ${job}`);
   return `.t3-start-${job}`;
