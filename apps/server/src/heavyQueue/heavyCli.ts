@@ -1342,16 +1342,20 @@ const learnedOf = (
       };
 };
 
-/** Why a call (program first) runs on this Mac: a reason of its own, or a learned route. */
+/**
+ * Why a call (program first) runs on this Mac: a reason of its own, or a learned route. The
+ * variables its line set (`NAME=value`) are judged like its arguments.
+ */
 const callMacReason = (
   dir: string,
   values: ReadonlyArray<string>,
   cwd: string,
   root: string,
   config: RunnerProjectConfig,
+  env: ReadonlyArray<string>,
 ) =>
   macReasonOf(
-    values,
+    env.length === 0 ? values : ["env", ...env, ...values],
     cwd,
     { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
     scriptReader(cwd),
@@ -1462,7 +1466,9 @@ const runCall = (
   const doc = readDoc(dir);
   const config = configFor(doc, cwd);
   const root = gitRootOf(cwd);
-  const mac = root === null || callMacReason(dir, [given, ...args], cwd, root, config) !== null;
+  const mac =
+    root === null ||
+    callMacReason(dir, [given, ...args], cwd, root, config, lineEnv(dir, macJob!)) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1521,7 +1527,7 @@ const runLinuxPart = async (
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
   const days = config.runnerRouteMemoryDays;
-  const here = callMacReason(dir, [program, ...args], cwd, root, config);
+  const here = callMacReason(dir, [program, ...args], cwd, root, config, lineEnv(dir, id));
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),

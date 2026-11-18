@@ -616,6 +616,15 @@ describe("t3 heavy", () => {
       expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
     });
 
+    it("judges the variables a line set for a call like its arguments", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp lint a.ts`;
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: lint a.ts\n");
+      expect(run.stderr()).toContain("Uses a file only this Mac has: /etc/t3home");
+    });
+
     it("runs the line here as written and sends each heavy call to Linux expanded", async () => {
       const { dir, env } = setup(echoArgs);
       NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir });
