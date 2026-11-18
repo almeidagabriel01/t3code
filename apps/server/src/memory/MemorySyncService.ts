@@ -2215,12 +2215,14 @@ const make = Effect.gen(function* () {
             (c): c is "protocol" | "availability" => c === "protocol" || c === "availability",
           );
           if (!recoverable.length) return { version: input.expectedVersion, rearmedClasses: [] };
-          if (!r.connection) return yield* new M.MemoryHubError({ code: "route_unavailable" });
-          const descriptor = yield* client.preflight(r.connection);
-          if (descriptor.environmentId !== r.hubId)
-            return yield* new M.MemoryHubError({ code: "identity_mismatch" });
-          if (descriptor.capabilities.memoryHubProtocolVersion !== 1)
-            return yield* new M.MemoryHubError({ code: "unsupported_protocol" });
+          // The hub on this device runs this build, so only a remote hub needs the probe.
+          if (r.connection) {
+            const descriptor = yield* client.preflight(r.connection);
+            if (descriptor.environmentId !== r.hubId)
+              return yield* new M.MemoryHubError({ code: "identity_mismatch" });
+            if (descriptor.capabilities.memoryHubProtocolVersion !== 1)
+              return yield* new M.MemoryHubError({ code: "unsupported_protocol" });
+          }
           yield* permit;
           yield* ensureEpoch(input.expectedVersion);
           yield* requireCurrentPublication;

@@ -6499,6 +6499,36 @@ it.effect.each(["protocol", "availability"] as const)(
       Effect.provide(fixture(peer({ preflight: () => Effect.succeed(recoveredDescriptor) }))),
     ),
 );
+it.effect("Settings reconcile rearms held work on the device that hosts the hub", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO memory_hub_members(space,environment,credential_digest,credential_version,status) VALUES (${space},${local},${"a".repeat(64)},1,'active')`;
+      yield* sql`INSERT INTO memory_sync_cursors(space,hub_environment_id,after_sequence,bootstrap_state) VALUES (${space},${local},0,'ready')`;
+      yield* changeHub(1, { mode: "hub", memorySpaceId: space });
+      yield* enqueue(1);
+      yield* sql`UPDATE memory_outbox SET status='retry',next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code='unsupported_protocol',hold_class='protocol' WHERE kind='sync'`;
+      const sync = yield* Sync.MemorySyncService;
+      const result = yield* sync.reconcileHub(
+        { ...reconcileInput, expectedVersion: 2 },
+        Effect.void,
+      );
+      assert.deepStrictEqual(result.rearmedClasses, ["protocol"]);
+      assert.deepStrictEqual(yield* sql`SELECT hold_class FROM memory_outbox WHERE kind='sync'`, [
+        { hold_class: null },
+      ]);
+    }).pipe(
+      Effect.provide(
+        fixture(
+          peer({ preflight: () => Effect.die("the local hub needs no probe") }),
+          undefined,
+          false,
+          true,
+        ),
+      ),
+    ),
+  ),
+);
 it.effect.each(["identity", "authorization"] as const)(
   "Settings reconcile refuses permanent %s hold without probing or releasing it",
   (c) =>
