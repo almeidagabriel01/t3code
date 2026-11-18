@@ -290,7 +290,14 @@ const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
-const DEV_SERVER = /^(dev|start|serve|preview)([:._-].*)?$/;
+const DEV_WORD = /^(dev|start|serve|preview)$/;
+/** A finite step a script's name may also name: `serve-static-build` builds and ends. */
+const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
+/** A script or task that starts a server: a server word leads its name and no finite step follows. */
+const servesScript = (name: string) => {
+  const [head = "", ...rest] = name.split(/[:._-]/);
+  return DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
+};
 const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
   next: /^(dev|start)$/,
@@ -409,7 +416,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   if (DEV_PROGRAMS[program]?.test(first) === true) return { code: "serves-port", subject: named };
   if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
   const task = TASK_RUNNERS.has(program)
-    ? words.find((word) => word.split(":").some((each) => DEV_SERVER.test(each)))
+    ? words.find((word) => word.split(":").some(servesScript))
     : undefined;
   if (task !== undefined) return { code: "serves-port", subject: `${program} ${task}` };
   const watch = after.find(
@@ -428,7 +435,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   const install = [first, second].find((word) => INSTALLS.test(word));
   if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
   const script = first === "run" || first === "run-script" ? second : first;
-  return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
+  return servesScript(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
 };
 
 /** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
@@ -681,7 +688,8 @@ const lineReason = (
         listening,
         env.filter((value) => value !== null),
       );
-      if (mac !== null) return mac;
+      // A pattern matches the text a shell runs too: what that text runs says why first.
+      if (mac !== null && mac.code !== "pinned") return mac;
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
@@ -701,6 +709,7 @@ const lineReason = (
         );
         if (inner !== null) return inner;
       }
+      if (mac !== null) return mac;
     }
     // A substitution runs in its own subshell: its folder and variables end with it.
     if (command.substituted) continue;

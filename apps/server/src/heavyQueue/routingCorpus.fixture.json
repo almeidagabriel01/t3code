@@ -1484,6 +1484,34 @@
       "observed": "QA 2026-11-18",
       "expect": "native-build:make",
       "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "npm run serve-static-build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a script that builds is no server, whatever word leads its name"
+    },
+    {
+      "line": "pnpm start:prod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm start:prod",
+      "why": "a server word with no finite step after it serves"
+    },
+    {
+      "line": "bash -lc 'xcodebuild test'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-tool:xcodebuild",
+      "why": "the text a shell runs says why before the pattern that matches it"
+    },
+    {
+      "line": "fastlane beta",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-tool:fastlane",
+      "why": "fastlane signs and ships with this Mac's keychain"
     }
   ]
 }
