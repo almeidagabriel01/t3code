@@ -21,6 +21,7 @@ import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
+  linuxFailedNote,
   type QueuedEntry,
 } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
@@ -233,6 +234,10 @@ describe("t3 heavy", () => {
     const dir = tempDir();
     const failing = heavy(dir, [process.execPath, "-e", "process.exit(7)"]);
     expect(await failing.exited).toBe(7);
+    // The command's own 75 is not T3 failing it: no note telling the agent to file a T3 bug.
+    const tempfail = heavy(dir, [process.execPath, "-e", "process.exit(75)"]);
+    expect(await tempfail.exited).toBe(75);
+    expect(tempfail.stderr()).not.toContain("not in your command");
 
     const holder = heavy(dir, [process.execPath, "-e", holdProgram(NodePath.join(dir, "m"), "h")]);
     await holder.until("out", "started h");
@@ -762,6 +767,7 @@ describe("t3 heavy", () => {
       const why =
         "Asked for Linux, but it needs this Mac: Linux couldn't run this before: x, 2100-01-01";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}`);
+      expect(run.stderr()).toContain(linuxFailedNote("remoto"));
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
       expect(NodeFS.existsSync(NodePath.join(dir, "remoto.count"))).toBe(false);
     });
@@ -1958,6 +1964,37 @@ describe("t3 heavy", () => {
         where: "mac",
       });
     });
+
+    it.each([
+      ["heavy ssh to the Runner host", ["ssh", "remoto", "cd x && vp test run"], true, "ssh"],
+      ["ssh -t with a heavy docker", ["ssh", "-t", "remoto", "docker compose up"], true, "ssh"],
+      ["light ssh to the Runner host", ["ssh", "remoto", "tail -5 log"], true, "plain"],
+      ["heavy ssh to another host", ["ssh", "other", "vp test run"], true, "plain"],
+      ["heavy ssh with the Runner off", ["ssh", "remoto", "vp test run"], false, "plain"],
+    ] as const)(
+      "%s: an ssh job only when heavy work goes to the Runner host",
+      (_name, [program, ...args], runner, expected) => {
+        const launch = heavyLaunch(
+          { program, args, where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: false, runner, runnerHost: "remoto" }),
+          false,
+        );
+        if (expected === "ssh") {
+          expect(launch).toEqual({
+            kind: "queue",
+            cwd: "/w",
+            program,
+            args,
+            where: "linux",
+            ssh: true,
+          });
+        } else {
+          expect(launch).not.toHaveProperty("ssh");
+        }
+      },
+    );
 
     // The queue cancels it with why (`intentOf`): run as written it would land on this Mac silently.
     it("queues --runner linux with the queue and the Runner off", () => {

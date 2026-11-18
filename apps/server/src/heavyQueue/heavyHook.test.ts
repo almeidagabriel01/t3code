@@ -16,6 +16,8 @@ import {
   lineParts,
   queueBashCall,
   readLine,
+  shellQuote,
+  sshWork,
   workParts,
 } from "./heavyHook.ts";
 
@@ -387,6 +389,57 @@ describe("an agent's own remoto call", () => {
   });
 });
 
+describe("an agent's own ssh to the Runner's host", () => {
+  const runner = { runner: true, runnerHost: "remoto" };
+  // The heavy part of the remote line, or null when ssh stays direct.
+  it.each<[string, string | null]>([
+    [
+      `ssh remoto 'docker run --rm --label t3.thread=x alpine sh -c "yes > /dev/null"'`,
+      `docker run --rm --label t3.thread=x alpine sh -c "yes > /dev/null"`,
+    ],
+    [`ssh remoto "cd ~/runs/erp && npm test"`, "npm test"],
+    [`ssh -t remoto 'cd ~/runs/erp && pnpm build'`, "pnpm build"],
+    [
+      `ssh -o BatchMode=yes -p 22 dev@remoto docker compose up --build`,
+      "docker compose up --build",
+    ],
+    [`ssh -oConnectTimeout=5 -tt remoto -- ./scripts/ci.sh`, "./scripts/ci.sh"],
+    [`ssh remoto 'bash ci-local.sh 16'`, "bash ci-local.sh 16"],
+    [`ssh remoto -t -p 22 -- vp test run`, "vp test run"],
+    [`cd /w && ssh remoto 'make test' 2>&1 | tail -5`, "make test"],
+    // Light work, a login, a log and other hosts stay direct.
+    [`ssh remoto 'docker ps'`, null],
+    [`ssh remoto 'tail -n 50 ~/runs/erp/ci.log'`, null],
+    [`ssh remoto ls ~/runs`, null],
+    [`ssh remoto`, null],
+    [`ssh -t remoto`, null],
+    [`ssh other 'npm test'`, null],
+    [`ssh -i remoto other 'npm test'`, null],
+    [`echo "ssh remoto 'npm test'"`, null],
+  ])("%j: %j", (line, heavy) => {
+    expect(sshWork(line, "remoto")).toBe(heavy);
+  });
+
+  it("queues heavy ssh for Linux itself, named by its remote work, and leaves light ssh alone", () => {
+    const command = `ssh remoto 'cd ~/runs/erp && npm test'`;
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, runner);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
+      `${PREFIX} --request-id 'toolu_1' --runner linux --name 'npm test' -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+    );
+    expect(
+      queueBashCall(bash({ command: "ssh remoto 'docker ps'" }), PREFIX, {}, runner),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["the Runner off", { runner: false, runnerHost: "remoto" }],
+    ["no Runner host known", { runner: true }],
+  ])("leaves ssh alone with %s", (_why, options) => {
+    const command = "ssh remoto 'npm test'";
+    expect(queueBashCall(bash({ command }), PREFIX, {}, options)).toBeNull();
+  });
+});
+
 describe("the one switch every entry point reads", () => {
   it.each([
     [true, false, "queue"],
@@ -454,6 +507,10 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
 
   it("hands a remoto call to T3, which decides whether the Runner takes it", () => {
     expect(run(reached, "remoto ./scripts/check.sh")).toBe("T3");
+  });
+
+  it("hands an ssh call to T3, which knows the Runner's host", () => {
+    expect(run(reached, "ssh remoto 'cd ~/runs/erp && npm test'")).toBe("T3");
   });
 
   it.each(["ls -la", "git status && git log --format=%H -3", "cat build.md", "rg TODO apps"])(

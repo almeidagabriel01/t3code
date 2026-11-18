@@ -292,6 +292,8 @@ const PROGRAMS = [
   ...RUNNERS,
   ...SCRIPT_RUNNERS,
   "remoto",
+  // An agent's own `ssh` to the Runner's host: T3 knows the host.
+  "ssh",
   // Scripts: the queue reads them (`bash x.sh`, `./verify`).
   "sh",
   "bash",
@@ -545,6 +547,49 @@ const heavySegments = (command: string, read?: ReadScript): ReadonlyArray<string
 export const heavySegment = (command: string, read?: ReadScript): string | null =>
   heavySegments(command, read)[0] ?? null;
 
+/** ssh options that take a value: `-p 22`, or glued on as `-p22`. */
+const SSH_VALUE_OPTIONS = new Set("BbcDEeFIiJLlmOoPpQRSWw");
+
+/** The index past ssh options (and a `--`) from `index`; ssh reads them after the host too. */
+const pastSshOptions = (values: ReadonlyArray<string>, index: number) => {
+  while (index < values.length) {
+    const value = values[index]!;
+    if (value === "--") return index + 1;
+    if (!value.startsWith("-") || value === "-") break;
+    const letters = value.slice(1).split("");
+    const valueAt = letters.findIndex((letter) => SSH_VALUE_OPTIONS.has(letter));
+    index += valueAt === letters.length - 1 ? 2 : 1;
+  }
+  return index;
+};
+
+/** `ssh [options] <host> <command…>` as its host and the line the remote shell runs; null for a login. */
+const sshCall = (values: ReadonlyArray<string>, at: number) => {
+  if (base(values[at] ?? "") !== "ssh") return null;
+  const index = pastSshOptions(values, at + 1);
+  const target = values[index];
+  const rest = values.slice(pastSshOptions(values, index + 1));
+  return target === undefined || rest.length === 0 ? null : { target, line: rest.join(" ") };
+};
+
+const hostOf = (target: string) => target.slice(target.lastIndexOf("@") + 1);
+
+/**
+ * The heavy part of work a line sends to `host` over its own ssh, or null when none: ssh skips
+ * the queue and the Linux copy, so the Runner takes it as a Linux job. Remote scripts can't be
+ * read from here, so one run by a shell or named `.sh` counts as heavy.
+ */
+export const sshWork = (line: string, host: string): string | null => {
+  if (host.trim() === "") return null;
+  for (const part of readLine(line).parts) {
+    const call = sshCall(part.values, part.programAt);
+    if (call === null || hostOf(call.target) !== hostOf(host)) continue;
+    const heavy = heavySegment(call.line, () => null);
+    if (heavy !== null) return heavy;
+  }
+  return null;
+};
+
 /**
  * The line runs `t3 heavy` itself (the prefix agents copy from `t3_heavy` status) or `remoto`,
  * which already runs work on another machine, and no heavy part runs outside them. Quoted text
@@ -645,6 +690,8 @@ export const queueBashCall = (
     readonly runner?: boolean;
     /** Reads a script the line runs, from the folder the line starts in. */
     readonly readScript?: ReadScript;
+    /** The Runner's Linux: heavy work sent there by `ssh` is queued for it. */
+    readonly runnerHost?: string;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
@@ -653,11 +700,17 @@ export const queueBashCall = (
   const command = toolInput.command;
   if (typeof command !== "string") return null;
   const parts = lineParts(command);
+  const ssh =
+    options.runner === true && options.runnerHost !== undefined
+      ? sshWork(command, options.runnerHost)
+      : null;
   const remoto = options.runner === true && parts.remoto;
-  if (!remoto && isQueued(command, options.readScript)) return null;
-  const segment = remoto
-    ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
-    : heavySegment(command, options.readScript);
+  if (ssh === null && !remoto && isQueued(command, options.readScript)) return null;
+  const segment =
+    ssh ??
+    (remoto
+      ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
+      : heavySegment(command, options.readScript));
   if (segment === null) return null;
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   // A repeat of the same call attaches to its job instead of running it twice.
@@ -671,7 +724,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request}${ssh === null ? "" : " --runner linux"} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}
@@ -697,7 +750,7 @@ export const heavyRoute = (mode: {
 export const interceptBashCall = (
   hookInput: unknown,
   queuePrefix: string,
-  mode: { readonly enabled: boolean; readonly runner?: boolean },
+  mode: { readonly enabled: boolean; readonly runner?: boolean; readonly runnerHost?: string },
   environment: Readonly<Record<string, string | undefined>> = {},
   readScript?: ReadScript,
 ) =>
@@ -705,6 +758,7 @@ export const interceptBashCall = (
     ? null
     : queueBashCall(hookInput, queuePrefix, environment, {
         runner: mode.runner === true,
+        ...(mode.runnerHost === undefined ? {} : { runnerHost: mode.runnerHost }),
         ...(readScript === undefined ? {} : { readScript }),
       });
 

@@ -535,6 +535,7 @@ export const configFor = (doc: Pick<QueueDoc, "runner">, cwd: string): RunnerPro
 export const modeFor = (doc: Pick<QueueDoc, "enabled" | "runner">, cwd: string) => ({
   enabled: doc.enabled,
   runner: configFor(doc, cwd).runnerEnabled,
+  ...(doc.runner === null ? {} : { runnerHost: doc.runner.machine.runnerHost }),
 });
 
 const gitRoots = new Map<string, string | null>();
