@@ -291,7 +291,6 @@ const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|li
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
 const DEV_SERVER = /^(dev|start|serve|preview)([:._-].*)?$/;
-// ponytail: the first word only; a flag's value before it (`vite --port 5173`) hides the server.
 const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
   next: /^(dev|start)$/,
@@ -341,28 +340,62 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
 };
 
 /**
+ * Flags that take the next word as their value, so it is never the subcommand: a package
+ * manager's workspace and folder (`pnpm -F web dev`), a server's address (`vite --port 5174`),
+ * a config file, a git setting (`git -c k=v commit`).
+ */
+// ponytail: these flags only; a program's own value flag before its subcommand needs a row here.
+const VALUE_FLAGS = new Set([
+  "-F",
+  "--filter",
+  "--filter-prod",
+  "-w",
+  "--workspace",
+  "-C",
+  "--dir",
+  "--prefix",
+  "--cwd",
+  "--port",
+  "-p",
+  "--host",
+  "--hostname",
+  "-H",
+  "--mode",
+  "-m",
+  "--config",
+  "-c",
+]);
+
+/**
+ * A program's subcommand words, past its flags and their values and a Yarn `workspace <name>`
+ * (`yarn workspace web dev` → `dev`).
+ */
+const subcommandWords = (program: string, after: ReadonlyArray<string>) => {
+  const words = after.filter(
+    (value, at) => !value.startsWith("-") && !VALUE_FLAGS.has(after[at - 1] ?? ""),
+  );
+  return program === "yarn" && words[0] === "workspace" ? words.slice(2) : words;
+};
+
+/**
  * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a native
  * build, a change to this checkout (a git write; an install, whose `node_modules` never comes
  * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs.
  */
 const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
-  let { program, words } = part;
+  let { program } = part;
   let after = part.values.slice(part.programAt + 1);
-  // `pnpm -F web exec vitest`: a flag's value can sit before `exec`.
+  let words = subcommandWords(program, after);
   const execAt = EXECUTORS.has(program)
     ? -1
-    : !PACKAGE_MANAGERS.has(program)
-      ? null
-      : EXEC.test(words[0] ?? "")
-        ? 0
-        : part.flags.length > 0 && EXEC.test(words[1] ?? "")
-          ? 1
-          : null;
+    : PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? "")
+      ? 0
+      : null;
   if (execAt !== null) {
     const raw = words[execAt + 1] ?? "";
-    program = raw.split("/").pop() ?? "";
-    words = words.slice(execAt + 2);
+    program = programName(raw);
     after = after.slice(after.indexOf(raw) + 1);
+    words = subcommandWords(program, after);
   }
   const [first = "", second = ""] = words;
   const named = `${program} ${first}`.trim();
@@ -392,41 +425,16 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
       : { code: "mac-docker", subject: named };
   }
   if (!PACKAGE_MANAGERS.has(program)) return null;
-  // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
   const install = [first, second].find((word) => INSTALLS.test(word));
   if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
   const script = first === "run" || first === "run-script" ? second : first;
   return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
 };
 
-/** Package manager flags that take the next word as their value (`pnpm -F web dev`). */
-const PM_VALUE_FLAGS = new Set([
-  "-F",
-  "--filter",
-  "--filter-prod",
-  "-w",
-  "--workspace",
-  "-C",
-  "--dir",
-  "--prefix",
-  "--cwd",
-]);
-
-/**
- * A package manager's subcommand words, past its flags and their values and a Yarn `workspace
- * <name>` (`yarn workspace web dev` → `dev`).
- */
-const subcommandWords = (after: ReadonlyArray<string>) => {
-  const words = after.filter(
-    (value, at) => !value.startsWith("-") && !PM_VALUE_FLAGS.has(after[at - 1] ?? ""),
-  );
-  return words[0] === "workspace" ? words.slice(2) : words;
-};
-
 /** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
 const scriptName = (values: ReadonlyArray<string>) => {
   if (!PACKAGE_MANAGERS.has(programName(values[0]))) return null;
-  const [first, second] = subcommandWords(values.slice(1));
+  const [first, second] = subcommandWords(programName(values[0]), values.slice(1));
   return first === "run" || first === "run-script" ? (second ?? null) : (first ?? null);
 };
 

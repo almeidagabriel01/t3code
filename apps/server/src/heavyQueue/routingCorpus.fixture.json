@@ -1414,6 +1414,55 @@
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
       "expect": "linux"
+    },
+    {
+      "line": "pnpm -F web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "pnpm --filter web run dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "npm -w web run dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:npm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "yarn workspace web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:yarn dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "vp run --filter web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vp dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "vite --port 5174",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vite",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "pnpm --filter web add zod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-state:pnpm add",
+      "why": "a flag's value before the subcommand is not the subcommand"
     }
   ]
 }
