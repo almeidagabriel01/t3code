@@ -195,11 +195,47 @@ describe("t3 heavy", () => {
     expect(await holder.exited).toBe(0);
   });
 
-  it("reports a missing program and a program that cannot start", async () => {
+  it.each([
+    // [case, options, command, exit code, text, stream]
+    ["no command", ["--"], [], 2, "Usage: t3 heavy", "err"],
+    ["no command and no separator", [], [], 2, "Usage: t3 heavy", "err"],
+    ["--help", [], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["-h", [], ["-h"], 0, "Usage: t3 heavy", "out"],
+    [
+      "--help among options",
+      ["--now", "--help", "--"],
+      ["vp", "test"],
+      0,
+      "Usage: t3 heavy",
+      "out",
+    ],
+    ["--help after the separator", ["--"], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["an unknown option", [], ["-x"], 2, "use `--` before the command", "err"],
+    ["an unknown option after the separator", ["--"], ["-x"], 2, "use `--` before", "err"],
+    ["an option missing its value", [], ["--name"], 2, "use `--` before", "err"],
+  ] as const)(
+    "%s never queues and answers with its usage",
+    async (_, options, command, code, text, stream) => {
+      const dir = tempDir();
+      const run = heavy(dir, command, {}, options);
+      expect(await run.exited).toBe(code);
+      expect(stream === "out" ? run.stdout() : run.stderr()).toContain(text);
+      expect(Queue.readDoc(dir)).toMatchObject({ entries: [], events: [] });
+    },
+  );
+
+  it.each([
+    ["a command's own --help", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "--help"], "--help\n"],
+    ["a command's own -x", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "-x"], "-x\n"],
+  ])("runs %s after the separator", async (_, command, out) => {
     const dir = tempDir();
-    const none = heavy(dir, []);
-    expect(await none.exited).toBe(2);
-    expect(none.stderr()).toContain("Usage: t3 heavy");
+    const run = heavy(dir, command);
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe(out);
+  });
+
+  it("reports a program that cannot start", async () => {
+    const dir = tempDir();
     const missing = heavy(dir, ["/nonexistent/t3-heavy-program"]);
     expect(await missing.exited).toBe(127);
     expect(Queue.read(dir)).toEqual([]);
@@ -1009,6 +1045,37 @@ describe("t3 heavy", () => {
       );
     });
 
+    const notCommands = [
+      ["bare remoto --help", ["remoto", "--help"], "--help"],
+      ["wrapped remoto -h", [SH, "-c", "remoto -h"], "-h"],
+      ["remoto -x after cd", [SH, "-c", "cd apps/server && remoto -x"], "-x"],
+      ["wrapped option", [SH, "-c", "--help"], "--help"],
+      ["quoted option", [SH, "-c", "'-x' a"], "-x"],
+    ] as const;
+
+    it.each(
+      notCommands.flatMap((shape) =>
+        modes.map((mode) => [shape[0], mode[0], shape, mode] as const),
+      ),
+    )("refuses to queue %s, %s", (_shape, _mode, [, command, word], [, enabled, runner]) => {
+      const launch = heavyLaunch(
+        { program: command[0], args: command.slice(1), where: undefined },
+        "/w",
+        "/home/me",
+        () => ({ enabled, runner }),
+        false,
+      );
+      const remoto = command.join(" ").includes("remoto");
+      // Run as written when T3 would not queue it: what the caller sees is the same as without T3.
+      if ((!enabled && !runner) || (remoto && !runner)) expect(launch).toEqual({ kind: "direct" });
+      else {
+        expect(launch).toMatchObject({ kind: "refused" });
+        if (launch.kind === "refused") {
+          expect(launch.reason).toContain(`\`${word}\``);
+        }
+      }
+    });
+
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
       const modeAt = (cwd: string) => (seen.push(cwd), { enabled: true, runner: true });
@@ -1482,6 +1549,7 @@ describe("t3 heavy", () => {
       name: undefined,
       priority: undefined,
       now: false,
+      help: false,
       program: "vp",
       args: ["test"],
     });

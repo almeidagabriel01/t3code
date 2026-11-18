@@ -111,6 +111,26 @@ const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGHUP: 129,
 };
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
+const HELP = new Set(["--help", "-h"]);
+const USAGE =
+  "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n";
+
+/**
+ * Why a command cannot be queued, or null. No program starts with `-`, so a first word that does
+ * is an option that missed the queue's own; a shell line is judged by its first word.
+ */
+const commandRefusal = (program: string | undefined, args: ReadonlyArray<string>) => {
+  const first =
+    program === undefined
+      ? ""
+      : isShellLine(program, args)
+        ? (args[1]!.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
+        : program;
+  if (first === "") return "no command given: use `--` before the command.";
+  return first.startsWith("-")
+    ? `\`${first}\` is not a command or a t3 heavy option: use \`--\` before the command.`
+    : null;
+};
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
@@ -121,6 +141,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let requestId: string | undefined;
   let routeReason: string | undefined;
   let now = false;
+  let help = false;
   const options = [
     "--queue-dir",
     "--name",
@@ -134,9 +155,15 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     flag !== undefined && flag !== "--" && flag.startsWith("--") && args.includes("--");
   while (
     rest[0] === "--now" ||
+    HELP.has(rest[0]!) ||
     (rest[1] !== undefined && options.includes(rest[0]!)) ||
     foreign(rest[0])
   ) {
+    if (HELP.has(rest[0]!)) {
+      help = true;
+      rest = rest.slice(1);
+      continue;
+    }
     if (rest[0] !== "--now" && !options.includes(rest[0]!)) {
       rest = rest.slice(rest[1]!.startsWith("-") ? 1 : 2);
       continue;
@@ -159,6 +186,8 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   if (rest[0] === "--") rest = rest.slice(1);
   return {
     dir,
+    // `<command> --help`, the prefix the agent tools hand out, asks for help after the separator.
+    help: help || HELP.has(rest[0] ?? ""),
     name,
     priority,
     where,
@@ -211,7 +240,9 @@ export type HeavyLaunch =
       readonly where: RunnerWhere | undefined;
       /** A commit whose hook runs goes ahead of other waiters: it is short and blocks its agent. */
       readonly priority?: "high";
-    };
+    }
+  /** The caller's mistake, such as `remoto --help` with `remoto` taken out: never queued. */
+  | { readonly kind: "refused"; readonly reason: string };
 
 /**
  * Run the command as written, or queue it. An agent's own `remoto` call never holds a Mac slot:
@@ -234,6 +265,8 @@ export const heavyLaunch = (
   const job = jobOf(command.program, command.args, cwd, home);
   const mode = modeAt(job.cwd);
   if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
+  const reason = commandRefusal(job.program, job.args);
+  if (reason !== null) return { kind: "refused", reason };
   const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
   if (commit === "direct") return { kind: "direct" };
   return {
@@ -622,14 +655,19 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runLinuxPart(part.dir, part.program, part.args);
     return;
   }
-  const { dir, name, priority, where, now, requestId, routeReason, program, args } =
+  const { dir, name, priority, where, now, help, requestId, routeReason, program, args } =
     parseHeavyArgs(argv);
-  if (program === undefined) {
-    process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
-    );
-    process.exit(2);
+  if (help) {
+    process.stdout.write(USAGE);
+    process.exit(0);
   }
+  // A usage error exits before the queue sees it, so it never becomes a job or a problem card.
+  const refuse = (reason: string): never => {
+    process.stderr.write(`[t3 heavy] ${reason}\n${USAGE}`);
+    return process.exit(2);
+  };
+  const refusal = commandRefusal(program, args);
+  if (refusal !== null || program === undefined) return refuse(refusal ?? "");
   const launch = heavyLaunch(
     { program, args, where },
     process.cwd(),
@@ -637,6 +675,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     (cwd) => modeFor(readDoc(dir), cwd),
     process.env[HEAVY_JOB_ENV] === "1",
   );
+  if (launch.kind === "refused") return refuse(launch.reason);
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
     // The shell reports a folder it cannot enter itself, as it would without T3.
     runDirect(program, args, process.env);
