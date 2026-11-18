@@ -946,8 +946,18 @@ describe("t3 heavy", () => {
       expect(NodeFS.existsSync(NodePath.join(dir, "routes.json"))).toBe(false);
     });
 
-    // Only a call that asks for stdin gets it: any other would drain a loop's input over ssh.
-    it("hands Linux stdin only for a call that asks for it", async () => {
+    // A call gets the stdin it was handed, as a program here would. A file goes from where its
+    // reader is, without moving it; a pipe a `read` loop reads stays here, or ssh would drain it.
+    it.each([
+      ["vp test run < in.txt", "vp|test|run|input\n"],
+      ["echo x | vp test run", "vp|test|run|x\n"],
+      ["echo x | vp lint --stdin-filepath=a.ts", "vp|lint|--stdin-filepath=a.ts|x\n"],
+      ['while read f; do vp lint "$f"; done < files.txt', "vp|lint|a.ts|b.ts\nvp|lint|b.ts|\n"],
+      [
+        "printf 'a.ts\\nb.ts\\n' | while read f; do vp lint \"$f\"; done",
+        "vp|lint|a.ts|\nvp|lint|b.ts|\n",
+      ],
+    ])("hands Linux the stdin of %j", async (line, expected) => {
       const { dir, env } = setup(
         [
           `printf '${M} phase=running pgid=4\\n' >&2`,
@@ -956,15 +966,22 @@ describe("t3 heavy", () => {
         ].join("\n"),
       );
       NodeFS.writeFileSync(NodePath.join(dir, "files.txt"), "a.ts\nb.ts\n");
-      const line =
-        'while read f; do vp lint "$f"; done < files.txt; echo x | vp lint --stdin-filepath=a.ts';
+      NodeFS.writeFileSync(NodePath.join(dir, "in.txt"), "input\n");
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp|lint|a.ts|\nvp|lint|b.ts|\nvp|lint|--stdin-filepath=a.ts|x\n");
+      expect(run.stdout()).toBe(expected);
     });
 
-    // Linux already read the input it was handed, so a rerun here would get none.
-    it("does not rerun a call whose input went to Linux", async () => {
+    // Linux already read the pipe it was handed, so a rerun here would get none; a file it read by
+    // position is still all here.
+    it.each([
+      ["cat in.txt | vp lint --stdin-filepath=a.ts", "code 127\n", true],
+      [
+        "vp lint --stdin-filepath=a.ts < in.txt",
+        "vp on mac: lint --stdin-filepath=a.ts\ncode 0\n",
+        false,
+      ],
+    ])("%s after Linux lacked its tool", async (call, output, spent) => {
       const { dir, env } = setup(
         [
           `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
@@ -973,11 +990,13 @@ describe("t3 heavy", () => {
         ].join("\n"),
       );
       NodeFS.writeFileSync(NodePath.join(dir, "in.txt"), "input\n");
-      const line = 'vp lint --stdin-filepath=a.ts < in.txt; echo "code $?"';
+      const line = `${call}; echo "code $?"`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("code 127\n");
-      expect(run.stderr()).toContain("its input went to Linux, so it does not run again here");
+      expect(run.stdout()).toBe(output);
+      expect(run.stderr().includes("its input went to Linux, so it does not run again here")).toBe(
+        spent,
+      );
       expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
       expect(faults(dir).map((fault) => fault.cause)).toEqual(["command-not-found:vp"]);
     });

@@ -690,6 +690,8 @@ export interface LinuxRunOptions {
   readonly startMarker?: string;
   /** An fd `remoto` gets as its stdin and passes to the command there (`forwardedInput`). */
   readonly input?: number;
+  /** Reads `input` by position from here (`fileOffset`), never moving its offset, so never spent. */
+  readonly inputStart?: number;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -705,6 +707,8 @@ export interface LinuxRun {
     readonly install: string | null;
     /** The fix for a dependency install the worktree's own files broke, before the command ran. */
     readonly worktree: string | null;
+    /** It took bytes off an `input` read in place: a rerun would not get them. */
+    readonly spentInput: boolean;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -739,6 +743,21 @@ export const forwardedInput = (fd: number) => {
   }
 };
 
+/** Where a file's reader is on `fd`, from `lsof`; null when it can't tell. */
+export const fileOffset = (fd: number) => {
+  try {
+    const out = NodeChildProcess.execFileSync(
+      "lsof",
+      ["-a", "-p", String(process.pid), "-d", String(fd), "-o", "-F", "o"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 },
+    );
+    const found = /^o0([tx])([0-9a-f]+)$/m.exec(out);
+    return found === null ? null : Number.parseInt(found[2]!, found[1] === "t" ? 10 : 16);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * `REMOTO_FALLBACK=nao`, so an unreachable host exits 75 instead of running here. Output passes
  * through unchanged except the marker lines, which become progress.
@@ -770,9 +789,17 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   // `remoto` may end without reading it (Linux unreachable): a write after that is no error.
   child.stdin?.on("error", () => {});
   child.stdin?.write(envHeader(options.env ?? [], options.input !== undefined));
+  let spentInput = false;
   if (options.input === undefined) child.stdin?.end();
   else if (child.stdin !== null) {
-    NodeFS.createReadStream("", { fd: options.input, autoClose: false })
+    NodeFS.createReadStream("", {
+      fd: options.input,
+      autoClose: false,
+      ...(options.inputStart === undefined ? {} : { start: options.inputStart }),
+    })
+      .on("data", () => {
+        spentInput ||= options.inputStart === undefined;
+      })
       .on("error", () => child.stdin?.end())
       .pipe(child.stdin);
   }
@@ -811,6 +838,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     platform: ReadonlyArray<string>;
     install: string | null;
     worktree: string | null;
+    spentInput: boolean;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -824,6 +852,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         platform: [...platform],
         install: progress.install ?? install,
         worktree,
+        spentInput,
       });
     };
     child.on("error", (error) => {

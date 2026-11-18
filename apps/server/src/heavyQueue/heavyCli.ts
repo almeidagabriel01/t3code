@@ -79,6 +79,7 @@ import {
   checkLinux,
   confirmed,
   drainLostRuns,
+  fileOffset,
   forwardedInput,
   resolveRemoto,
   startLinuxRun,
@@ -997,6 +998,9 @@ const PHASE_LABEL = { syncing: "syncing", installing: "installing deps", running
 const runnerName = (runner: "mac" | "linux") => (runner === "linux" ? "Linux" : "this Mac");
 
 const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
+/** Set when the job's line reads its own stdin (`while read`): its calls then leave a pipe here. */
+const LINE_READS_ENV = "T3CODE_HEAVY_LINE_READS";
+const READS_STDIN = /(?:^|[\s;&|({!])(?:read|mapfile|readarray)(?=[\s;&|)]|$)/;
 const MAC_JOB_ENV = "T3CODE_HEAVY_MAC_JOB";
 const GROUP_ENV = "T3CODE_HEAVY_GROUP";
 /** On a job a heavy call queued: its program never goes through the shims again. */
@@ -1028,6 +1032,7 @@ const withShims = (
     ...environment,
     PATH: `${ensureShims(dir, call)}:${environment.PATH ?? ""}`,
     [idEnv]: id,
+    ...(isShellLine(program, args) && READS_STDIN.test(args[1]!) ? { [LINE_READS_ENV]: "1" } : {}),
   };
   NodeFS.writeFileSync(
     envFile(dir, id),
@@ -1550,10 +1555,18 @@ const runLinuxPart = async (
     });
     if (found !== null) recordFault(dir, id, found);
   };
-  // Only a call that names stdin gets it: ssh would drain a `while read` loop's input otherwise.
-  const input = args.some((arg) => arg === "-" || arg.startsWith("--stdin"))
-    ? forwardedInput(0)
-    : undefined;
+  // Its stdin goes as a program here would get it. A file is read in place, never spent; a pipe the
+  // line's `read` loop reads stays here unless the call names stdin, or ssh would drain the loop.
+  const named = args.some((arg) => arg === "-" || arg.startsWith("--stdin"));
+  const stdin = forwardedInput(0) === 0 ? NodeFS.fstatSync(0) : null;
+  const inputStart = stdin?.isFile() === true ? fileOffset(0) : null;
+  const input =
+    inputStart !== null ||
+    (stdin !== null && (named || (stdin.isFIFO() && process.env[LINE_READS_ENV] !== "1")))
+      ? 0
+      : undefined;
+  /** Whether Linux took bytes off a pipe it was handed: a rerun would not get them. */
+  let spentInput = false;
   /** Whether Linux wrote any of the call's stdout: a pipe after it already holds that. */
   let wroteOutput = false;
   /**
@@ -1569,8 +1582,8 @@ const runLinuxPart = async (
         code,
       });
     }
-    if (input !== undefined || wroteOutput) {
-      const spent = input !== undefined ? "its input went to Linux" : "it already wrote output";
+    if (spentInput || wroteOutput) {
+      const spent = spentInput ? "its input went to Linux" : "it already wrote output";
       process.stderr.write(
         `[t3 heavy] Linux couldn't run this: ${lacked.line}; ${spent}, so it does not run again here.\n`,
       );
@@ -1606,6 +1619,7 @@ const runLinuxPart = async (
       env,
       ...(bringsBack ? { startMarker: call } : {}),
       ...(input === undefined ? {} : { input }),
+      ...(inputStart === null ? {} : { inputStart }),
       stdout: (chunk) => {
         wroteOutput ||= chunk.length > 0;
         process.stdout.write(chunk);
@@ -1652,16 +1666,18 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install, worktree } = await run.done;
+  let { outcome, progress, platform, install, worktree, spentInput: spent } = await run.done;
+  spentInput ||= spent;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     // The first run read the input: a rerun would get none.
-    if (input === undefined) {
+    if (!spentInput) {
       jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
       recorded = null;
       failure = null;
       run = start();
-      ({ outcome, progress, platform, install, worktree } = await run.done);
+      ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+      spentInput ||= spent;
     }
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
