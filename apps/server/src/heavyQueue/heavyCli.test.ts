@@ -403,6 +403,11 @@ describe("t3 heavy", () => {
       );
       expect(await piped.exited).toBe(0);
       expect(piped.stdout()).toBe(`vp|test|run|a.test.ts| in ${NodeFS.realpathSync(sub)}\n`);
+      // With no heavy call to pick out, the line itself is what it asked Linux to run.
+      script(NodePath.join(dir, "bin"), "npm", 'echo "npm on mac: $*"');
+      const light = heavyHere(dir, ["/bin/sh", "-c", "remoto npm run cobertura"], env);
+      expect(await light.exited).toBe(0);
+      expect(light.stdout()).toBe(`bash|-c|npm run cobertura| in ${NodeFS.realpathSync(dir)}\n`);
     });
 
     const echoArgs = [

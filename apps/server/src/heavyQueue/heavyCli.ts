@@ -1071,8 +1071,12 @@ const runLinuxAttempt = async (
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
-  // A shell line runs here as written, its heavy calls through the shims; a program alone is the work.
-  const line = isShellLine(job.program, job.args);
+  // A shell line runs here as written, its heavy calls through the shims. A program alone, or a
+  // line read in full with no heavy call to pick out, is itself the work.
+  const read = isShellLine(job.program, job.args)
+    ? readLine(job.args[1]!, scriptReader(process.cwd()))
+    : null;
+  const line = read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy));
   const shell = line ? job.program : "/bin/sh";
   const run = withShims(
     dir,
@@ -1083,7 +1087,7 @@ const runLinuxAttempt = async (
       ? job.args
       : [
           "-c",
-          `${selfPrefix(dir, environment, "linux-part")} -- ${jobLine(job.program, job.args)}`,
+          `${selfPrefix(dir, environment, "linux-part")} -- ${[job.program, ...job.args].map(shellQuote).join(" ")}`,
         ],
     { ...environment, [HEAVY_JOB_ENV]: "1", T3CODE_REMOTO: remoto },
   );
