@@ -46,6 +46,7 @@ import {
   answerBashCall,
   claimHealthCheck,
   configFor,
+  contextOf,
   defaultQueueDir,
   enqueue,
   finish,
@@ -88,10 +89,10 @@ import {
   stopRemote,
 } from "./runnerExec.ts";
 import { listensHere } from "./localPorts.ts";
-import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
+import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
 import {
   forgetRoutes,
-  learnedRoute,
+  learnedOf,
   learnedRoutes,
   recordRouteFault,
   resetRoutes,
@@ -793,7 +794,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
               workers: start.workers,
               lane: self?.priority,
               environment,
-              shims: !queuedCall && self !== undefined && reasonedMac(doc, self),
+              shims: !queuedCall && self !== undefined && reasonedMac(dir, doc, self),
             },
             (handler) => (onSignal = handler),
           );
@@ -803,15 +804,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 };
 
 /** On this Mac for a closed-list reason: its other heavy calls may still go to Linux (D3). */
-const reasonedMac = (doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
-  const config = configFor(doc, entry.cwd);
-  if (!config.runnerEnabled) return false;
-  const { mac } = eligibilityOf(entry, {
-    config,
-    home: NodeOS.homedir(),
-    rootOf: gitRootOf,
-    listening: listensHere,
-  });
+const reasonedMac = (dir: string, doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
+  const context = contextOf(dir, doc, Date.now())(entry.cwd);
+  if (!context.config.runnerEnabled) return false;
+  const { mac } = eligibilityOf(entry, context);
   return mac !== undefined && mac.code !== "pinned";
 };
 
@@ -1323,44 +1319,30 @@ const runLinuxAttempt = async (
   return { kind: "requeued" };
 };
 
-/** The route memory's reason to keep this program's calls in this package here, if learned. */
-const learnedOf = (
-  dir: string,
-  command: ReadonlyArray<string>,
-  cwd: string,
-  root: string,
-  config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
-): MacReason | null => {
-  const found = learnedRoute(
-    dir,
-    command,
-    routeFolder(cwd, root),
-    Date.now(),
-    config.runnerRouteMemoryDays,
-    config.runnerRouteLearnAfter,
-  );
-  return found === null
-    ? null
-    : {
-        code: "learned",
-        subject: `${found.route.line}, ${new Date(found.route.at).toISOString().slice(0, 10)}`,
-      };
-};
-
 /** Why a call (program first) runs on this Mac: a reason of its own, or a learned route. */
 const callMacReason = (
   dir: string,
   values: ReadonlyArray<string>,
   cwd: string,
-  root: string,
   config: RunnerProjectConfig,
-) =>
-  macReasonOf(
+) => {
+  const learned = learnedOf(dir, Date.now());
+  return macReasonOf(
     values,
     cwd,
-    { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
+    {
+      config,
+      home: NodeOS.homedir(),
+      rootOf: gitRootOf,
+      listening: listensHere,
+      learned: (command, at) => {
+        const root = gitRootOf(at);
+        return root === null ? null : learned(command, at, root, config);
+      },
+    },
     scriptReader(cwd),
-  ) ?? learnedOf(dir, values, cwd, root, config);
+  );
+};
 
 /** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
 const runRoutes = (args: ReadonlyArray<string>) => {
@@ -1467,7 +1449,7 @@ const runCall = (
   const doc = readDoc(dir);
   const config = configFor(doc, cwd);
   const root = gitRootOf(cwd);
-  const mac = root === null || callMacReason(dir, [given, ...args], cwd, root, config) !== null;
+  const mac = root === null || callMacReason(dir, [given, ...args], cwd, config) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1526,7 +1508,7 @@ const runLinuxPart = async (
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
   const days = config.runnerRouteMemoryDays;
-  const here = callMacReason(dir, [program, ...args], cwd, root, config);
+  const here = callMacReason(dir, [program, ...args], cwd, config);
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),

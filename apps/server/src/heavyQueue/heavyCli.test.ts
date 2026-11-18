@@ -753,7 +753,7 @@ describe("t3 heavy", () => {
       const why =
         "Asked for Linux, but it needs this Mac: Linux couldn't run this before: x, 2100-01-01";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}`);
-      expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
+      expect(Queue.read(dir)).toEqual([]);
       expect(NodeFS.existsSync(NodePath.join(dir, "remoto.count"))).toBe(false);
     });
 
@@ -819,8 +819,8 @@ describe("t3 heavy", () => {
       expect(Queue.read(dir)).toEqual([]);
     });
 
-    // Two environment faults of one program in one package teach the route: the next call skips
-    // Linux. Forgetting it, or its expiry, sends calls to Linux again.
+    // Two environment faults of one program in one package teach the route: the next job skips
+    // Linux whole. Forgetting it, or its expiry, sends it to Linux again.
     it("learns a call Linux failed twice, then forgets it", async () => {
       const { dir, env } = setup(
         [
@@ -843,9 +843,7 @@ describe("t3 heavy", () => {
       expect(linuxRuns()).toBe(1);
       expect(await call()).toContain(`Learned: ${key} `);
       expect(linuxRuns()).toBe(2);
-      expect(await call()).toMatch(
-        /Linux couldn't run this before: sh: 1: vp: not found, \d{4}-\d{2}-\d{2}; running this call on this Mac/,
-      );
+      await call();
       expect(linuxRuns()).toBe(2);
       // One card per failure Linux had; the learned call never reached it.
       expect(faults(dir).map((fault) => fault.cause)).toEqual([

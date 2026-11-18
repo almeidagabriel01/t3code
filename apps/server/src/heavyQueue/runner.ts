@@ -562,10 +562,12 @@ const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 const lineReason = (
   line: string,
   start: string | null,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript | undefined,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
+  // Route memory's reason waits for the line's own: any of them wins over it.
+  let learned: MacReason | null = null;
   const parsed = readLine(line, read);
   // The parser keeps a `case` arm's pattern as the command's first word: `a) xcodebuild` runs it.
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
@@ -624,6 +626,7 @@ const lineReason = (
         env.filter((value) => value !== null),
       );
       if (mac !== null) return mac;
+      if (at !== null) learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
@@ -644,7 +647,8 @@ const lineReason = (
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
         );
-        if (inner !== null) return inner;
+        if (inner?.code === "learned") learned ??= inner;
+        else if (inner !== null) return inner;
       }
     }
     // A substitution runs in its own subshell: its folder and variables end with it.
@@ -678,7 +682,7 @@ const lineReason = (
       }
     }
   }
-  return null;
+  return learned;
 };
 
 /**
@@ -687,7 +691,7 @@ const lineReason = (
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -707,7 +711,7 @@ export const eligibilityOf = (
 export const macReasonOf = (
   values: ReadonlyArray<string>,
   cwd: string,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript,
 ) => lineReason(values.map(shellQuote).join(" "), cwd, context, read);
 
@@ -986,6 +990,8 @@ export interface WorkContext {
   readonly rootOf: (cwd: string) => string | null;
   /** Whether something on this Mac listens on a TCP port; nothing does when absent. */
   readonly listening?: (port: number) => boolean;
+  /** Route memory's reason to keep a call (program first) in `cwd` here; none when absent. */
+  readonly learned?: (values: ReadonlyArray<string>, cwd: string) => MacReason | null;
 }
 
 export interface RoutePlanInput extends PlanInput {

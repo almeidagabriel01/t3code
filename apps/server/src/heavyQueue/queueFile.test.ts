@@ -15,6 +15,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import * as Queue from "./queueFile.ts";
+import { recordRouteFault, routeFolder, routeKey } from "./routeMemory.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
@@ -1557,14 +1558,29 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Mac-only tool: xcodebuild" },
     },
     {
+      name: "a route Linux learned keeps the whole job here",
+      line: "vp test run",
+      learned: true,
+      over: { runnerWhere: "linux" as const },
+      expected: {
+        runsOn: "mac",
+        reason: "Linux couldn't run this before: vp: not found, 2026-01-01",
+      },
+    },
+    {
       name: "its heavy work already goes to remoto inside: runs as written",
       line: "sh -c 'remoto vp test run'",
       over: { runnerWhere: "linux" as const },
       expected: { runsOn: "direct", reason: Queue.HANDED_OFF_RUNS_DIRECT, startsNow: true },
     },
-  ])("probe: $name, queuing nothing", ({ line, from, online, over, files, expected }) => {
+  ])("probe: $name, queuing nothing", ({ line, from, online, over, files, learned, expected }) => {
     const dir = queueWith(block(config(over)), online ?? true);
     const root = checkout("probe");
+    const key = routeKey(line.split(" "), routeFolder(root, root), "missing-program");
+    for (let fault = 0; learned === true && fault < config().runnerRouteLearnAfter; fault++) {
+      const lacked = { kind: "missing-program" as const, subject: "vp", line: "vp: not found" };
+      recordRouteFault(dir, key, lacked, NOW, 7, config().runnerRouteLearnAfter);
+    }
     for (const [name, text] of Object.entries(files ?? {})) {
       NodeFS.writeFileSync(NodePath.join(root, name), text);
     }

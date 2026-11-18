@@ -65,6 +65,7 @@ import {
   withRecord,
 } from "./heavyNotices.ts";
 import { listensHere } from "./localPorts.ts";
+import { learnedOf } from "./routeMemory.ts";
 import {
   beforeBoot,
   bootAtOf,
@@ -561,15 +562,21 @@ const listening = (port: number) => {
   return answer;
 };
 
-const contextOf =
-  (doc: QueueDoc) =>
-  (cwd: string): WorkContext => ({
+/** Each folder's work context for one plan: `routes.json` is read once for all of them. */
+export const contextOf = (dir: string, doc: QueueDoc, now: number) => {
+  const learned = learnedOf(dir, now);
+  return (cwd: string): WorkContext => ({
     config: configFor(doc, cwd),
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
     listening,
+    learned: (values, at) => {
+      const root = gitRootOf(at);
+      return root === null ? null : learned(values, at, root, configFor(doc, at));
+    },
   });
+};
 
 /** Some project uses the Runner, so jobs can wait on either machine. */
 const runnerOn = (doc: QueueDoc) =>
@@ -577,7 +584,12 @@ const runnerOn = (doc: QueueDoc) =>
   (doc.runner.global.runnerEnabled ||
     doc.runner.projects.some((project) => project.config.runnerEnabled));
 
-const planOf = (doc: QueueDoc, now: number): RoutePlan =>
+const planOf = (
+  dir: string,
+  doc: QueueDoc,
+  now: number,
+  contexts = contextOf(dir, doc, now),
+): RoutePlan =>
   planRoutes({
     entries: doc.entries,
     maxRunning: doc.maxRunning,
@@ -594,7 +606,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     unseenMediumMegabytes: doc.unseenMediumMegabytes,
     headPatienceMinutes: doc.headPatienceMinutes,
     now,
-    contextOf: contextOf(doc),
+    contextOf: contexts,
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
@@ -618,7 +630,7 @@ const withoutAttempt = ({
 }: QueuedEntry) => ({ ...rest, startedAt: null });
 
 /** Starts `id` when the admission plan picks it; running entries stay in front, so index order is wait order. */
-const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
+const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
   const { entries } = doc;
   const index = entries.findIndex((entry) => entry.id === id);
   if (index < 0) return { doc, result: { status: "removed" } };
@@ -639,7 +651,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       },
     };
   }
-  const decision = planOf(doc, now);
+  const contexts = contextOf(dir, doc, now);
+  const decision = planOf(dir, doc, now, contexts);
   const active = runningOf(entries);
   const canceled = decision.cancels[id];
   if (canceled !== undefined) {
@@ -670,7 +683,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     }: QueuedEntry = entry;
     const record = startRecord(
       entry,
-      intentOf(entry, contextOf(doc)(entry.cwd)).intent,
+      intentOf(entry, contexts(entry.cwd)).intent,
       admit.runner,
       now,
     );
@@ -925,12 +938,13 @@ export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
   );
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
-  mutate(dir, (doc) => decideStart(doc, id, now), now);
+  mutate(dir, (doc) => decideStart(dir, doc, id, now), now);
 
 /** What the admission rules say right now, without starting anyone. */
 export const readPlan = (dir: string, now = Date.now()) => {
   const doc = readDoc(dir);
-  return { doc, plan: planOf(doc, now) };
+  const contexts = contextOf(dir, doc, now);
+  return { doc, plan: planOf(dir, doc, now, contexts), contexts };
 };
 
 export const HANDED_OFF_RUNS_DIRECT =
@@ -971,7 +985,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     priority: commit === "first" ? "high" : "low",
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
-  const plan = planOf(withProbe, now);
+  const plan = planOf(dir, withProbe, now);
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
   const ahead = withProbe.entries
@@ -1312,8 +1326,8 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
   });
 
 /** Exclusive work, its project's Mac-only list and projects with the Runner off never leave this Mac. */
-export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
-  const context = contextOf(doc)(entry.cwd);
+export const staysOnMac = (contexts: (cwd: string) => WorkContext, entry: HeavyQueueEntry) => {
+  const context = contexts(entry.cwd);
   if (!context.config.runnerEnabled) return true;
   const { eligibility } = eligibilityOf(entry, context);
   return eligibility === "exclusive" || eligibility === "mac-only";
@@ -1388,7 +1402,9 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: "not-found" };
-    if (runner === "linux" && staysOnMac(doc, target)) return { doc, result: "not-allowed" };
+    if (runner === "linux" && staysOnMac(contextOf(dir, doc, Date.now()), target)) {
+      return { doc, result: "not-allowed" };
+    }
     const update = (patch: (entry: HeavyQueueEntry) => HeavyQueueEntry) => ({
       doc: { ...doc, entries: doc.entries.map((e) => (e.id === id ? patch(e) : e)) },
       result: "ok" as const,
@@ -1432,13 +1448,14 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
     dir,
     (doc): Decided<ReadonlyArray<string>> => {
       if (runner === "linux" && doc.linux.online !== true) return { doc, result: [] };
-      const { routes } = planOf(doc, now);
+      const contexts = contextOf(dir, doc, now);
+      const { routes } = planOf(dir, doc, now, contexts);
       const moves = doc.entries.filter(
         (entry) =>
           entry.startedAt === null &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
-          !(runner === "linux" && (entry.where === "mac" || staysOnMac(doc, entry))),
+          !(runner === "linux" && (entry.where === "mac" || staysOnMac(contexts, entry))),
       );
       const moved = new Set(moves.map((entry) => entry.id));
       return {

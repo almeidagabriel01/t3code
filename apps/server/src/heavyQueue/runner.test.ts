@@ -18,6 +18,7 @@ import {
   eligibilityOf,
   foldMarker,
   installFailure,
+  intentOf,
   linkMachine,
   LINUX_EVICT_SHARE,
   linuxStops,
@@ -1731,6 +1732,30 @@ describe("patterns and eligibility", () => {
         reason,
       });
     }
+  });
+
+  // Route memory speaks for the whole job too, after every reason of the job's own.
+  it.each([
+    ["vp test run", null, { intent: "linux", reason: "" }],
+    [
+      "vp test run",
+      "vp test",
+      { intent: "mac", reason: "Linux couldn't run this before: vp: not found, 2026-11-18" },
+    ],
+    [
+      "vp test run && vp test run /etc/hosts",
+      "vp test",
+      { intent: "mac", reason: "Uses a file only this Mac has: /etc/hosts" },
+    ],
+  ] as const)("%s with %j learned goes where route memory says", (label, learned, expected) => {
+    const context = {
+      ...input([], { runnerWhere: "linux" }).contextOf("/work/a"),
+      learned: (values: ReadonlyArray<string>) =>
+        values.slice(0, 2).join(" ") === learned
+          ? { code: "learned" as const, subject: "vp: not found, 2026-11-18" }
+          : null,
+    };
+    expect(intentOf(job("a", label), context)).toEqual(expected);
   });
 
   // Shapes of the eight jobs a strained Mac held while Linux idled, and their counter-cases.

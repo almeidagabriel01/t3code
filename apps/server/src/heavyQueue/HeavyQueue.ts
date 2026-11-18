@@ -261,7 +261,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
 
   const state = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const { doc, plan } = QueueFile.readPlan(dir, now);
+    const { doc, plan, contexts } = QueueFile.readPlan(dir, now);
     const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
     const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
     const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = doc;
@@ -324,7 +324,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       // With nothing held back, the limit the same reading is past, so the summary never claims room.
       hold: plan.mac?.hold ?? (fresh ? machineHold(sample, doc) : null),
       linux: linuxState(doc),
-      macOnly: entries.filter((entry) => QueueFile.staysOnMac(doc, entry)).map((entry) => entry.id),
+      macOnly: entries
+        .filter((entry) => QueueFile.staysOnMac(contexts, entry))
+        .map((entry) => entry.id),
       routes: plan.routes,
     };
   });
