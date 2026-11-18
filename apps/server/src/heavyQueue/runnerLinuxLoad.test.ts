@@ -129,8 +129,9 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
             "psi io full avg10=40.00 avg60=30.00 avg300=20.00 total=5",
           ]
         : []),
-      "job t3-a-0123abcd 2097152",
-      "job t3-b-89abcdef 0",
+      "job t3-a-0123abcd 4242 2097152",
+      "job t3-b-89abcdef 4300 0",
+      "job t3-c-01234567 2097152",
     ].join("\n");
 
   it("reads the incident's numbers", () => {
@@ -144,7 +145,10 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
       swapFreeBytes: 65536 * 1024,
       uptimeSeconds: 21231.5,
       pressure: { cpu: 2.1, memorySome: 60, memoryFull: 57, ioFull: 40 },
-      jobMemory: { "t3-a-0123abcd": 2 * GIB, "t3-b-89abcdef": 0 },
+      jobMemory: {
+        "t3-a-0123abcd": { pgid: 4242, bytes: 2 * GIB },
+        "t3-b-89abcdef": { pgid: 4300, bytes: 0 },
+      },
     });
     expect(Math.round(reading.cpuPercent!)).toBe(2);
   });

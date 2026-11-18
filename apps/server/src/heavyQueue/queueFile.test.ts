@@ -139,12 +139,12 @@ describe("heavy queue file", () => {
     const run = { ...entry("r1"), runner: "linux" as const, phase: "running" as const };
     Queue.enqueue(
       dir,
-      { ...run, startedAt: new Date(at).toISOString(), remote: { id: "w-0123abcd" } },
+      { ...run, startedAt: new Date(at).toISOString(), remote: { id: "w-0123abcd", pgid: 4242 } },
       at,
     );
     // `ps` reports KiB: 2 GiB, then 1 GiB, and a copy no job here owns.
     for (const kib of [2097152, 1048576]) {
-      const beat = `job w-0123abcd ${kib}\njob other-89abcdef 4194304`;
+      const beat = `job w-0123abcd 4242 ${kib}\njob other-89abcdef 5000 4194304`;
       Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(beat) }, at + 1000);
     }
     expect(Queue.read(dir)[0]).toMatchObject({ memory: 1 * GIB, peakMemory: 2 * GIB });
@@ -152,6 +152,22 @@ describe("heavy queue file", () => {
     expect(Queue.readDoc(dir).linuxHistory.r1).toEqual([
       { durationMs: 60_000, memoryBytes: 2 * GIB },
     ]);
+  });
+
+  it.each([
+    { name: "a stale pgid file whose pid came back", phase: "running" as const, pgid: 4242 },
+    { name: "a run still syncing", phase: "syncing" as const, pgid: 5000 },
+    { name: "a run whose group is not known yet", phase: "running" as const, pgid: undefined },
+  ])("$name lends no memory to the run", ({ phase, pgid }) => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const remote = pgid === undefined ? { id: "w-0123abcd" } : { id: "w-0123abcd", pgid };
+    const run = { ...entry("r1"), runner: "linux" as const, phase, remote };
+    Queue.enqueue(dir, { ...run, startedAt: new Date(at).toISOString() }, at);
+    const beat = "job w-0123abcd 5000 4194304";
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(beat) }, at + 1000);
+    expect(Queue.read(dir)[0]?.memory).toBeUndefined();
+    expect(Queue.read(dir)[0]?.peakMemory).toBeUndefined();
   });
 
   it("keeps the last 200 results", () => {

@@ -652,7 +652,7 @@ export interface LinuxHealth extends Sustained {
   readonly swapTotalBytes?: number | null;
   readonly swapFreeBytes?: number | null;
   readonly pressure?: LinuxPressure | null;
-  readonly jobMemory?: Readonly<Record<string, number>>;
+  readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
   /** The failing checks reached the host but got no answer in time: alive, too loaded to reply. */
   readonly unresponsive?: boolean;
 }
@@ -695,8 +695,14 @@ export interface LinuxReading {
   readonly swapFreeBytes?: number | null;
   /** Null where the kernel has no PSI. */
   readonly pressure?: LinuxPressure | null;
-  /** Resident memory of each run's session there, by `runs/<id>` copy. */
-  readonly jobMemory?: Readonly<Record<string, number>>;
+  /** Resident memory of the session in each `runs/<id>.pgid`, with that group. */
+  readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
+}
+
+/** A pgid file can outlive its run, and its number can come back as another process. */
+export interface LinuxJobMemory {
+  readonly pgid: number;
+  readonly bytes: number;
 }
 
 /**
@@ -733,12 +739,12 @@ export const parseHeartbeat = (text: string): LinuxReading => {
     return match === null ? null : value(Number(match[1]));
   };
   const hasPressure = lines.some((line) => line.startsWith("psi "));
-  const jobMemory: Record<string, number> = Object.create(null);
+  const jobMemory: Record<string, LinuxJobMemory> = Object.create(null);
   for (const line of lines) {
-    const [tag, id, rss] = line.split(/\s+/);
+    const [tag, id, pgid, rss] = line.split(/\s+/);
     // `ps` reports KiB.
-    if (tag === "job" && id !== undefined && /^\d+$/.test(rss ?? "")) {
-      jobMemory[id] = Number(rss) * 1024;
+    if (tag === "job" && id !== undefined && /^\d+$/.test(pgid ?? "") && /^\d+$/.test(rss ?? "")) {
+      jobMemory[id] = { pgid: Number(pgid), bytes: Number(rss) * 1024 };
     }
   }
   const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
@@ -1642,7 +1648,7 @@ export const HEARTBEAT_COMMAND = [
   `for r in cpu memory io; do sed "s/^/psi $r /" /proc/pressure/$r 2>/dev/null; done`,
   // ponytail: a run's session only; containers it starts live under dockerd and show in
   // MemAvailable and PSI, not in its own peak. Attribute them by cgroup if that undercounts.
-  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; echo "job \${b%.pgid} $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}')"; done`,
+  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; echo "job \${b%.pgid} $p $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}')"; done`,
 ].join("; ");
 
 /**

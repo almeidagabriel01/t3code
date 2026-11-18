@@ -74,6 +74,7 @@ import {
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
+  type LinuxJobMemory,
   type QueuedEntry,
   type RoutePlan,
   type RunnerBlock,
@@ -1293,14 +1294,19 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
 /** A running Linux job's session memory from a heartbeat, and its peak, for what it reserves and learns. */
 const withLinuxMemory = (
   entry: QueuedEntry,
-  jobMemory: Readonly<Record<string, number>> | undefined,
+  jobMemory: Readonly<Record<string, LinuxJobMemory>> | undefined,
 ): QueuedEntry => {
   const id = entry.remote?.id;
-  if (entry.startedAt === null || entry.runner !== "linux" || id === undefined) return entry;
-  const memory =
-    jobMemory !== undefined && Object.hasOwn(jobMemory, id) ? jobMemory[id] : undefined;
-  if (memory === undefined) return entry;
-  return { ...entry, memory, peakMemory: Math.max(entry.peakMemory ?? 0, memory) };
+  if (entry.startedAt === null || entry.runner !== "linux" || entry.phase !== "running") {
+    return entry;
+  }
+  const job =
+    id !== undefined && jobMemory !== undefined && Object.hasOwn(jobMemory, id)
+      ? jobMemory[id]
+      : undefined;
+  // Only this run's own group: a stale pgid file may name a reused pid.
+  if (job === undefined || job.pgid !== entry.remote?.pgid) return entry;
+  return { ...entry, memory: job.bytes, peakMemory: Math.max(entry.peakMemory ?? 0, job.bytes) };
 };
 
 /**
