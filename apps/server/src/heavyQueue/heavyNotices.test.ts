@@ -1255,6 +1255,32 @@ describe("errorLineOf", () => {
       null,
       "rsync: connection unexpectedly closed",
     ],
+    // A warning never names the failure; a warning that reports one still does.
+    [
+      "a warning after the error",
+      "sh: 1: tsgo: not found\nnpm warn install-scripts Run `npm install-scripts ls` to review\n",
+      null,
+      "sh: 1: tsgo: not found",
+    ],
+    [
+      "warnings of every shape",
+      "npm WARN deprecated glob@7.2.3\n WARN  Issues with peer dependencies found\n(node:42) ExperimentalWarning: VM Modules\nDeprecationWarning: Buffer() is deprecated\nwarning: unused import\nyarn warn x\n",
+      null,
+      null,
+    ],
+    [
+      "an unhandled rejection",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED\n",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED",
+    ],
+    [
+      "cargo's failed build",
+      "warning: unused variable\nwarning: build failed, waiting for other jobs to finish...\n",
+      null,
+      "warning: build failed, waiting for other jobs to finish...",
+    ],
+    ["a count of warnings", "Warnings: 0, Errors: 1\n", null, "Warnings: 0, Errors: 1"],
   ])("%s", (_case, text, failure, last) => {
     expect(errorLineOf(text)).toEqual({ failure, last });
   });

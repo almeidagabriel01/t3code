@@ -345,6 +345,8 @@ describe("t3 heavy", () => {
 
   describe("with the Runner sending work to Linux (fake remoto and ssh)", () => {
     const M = "\\036remoto";
+    const WARN = "npm warn install-scripts Run `npm install-scripts ls` to review";
+    const NOT_FOUND = "sh: 1: tsgo: not found";
     const script = (dir: string, name: string, body: string) => {
       const path = NodePath.join(dir, name);
       NodeFS.writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
@@ -826,6 +828,32 @@ describe("t3 heavy", () => {
         `[t3 heavy] Linux couldn't run this: ${error}; running this call on this Mac.\n`,
       );
       expect(Queue.read(dir)).toEqual([]);
+    });
+
+    // A warning printed around a call never names a fault: the shell's line does, or none is filed.
+    it.each([
+      ["a warning after the missing tool", 127, [NOT_FOUND, WARN], 0, NOT_FOUND],
+      ["a warning before the missing tool", 127, [WARN, NOT_FOUND], 0, NOT_FOUND],
+      ["only a warning, exit 127", 127, [WARN], 127, null],
+      ["a warning, exit 0", 0, [WARN], 0, null],
+      ["a warning, exit 1", 1, [WARN, "warning: unused variable"], 1, null],
+    ] as const)("%s", async (_, code, lines, exit, error) => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          ...lines.map((line) => `echo '${line}' >&2`),
+          `printf '${M} exit=${code}\\n' >&2`,
+          `exit ${code}`,
+        ].join("\n"),
+        { runnerDropped: "agent" },
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(exit);
+      const logged = Queue.readDoc(dir).events.flatMap((event) =>
+        event.kind === "t3-fault" ? [event.error] : [],
+      );
+      expect(logged).toEqual(error === null ? [] : [error]);
+      expect(run.stderr().includes("Linux couldn't run this")).toBe(error !== null);
     });
 
     // Two environment faults of one program in one package teach the route: the next call skips
