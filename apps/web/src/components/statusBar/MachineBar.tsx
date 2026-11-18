@@ -33,6 +33,8 @@ const TRACE_HEIGHT = 12;
 const MAX_PIPS = 6;
 
 const clampShare = (share: number) => Math.min(1, Math.max(0, share));
+// In a phone-width popover the bars and traces go, so the machine names keep their room.
+const WIDE_ONLY = "@max-[26rem]/machines:hidden";
 
 /** A reading with its exact words in a tooltip, reachable by keyboard. */
 function Reading({
@@ -73,7 +75,10 @@ function Reading({
 /** A thin bar for a share of a whole; its fill slides on change instead of repainting. */
 function Meter({ share, warn }: { readonly share: number | null; readonly warn: boolean }) {
   return (
-    <span aria-hidden className="relative h-1 w-9 overflow-hidden rounded-full bg-foreground/12">
+    <span
+      aria-hidden
+      className={cn("relative h-1 w-9 overflow-hidden rounded-full bg-foreground/12", WIDE_ONLY)}
+    >
       {share === null ? null : (
         <span
           data-warn={warn ? "" : undefined}
@@ -96,14 +101,14 @@ function Trace({
   readonly values: ReadonlyArray<number>;
 }) {
   return values.length < 2 ? (
-    <span aria-hidden className="w-9" />
+    <span aria-hidden className={cn("w-9", WIDE_ONLY)} />
   ) : (
     <svg
       role="img"
       aria-label={label}
       width={TRACE_WIDTH}
       height={TRACE_HEIGHT}
-      className="shrink-0 text-muted-foreground/80"
+      className={cn("shrink-0 text-muted-foreground/80", WIDE_ONLY)}
     >
       <polyline
         points={sparklinePoints(values, TRACE_WIDTH, TRACE_HEIGHT)}
@@ -275,75 +280,81 @@ export function MachineBar({
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
-    <div
-      role="group"
-      aria-label="Machines"
-      className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
-    >
-      <MachineName Icon={LaptopIcon} name="This Mac" />
-      <MachineGauge gauge={mac.cpu} />
-      <MachineGauge gauge={mac.memory} unit="free" />
-      <MachineSlots row={mac} />
+    <div className="@container/machines">
+      <div
+        role="group"
+        aria-label="Machines"
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
+      >
+        <MachineName Icon={LaptopIcon} name="This Mac" />
+        <MachineGauge gauge={mac.cpu} />
+        <MachineGauge gauge={mac.memory} unit="free" />
+        <MachineSlots row={mac} />
 
-      {t3 === null ? null : (
-        <>
-          <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
-            <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
-          </Reading>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>
-              {formatCpu(
-                macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
-              )}
-            </span>
-            <span className={UNIT} />
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>{formatMemory(t3.rssBytes)}</span>
-            <span className={UNIT} />
-          </span>
-          <span />
-        </>
-      )}
-
-      {linux === null ? null : (
-        <>
-          <MachineName
-            Icon={ServerIcon}
-            name="Linux"
-            {...(linux.chip === null
-              ? {}
-              : {
-                  status: {
-                    text: linux.chip.text,
-                    dot: CHIP_DOT[linux.chip.tone],
-                    hint: linux.statusHint ?? "",
-                  },
-                })}
-          />
-          {linux.offline === null ? (
-            <>
-              <MachineGauge gauge={linux.cpu} />
-              <MachineGauge gauge={linux.memory} unit="free" />
-            </>
-          ) : (
-            <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
-              <span
-                className={cn(
-                  "truncate text-2xs",
-                  linux.online === false ? "text-destructive-foreground" : "text-muted-foreground",
-                )}
-              >
-                {/* The error goes in the tooltip: a long one would starve the names' column. */}
-                {linux.offline.text}
-              </span>
+        {t3 === null ? null : (
+          <>
+            <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
+              <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
             </Reading>
-          )}
-          <MachineSlots row={linux} />
-        </>
-      )}
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatCpu(
+                  macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
+                )}
+              </span>
+              <span className={UNIT} />
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatMemory(t3.rssBytes)}
+              </span>
+              <span className={UNIT} />
+            </span>
+            <span />
+          </>
+        )}
+
+        {linux === null ? null : (
+          <>
+            <MachineName
+              Icon={ServerIcon}
+              name="Linux"
+              {...(linux.chip === null
+                ? {}
+                : {
+                    status: {
+                      text: linux.chip.text,
+                      dot: CHIP_DOT[linux.chip.tone],
+                      hint: linux.statusHint ?? "",
+                    },
+                  })}
+            />
+            {linux.offline === null ? (
+              <>
+                <MachineGauge gauge={linux.cpu} />
+                <MachineGauge gauge={linux.memory} unit="free" />
+              </>
+            ) : (
+              <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
+                <span
+                  className={cn(
+                    "truncate text-2xs",
+                    linux.online === false
+                      ? "text-destructive-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {/* The error goes in the tooltip: a long one would starve the names' column. */}
+                  {linux.offline.text}
+                </span>
+              </Reading>
+            )}
+            <MachineSlots row={linux} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
