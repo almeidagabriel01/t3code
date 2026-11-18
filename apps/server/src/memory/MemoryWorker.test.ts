@@ -1194,6 +1194,34 @@ describe("MemoryWorker", () => {
       Effect.provide(Layer.merge(live(), Logger.layer([logger], { mergeWithExisting: false }))),
     );
   });
+  it.effect("QA: a reply still streaming at the mark does not invalidate when it finishes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* Worker.MemoryWorker;
+      const original = (yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_events WHERE sequence=1`)[0]!;
+      const message = yield* decodeMessage(original.payload_json);
+      const reply = {
+        ...message,
+        id: M.MessageId.make("reply"),
+        runId: M.RunId.make("run-live"),
+        role: "assistant" as const,
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+      };
+      // Streaming partial before the mark: never usable, so the run never read its text.
+      yield* sql`INSERT INTO orchestration_events VALUES (0,${id(29)},${threadId},'message.updated',${encodeMessage({ ...reply, text: "partial", streaming: true })},${now},2,'thread')`;
+      yield* sql`INSERT INTO orchestration_events VALUES (3,${id(30)},${threadId},'message.updated',${encodeMessage({ ...reply, text: "partial and done", streaming: false })},${now},2,'thread')`;
+      yield* worker.sweepDue();
+      assert.deepStrictEqual(
+        yield* sql`SELECT status,failure_code FROM memory_outbox WHERE kind='summary'`,
+        [{ status: "completed", failure_code: null }],
+      );
+    }).pipe(Effect.provide(live())),
+  );
   it.effect("completes a run that later turns follow instead of cancelling it", () => {
     const spans = new Map<string, number>();
     const reads = () => spans.get("MemoryWorker.readSource") ?? 0;

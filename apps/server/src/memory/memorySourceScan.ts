@@ -17,6 +17,10 @@ const encodeSequences = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Sch
 export const delegatedChildThreadSql = (threadColumn: string) =>
   `EXISTS (SELECT 1 FROM orchestration_events c WHERE c.application_event_version=2 AND c.aggregate_kind='thread' AND c.stream_id=${threadColumn} AND c.event_type='thread.created' AND json_extract(c.payload_json,'$.lineage.relationshipToParent')='subagent')`;
 
+/** A message version a summary can read: settled, non-blank, from the user or assistant. */
+export const usableMessageSql = (payloadColumn: string) =>
+  `coalesce(json_extract(${payloadColumn},'$.streaming'),0)=0 AND trim(json_extract(${payloadColumn},'$.text'))!='' AND json_extract(${payloadColumn},'$.role') IN ('user','assistant')`;
+
 export const isDelegatedChildThread = (sql: SqlClient.SqlClient, threadId: string) =>
   sql<{
     found: number;
@@ -92,7 +96,7 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
     }>`SELECT sequence,event_id,event_type,json_extract(payload_json,'$.id') AS id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.runId') END AS run_id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.role') END AS role,
-      CASE WHEN event_type='message.updated' THEN coalesce(json_extract(payload_json,'$.streaming'),0)=0 AND trim(json_extract(payload_json,'$.text'))!='' AND json_extract(payload_json,'$.role') IN ('user','assistant') END AS usable,
+      CASE WHEN event_type='message.updated' THEN ${sql.unsafe(usableMessageSql("payload_json"))} END AS usable,
       CASE WHEN event_type!='message.updated' THEN json_extract(payload_json,'$.status') END AS status,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.createdBy') END AS created_by,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.creationSource') END AS creation_source,

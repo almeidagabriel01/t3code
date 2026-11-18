@@ -147,10 +147,11 @@ const make = Effect.gen(function* () {
         return yield* new MemoryWorkerError({ code: "source_unavailable" });
       // The scan is frozen at the observed mark, so new turns belong to the next chunk and an
       // always-busy thread still progresses. What changes the text already read is a deletion, a
-      // rollback, or an update to a message that existed by the watermark (an edit).
+      // rollback, or an update to a message the scan read by the watermark (an edit); a version
+      // still streaming then was never read, so its final text is not an edit.
       const sourceThreadId = meta.sourceThread.threadId;
       const newer = yield* query(
-        sql`SELECT 1 FROM orchestration_events e WHERE e.application_event_version=2 AND e.aggregate_kind='thread' AND e.stream_id=${sourceThreadId} AND e.sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (e.event_type='thread.deleted' OR (e.event_type='run.updated' AND json_extract(e.payload_json,'$.status')='rolled_back') OR (e.event_type='message.updated' AND EXISTS (SELECT 1 FROM orchestration_events p WHERE p.application_event_version=2 AND p.aggregate_kind='thread' AND p.stream_id=${sourceThreadId} AND p.event_type='message.updated' AND p.sequence<=${meta.sourceWatermark.throughSequence} AND json_extract(p.payload_json,'$.id')=json_extract(e.payload_json,'$.id')))) LIMIT 1`,
+        sql`SELECT 1 FROM orchestration_events e WHERE e.application_event_version=2 AND e.aggregate_kind='thread' AND e.stream_id=${sourceThreadId} AND e.sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (e.event_type='thread.deleted' OR (e.event_type='run.updated' AND json_extract(e.payload_json,'$.status')='rolled_back') OR (e.event_type='message.updated' AND EXISTS (SELECT 1 FROM orchestration_events p WHERE p.application_event_version=2 AND p.aggregate_kind='thread' AND p.stream_id=${sourceThreadId} AND p.event_type='message.updated' AND p.sequence<=${meta.sourceWatermark.throughSequence} AND json_extract(p.payload_json,'$.id')=json_extract(e.payload_json,'$.id') AND ${sql.unsafe(SourceScan.usableMessageSql("p.payload_json"))}))) LIMIT 1`,
       );
       if (newer.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
       const excluded = yield* store.readSuppressions(
