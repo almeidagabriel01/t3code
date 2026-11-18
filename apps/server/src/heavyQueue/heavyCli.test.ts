@@ -312,6 +312,18 @@ describe("t3 heavy", () => {
     expect(Queue.read(dir)).toEqual([]);
     direct.child.stdin.end();
     expect(await direct.exited).toBe(0);
+    // Asked for Linux, it never lands here silently: it ends with why.
+    const linux = heavy(dir, [process.execPath, "-e", "console.log('ran')"], {}, [
+      "--runner",
+      "linux",
+      "--",
+    ]);
+    expect(await linux.exited).toBe(75);
+    expect(linux.stdout()).toBe("");
+    expect(linux.stderr()).toContain(
+      "[t3 heavy] The Runner is off for this project and this job asked for Linux.",
+    );
+    expect(Queue.read(dir)).toEqual([]);
 
     Queue.publishRunner(dir, {
       global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true },

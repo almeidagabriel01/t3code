@@ -1039,14 +1039,14 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--runner linux, dropped, agent",
       "vp test run",
-      { where: "linux", dropped: true, linkFailures: 3 },
+      { where: "linux", linuxOnly: true, dropped: true, linkFailures: 3 },
       { runnerDropped: "agent", runnerUnavailable: "wait" },
       "Linux dropped it mid-run, and this job asked for Linux",
     ],
     [
       "--runner linux, dropped, mac",
       "vp test run",
-      { where: "linux", dropped: true, linkFailures: 3 },
+      { where: "linux", linuxOnly: true, dropped: true, linkFailures: 3 },
       { runnerDropped: "mac", runnerUnavailable: "wait" },
       "Linux dropped it mid-run, and this job asked for Linux",
     ],
@@ -1060,7 +1060,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--now, mac",
       "vp test run",
-      { where: "linux", forced: true },
+      { where: "linux", linuxOnly: true, forced: true },
       { runnerUnavailable: "mac" },
       OFFLINE_ASKED,
     ],
@@ -1075,7 +1075,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--runner linux, unanswered → Mac",
       "vp test run",
-      { where: "linux", ask: asked(-1) },
+      { where: "linux", linuxOnly: true, ask: asked(-1) },
       { runnerUnavailable: "ask", runnerDeadlineAction: "mac" },
       OFFLINE_ASKED,
     ],
@@ -1090,7 +1090,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--runner linux, needs this Mac",
       "xcodebuild test",
-      { where: "linux" },
+      { where: "linux", linuxOnly: true },
       { runnerUnavailable: "mac" },
       "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
     ],
@@ -1100,7 +1100,9 @@ describe("Linux unavailable, deadline and dropped policies", () => {
   });
 
   it("asked for Linux and needing this Mac cancels even with Linux up", () => {
-    const plan = planRoutes(input([job("a", "xcodebuild test", { where: "linux" })]));
+    const plan = planRoutes(
+      input([job("a", "xcodebuild test", { where: "linux", linuxOnly: true } as never)]),
+    );
     expect(plan.cancels.a).toBe(
       "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
     );
