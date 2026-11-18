@@ -28,6 +28,8 @@ import {
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import {
+  appendTail,
+  environmentFaultOf,
   errorLineOf,
   faultOf,
   type FaultSeen,
@@ -1389,24 +1391,23 @@ const runLinuxPart = async (
   /** The first line naming a failure: what a card quotes when no exit code explains it. */
   let failure: string | null = null;
   let unreachable: string | null = null;
+  /** The end of its output, stdout and stderr, to tell what Linux lacked from a failure. */
+  let tail = "";
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
   const fault = (seen: FaultSeen) => {
-    const found = faultOf(
-      seen,
-      seen.kind === "exit" ? lastError : (unreachable ?? failure ?? lastError),
-      {
-        command: labelOf(program, args),
-        projectFolder: root,
-      },
-    );
+    const found = faultOf(seen, unreachable ?? failure ?? lastError, {
+      command: labelOf(program, args),
+      projectFolder: root,
+    });
     if (found !== null) recordFault(dir, id, found);
   };
   const input = forwardedInput(0);
   const start = () => {
     since = Date.now();
+    tail = "";
     return startLinuxRun({
       remoto,
       program: command.program,
@@ -1420,9 +1421,13 @@ const runLinuxPart = async (
       env,
       ...(bringsBack ? { startMarker: id } : {}),
       ...(input === undefined ? {} : { input }),
-      stdout: (chunk) => process.stdout.write(chunk),
+      stdout: (chunk) => {
+        process.stdout.write(chunk);
+        tail = appendTail(tail, String(chunk));
+      },
       stderr: (text) => {
         process.stderr.write(text);
+        tail = appendTail(tail, text);
         const lines = errorLineOf(text);
         lastError = lines.last ?? lastError;
         failure ??= lines.failure;
@@ -1494,11 +1499,14 @@ const runLinuxPart = async (
         jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
       }
     }
-    fault({ kind: "exit", code: outcome.code, program: command.program });
-    // A tool or file Linux lacks is its environment's failure, which the policy decides.
-    const error = lastError as string | null;
-    if ((outcome.code === 126 || outcome.code === 127) && error !== null) {
-      return endLine(dir, id, { kind: "environment", reason: error, code: outcome.code });
+    // What Linux lacked is its environment's failure, not the command's.
+    const lacked = environmentFaultOf(outcome.code, tail, {
+      program: command.program,
+      folders: [cwd, root],
+    });
+    if (lacked !== null) {
+      fault({ kind: "environment", fault: lacked });
+      return endLine(dir, id, { kind: "environment", reason: lacked.line, code: outcome.code });
     }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(

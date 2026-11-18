@@ -81,8 +81,8 @@ export interface Fault {
 export type FaultSeen =
   /** The pre-flight found the tool missing there. */
   | { readonly kind: "missing"; readonly tool: string }
-  /** It ran and exited 126 or 127: something it calls is missing or not executable there. */
-  | { readonly kind: "exit"; readonly code: number; readonly program: string }
+  /** It ran and its exit code and output show Linux lacked something (`environmentFaultOf`). */
+  | { readonly kind: "environment"; readonly fault: EnvironmentFault }
   /** A package's install was unfinished in the copy twice in a row. */
   | { readonly kind: "install"; readonly package: string | null }
   /** `remoto` reached the PC and started syncing, but the command never ran. */
@@ -146,6 +146,126 @@ export const worktreeProblemOf = (line: string) =>
 /** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
 const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
 
+/** What Linux lacked for a call that ran there; `install` is the copy's unfinished install. */
+export type EnvironmentFaultKind =
+  | "missing-program"
+  | "not-executable"
+  | "no-git"
+  | "package-command"
+  | "no-browser"
+  | "local-service"
+  | "python-module"
+  | "install";
+
+export interface EnvironmentFault {
+  readonly kind: EnvironmentFaultKind;
+  /** What it lacked: a program, a module, a service's address. */
+  readonly subject: string;
+  /** The output line that shows it, for the card. */
+  readonly line: string;
+}
+
+/** How much of a call's output is kept to classify its failure. */
+export const TAIL_CHARS = 64 * 1024;
+export const appendTail = (tail: string, text: string) => {
+  const joined = tail + text;
+  return joined.length > TAIL_CHARS ? joined.slice(-TAIL_CHARS) : joined;
+};
+
+/**
+ * Exit code and output line that mean Linux lacked something the Mac has. A row without a code
+ * takes any failure; one marked `optional` needs only its code, its line names the subject.
+ */
+const ENVIRONMENT_FAULTS: ReadonlyArray<{
+  readonly kind: Exclude<EnvironmentFaultKind, "install">;
+  readonly code?: number;
+  readonly pattern: RegExp;
+  readonly optional?: true;
+}> = [
+  { kind: "missing-program", code: 127, pattern: MISSING_TOOL, optional: true },
+  { kind: "not-executable", code: 126, pattern: MISSING_TOOL, optional: true },
+  { kind: "no-git", code: 128, pattern: /not a git repository/ },
+  {
+    kind: "package-command",
+    pattern: /(?:ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL\s+|^)Command "([^"]+)" not found/,
+  },
+  { kind: "no-browser", pattern: /Executable doesn't exist at \S*ms-playwright\/([^/\s]+)/ },
+  {
+    kind: "local-service",
+    pattern: /ECONNREFUSED ((?:localhost|127\.0\.0\.1|::1|\[::1\]):\d+)/,
+  },
+  { kind: "python-module", pattern: /No module named '?([\w.]+)'?/ },
+];
+
+/**
+ * The environment fault a call that ran on Linux shows, from its exit code and output tail, or
+ * null when it failed in its own code. A Python module that is a file or folder in `folders` is
+ * the project's own, missing anywhere.
+ */
+export const environmentFaultOf = (
+  code: number,
+  tail: string,
+  context: {
+    readonly program: string;
+    readonly folders: ReadonlyArray<string>;
+    readonly exists?: (path: string) => boolean;
+  },
+): EnvironmentFault | null => {
+  if (code === 0) return null;
+  const exists = context.exists ?? NodeFS.existsSync;
+  const lines = meaningfulLines(tail.slice(-TAIL_CHARS))
+    .filter((line) => !line.startsWith("[t3 heavy]"))
+    .toReversed();
+  for (const row of ENVIRONMENT_FAULTS) {
+    if (row.code !== undefined && row.code !== code) continue;
+    let match: RegExpExecArray | null = null;
+    let line: string | undefined;
+    for (const each of lines) {
+      match = row.pattern.exec(each);
+      if (match !== null) {
+        line = each;
+        break;
+      }
+    }
+    if (match === null && row.optional === undefined) continue;
+    const subject = match?.[1] ?? context.program;
+    if (row.kind === "python-module") {
+      const top = subject.split(".")[0]!;
+      const own = context.folders.some(
+        (folder) =>
+          exists(NodePath.join(folder, top)) || exists(NodePath.join(folder, `${top}.py`)),
+      );
+      if (own) continue;
+    }
+    return {
+      kind: row.kind,
+      subject: row.kind === "python-module" ? subject.split(".")[0]! : subject,
+      line: line ?? lines[0] ?? `${subject}: command not found`,
+    };
+  }
+  return null;
+};
+
+/** The problem detector's reason and stable cause detail for each environment fault. */
+const environmentCause = ({ kind, subject }: EnvironmentFault): [FaultReason, string] => {
+  switch (kind) {
+    case "missing-program":
+    case "not-executable":
+    case "package-command":
+      return ["command-not-found", subject];
+    case "no-browser":
+      return ["command-not-found", "playwright-browser"];
+    case "python-module":
+      return ["command-not-found", `python-${subject}`];
+    case "no-git":
+      return ["linux-sync", "no-git"];
+    case "local-service":
+      return ["network", "localhost"];
+    case "install":
+      return ["linux-install", subject];
+  }
+};
+
 /**
  * A Linux environment failure as the problem detector files it, with a cause key that stays the same for the
  * same fault: no counts, times or paths in it. Null when the run failed in its own code.
@@ -166,10 +286,9 @@ export const faultOf = (
   if (seen.kind === "missing") {
     return fault("command-not-found", seen.tool, `${seen.tool}: command not found`);
   }
-  if (seen.kind === "exit") {
-    if (seen.code !== 126 && seen.code !== 127) return null;
-    const tool = (line === null ? null : MISSING_TOOL.exec(line)?.[1]) ?? seen.program;
-    return fault("command-not-found", tool, `${tool}: command not found`);
+  if (seen.kind === "environment") {
+    const [reason, detail] = environmentCause(seen.fault);
+    return { ...fault(reason, detail, ""), error: seen.fault.line };
   }
   if (line !== null && PC_UNREACHABLE.test(line)) return null;
   const pc = line === null ? undefined : PC_CAUSES.find(([pattern]) => pattern.test(line));
