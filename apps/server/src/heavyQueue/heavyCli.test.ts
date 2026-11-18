@@ -1254,6 +1254,87 @@ describe("t3 heavy", () => {
       expect(Queue.readDoc(dir).events.at(-1)).toMatchObject({ kind: "sync-back" });
     });
 
+    // Parallel calls in one job share the copy there: each marks its own start and is stopped.
+    describe("parallel calls in one Linux job", () => {
+      const parallel = (command: (dir: string) => string) => {
+        const { dir, env } = setup("");
+        const home = tempDir();
+        const log = NodePath.join(dir, "stops.log");
+        const remoto = script(
+          dir,
+          "remoto-parallel",
+          [
+            `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=%s\\n' $$ >&2`,
+            'eval "last=\\${$#}"; echo "remote-up-$last" >&2',
+            `mkdir -p "${home}/runs/app-1" && cd "${home}/runs/app-1" && "$@"; c=$?`,
+            `printf '${M} exit=%s\\n' "$c" >&2; exit "$c"`,
+          ].join("\n"),
+        );
+        // Both calls wait for each other, then each writes its own file there.
+        const bins = NodePath.join(home, "runs", "app-1", "node_modules", ".bin");
+        NodeFS.mkdirSync(bins, { recursive: true });
+        script(
+          bins,
+          "vp",
+          [
+            `touch "${home}/up-$2"`,
+            `while [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; do sleep 0.05; done`,
+            command(dir),
+          ].join("\n"),
+        );
+        const ssh = script(
+          dir,
+          "ssh-parallel",
+          [
+            'eval "c=\\${$#}"',
+            `case "$c" in *t3-start*) cd "${home}" && exec sh -c "$c";; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo "$c" >> ${log}; echo gone;; esac`,
+          ].join("\n"),
+        );
+        const rsync = script(
+          dir,
+          "rsync-parallel",
+          `for a; do case "$a" in --files-from=*) l="\${a#--files-from=}";; esac; done; eval "d=\\\${$#}"; S="${home}/runs/app-1/" D="$d" xargs -0 sh -c 'for f; do cp "$S$f" "$D$f"; done' sh < "$l"`,
+        );
+        const run = heavyHere(
+          dir,
+          ["/bin/sh", "-c", "vp lint a & vp lint b & wait"],
+          { ...env, T3CODE_REMOTO: remoto, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
+          ["--"],
+          dir,
+        );
+        const stops = () =>
+          new Set(
+            [
+              ...(NodeFS.existsSync(log) ? NodeFS.readFileSync(log, "utf8") : "").matchAll(
+                /p=(\d+);/g,
+              ),
+            ].map((match) => match[1]),
+          );
+        return { dir, run, stops };
+      };
+
+      it("each brings back what it wrote", async () => {
+        // `b` ends only once `a`'s results are back here, after `a` listed what changed there.
+        const { dir, run } = parallel(
+          (mac) =>
+            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
+        );
+        expect(await run.exited).toBe(0);
+        expect(run.stderr()).not.toContain("Could not copy");
+        expect(NodeFS.readFileSync(NodePath.join(dir, "a.txt"), "utf8")).toBe("a\n");
+        expect(NodeFS.readFileSync(NodePath.join(dir, "b.txt"), "utf8")).toBe("b\n");
+      });
+
+      it("Stop stops both runs there", async () => {
+        const { run, stops } = parallel(() => "exec sleep 30");
+        await run.until("err", "remote-up-a");
+        await run.until("err", "remote-up-b");
+        run.child.kill("SIGTERM");
+        expect(await run.exited).toBe(143);
+        expect(stops().size).toBe(2);
+      });
+    });
+
     // On a run's last attempt, a PC that went away answers neither check: the agent hears
     // before Linux can confirm.
     it.each([

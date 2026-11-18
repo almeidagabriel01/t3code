@@ -726,6 +726,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   // The code a failure notice reports; every exit path ends here.
   process.on("exit", (code) => {
     NodeFS.rmSync(envFile(dir, id), { force: true });
+    for (const file of partRemoteFiles(dir, id)) NodeFS.rmSync(file, { force: true });
     finish(
       dir,
       id,
@@ -1079,6 +1080,20 @@ const remoteOf = (dir: string, id: string) => {
   return remote === undefined ? null : { id: remote.id, pgid: remote.pgid ?? null };
 };
 
+/** Each work part's own run there, until it ends: parallel parts of one job run at once. */
+const partRemotePath = (dir: string, id: string) =>
+  NodePath.join(dir, `remote-${id}-${process.pid}.json`);
+
+const partRemoteFiles = (dir: string, id: string) => {
+  try {
+    return NodeFS.readdirSync(dir)
+      .filter((name) => name.startsWith(`remote-${id}-`) && name.endsWith(".json"))
+      .map((name) => NodePath.join(dir, name));
+  } catch {
+    return [];
+  }
+};
+
 /**
  * A Linux job runs its line in a shell here, in a process group of its own: each heavy call goes
  * to Linux through its shim while redirects, pipes and the rest stay here. A call Linux never ran
@@ -1150,11 +1165,22 @@ const runLinuxAttempt = async (
     });
     child.on("exit", (code, signal) => resolve({ code, signal }));
   });
+  /** Stops every part's run still going there; true once Linux confirms each one ended. */
   const confirmGone = async () => {
-    const remote = remoteOf(dir, id);
-    return remote === null
-      ? true
-      : confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+    const stops = await Promise.all(
+      partRemoteFiles(dir, id).map(async (file) => {
+        let remote: { readonly id: string; readonly pgid: number | null };
+        try {
+          remote = JSON.parse(NodeFS.readFileSync(file, "utf8")) as typeof remote;
+        } catch {
+          return true;
+        }
+        const gone = confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+        if (gone) NodeFS.rmSync(file, { force: true });
+        return gone;
+      }),
+    );
+    return stops.every(Boolean);
   };
   let stopping = false;
   setSignal((signal) => {
@@ -1488,6 +1514,8 @@ const runLinuxPart = async (
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
+  // This call's own start marker there: parallel calls of one job each list what they wrote.
+  const call = `${id}-${process.pid}`;
   const fault = (seen: FaultSeen) => {
     const found = faultOf(seen, unreachable ?? failure ?? lastError, {
       command: labelOf(program, args),
@@ -1547,7 +1575,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
-      ...(bringsBack ? { startMarker: id } : {}),
+      ...(bringsBack ? { startMarker: call } : {}),
       ...(input === undefined ? {} : { input }),
       stdout: (chunk) => {
         wroteOutput ||= chunk.length > 0;
@@ -1566,6 +1594,12 @@ const runLinuxPart = async (
         if (progress.phase === recorded || progress.phase === null) return;
         recorded = progress.phase;
         jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
+        if (progress.id !== null) {
+          NodeFS.writeFileSync(
+            partRemotePath(dir, id),
+            JSON.stringify({ id: progress.id, pgid: progress.pgid }),
+          );
+        }
         setProgress(dir, id, {
           phase: progress.phase,
           ...(progress.id === null
@@ -1609,6 +1643,8 @@ const runLinuxPart = async (
     }
   }
   if (stopped) process.exit(143);
+  // Its command ended there: nothing of it is left to stop.
+  if (outcome.kind === "finished") NodeFS.rmSync(partRemotePath(dir, id), { force: true });
   // Rerunning anywhere fails the same way until the worktree is fixed.
   if (outcome.kind !== "finished" && worktree !== null) {
     return endLine(dir, id, { kind: "worktree", reason: worktree });
@@ -1619,7 +1655,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       environment: process.env,
       copyId: progress.id,
-      job: id,
+      job: call,
       root,
       since,
       exclude: configFor(doc, cwd).runnerBringBackExclude,
@@ -1701,7 +1737,12 @@ const syncBack = async (dir: string, id: string, options: Parameters<typeof brin
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {
-  NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome));
+  try {
+    // The first part to end the line names why; a parallel one stopped by it adds nothing.
+    NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome), { flag: "wx" });
+  } catch {
+    // Another part already ended the line.
+  }
   process.kill(-Number(process.env[GROUP_ENV] ?? 0), "SIGTERM");
   process.exit(LINUX_UNAVAILABLE_EXIT);
 };
