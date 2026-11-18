@@ -438,33 +438,45 @@ export const bringBack = async (options: {
     options.exclude.length === 0
       ? ""
       : `\\( ${options.exclude.map((name) => `-name ${shellQuote(name)}`).join(" -o ")} \\) -prune -o`;
-  // `wc -c` sizes the files and adds a `total` line, which has no `./`. Captured first: a pipe
-  // would report `sed`'s status, and a `find` that failed partway would read as a full listing.
+  // NUL-separated records: a newline in a file name can't forge another. Each file is sized on
+  // its own, so a `find` that failed partway exits non-zero instead of reading as a full listing.
   // ponytail: deletions are found in the first DELETION_FOLDERS changed folders only, by their
   // direct entries; a full tree diff if a deeper count ever matters.
+  const swap = `tr '\\n\\000' '\\000\\n'`;
   const listed = await ssh(
     machine,
     environment,
     [
       `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
-      `files=$(find . ${prune} -type f -cnewer ${marker} -exec wc -c {} +) || exit 1`,
-      `printf '%s\\n' "$files" | sed -n 's|^ *\\([0-9][0-9]*\\) \\(\\./.*\\)|F \\1 \\2|p'`,
-      `find . ${prune} -type d -cnewer ${marker} -print | head -n ${DELETION_FOLDERS} | while IFS= read -r d; do printf 'D %s\\n' "$d"; ls -A "$d" | while IFS= read -r n; do printf 'E %s/%s\\n' "$d" "$n"; done; done`,
+      `find . ${prune} -type f -cnewer ${marker} -exec sh -c 'for f; do printf "F %s %s\\000" $(wc -c < "$f") "$f"; done' sh {} + || exit 1`,
+      // Swapped, each record is one line for `head`.
+      `find . ${prune} -type d -cnewer ${marker} -print0 | ${swap} | head -n ${DELETION_FOLDERS} | ${swap} | xargs -0 sh -c 'for d; do printf "D %s\\000" "$d"; find "$d" -mindepth 1 -maxdepth 1 -exec printf "E %s\\000" {} +; done' sh`,
       `rm -f ${marker}`,
     ].join("\n"),
     (machine.runnerSshTimeoutSeconds + 60) * 1000,
   );
   if (listed.code !== 0) return null;
+  const excluded = nameMatcher(options.exclude);
+  // What a job there names is checked here too: nothing lands outside the checkout, in `.git`, or
+  // under a name the setting leaves out.
+  const safe = (path: string) =>
+    path
+      .split("/")
+      .every(
+        (name) =>
+          name !== "" && name !== "." && name !== ".." && name !== ".git" && !excluded(name),
+      );
   const relative = (path: string) => (path === "." ? "" : path.replace(/^\.\//, ""));
   const copied: string[] = [];
   const skipped: string[] = [];
   let bytes = 0;
   const folders: string[] = [];
   const there = new Set<string>();
-  for (const line of listed.stdout.split("\n")) {
-    const file = /^F (\d+) \.\/(.+)$/.exec(line);
+  for (const record of listed.stdout.split("\0")) {
+    const file = /^F (\d+) \.\/([\s\S]+)$/.exec(record);
     if (file !== null) {
       const path = file[2]!;
+      if (!safe(path)) continue;
       let changedHere = false;
       try {
         changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
@@ -476,10 +488,11 @@ export const bringBack = async (options: {
         copied.push(path);
         bytes += Number(file[1]);
       }
-    } else if (line.startsWith("D ")) folders.push(relative(line.slice(2)));
-    else if (line.startsWith("E ")) there.add(relative(line.slice(2)));
+    } else if (record.startsWith("D ")) {
+      const folder = relative(record.slice(2));
+      if (folder === "" || safe(folder)) folders.push(folder);
+    } else if (record.startsWith("E ")) there.add(relative(record.slice(2)));
   }
-  const excluded = nameMatcher(options.exclude);
   const missing: string[] = [];
   for (const folder of folders) {
     let names: string[];
@@ -507,7 +520,7 @@ export const bringBack = async (options: {
     const listDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bring-back-"));
     try {
       const list = NodePath.join(listDir, "files");
-      NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
+      NodeFS.writeFileSync(list, `${copied.join("\0")}\0`);
       const shell = [
         sshProgram(environment),
         // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
@@ -523,6 +536,7 @@ export const bringBack = async (options: {
           "-p",
           "-e",
           shell.join(" "),
+          "--from0",
           `--files-from=${list}`,
           `${machine.runnerHost}:runs/${copyId}/`,
           `${root}/`,

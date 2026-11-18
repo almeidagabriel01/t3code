@@ -625,13 +625,13 @@ describe("bringing results back", () => {
       T3_FAKE_HOME: home,
       // Runs the command in Linux's home, as ssh would.
       T3CODE_RUNNER_SSH: fake('eval "c=\\${$#}"; cd "$T3_FAKE_HOME" && exec sh -c "$c"'),
-      // Copies each listed file from the copy there, as rsync --files-from would.
+      // Copies each listed file from the copy there, as rsync --from0 --files-from would.
       T3CODE_RUNNER_RSYNC: fake(
         [
           'printf "%s\\n" "$@" > "$T3_FAKE_HOME/rsync-args"',
           'for a; do case "$a" in --files-from=*) list="${a#--files-from=}";; esac; done',
           'eval "src=\\${$(($# - 1))}"; eval "dst=\\${$#}"; src="$T3_FAKE_HOME/${src#*:}"',
-          'while IFS= read -r f; do mkdir -p "$dst$(dirname "$f")"; cp "$src$f" "$dst$f"; done < "$list"',
+          'export src dst; xargs -0 sh -c \'for f; do mkdir -p "$dst$(dirname "$f")" && cp "$src$f" "$dst$f" || exit 1; done\' sh < "$list"',
         ].join("\n"),
       ),
     };
@@ -733,6 +733,44 @@ describe("bringing results back", () => {
     NodeFS.writeFileSync(marker, "");
     NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
     expect((await back(["*.log", "logs"], 5))?.copied).toEqual(["out.txt"]);
+  });
+
+  it("never copies into .git, even with no excludes, nor a line a file name forged", async () => {
+    const { copy, marker, root, back } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    write(NodePath.join(copy, ".git", "hooks", "pre-commit"), "evil", 500_000_000);
+    // Its name's newline would read as a second line naming `b.txt`, which the job never wrote.
+    const forged = "x\n 1 .";
+    write(NodePath.join(copy, forged, "b.txt"), "linux", 500_000_000);
+    write(NodePath.join(root, "b.txt"), "mac", T0 - 100);
+    expect((await back([]))?.copied).toEqual([`${forged}/b.txt`]);
+    expect(NodeFS.existsSync(NodePath.join(root, ".git", "hooks", "pre-commit"))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(root, "b.txt"), "utf8")).toBe("mac");
+    expect(NodeFS.readFileSync(NodePath.join(root, forged, "b.txt"), "utf8")).toBe("linux");
+  });
+
+  it("drops listed paths that leave the checkout, enter .git, or name an excluded entry", async () => {
+    const { copy, root, environment } = setup();
+    write(NodePath.join(copy, "ok.txt"), "linux", 500_000_000);
+    const listing = ["../x", "./../x", "/etc/x", ".git/hooks/x", "a/.git/x", "a//b", "./logs/x"]
+      .map((path) => `F 1 ./${path}`)
+      .concat(["F 1 ./ok.txt", "D ./..", "D ./.git"]);
+    const canned = {
+      ...environment,
+      T3CODE_RUNNER_SSH: fake(`printf '${listing.join("\\0")}\\0'`),
+    };
+    const back = await bringBack({
+      machine: DEFAULT_MACHINE_CONFIG,
+      environment: canned,
+      copyId: COPY,
+      job: "job-1",
+      root,
+      since: 0,
+      exclude: ["logs"],
+      maxBytes: 1024,
+    });
+    expect(back?.copied).toEqual(["ok.txt"]);
+    expect(back?.deleted).toEqual([]);
   });
 
   it("is null when Linux can't list or send them, and leaves this Mac alone", async () => {

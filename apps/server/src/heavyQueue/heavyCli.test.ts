@@ -1153,12 +1153,12 @@ describe("t3 heavy", () => {
       const ssh = script(
         dir,
         "ssh-list",
-        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\nF 4 ./mine.txt\\nD ./sub\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\0F 4 ./mine.txt\\0D ./sub\\0';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
       );
       const rsync = script(
         dir,
         "rsync-fake",
-        `for a; do case "$a" in --files-from=*) l="\${a#--files-from=}";; esac; done; eval "d=\\\${$#}"; while read -r f; do echo from-linux > "$d$f"; done < "$l"`,
+        `for a; do case "$a" in --files-from=*) l="\${a#--files-from=}";; esac; done; eval "d=\\\${$#}"; tr "\\0" "\\n" < "$l" | while read -r f; do echo from-linux > "$d$f"; done`,
       );
       const run = heavyHere(
         dir,
@@ -1188,7 +1188,7 @@ describe("t3 heavy", () => {
       const ssh = script(
         dir,
         "ssh-list",
-        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\0';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
       );
       const run = heavyHere(
         dir,
