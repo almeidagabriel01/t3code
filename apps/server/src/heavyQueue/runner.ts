@@ -210,6 +210,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly syncBack?: SyncBack;
   /** A Mac job's own call queued for Linux: when Linux can't take it, it runs under that job. */
   readonly call?: boolean;
+  /** Asked with `--runner linux` (not an agent's `remoto`): none of its calls runs on this Mac. */
+  readonly linuxOnly?: boolean;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 

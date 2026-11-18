@@ -711,7 +711,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
-    ...(process.env[CALL_ENV] === "1" ? { call: true } : {}),
+    ...(process.env[CALL_ENV] === "1"
+      ? { call: true }
+      : where === "linux"
+        ? { linuxOnly: true }
+        : {}),
   };
   // Another process owns this request's job: wait for it to end and answer with its code. An
   // owner that died without one leaves no result, so this process runs the job itself.
@@ -1042,7 +1046,9 @@ type PartOutcome =
   /** The worktree's own files broke the install there; `reason` is the fix. */
   | { readonly kind: "worktree"; readonly reason: string }
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
-  | { readonly kind: "command"; readonly reason: string };
+  | { readonly kind: "command"; readonly reason: string }
+  /** Its job asked for Linux, and Linux can't run this part: the job ends with `code`. */
+  | { readonly kind: "refused"; readonly reason: string; readonly code: number };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1207,6 +1213,11 @@ const runLinuxAttempt = async (
     commandFailure = outcome.reason;
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
     return { kind: "exit", code: 127 };
+  }
+  if (outcome.kind === "refused") {
+    commandFailure = outcome.reason;
+    process.stderr.write(`[t3 heavy] ${outcome.reason}.\n`);
+    return { kind: "exit", code: outcome.code };
   }
   if (outcome.kind === "worktree") {
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
@@ -1396,10 +1407,20 @@ const runLinuxPart = async (
   const cwd = moved?.cwd ?? process.cwd();
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
+  // Asked with `--runner linux`: none of its calls runs here, so the job ends with why instead.
+  const linuxOnly = doc.entries.some(
+    (entry: QueuedEntry) => entry.id === id && entry.linuxOnly === true,
+  );
+  const toMac = (reason: string) =>
+    linuxOnly
+      ? endLine(dir, id, {
+          kind: "refused",
+          reason: `Asked for Linux, but it needs this Mac: ${reason}`,
+          code: LINUX_UNAVAILABLE_EXIT,
+        })
+      : queueCall(dir, "mac", [given, ...givenArgs], { reason });
   if (root === null || program === undefined) {
-    return queueCall(dir, "mac", [given, ...givenArgs], {
-      reason: macReasonText({ code: "mac-env", subject: cwd }),
-    });
+    return toMac(macReasonText({ code: "mac-env", subject: cwd }));
   }
   // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
   const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
@@ -1413,9 +1434,7 @@ const runLinuxPart = async (
   );
   const days = configFor(doc, cwd).runnerRouteMemoryDays;
   const here = mac ?? learnedOf(dir, program, cwd, root, days);
-  if (here !== null) {
-    return queueCall(dir, "mac", [given, ...givenArgs], { reason: macReasonText(here) });
-  }
+  if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),
     ...((args.includes("check:changed") ? changedInputs(args, cwd, root) : null) ?? []),
@@ -1455,6 +1474,13 @@ const runLinuxPart = async (
    * Input it handed Linux is spent, so then the call ends with Linux's code.
    */
   const fallBack = (lacked: EnvironmentFault, code: number) => {
+    if (linuxOnly) {
+      return endLine(dir, id, {
+        kind: "refused",
+        reason: `Linux couldn't run this: ${lacked.line}`,
+        code,
+      });
+    }
     const key = routeKey(program, routeFolder(cwd, root), lacked.kind);
     if (recordRouteFault(dir, key, lacked, Date.now(), days).learned) {
       jobNote(

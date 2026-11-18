@@ -1004,6 +1004,45 @@ describe("t3 heavy", () => {
       );
     });
 
+    // Only the shell knows `$F`: the call finds its reason at run time, and still never runs here.
+    it("a job asked for Linux ends when a call turns out to need this Mac", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = "F=$(echo /etc/hosts); vp test run $F; echo after";
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
+      expect(await run.exited).toBe(75);
+      expect(run.stdout()).toBe("");
+      const why =
+        "Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts";
+      expect(run.stderr()).toContain(`[t3 heavy] ${why}.\n`);
+      expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
+      // An agent's own `remoto` still runs that call here.
+      const remoto = heavyHere(dir, ["/bin/sh", "-c", `remoto ${line}`], env, ["--"], dir);
+      expect(await remoto.exited).toBe(0);
+      expect(remoto.stdout()).toBe("vp on mac: test run /etc/hosts\nafter\n");
+    });
+
+    it("a job asked for Linux ends with what Linux lacked, never rerunning here or learning it", async () => {
+      const error = "sh: 1: tsgo: not found";
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=127\\n' >&2; exit 127`,
+      );
+      const run = heavyHere(
+        dir,
+        ["/bin/sh", "-c", "vp test run; echo after"],
+        env,
+        ["--runner", "linux", "--"],
+        dir,
+      );
+      expect(await run.exited).toBe(127);
+      expect(run.stdout()).toBe("");
+      expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}.\n`);
+      expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({
+        code: 127,
+        error: `Linux couldn't run this: ${error}`,
+      });
+      expect(NodeFS.existsSync(NodePath.join(dir, "routes.json"))).toBe(false);
+    });
+
     /** Fails its first run with `first`, then runs as Linux would; `$0.count` counts the runs. */
     const failingOnce = (first: string) =>
       [
