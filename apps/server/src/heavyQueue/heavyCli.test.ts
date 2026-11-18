@@ -652,6 +652,26 @@ describe("t3 heavy", () => {
       },
     );
 
+    it("inside a Mac job, a call with a learned route runs here", async () => {
+      const { dir, env } = setup(echoArgs);
+      script(NodePath.join(dir, "bin"), "xcodebuild", 'echo "xcodebuild on mac: $*"');
+      // Learned far ahead of any clock this runs under, so it is still in force.
+      const route = {
+        kind: "missing-program",
+        faults: 2,
+        at: Date.parse("2100-01-01"),
+        line: "x",
+      };
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "routes.json"),
+        JSON.stringify({ "vp@.#missing-program": route }),
+      );
+      const line = "xcodebuild -version; vp run knip:check";
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout().split("\n").slice(1)).toEqual(["vp on mac: run knip:check", ""]);
+    });
+
     /** The faults the job logged for the problem detector, without the per-run fields. */
     const faults = (dir: string) =>
       Queue.readDoc(dir).events.flatMap((event) =>
