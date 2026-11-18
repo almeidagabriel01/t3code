@@ -13,6 +13,7 @@ import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   runnerModeFieldApplies,
+  runnerModeFieldIdle,
   RUNNER_LINUX_FULL_DESCRIPTION,
   RUNNER_LINUX_FULL_LABEL,
   runnerWhereLine,
@@ -309,6 +310,18 @@ describe("Runner copy and mode fields", () => {
     ["runnerLinuxCommands", "automatic", true, true],
   ] as const)("%s under %s, Everything %s: %s", (key, where, everything, applies) => {
     expect(runnerModeFieldApplies(key, where, everything)).toBe(applies);
+  });
+
+  it.each([
+    ["runnerLinuxFull", "linux", false, null],
+    ["runnerLinuxFull", null, false, null],
+    ["runnerLinuxFull", "automatic", false, "Only applies when Where jobs run is Linux."],
+    ["runnerLinuxEverything", "mac", false, "Only applies when Where jobs run is Linux."],
+    ["runnerMacFirstAfter", "linux", false, "Only applies when Where jobs run is Mac first."],
+    ["runnerLinuxCommands", "linux", true, "Only applies while Everything is off."],
+    ["runnerBringBack", "mac", false, null],
+  ] as const)("why %s does nothing under %s, Everything %s: %s", (key, where, everything, idle) => {
+    expect(runnerModeFieldIdle(key, where, everything)).toBe(idle);
   });
 
   it.each([

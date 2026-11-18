@@ -474,6 +474,18 @@ export function runnerModeFieldApplies(
   return true;
 }
 
+/** Why a mode-specific field does nothing under the picked mode, or null when it applies. */
+export function runnerModeFieldIdle(
+  key: RunnerKey,
+  where: RunnerWhere | null,
+  everything: boolean | null,
+): string | null {
+  if (runnerModeFieldApplies(key, where, everything)) return null;
+  if (key === "runnerMacFirstAfter") return "Only applies when Where jobs run is Mac first.";
+  if (key === "runnerLinuxCommands") return "Only applies while Everything is off.";
+  return "Only applies when Where jobs run is Linux.";
+}
+
 /** The effective values Runner fields depend on; null where the selected targets disagree. */
 export interface RunnerChoices {
   readonly runnerEnabled: boolean | null;
