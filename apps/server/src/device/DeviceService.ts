@@ -1714,9 +1714,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         if (!device) {
           return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
         }
+        // The idle reaper owns what this boot started, even if the open fails from here on.
+        yield* markUsed(host.id, device.id);
       } else if (device.booted) {
         yield* ready.devices.attach(device, hostContext);
       }
+      // Only agents are refused: a hub-booted emulator has no window, so the user's own
+      // open is the way to its lock screen. Routed hosts check on the side running it.
+      if (context?.agent && device.platform === "android" && !ready.upstream)
+        yield* ensureAndroidUnlocked(ready, device);
       if (hosts.get(host.id) !== host)
         return yield* new DeviceHostUnavailableError({
           hostId: host.id,
@@ -1768,6 +1774,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return session;
     },
   );
+
+  // A PIN-protected Android user stays locked after a cold boot although sys.boot_completed
+  // is 1, and apps cannot start until someone unlocks it. Only an explicit locked reading
+  // refuses: a credential-free boot passes through RUNNING_UNLOCKING, and old or offline
+  // devices answer something else.
+  const ensureAndroidUnlocked = Effect.fn("DeviceService.ensureAndroidUnlocked")(function* (
+    ready: DeviceReadiness,
+    device: DeviceSummary,
+  ) {
+    const user = yield* ready.run(
+      "adb",
+      ["-s", device.id, "shell", "am", "get-started-user-state", "0"],
+      {
+        timeoutMs: 10_000,
+      },
+    );
+    if (user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout))
+      return yield* new DeviceNotReadyError({
+        hostId: device.hostId,
+        deviceId: device.id,
+        deviceName: device.name,
+        reason: "locked",
+        detail: device.physical
+          ? "unlock the phone itself"
+          : "open it in the Device panel and enter its PIN",
+      });
+  });
 
   const refreshAfterShutdown = (ready: DeviceReadiness) =>
     refresh(ready).pipe(

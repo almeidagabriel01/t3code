@@ -209,10 +209,13 @@ const fixture = Effect.fn("fixture")(function* (
       );
     }),
   );
+  const androidUser = yield* Ref.make({ code: 0, stdout: "RUNNING_UNLOCKED\n", stderr: "" });
   const run = (command: string) =>
     command === "emulator"
       ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : Ref.get(encoderResult);
+      : command === "adb"
+        ? Ref.get(androidUser)
+        : Ref.get(encoderResult);
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -353,6 +356,7 @@ const fixture = Effect.fn("fixture")(function* (
     connection,
     devices,
     encoderResult,
+    androidUser,
     discoveryErrors,
     androidAvailable,
     iosAvailable,
@@ -535,6 +539,106 @@ describe("device setup consent", () => {
       const state = yield* service.state;
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { case: "an emulator it boots", deviceId: "Pixel_API_35", booted: false, physical: false },
+    { case: "a running emulator", deviceId: "emulator-5556", booted: true, physical: false },
+    { case: "a physical phone", deviceId: "physical-android", booted: true, physical: true },
+  ])(
+    "refuses agents $case while its Android user is locked, and the user opens it to unlock",
+    (row) =>
+      Effect.gen(function* () {
+        const { service, devices, androidUser, requests } = yield* fixture();
+        if (row.booted)
+          devices.push({
+            id: DeviceId.make(row.deviceId),
+            name: row.deviceId,
+            platform: "android",
+            version: "Android 15",
+            booted: true,
+            physical: row.physical,
+          });
+        yield* service.configure({ enabled: true });
+        yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_LOCKED\n", stderr: "" });
+        const agentThread = ThreadId.make("locked-android");
+        const asAgent = { agent: { ask: () => Effect.succeed("allowed" as const) } };
+        const refused = yield* service
+          .open({ threadId: agentThread, deviceId: row.deviceId, platform: "android" }, asAgent)
+          .pipe(Effect.flip);
+        expect(refused).toMatchObject({
+          _tag: "DeviceNotReadyError",
+          reason: "locked",
+          // The refusal names the running device, which is what a retry opens.
+          deviceId: row.booted ? row.deviceId : "emulator-5554",
+        });
+        expect(refused.message).toContain(
+          row.physical
+            ? "unlock the phone itself"
+            : "open it in the Device panel and enter its PIN",
+        );
+        const locked = yield* service.state;
+        expect(locked.sessions).toEqual([]);
+        expect(locked.bootingDevices ?? []).toEqual([]);
+        expect(locked.devices.every((device) => (device.issues ?? []).length === 0)).toBe(true);
+
+        const running = (refused as { deviceId: string }).deviceId;
+        // A headless emulator's lock screen is reachable only through the user's own open.
+        const user = yield* service.open({
+          threadId: ThreadId.make("user-unlocks"),
+          deviceId: running,
+          platform: "android",
+        });
+        expect(user.deviceId).toBe(running);
+
+        yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_UNLOCKED\n", stderr: "" });
+        const session = yield* service.open(
+          { threadId: agentThread, deviceId: running, platform: "android" },
+          asAgent,
+        );
+        expect(session.deviceId).toBe(running);
+        expect((yield* service.state).sessions).toEqual([user, session]);
+        // Unlocking needed no reboot.
+        expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(row.booted ? 0 : 1);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("powers off an emulator it booted locked once it sits idle", () =>
+    Effect.gen(function* () {
+      const { service, androidUser, requests } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_LOCKED\n", stderr: "" });
+      yield* service
+        .open(
+          {
+            threadId: ThreadId.make("locked-idle"),
+            deviceId: "Pixel_API_35",
+            platform: "android",
+          },
+          { agent: {} },
+        )
+        .pipe(Effect.flip);
+      yield* TestClock.adjust("21 minutes");
+      yield* service.reapIdleDevices(20);
+      expect(requests.filter((url) => url.endsWith("/shutdown"))).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { case: "adb fails", result: { code: 1, stdout: "", stderr: "device offline" } },
+    { case: "the state is unknown", result: { code: 0, stdout: "Unknown command\n", stderr: "" } },
+  ])("opens an Android device when $case, since only a locked reading refuses", ({ result }) =>
+    Effect.gen(function* () {
+      const { service, androidUser } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      yield* Ref.set(androidUser, result);
+      const session = yield* service.open({
+        threadId: ThreadId.make("unknown-lock"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      expect(session.deviceId).toBe("emulator-5554");
     }).pipe(Effect.scoped),
   );
 
