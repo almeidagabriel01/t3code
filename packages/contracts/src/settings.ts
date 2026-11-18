@@ -1404,6 +1404,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerRouteMemoryDays",
   "runnerBringBackExclude",
   "runnerBringBackMaxMB",
+  "runnerMacTools",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1479,6 +1480,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
   runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
   runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.optionalKey(RunnerPatterns),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1797,6 +1799,9 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerBringBackMaxMB: RunnerBringBackMaxMB.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
+  ),
+  runnerMacTools: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacTools)),
   ),
   runnerHost: RunnerHost.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
@@ -2347,6 +2352,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
   runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
   runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.optionalKey(RunnerPatterns),
   runnerHost: Schema.optionalKey(RunnerHost),
   runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
   runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),

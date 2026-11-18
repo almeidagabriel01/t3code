@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { RunnerOfflineAfterFailures, RunnerProjectConfig } from "./runner.ts";
+import { RUNNER_DEFAULTS, RunnerOfflineAfterFailures, RunnerProjectConfig } from "./runner.ts";
 
 const decodeProjectConfig = Schema.decodeUnknownSync(RunnerProjectConfig);
 
@@ -32,12 +32,13 @@ describe("Runner settings", () => {
       runnerBringBack: false,
     };
     const saved = { ...current, runnerLinuxCommands: ["test"], runnerLinuxEverything: false };
-    // Saved before route memory and the bring-back limits existed, it reads their defaults too.
+    // Saved before route memory, the bring-back limits and the Mac tools existed, it reads their defaults too.
     expect(decodeProjectConfig(saved)).toEqual({
       ...current,
       runnerRouteMemoryDays: 7,
       runnerBringBackExclude: ["node_modules", ".git", ".turbo", "*.tsbuildinfo"],
       runnerBringBackMaxMB: 200,
+      runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,
     });
   });
 });

@@ -52,6 +52,7 @@ describe("the Runner block a server publishes", () => {
           runnerBringBack: false,
           runnerBringBackExclude: ["dist"],
           runnerBringBackMaxMB: 50,
+          runnerMacTools: ["fastlane"],
         },
       },
     };
@@ -71,6 +72,7 @@ describe("the Runner block a server publishes", () => {
       runnerBringBack: true,
       runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
       runnerBringBackMaxMB: 200,
+      runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,
     });
     expect(block.machine).toEqual({
       runnerHost: "pc",
@@ -95,6 +97,7 @@ describe("the Runner block a server publishes", () => {
         runnerBringBack: false,
         runnerBringBackExclude: ["dist"],
         runnerBringBackMaxMB: 50,
+        runnerMacTools: ["fastlane"],
       }),
     });
     expect(block.projects[1]!.config).toEqual(block.global);

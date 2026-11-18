@@ -58,6 +58,25 @@ export const RUNNER_DEFAULTS = {
   ] as ReadonlyArray<string>,
   /** A run whose results come to more than this many MB copies nothing back. */
   runnerBringBackMaxMB: 200,
+  /** Programs only this Mac has: a heavy call that runs one stays here. */
+  runnerMacTools: [
+    "xcodebuild",
+    "xcrun",
+    "simctl",
+    "emulator",
+    "adb",
+    "instruments",
+    "pod",
+    "pbcopy",
+    "security",
+    "defaults",
+    "open",
+    "osascript",
+    "screencapture",
+    "agent-device",
+    // It measures this Mac.
+    "hyperfine",
+  ] as ReadonlyArray<string>,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -118,6 +137,7 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerRouteMemoryDays",
   "runnerBringBackExclude",
   "runnerBringBackMaxMB",
+  "runnerMacTools",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -219,6 +239,9 @@ export const RunnerProjectConfig = Schema.Struct({
   ),
   runnerBringBackMaxMB: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
+  ),
+  runnerMacTools: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacTools)),
   ),
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;

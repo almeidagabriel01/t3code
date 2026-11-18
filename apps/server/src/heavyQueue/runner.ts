@@ -55,6 +55,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerRouteMemoryDays: RUNNER_DEFAULTS.runnerRouteMemoryDays,
   runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
   runnerBringBackMaxMB: RUNNER_DEFAULTS.runnerBringBackMaxMB,
+  runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,
 };
 
 export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {
@@ -279,31 +280,13 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
 };
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
-const MAC_TOOLS = new Set([
-  "xcodebuild",
-  "xcrun",
-  "simctl",
-  "emulator",
-  "adb",
-  "instruments",
-  "pod",
-  "pbcopy",
-  "security",
-  "defaults",
-  "open",
-  "osascript",
-  "screencapture",
-  "agent-device",
-  // It measures this Mac.
-  "hyperfine",
-]);
 
 /**
- * What a part's program does to this Mac, whatever the lists say: a Mac-only tool, a change to
+ * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a change to
  * this checkout (a git write; an install, whose `node_modules` never comes back), or a server
  * used from here. Judged on the program `npx` or `pnpm exec` runs.
  */
-const programReason = (part: Part): MacReason | null => {
+const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
   let { program, words } = part;
   if (EXECUTORS.has(program) || (PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? ""))) {
     const at = EXECUTORS.has(program) ? 0 : 1;
@@ -312,7 +295,7 @@ const programReason = (part: Part): MacReason | null => {
   }
   const [first = "", second = ""] = words;
   const named = `${program} ${first}`.trim();
-  if (MAC_TOOLS.has(program)) return { code: "mac-tool", subject: program };
+  if (macTools.includes(program)) return { code: "mac-tool", subject: program };
   if ((program === "expo" && /^(run|prebuild)/.test(first)) || named === "playwright install") {
     return { code: "mac-tool", subject: named };
   }
@@ -341,7 +324,7 @@ const tieOf = (
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
 ): MacReason | null => {
-  const own = programReason(part);
+  const own = programReason(part, config.runnerMacTools);
   if (own !== null) return own;
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));

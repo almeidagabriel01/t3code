@@ -83,6 +83,11 @@ export const RUNNER_SETTING_COPY: Record<
     description:
       "A Linux run whose results come to more than this many MB copies nothing back, and its card says so.",
   },
+  runnerMacTools: {
+    title: "Mac-only tools",
+    description:
+      "Programs only this Mac has. A heavy command that runs one stays here, even when sent to Linux by hand.",
+  },
   runnerRouteMemoryDays: {
     title: "Remember Linux failures for",
     description:

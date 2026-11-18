@@ -1586,6 +1586,14 @@ describe("patterns and eligibility", () => {
       mac: { code, subject },
     });
   });
+  it("takes its Mac-only tools from the settings", () => {
+    const tools = { ...at, config: { ...open.config, runnerMacTools: ["fastlane"] } };
+    expect(eligibilityOf({ label: "fastlane beta", cwd: "/w" }, tools)).toMatchObject({
+      reason: "Mac-only tool: fastlane",
+    });
+    expect(eligibilityOf({ label: "xcodebuild test", cwd: "/w" }, tools).eligibility).toBe("linux");
+  });
+
   it.each([
     "vp test run",
     "npx vite build",

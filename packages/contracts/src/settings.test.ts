@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import { MemoryHubSettings, MemoryHubSettingsUpdateInput } from "./memory.ts";
+import { RUNNER_DEFAULTS } from "./runner.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
@@ -757,14 +758,20 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerRouteMemoryDays",
     "runnerBringBackExclude",
     "runnerBringBackMaxMB",
+    "runnerMacTools",
   ] as const;
   const EXCLUDE = ["node_modules", ".git", ".turbo", "*.tsbuildinfo"];
+  const TOOLS = RUNNER_DEFAULTS.runnerMacTools;
   it.each([
-    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, true, 7, EXCLUDE, 200]],
+    [
+      "an older file reads the new defaults",
+      {},
+      ["mac", "agent", 4, false, true, 7, EXCLUDE, 200, TOOLS],
+    ],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, true, 7, EXCLUDE, 200],
+      ["automatic", "ask", 4, false, true, 7, EXCLUDE, 200, TOOLS],
     ],
     [
       "the new values",
@@ -777,8 +784,9 @@ describe("ServerSettings project overrides across versions", () => {
         runnerRouteMemoryDays: 30,
         runnerBringBackExclude: ["dist"],
         runnerBringBackMaxMB: 50,
+        runnerMacTools: ["xcodebuild", "fastlane"],
       },
-      ["macFirst", "agent", 32, true, false, 30, ["dist"], 50],
+      ["macFirst", "agent", 32, true, false, 30, ["dist"], 50, ["xcodebuild", "fastlane"]],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");
