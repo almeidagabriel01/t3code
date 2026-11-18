@@ -7369,7 +7369,7 @@ it.effect("r16 nullable processing reads the actual local item counters and PK p
     const plans = [
       yield* sql<{
         detail: string;
-      }>`EXPLAIN QUERY PLAN SELECT dimension,value FROM memory_quota_counters WHERE space=${key} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_admission_failures')`,
+      }>`EXPLAIN QUERY PLAN SELECT dimension,value FROM memory_quota_counters WHERE space=${key} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_failed_sync')`,
       yield* sql<{
         detail: string;
       }>`EXPLAIN QUERY PLAN SELECT processing_oldest_at FROM memory_items WHERE space=${key} AND processing_oldest_at IS NOT NULL ORDER BY processing_oldest_at LIMIT 1`,

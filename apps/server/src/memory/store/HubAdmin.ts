@@ -447,7 +447,7 @@ export const makeHubAdmin = (
           sql<{
             dimension: string;
             value: number;
-          }>`SELECT dimension,value FROM memory_quota_counters WHERE space=${input.space} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_admission_failures','processing_discarded_sync')`,
+          }>`SELECT dimension,value FROM memory_quota_counters WHERE space=${input.space} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_failed_sync')`,
         );
         const values = new Map(rows.map((r) => [r.dimension, r.value]));
         const count = (name: string) => values.get(`processing_${name}`) ?? 0;
@@ -481,8 +481,8 @@ export const makeHubAdmin = (
               scannerPendingItems: count("scanner_pending"),
               missingParentItems: count("missing_parent"),
               pendingCleanupItems: count("cleanup"),
-              // A discarded unsendable change is one the hub never accepted either.
-              hubAdmissionFailures: count("admission_failures") + count("discarded_sync"),
+              // This device's own changes the hub refused or that could not be sent.
+              hubAdmissionFailures: count("failed_sync"),
               indexCoverage: {
                 status:
                   eligible === indexed ? "available" : indexed === 0 ? "unavailable" : "partial",

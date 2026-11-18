@@ -43,63 +43,72 @@ describe("Memory schema", () => {
       assert.strictEqual(seeds[0]!.count, 17);
     }).pipe(Effect.provide(database)),
   );
-  it.effect("counts sync work discarded before the counter existed, once", () =>
+  it.effect("counts this device's failed sync work once, without the ledger's rejections", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* ensureForkSchema();
-      // A database from before the counter: no triggers, no marker, and discards already there.
+      // A database from before the counter: no triggers, no marker, rejections counted per event.
       for (const t of ["insert", "update", "delete"])
-        yield* sql.unsafe(`DROP TRIGGER memory_outbox_discard_count_${t}`);
+        yield* sql.unsafe(`DROP TRIGGER memory_outbox_failed_sync_${t}`);
       yield* sql`DELETE FROM memory_quota_counters WHERE space='_migrations'`;
-      const insert = (id: string, kind: string, code: string) =>
-        sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES (${id},'space',${kind},'failed','{}',0,${code})`;
+      yield* sql`INSERT INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('space','processing_admission_failures','',2),('space','processing_discarded_sync','',1)`;
+      const insert = (id: string, kind: string, code: string, receipt: string | null = null) =>
+        sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code,completed_receipt_json) VALUES (${id},'space',${kind},'failed','{}',0,${code},${receipt})`;
+      const event = (operation: string) =>
+        sql`INSERT INTO memory_events (protocol_version,memory_space_id,memory_id,operation_id,kind,origin_environment_id,operation_digest,metadata_json,receipt_json,created_at) VALUES (1,'space','m',${operation},'upsert','env','d','{}','{"outcome":"rejected"}',0)`;
+      // This device's push the hub refused: its event and its failed row are one failure.
+      yield* event("own");
+      yield* insert("own", "sync", "conflict_changed", '{"outcome":"rejected"}');
+      // Another member's refused change reaches this ledger by pull, with no row here.
+      yield* event("theirs");
       yield* insert("a", "sync", "invalid_output");
       yield* insert("b", "revert_intent", "not_found");
       yield* insert("c", "sync", "source_invalidated");
       yield* insert("d", "summary", "invalid_output");
-      const counted = sql<{
-        value: number;
-      }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_discarded_sync'`;
+      const counters = sql`SELECT dimension,value FROM memory_quota_counters WHERE space='space' AND dimension IN ('processing_failed_sync','processing_admission_failures','processing_discarded_sync') ORDER BY dimension`;
       yield* ensureForkSchema();
-      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
+      assert.deepStrictEqual(yield* counters, [{ dimension: "processing_failed_sync", value: 3 }]);
+      // A later pulled refusal of another member's change does not count either.
+      yield* event("theirs-2");
       // Restarts keep the live count instead of recounting.
       yield* insert("e", "sync", "unsupported_protocol");
       yield* ensureForkSchema();
-      assert.deepStrictEqual(yield* counted, [{ value: 3 }]);
+      assert.deepStrictEqual(yield* counters, [{ dimension: "processing_failed_sync", value: 4 }]);
       yield* sql`DELETE FROM memory_outbox WHERE id='a'`;
-      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
+      assert.deepStrictEqual(yield* counters, [{ dimension: "processing_failed_sync", value: 3 }]);
     }).pipe(Effect.provide(database)),
   );
-  it.effect("QA: discard counter follows status and ignores hub rejections", () =>
+  it.effect("QA: failed sync counter follows status and counts hub refusals", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* ensureForkSchema();
       const counted = sql<{
         value: number;
-      }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_discarded_sync'`;
-      // Rows that never were discards leave the counter alone.
+      }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_failed_sync'`;
+      // Rows that never failed leave the counter alone.
       yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at) VALUES ('p','space','sync','pending','{}',0)`;
       yield* sql`UPDATE memory_outbox SET status='running' WHERE id='p'`;
       assert.deepStrictEqual(yield* counted, []);
-      // A database that ran the unguarded triggers keeps only the guarded ones after a restart.
-      yield* sql`CREATE TRIGGER memory_outbox_discarded_sync_insert AFTER INSERT ON memory_outbox BEGIN SELECT 1; END`;
+      // A database that ran the superseded triggers keeps only the current ones after a restart.
+      yield* sql`CREATE TRIGGER memory_outbox_discard_count_insert AFTER INSERT ON memory_outbox BEGIN SELECT 1; END`;
+      yield* sql`CREATE TRIGGER memory_events_processing_insert AFTER INSERT ON memory_events BEGIN SELECT 1; END`;
       yield* ensureForkSchema();
       assert.deepStrictEqual(
-        yield* sql`SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memory_outbox_discard%' ORDER BY name`,
-        ["delete", "insert", "update"].map((t) => ({ name: `memory_outbox_discard_count_${t}` })),
+        yield* sql`SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'memory_outbox_failed_sync_%' OR name LIKE 'memory_outbox_discard%' OR name LIKE 'memory_events_processing_%' OR name LIKE 'memory_compact_receipts_processing_%') ORDER BY name`,
+        ["delete", "insert", "update"].map((t) => ({ name: `memory_outbox_failed_sync_${t}` })),
       );
       yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES ('a','space','sync','failed','{}',0,'invalid_output')`;
       assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
-      // A rejection the hub answered carries its receipt and is counted elsewhere.
-      yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code,completed_receipt_json) VALUES ('r','space','sync','failed','{}',0,'not_found','{}')`;
-      assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
+      // A refusal the hub answered for this device's push counts too.
+      yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code,completed_receipt_json) VALUES ('r','space','sync','failed','{}',0,'not_found','{"outcome":"rejected"}')`;
+      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
       // Leaving failed uncounts it; coming back counts it again.
       yield* sql`UPDATE memory_outbox SET status='retry' WHERE id='a'`;
-      assert.deepStrictEqual(yield* counted, [{ value: 0 }]);
-      yield* sql`UPDATE memory_outbox SET status='failed' WHERE id='a'`;
       assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
+      yield* sql`UPDATE memory_outbox SET status='failed' WHERE id='a'`;
+      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
       // A restart with the marker present keeps the live value even when it differs from a recount.
-      yield* sql`UPDATE memory_quota_counters SET value=7 WHERE space='space' AND dimension='processing_discarded_sync'`;
+      yield* sql`UPDATE memory_quota_counters SET value=7 WHERE space='space' AND dimension='processing_failed_sync'`;
       yield* ensureForkSchema();
       assert.deepStrictEqual(yield* counted, [{ value: 7 }]);
     }).pipe(Effect.provide(database)),

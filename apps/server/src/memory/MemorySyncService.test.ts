@@ -304,13 +304,25 @@ it.effect("unsendable work at the queue head is discarded with its reason and th
         Effect.sync(() => {
           pushed.push(...i.operations.map((op) => op.operationId));
           return {
-            receipts: i.operations.map((op) => ({
-              operationId: op.operationId,
-              memoryId: op.memoryId,
-              operationDigest: memoryOperationDigest(op),
-              hubSequence: 1,
-              outcome: "accepted" as const,
-            })),
+            receipts: i.operations.map((op) =>
+              // The hub refuses one of this member's pushes.
+              op.operationId === operation(1102).operationId
+                ? {
+                    operationId: op.operationId,
+                    memoryId: op.memoryId,
+                    operationDigest: memoryOperationDigest(op),
+                    hubSequence: 1,
+                    outcome: "rejected" as const,
+                    failureCode: "conflict_changed" as const,
+                  }
+                : {
+                    operationId: op.operationId,
+                    memoryId: op.memoryId,
+                    operationDigest: memoryOperationDigest(op),
+                    hubSequence: 1,
+                    outcome: "accepted" as const,
+                  },
+            ),
           };
         }),
     });
@@ -339,15 +351,15 @@ it.effect("unsendable work at the queue head is discarded with its reason and th
             { status: "failed", failure_code: "not_found", hold_class: null, n: 50 },
           ],
         );
-        // The status counts each discard as a change the hub could not accept, across cycles,
-        // and a failure that is not a discard stays out of that count.
+        // The status counts this member's refused push and each discard, across cycles, and a
+        // failure that is neither stays out of that count.
         const failures = sync
           .syncStatus({}, Effect.void)
           .pipe(Effect.map((status) => status.processing.hubAdmissionFailures));
-        assert.strictEqual(yield* failures, 100);
-        yield* sql`UPDATE memory_outbox SET status='failed',failure_code='source_invalidated' WHERE id=${ids[100]!}`;
+        assert.strictEqual(yield* failures, 101);
+        yield* sql`UPDATE memory_outbox SET status='failed',failure_code='source_invalidated',completed_receipt_json=NULL WHERE id=${ids[100]!} AND json_extract(completed_receipt_json,'$.outcome')='accepted'`;
         yield* sync.syncOnce;
-        assert.strictEqual(yield* failures, 100);
+        assert.strictEqual(yield* failures, 101);
         // Nothing is left for Settings to rearm, so they are never held again.
         const store = yield* Store.MemoryStore;
         assert.deepStrictEqual(
@@ -360,7 +372,7 @@ it.effect("unsendable work at the queue head is discarded with its reason and th
         for (let after: number | null = 0; after !== null;)
           after = (yield* store.pruneSettledWork(local, after, 64, expired)).nextRowId;
         assert.deepStrictEqual(
-          yield* sql`SELECT count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))}`,
+          yield* sql`SELECT count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids)} AND status='failed'`,
           [{ n: 0 }],
         );
         assert.strictEqual(yield* failures, 0);
@@ -6542,6 +6554,43 @@ it.effect("Settings reconcile rearms held work on the device that hosts the hub"
       assert.deepStrictEqual(yield* sql`SELECT hold_class FROM memory_outbox WHERE kind='sync'`, [
         { hold_class: null },
       ]);
+      // The hub host's own change goes through its outbox, so the hub refusing it counts here.
+      const actual = yield* Hub.MemoryHubService;
+      const refusing = Hub.MemoryHubService.of({
+        ...actual,
+        pull: (i) =>
+          Effect.succeed({
+            highWatermark: i.afterSequence,
+            throughSequence: i.afterSequence,
+            hasMore: false,
+            entries: [],
+          }),
+        push: (input) =>
+          Effect.succeed({
+            receipts: input.operations.map((op) => ({
+              operationId: op.operationId,
+              memoryId: op.memoryId,
+              operationDigest: memoryOperationDigest(op),
+              hubSequence: 1,
+              outcome: "rejected" as const,
+              failureCode: "conflict_changed" as const,
+            })),
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* Sync.MemorySyncService;
+        yield* host.syncOnce;
+        assert.strictEqual(
+          (yield* host.syncStatus({}, Effect.void)).processing.hubAdmissionFailures,
+          1,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(Sync.layer).pipe(
+            Layer.provide(Layer.succeed(Hub.MemoryHubService, refusing)),
+          ),
+        ),
+      );
     }).pipe(
       Effect.provide(
         fixture(

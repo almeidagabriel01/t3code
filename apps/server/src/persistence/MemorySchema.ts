@@ -3,11 +3,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 // End state of GOAT's memory migrations 078-117 minus the report outbox. Every statement is idempotent,
 // so ensureMemorySchema runs on each start like the other fork tables.
-// Sync work discarded as unsendable (Outbox.discardUnsendable): failed locally, with no hub receipt.
-const discardedSync = (row: string) =>
-  `coalesce((${row}.kind IN ('sync','revert_intent') AND ${row}.status='failed' AND ${row}.completed_receipt_json IS NULL AND ${row}.failure_code IN ('invalid_output','not_found','unsupported_protocol')),0)`;
-const countDiscarded = `INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_discarded_sync','',${discardedSync("NEW")}) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value;`;
-const uncountDiscarded = `UPDATE memory_quota_counters SET value=value-${discardedSync("OLD")} WHERE space=OLD.space AND dimension='processing_discarded_sync' AND scope_key='';`;
+
+// This device's sync work the hub refused (failed with its receipt) or that was discarded as
+// unsendable: the changes this device can act on. Refusals of other members' changes stay in the
+// ledger and the hub diagnostics, not in this count.
+const failedSync = (row: string) =>
+  `coalesce((${row}.kind IN ('sync','revert_intent') AND ${row}.status='failed' AND (json_extract(${row}.completed_receipt_json,'$.outcome')='rejected' OR ${row}.failure_code IN ('invalid_output','not_found','unsupported_protocol'))),0)`;
+const countFailed = `INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_failed_sync','',${failedSync("NEW")}) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value;`;
+const uncountFailed = `UPDATE memory_quota_counters SET value=value-${failedSync("OLD")} WHERE space=OLD.space AND dimension='processing_failed_sync' AND scope_key='';`;
 
 const MEMORY_DDL: ReadonlyArray<string> = [
   `CREATE TABLE IF NOT EXISTS memory_events (
@@ -1041,12 +1044,6 @@ UPDATE memory_quota_counters SET value=value-coalesce(((SELECT count(*) FROM jso
   `CREATE TRIGGER IF NOT EXISTS memory_inbox_pending_processing_insert AFTER INSERT ON memory_inbox_pending BEGIN  INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_parked','',coalesce((NEW.record_kind='operation'),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
   `CREATE TRIGGER IF NOT EXISTS memory_inbox_pending_processing_update AFTER UPDATE OF space,record_kind ON memory_inbox_pending BEGIN UPDATE memory_quota_counters SET value=value-coalesce((OLD.record_kind='operation'),0) WHERE space=OLD.space AND dimension='processing_parked' AND scope_key=''; INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_parked','',coalesce((NEW.record_kind='operation'),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
   `CREATE TRIGGER IF NOT EXISTS memory_inbox_pending_processing_delete AFTER DELETE ON memory_inbox_pending BEGIN UPDATE memory_quota_counters SET value=value-coalesce((OLD.record_kind='operation'),0) WHERE space=OLD.space AND dimension='processing_parked' AND scope_key='';  END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_events_processing_insert AFTER INSERT ON memory_events BEGIN  INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.memory_space_id,'processing_admission_failures','',coalesce((json_extract(NEW.receipt_json,'$.outcome')='rejected' AND NOT EXISTS(SELECT 1 FROM memory_compact_receipts c WHERE c.space=NEW.memory_space_id AND c.operation_id=NEW.operation_id)),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_events_processing_update AFTER UPDATE OF memory_space_id,operation_id,receipt_json ON memory_events BEGIN UPDATE memory_quota_counters SET value=value-coalesce((json_extract(OLD.receipt_json,'$.outcome')='rejected' AND NOT EXISTS(SELECT 1 FROM memory_compact_receipts c WHERE c.space=OLD.memory_space_id AND c.operation_id=OLD.operation_id)),0) WHERE space=OLD.memory_space_id AND dimension='processing_admission_failures' AND scope_key=''; INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.memory_space_id,'processing_admission_failures','',coalesce((json_extract(NEW.receipt_json,'$.outcome')='rejected' AND NOT EXISTS(SELECT 1 FROM memory_compact_receipts c WHERE c.space=NEW.memory_space_id AND c.operation_id=NEW.operation_id)),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_events_processing_delete AFTER DELETE ON memory_events BEGIN UPDATE memory_quota_counters SET value=value-coalesce((json_extract(OLD.receipt_json,'$.outcome')='rejected' AND NOT EXISTS(SELECT 1 FROM memory_compact_receipts c WHERE c.space=OLD.memory_space_id AND c.operation_id=OLD.operation_id)),0) WHERE space=OLD.memory_space_id AND dimension='processing_admission_failures' AND scope_key='';  END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_compact_receipts_processing_insert AFTER INSERT ON memory_compact_receipts BEGIN  INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_admission_failures','',coalesce(((json_extract(NEW.receipt_json,'$.outcome')='rejected')-EXISTS(SELECT 1 FROM memory_events e WHERE e.memory_space_id=NEW.space AND e.operation_id=NEW.operation_id AND json_extract(e.receipt_json,'$.outcome')='rejected')),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_compact_receipts_processing_update AFTER UPDATE OF space,operation_id,receipt_json ON memory_compact_receipts BEGIN UPDATE memory_quota_counters SET value=value-coalesce(((json_extract(OLD.receipt_json,'$.outcome')='rejected')-EXISTS(SELECT 1 FROM memory_events e WHERE e.memory_space_id=OLD.space AND e.operation_id=OLD.operation_id AND json_extract(e.receipt_json,'$.outcome')='rejected')),0) WHERE space=OLD.space AND dimension='processing_admission_failures' AND scope_key=''; INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_admission_failures','',coalesce(((json_extract(NEW.receipt_json,'$.outcome')='rejected')-EXISTS(SELECT 1 FROM memory_events e WHERE e.memory_space_id=NEW.space AND e.operation_id=NEW.operation_id AND json_extract(e.receipt_json,'$.outcome')='rejected')),0)) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value; END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_compact_receipts_processing_delete AFTER DELETE ON memory_compact_receipts BEGIN UPDATE memory_quota_counters SET value=value-coalesce(((json_extract(OLD.receipt_json,'$.outcome')='rejected')-EXISTS(SELECT 1 FROM memory_events e WHERE e.memory_space_id=OLD.space AND e.operation_id=OLD.operation_id AND json_extract(e.receipt_json,'$.outcome')='rejected')),0) WHERE space=OLD.space AND dimension='processing_admission_failures' AND scope_key='';  END`,
   `CREATE INDEX IF NOT EXISTS memory_processing_oldest ON memory_items(space,processing_oldest_at) WHERE processing_oldest_at IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS memory_search_backfill (singleton INTEGER PRIMARY KEY CHECK(singleton=1), after_rowid INTEGER NOT NULL, ready INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS memory_search_counters (space TEXT NOT NULL, scope_key TEXT NOT NULL, eligible INTEGER NOT NULL DEFAULT 0, indexed INTEGER NOT NULL DEFAULT 0, text_bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(space,scope_key))`,
@@ -1562,13 +1559,24 @@ UPDATE memory_quota_counters SET value=value-coalesce(((SELECT count(*) FROM jso
   `CREATE TRIGGER IF NOT EXISTS memory_revisions_checkpoint_bytes_reset AFTER UPDATE OF space,revision_id,memory_id,operation_id,parents_json,scope_json,assertion_kind,provenance_json,payload_ref,created_at ON memory_revisions
     WHEN NEW.checkpoint_bytes IS NOT NULL
     BEGIN UPDATE memory_revisions SET checkpoint_bytes=NULL WHERE space=NEW.space AND revision_id=NEW.revision_id; END`,
-  // Replaced by the guarded triggers below, which fire only when a row is or was a discard.
-  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_insert`,
-  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_update`,
-  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_delete`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_insert AFTER INSERT ON memory_outbox WHEN ${discardedSync("NEW")} BEGIN ${countDiscarded} END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_update AFTER UPDATE OF space,kind,status,completed_receipt_json,failure_code ON memory_outbox WHEN ${discardedSync("OLD")} OR ${discardedSync("NEW")} BEGIN ${uncountDiscarded} ${countDiscarded} END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_delete AFTER DELETE ON memory_outbox WHEN ${discardedSync("OLD")} BEGIN ${uncountDiscarded} END`,
+  // Superseded counters: per-event rejections (other members' changes too) and discards alone.
+  ...[
+    "memory_events_processing_insert",
+    "memory_events_processing_update",
+    "memory_events_processing_delete",
+    "memory_compact_receipts_processing_insert",
+    "memory_compact_receipts_processing_update",
+    "memory_compact_receipts_processing_delete",
+    "memory_outbox_discarded_sync_insert",
+    "memory_outbox_discarded_sync_update",
+    "memory_outbox_discarded_sync_delete",
+    "memory_outbox_discard_count_insert",
+    "memory_outbox_discard_count_update",
+    "memory_outbox_discard_count_delete",
+  ].map((name) => `DROP TRIGGER IF EXISTS ${name}`),
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_failed_sync_insert AFTER INSERT ON memory_outbox WHEN ${failedSync("NEW")} BEGIN ${countFailed} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_failed_sync_update AFTER UPDATE OF space,kind,status,completed_receipt_json,failure_code ON memory_outbox WHEN ${failedSync("OLD")} OR ${failedSync("NEW")} BEGIN ${uncountFailed} ${countFailed} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_failed_sync_delete AFTER DELETE ON memory_outbox WHEN ${failedSync("OLD")} BEGIN ${uncountFailed} END`,
   `CREATE INDEX IF NOT EXISTS memory_outbox_summary_thread_idx ON memory_outbox(
     json_extract(metadata_json,'$.sourceThread.threadId'),
     coalesce(json_extract(metadata_json,'$.observedThroughSequence'),json_extract(metadata_json,'$.sourceWatermark.throughSequence'))
@@ -1610,12 +1618,13 @@ const MEMORY_SEEDS: ReadonlyArray<string> = [
   `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_usage_environment','usage_receipts','',0)`,
   `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_usage_environment','usage_receipt_bytes','',0)`,
   `INSERT OR IGNORE INTO memory_search_backfill (singleton,after_rowid,ready) VALUES (1,0,0)`,
-  // Once, on the first start with the discard triggers: count the discards already stored.
+  `DELETE FROM memory_quota_counters WHERE dimension IN ('processing_admission_failures','processing_discarded_sync') OR (space='_migrations' AND dimension='discarded_sync_counted')`,
+  // Once, on the first start with the failed-sync triggers: count the failures already stored.
   `INSERT INTO memory_quota_counters(space,dimension,scope_key,value)
-    SELECT o.space,'processing_discarded_sync','',sum(${discardedSync("o")}) FROM memory_outbox o
-    WHERE o.status='failed' AND NOT EXISTS (SELECT 1 FROM memory_quota_counters WHERE space='_migrations' AND dimension='discarded_sync_counted' AND scope_key='')
+    SELECT o.space,'processing_failed_sync','',sum(${failedSync("o")}) FROM memory_outbox o
+    WHERE o.status='failed' AND NOT EXISTS (SELECT 1 FROM memory_quota_counters WHERE space='_migrations' AND dimension='failed_sync_counted' AND scope_key='')
     GROUP BY o.space ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=excluded.value`,
-  `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_migrations','discarded_sync_counted','',1)`,
+  `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_migrations','failed_sync_counted','',1)`,
 ];
 
 export const ensureMemorySchema = Effect.fn("MemorySchema.ensure")(function* () {
