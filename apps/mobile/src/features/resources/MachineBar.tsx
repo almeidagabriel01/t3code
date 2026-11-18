@@ -31,7 +31,7 @@ const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
   muted: "bg-foreground-muted",
   ok: "bg-adaptive-emerald-600-400",
   warn: "bg-warning-foreground",
-  danger: "bg-danger",
+  danger: "bg-danger-foreground",
 };
 
 /** A thin bar for a share of a whole, with its value; warning-coloured when a hold is about it. */
@@ -47,7 +47,7 @@ function Gauge(props: {
       <View className="h-1 w-10 overflow-hidden rounded-full bg-subtle-strong">
         {share === null ? null : (
           <View
-            className={`h-full rounded-full ${warn ? "bg-warning" : "bg-foreground-muted"}`}
+            className={`h-full rounded-full ${warn ? "bg-warning-foreground" : "bg-foreground-muted"}`}
             style={{ width: `${clampShare(share) * 100}%` }}
           />
         )}
@@ -121,7 +121,7 @@ function MachineRow(props: {
       accessibilityRole="button"
       accessibilityLabel={[
         name,
-        status?.text,
+        row.statusHint ?? status?.text,
         row.cpu === null ? null : `CPU ${row.cpu.value}`,
         row.memory === null ? null : `${row.memory.value} free`,
         row.slots === null ? "Off" : `${row.slots.running} of ${row.slots.slots} running`,

@@ -1194,20 +1194,49 @@ describe("ResourceManagerRouteScreen", () => {
     mocks.environments = [
       { environmentId: "env", label: "Studio", connection: { phase: "connected" } },
     ];
-    setup([entry("a", { startedAt: NOW, runner: "linux" })], { linux: { ...LINUX, running: 0 } });
+    setup([entry("a", { startedAt: NOW, runner: "linux" })], {
+      linux: { ...LINUX, running: 0, cpuPercent: 20 },
+    });
     const view = await screen();
     expect(view.host.querySelector('[aria-label^="Linux"]')!.getAttribute("aria-label")).toBe(
-      "Linux, online, CPU 20%, 8.0 GB free, 1 of 2 running",
+      "Linux, remoto · online, CPU 20%, 8.0 GB free, 1 of 2 running",
     );
     await view.unmount();
 
     setup([], { linux: { ...LINUX, online: false, error: "ssh timed out" } });
     const offline = await screen();
     const linux = offline.host.querySelector<HTMLElement>('[aria-label^="Linux"]')!;
-    expect(linux.getAttribute("aria-label")).toBe("Linux, offline, 0 of 2 running");
+    expect(linux.getAttribute("aria-label")).toBe(
+      "Linux, remoto · offline · ssh timed out, 0 of 2 running",
+    );
     expect(linux.textContent).toContain("Offline");
     await act(async () => linux.click());
-    expect(linux.textContent).toContain("Linux offline: ssh timed out");
+    expect(linux.textContent).toContain("remoto · offline · ssh timed out");
     await offline.unmount();
+
+    setup([], {
+      linux: {
+        ...LINUX,
+        cpuPercent: 20,
+        status: "over-limit",
+        overLimits: [
+          { limit: "memory", reason: "0.8 GB free, keeping 10%" },
+          { limit: "swap", reason: "swap 60% used (limit 50%)" },
+        ],
+      },
+    });
+    const over = await screen();
+    const busy = over.host.querySelector<HTMLElement>('[aria-label^="Linux"]')!;
+    expect(busy.getAttribute("aria-label")).toBe(
+      "Linux, remoto · over limits · 0.8 GB free, keeping 10%; swap 60% used (limit 50%), CPU 20%, 8.0 GB free, 0 of 2 running, warning",
+    );
+    expect(
+      [...busy.querySelectorAll(".text-warning-foreground")].map((el) => el.textContent),
+    ).toEqual(["8.0 GB free"]);
+    await act(async () => busy.click());
+    expect(busy.textContent).toContain(
+      "remoto · over limits · 0.8 GB free, keeping 10%; swap 60% used (limit 50%)",
+    );
+    await over.unmount();
   });
 });
