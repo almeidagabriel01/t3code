@@ -17,11 +17,16 @@ import {
   type HeavyQueueRule,
   type HeavyRunner,
   RunnerBringBackMaxMB,
+  RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerLinuxEvictionsBeforeAlone,
+  RunnerLinuxFullPolicy,
   RunnerPatterns,
   type RunnerProjectConfig,
   RunnerRouteLearnAfter,
   RunnerRouteMemoryDays,
+  RunnerUnavailablePolicy,
+  RunnerWhere,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -281,6 +286,11 @@ const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey
 
 /** Keys read whole only when valid: a null or bad one would throw where it is used. */
 const CHECKED_PROJECT_KEYS = {
+  runnerWhere: Schema.is(RunnerWhere),
+  runnerUnavailable: Schema.is(RunnerUnavailablePolicy),
+  runnerLinuxFull: Schema.is(RunnerLinuxFullPolicy),
+  runnerDeadlineAction: Schema.is(RunnerDeadlineAction),
+  runnerDropped: Schema.is(RunnerFailedPolicy),
   runnerRouteMemoryDays: Schema.is(RunnerRouteMemoryDays),
   runnerRouteLearnAfter: Schema.is(RunnerRouteLearnAfter),
   runnerBringBackExclude: Schema.is(RunnerPatterns),

@@ -22,6 +22,10 @@ export type RunnerFailedPolicy = typeof RunnerFailedPolicy.Type;
 export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
 export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
 
+/** In Linux mode, what a job does while Linux is full: wait, take this Mac's room, or the shorter queue. */
+export const RunnerLinuxFullPolicy = Schema.Literals(["wait", "mac", "balance"]);
+export type RunnerLinuxFullPolicy = typeof RunnerLinuxFullPolicy.Type;
+
 export const RUNNER_LIMITS = {
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
   runnerMacFirstAfter: { min: 1, max: 32, unit: "jobs" },
@@ -42,6 +46,7 @@ export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
   runnerWhere: "mac" as RunnerWhere,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
+  runnerLinuxFull: "wait" as RunnerLinuxFullPolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
   runnerDropped: "agent" as RunnerFailedPolicy,
@@ -136,6 +141,7 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerEnabled",
   "runnerWhere",
   "runnerUnavailable",
+  "runnerLinuxFull",
   "runnerAskMinutes",
   "runnerDeadlineAction",
   "runnerDropped",
@@ -242,6 +248,9 @@ export const RunnerProjectConfig = Schema.Struct({
   runnerEnabled: Schema.Boolean,
   runnerWhere: RunnerWhere,
   runnerUnavailable: RunnerUnavailablePolicy,
+  runnerLinuxFull: RunnerLinuxFullPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxFull)),
+  ),
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,
   runnerDropped: RunnerFailedPolicy,

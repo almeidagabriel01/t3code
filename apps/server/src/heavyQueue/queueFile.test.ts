@@ -1439,6 +1439,13 @@ describe("Runner in the queue file", () => {
     ["runnerRouteMemoryDays", 91],
     ["runnerRouteLearnAfter", null],
     ["runnerRouteLearnAfter", 0],
+    ["runnerLinuxFull", undefined],
+    ["runnerLinuxFull", "later"],
+    ["runnerLinuxFull", null],
+    ["runnerWhere", "cloud"],
+    ["runnerUnavailable", null],
+    ["runnerDeadlineAction", "retry"],
+    ["runnerDropped", 1],
   ] as const)("a stored %s of %j reads as its default", (key, stored) => {
     const dir = tempDir();
     const bad = { ...config(), [key]: stored } as unknown as RunnerProjectConfig;

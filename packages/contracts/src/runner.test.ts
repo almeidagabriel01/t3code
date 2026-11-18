@@ -35,6 +35,7 @@ describe("Runner settings", () => {
     // Saved before route memory, the bring-back limits and the Mac tools existed, it reads their defaults too.
     expect(decodeProjectConfig(saved)).toEqual({
       ...current,
+      runnerLinuxFull: "wait",
       runnerRouteMemoryDays: 7,
       runnerRouteLearnAfter: 2,
       runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,

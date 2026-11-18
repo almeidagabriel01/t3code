@@ -47,6 +47,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
   runnerWhere: RUNNER_DEFAULTS.runnerWhere,
   runnerUnavailable: RUNNER_DEFAULTS.runnerUnavailable,
+  runnerLinuxFull: RUNNER_DEFAULTS.runnerLinuxFull,
   runnerAskMinutes: RUNNER_DEFAULTS.runnerAskMinutes,
   runnerDeadlineAction: RUNNER_DEFAULTS.runnerDeadlineAction,
   runnerDropped: RUNNER_DEFAULTS.runnerDropped,
