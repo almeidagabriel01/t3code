@@ -86,6 +86,24 @@ it.effect.each([400, 500])(
 
 type AdbAnswer = { readonly code: number; readonly stdout: string; readonly stderr: string };
 const adbAnswer = (stdout: string, code = 0): AdbAnswer => ({ code, stdout, stderr: "" });
+type FakeAdb = { currentUser: AdbAnswer; users: Record<string, AdbAnswer> };
+/** Ways a fake Android phone reads as locked to an agent. */
+const ANDROID_LOCKS = {
+  storage: (adb: FakeAdb) => {
+    adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+  "current user": (adb: FakeAdb) => {
+    adb.currentUser = adbAnswer("10\n");
+    adb.users["10"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+  "unreadable current user": (adb: FakeAdb) => {
+    adb.currentUser = adbAnswer("", 1);
+    adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+};
+const unlockAndroid = (adb: FakeAdb) => {
+  for (const user of Object.keys(adb.users)) adb.users[user] = adbAnswer("RUNNING_UNLOCKED\n");
+};
 
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
@@ -214,6 +232,7 @@ const fixture = Effect.fn("fixture")(function* (
   );
   /** What the fake phone's `adb shell` answers, by command; started-user states by user id. */
   const adb = {
+    currentUser: adbAnswer("0\n"),
     users: { "0": adbAnswer("RUNNING_UNLOCKED\n") } as Record<string, AdbAnswer>,
   };
   const run = (command: string, args: ReadonlyArray<string> = []) => {
@@ -221,6 +240,7 @@ const fixture = Effect.fn("fixture")(function* (
       return Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" });
     if (command !== "adb") return Ref.get(encoderResult);
     const shell = args.slice(args.indexOf("shell") + 1);
+    if (shell.join(" ") === "am get-current-user") return Effect.succeed(adb.currentUser);
     if (shell[0] === "am" && shell[1] === "get-started-user-state")
       return Effect.succeed(adb.users[shell[2] ?? ""] ?? adbAnswer("Unknown user\n"));
     return Effect.succeed(adbAnswer(""));
@@ -561,8 +581,22 @@ describe("device setup consent", () => {
     { case: "an emulator it boots", deviceId: "Pixel_API_35", booted: false, physical: false },
     { case: "a running emulator", deviceId: "emulator-5556", booted: true, physical: false },
     { case: "a physical phone", deviceId: "physical-android", booted: true, physical: true },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "current user" as const,
+    },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "unreadable current user" as const,
+    },
   ])(
-    "refuses agents $case while its Android user is locked, and the user opens it to unlock",
+    "refuses agents $case while it reads as locked ($lock), and the user opens it to unlock",
     (row) =>
       Effect.gen(function* () {
         const { service, devices, adb, attaches, requests } = yield* fixture();
@@ -576,7 +610,7 @@ describe("device setup consent", () => {
             physical: row.physical,
           });
         yield* service.configure({ enabled: true });
-        adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+        ANDROID_LOCKS[row.lock ?? "storage"](adb);
         const agentThread = ThreadId.make("locked-android");
         const asAgent = { agent: { ask: () => Effect.succeed("allowed" as const) } };
         const refused = yield* service
@@ -609,7 +643,7 @@ describe("device setup consent", () => {
         });
         expect(user.deviceId).toBe(running);
 
-        adb.users["0"] = adbAnswer("RUNNING_UNLOCKED\n");
+        unlockAndroid(adb);
         const session = yield* service.open(
           { threadId: agentThread, deviceId: running, platform: "android" },
           asAgent,

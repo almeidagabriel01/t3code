@@ -1784,12 +1784,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ready: DeviceReadiness,
     device: DeviceSummary,
   ) {
-    const user = yield* ready.run(
-      "adb",
-      ["-s", device.id, "shell", "am", "get-started-user-state", "0"],
-      {
-        timeoutMs: 10_000,
-      },
+    const shell = (...args: ReadonlyArray<string>) =>
+      ready.run("adb", ["-s", device.id, "shell", ...args], { timeoutMs: 10_000 });
+    const current = yield* shell("am", "get-current-user");
+    const userId = current.stdout.trim();
+    // Apps open as the foreground user; an unreadable answer means the primary one.
+    const user = yield* shell(
+      "am",
+      "get-started-user-state",
+      current.code === 0 && /^\d+$/.test(userId) ? userId : "0",
     );
     if (user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout))
       return yield* new DeviceNotReadyError({
