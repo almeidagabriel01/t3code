@@ -289,14 +289,14 @@ it.effect("blocked generation leaves unrelated push and cursor movement free", (
   }),
 );
 
-it.effect("unsendable work at the queue head is held with its reason and the rest ships", () =>
+it.effect("unsendable work at the queue head is discarded with its reason and the rest ships", () =>
   Effect.gen(function* () {
     const pushed: M.MemoryOperationId[] = [];
     const held: string[] = [];
     const skipped: string[] = [];
     const logger = Logger.make(({ message, logLevel }) => {
       const text = JSON.stringify(message);
-      if (logLevel === "Warn" && text.includes("unsendable sync work held")) held.push(text);
+      if (logLevel === "Warn" && text.includes("unsendable sync work discarded")) held.push(text);
       if (text.includes("sync work skipped")) skipped.push(text);
     });
     const client = peer({
@@ -333,11 +333,17 @@ it.effect("unsendable work at the queue head is held with its reason and the res
         assert.strictEqual(held.length, 100);
         assert.deepStrictEqual(skipped, []);
         assert.deepStrictEqual(
-          yield* sql`SELECT failure_code, hold_class, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
+          yield* sql`SELECT status, failure_code, hold_class, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
           [
-            { failure_code: "invalid_output", hold_class: "protocol", n: 50 },
-            { failure_code: "not_found", hold_class: "protocol", n: 50 },
+            { status: "failed", failure_code: "invalid_output", hold_class: null, n: 50 },
+            { status: "failed", failure_code: "not_found", hold_class: null, n: 50 },
           ],
+        );
+        // Nothing is left for Settings to rearm, so they are never held again.
+        const store = yield* Store.MemoryStore;
+        assert.deepStrictEqual(
+          yield* store.readPersistedHoldClasses({ memorySpaceId: space, hubEnvironmentId: remote }),
+          [],
         );
       }).pipe(
         Effect.provide(

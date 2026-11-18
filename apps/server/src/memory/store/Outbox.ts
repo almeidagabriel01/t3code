@@ -1,6 +1,8 @@
 import * as M from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { CoreReads } from "./CoreReads.ts";
 import type { ImportLineage } from "./ImportLineage.ts";
 import type { ItemWrites } from "./ItemWrites.ts";
@@ -18,6 +20,7 @@ import type { WorkRow } from "./StoreCodecs.ts";
 import type { StoreKernel } from "./StoreKernel.ts";
 import {
   MemoryCapacityError,
+  MemoryStorageError,
   MemoryStoreConflict,
   PendingForgetIntent,
   hashText,
@@ -25,6 +28,10 @@ import {
 } from "./StoreModel.ts";
 import type { SyncWorkCandidate } from "./StoreModel.ts";
 import type { WorkQueue } from "./WorkQueue.ts";
+
+const isDecodeFailure = (error: unknown): boolean =>
+  Schema.isSchemaError(error) ||
+  (error instanceof MemoryStorageError && isDecodeFailure(error.cause));
 
 export const makeOutbox = (
   kernel: Pick<StoreKernel, "emit" | "nextWatermark" | "sql" | "transact">,
@@ -40,23 +47,23 @@ export const makeOutbox = (
   const { enqueueWork, putItem } = itemWrites;
   const { persistImportLineageTx, settleImportOperationTx } = importLineage;
   const { finishWork } = workQueue;
-  // A row that can never be encoded is held (recoverable, shown in status) instead of blocking
-  // the queue head; work that depends on it waits like it does for any other hold.
-  const parkUnsendable = Effect.fnUntraced(function* (
+  // A row that can never be sent is discarded with its reason, not held: rearming it would only
+  // hold it again. Work that depends on it then reaches the hub's typed rejection.
+  const discardUnsendable = Effect.fnUntraced(function* (
     id: string,
     version: number,
     code: "invalid_output" | "unsupported_protocol" | "not_found",
   ) {
-    const parked = yield* stored(
-      "sync-outbox-park",
-      sql`UPDATE memory_outbox SET status='retry',claimed_by=NULL,claimed_until=NULL,next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code=${code},hold_class='protocol' WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
+    const discarded = yield* stored(
+      "sync-outbox-discard",
+      sql`UPDATE memory_outbox SET status='failed',terminal_at=${yield* Clock.currentTimeMillis},claimed_by=NULL,claimed_until=NULL,failure_code=${code},hold_class=NULL WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
     );
-    if (parked.length)
-      yield* Effect.logWarning("memory: unsendable sync work held", {
+    if (discarded.length)
+      yield* Effect.logWarning("memory: unsendable sync work discarded", {
         workId: id,
         failureCode: code,
       });
-    return parked.length === 1;
+    return discarded.length === 1;
   });
   const readEligibleOutbox = Effect.fn("MemoryStore.readEligibleOutbox")(function* (
     space: M.MemorySpaceId,
@@ -68,7 +75,7 @@ export const makeOutbox = (
     // Only live local submissions wait; missing or terminal inputs reach the hub's typed rejection.
     const pageLimit = Math.max(0, Math.min(limit, M.MEMORY_PAGE_MAX_ITEMS));
     const candidates: SyncWorkCandidate[] = [];
-    // Parked rows leave the eligible set, so each re-read reaches the work queued behind them.
+    // Discarded rows leave the eligible set, so each re-read reaches the work queued behind them.
     for (let parked = 1; parked > 0 && candidates.length < pageLimit;) {
       parked = 0;
       const rows = yield* stored(
@@ -97,19 +104,21 @@ export const makeOutbox = (
         const version = row.sync_version;
         const decoded = yield* Effect.result(workRows([row]));
         if (decoded._tag === "Failure") {
-          if (yield* parkUnsendable(row.id, version, "invalid_output")) parked++;
+          // Only a row that fails to decode is unsendable; anything else is retried.
+          if (!isDecodeFailure(decoded.failure)) return yield* decoded.failure;
+          if (yield* discardUnsendable(row.id, version, "invalid_output")) parked++;
           continue;
         }
         const work = decoded.success[0]!;
         if (!("protocolVersion" in work.metadata)) {
-          if (yield* parkUnsendable(work.id, version, "unsupported_protocol")) parked++;
+          if (yield* discardUnsendable(work.id, version, "unsupported_protocol")) parked++;
           continue;
         }
         let operationDigest = row.operation_digest;
         if (!operationDigest) {
           const op = yield* readWorkOperation(work.id);
           if (!op) {
-            if (yield* parkUnsendable(work.id, version, "not_found")) parked++;
+            if (yield* discardUnsendable(work.id, version, "not_found")) parked++;
             continue;
           }
           operationDigest = hashText(M.encodeMemoryOperation(op));
