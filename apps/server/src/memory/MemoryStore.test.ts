@@ -3261,7 +3261,7 @@ describe("MemoryStore durable hub checkpoints", () => {
       }).pipe(checkUsage, Effect.provide(live)),
   );
   it.effect(
-    "producer reauthenticates the real hub and rolls back capacity and outer publication failure",
+    "producer reauthenticates the real hub, publishes past full staging and rolls back outer failure",
     () =>
       Effect.gen(function* () {
         yield* seed;
@@ -3355,10 +3355,12 @@ describe("MemoryStore durable hub checkpoints", () => {
                 nextFloor: 1,
                 now: 0,
               });
+              // Compaction is admitted past full staging; only the outer failure rolls it back.
+              return yield* Effect.fail("rollback" as const);
             }),
           )
           .pipe(Effect.flip);
-        assert.strictEqual(capacity._tag, "MemoryCapacityError");
+        assert.strictEqual(capacity, "rollback");
         assert.deepStrictEqual(
           yield* sql`SELECT * FROM memory_hub_retention WHERE space=${space}`,
           full,

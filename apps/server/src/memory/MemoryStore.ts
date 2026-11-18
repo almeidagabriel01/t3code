@@ -329,9 +329,10 @@ const make = Effect.gen(function* () {
     historyPage,
     recordRevertResultTx,
     prepareHubCheckpointTx: (input) => withHubBudget(prepareHubCheckpointTx(input)),
-    prepareHubProducerCheckpointTx: (input) => withHubBudget(prepareHubProducerCheckpointTx(input)),
+    prepareHubProducerCheckpointTx: (input) =>
+      withHubBudget(prepareHubProducerCheckpointTx(input), true),
     readHubCheckpointPageTx,
-    publishCheckpointAndFloorTx: (input) => withHubBudget(publishCheckpointAndFloorTx(input)),
+    publishCheckpointAndFloorTx: (input) => withHubBudget(publishCheckpointAndFloorTx(input), true),
     compactEligibleHistoryTx,
     purgeHubTransientTx,
     requestHubSourceReadTx: (authority, input) =>
