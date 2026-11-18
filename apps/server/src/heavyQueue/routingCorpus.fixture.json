@@ -1388,6 +1388,32 @@
       "observed": "synthetic",
       "expect": "linux",
       "why": "an unexported variable never reaches the command"
+    },
+    {
+      "line": "true 2>&1 | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "2026-11-18 req-9f35d9fc9e3d00d0",
+      "expect": "linux",
+      "why": "a part that reads a local pipe still runs there: the pipe goes with it"
+    },
+    {
+      "line": "vp test run src/heavyQueue/shims.test.ts 2>&1 | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "echo a | vp test run src/heavyQueue/shims.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "the input goes with the command"
+    },
+    {
+      "line": "cat list.txt | xargs vp lint",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux"
     }
   ]
 }
