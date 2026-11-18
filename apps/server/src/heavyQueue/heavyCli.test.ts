@@ -1044,7 +1044,9 @@ describe("t3 heavy", () => {
         );
         expect(run.stderr()).toContain("Dependency install on Linux failed");
         expect(
-          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+          run
+            .stderr()
+            .includes("Linux couldn't run this: Dependency install on Linux failed: electron"),
         ).toBe(fails === 2);
         expect(faults(dir).map((fault) => fault.cause)).toEqual(
           fails === 2 ? ["linux-install:electron"] : [],

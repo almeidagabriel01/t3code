@@ -1712,7 +1712,7 @@ const runLinuxPart = async (
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return fallBack(
-        { kind: "install", subject: install, line: INSTALL_FAILED },
+        { kind: "install", subject: install, line: `${INSTALL_FAILED}: ${install}` },
         outcome.code ?? 1,
       );
     }
