@@ -1,9 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 /**
  * A queue job runs its line as written with these first on PATH: one `sh` script per heavy
  * program, so each heavy call, in any script or git hook, picks its own machine through
  * `t3 heavy call`. A light call runs the real program without starting T3.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -74,9 +75,44 @@ ${SHIM_FILTER.always.includes(name) ? "" : FILTER}
 exec /usr/bin/env ${call} -- ${shellQuote(name)} "$@"
 `;
 
-/** Writes the shims into `<queue>/shims` where they differ; jobs start concurrently. */
-export const ensureShims = (dir: string, call: string) => {
-  const shims = NodePath.join(dir, "shims");
+/** A folder of shims nothing has started a job with for this long is removed. */
+const UNUSED_MS = 7 * 86_400_000;
+
+/**
+ * Removes shim folders unused for `UNUSED_MS`, and the flat `<queue>/shims` files of the earlier
+ * layout, scripts before their mark: a script without the mark beside it would find itself on PATH.
+ */
+const removeUnused = (root: string, keep: string, now: number) => {
+  const unused = (folder: string) => {
+    try {
+      return now - NodeFS.statSync(NodePath.join(folder, MARK)).mtimeMs > UNUSED_MS;
+    } catch {
+      return false;
+    }
+  };
+  // ponytail: a caller idle for a week that starts a job during this sweep can lose its folder mid-write; the next job rewrites it.
+  for (const entry of NodeFS.readdirSync(root, { withFileTypes: true })) {
+    const folder = NodePath.join(root, entry.name);
+    if (entry.isDirectory() && folder !== keep && unused(folder)) {
+      NodeFS.rmSync(folder, { recursive: true, force: true });
+    }
+  }
+  if (unused(root)) {
+    for (const name of [...SHIMMED, MARK])
+      NodeFS.rmSync(NodePath.join(root, name), { force: true });
+  }
+};
+
+/**
+ * Writes the shims into `<queue>/shims/<hash of call>` where they differ; jobs start concurrently.
+ * Each CLI that calls back (the installed app, a worktree's dev server) keeps its own folder.
+ */
+export const ensureShims = (dir: string, call: string, now = Date.now()) => {
+  const root = NodePath.join(dir, "shims");
+  const shims = NodePath.join(
+    root,
+    NodeCrypto.createHash("sha256").update(call).digest("hex").slice(0, 12),
+  );
   NodeFS.mkdirSync(shims, { recursive: true });
   const files: ReadonlyArray<readonly [string, string]> = [
     [MARK, ""],
@@ -93,5 +129,8 @@ export const ensureShims = (dir: string, call: string) => {
     NodeFS.writeFileSync(temp, text, { mode: 0o755 });
     NodeFS.renameSync(temp, path);
   }
+  // The mark's time is when this folder was last used; unchanged scripts keep theirs.
+  NodeFS.utimesSync(NodePath.join(shims, MARK), now / 1000, now / 1000);
+  removeUnused(root, shims, now);
   return shims;
 };

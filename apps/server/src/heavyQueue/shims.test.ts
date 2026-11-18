@@ -45,10 +45,10 @@ describe("PATH shims", () => {
     // Missing on this Mac: only Linux may have it, so the call still goes out.
     ["pytest -x", true],
   ])("%j calls t3: %s", (line, calls) => {
-    const { dir, path } = setup();
+    const { dir, shims, path } = setup();
     try {
       const [name, ...args] = line.split(" ");
-      const out = NodeChildProcess.execFileSync(NodePath.join(dir, "q", "shims", name!), args, {
+      const out = NodeChildProcess.execFileSync(NodePath.join(shims, name!), args, {
         env: { PATH: path, T3CODE_HEAVY_JOB: "1" },
         encoding: "utf8",
       });
@@ -73,6 +73,46 @@ describe("PATH shims", () => {
       const before = NodeFS.statSync(NodePath.join(shims, "vp")).mtimeMs;
       ensureShims(NodePath.join(dir, "q"), "echo CALL");
       expect(NodeFS.statSync(NodePath.join(shims, "vp")).mtimeMs).toBe(before);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The installed app and a worktree's dev server share the queue but start different CLIs.
+  it("keeps each caller's shims in its own folder, and clears folders left unused", () => {
+    const { dir } = setup();
+    try {
+      const queue = NodePath.join(dir, "shared");
+      const root = NodePath.join(queue, "shims");
+      const day = 86_400_000;
+      const now = Date.parse("2026-11-18T12:00:00.000Z");
+      const app = ensureShims(queue, "echo APP", now);
+      const dev = ensureShims(queue, "echo DEV", now);
+      expect(app).not.toBe(dev);
+      for (const [folder, call] of [
+        [app, "echo APP"],
+        [dev, "echo DEV"],
+      ] as const) {
+        expect(NodePath.dirname(folder)).toBe(root);
+        expect(NodeFS.readFileSync(NodePath.join(folder, "vp"), "utf8")).toContain(call);
+      }
+      expect(withoutShims(`${app}:${dev}:/usr/bin`)).toBe("/usr/bin");
+      // The flat folder of the earlier layout, and the dev server's, both idle for a week.
+      const old = (now - 8 * day) / 1000;
+      NodeFS.writeFileSync(NodePath.join(root, ".t3-heavy-shims"), "");
+      NodeFS.writeFileSync(NodePath.join(root, "vp"), "#!/bin/sh\n", { mode: 0o755 });
+      for (const file of [".t3-heavy-shims", "vp"]) {
+        NodeFS.utimesSync(NodePath.join(root, file), old, old);
+      }
+      NodeFS.utimesSync(NodePath.join(dev, ".t3-heavy-shims"), old, old);
+      expect(ensureShims(queue, "echo APP", now)).toBe(app);
+      expect(NodeFS.readdirSync(root)).toEqual([NodePath.basename(app)]);
+      // Each call marks its own folder used, so a folder idle for less than a week stays.
+      ensureShims(queue, "echo DEV", now - 2 * day);
+      ensureShims(queue, "echo APP", now);
+      expect(NodeFS.readdirSync(root).toSorted()).toEqual(
+        [NodePath.basename(app), NodePath.basename(dev)].toSorted(),
+      );
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
