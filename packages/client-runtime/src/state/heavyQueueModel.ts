@@ -7,6 +7,7 @@ import {
   type HeavyQueueState,
   type HeavyRunner,
   type HeavyRunnerLinux,
+  type HeavyRunnerLinuxLimit,
   type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 
@@ -438,6 +439,30 @@ export const linuxChip = (
   }
 };
 
+/** The Linux gauge each limit warns on; the rest have no gauge and show only in the status hint. */
+const LIMIT_GAUGE: Record<HeavyRunnerLinuxLimit, "cpu" | "memory" | null> = {
+  memory: "memory",
+  "memory-pressure": null,
+  swap: null,
+  "io-pressure": null,
+  "cpu-pressure": "cpu",
+  cpu: "cpu",
+};
+
+/** "remoto · over limits · 0.8 GB free, keeping 10%": host, the chip's words, then why. */
+const linuxStatusHint = (linux: HeavyRunnerLinux) => {
+  const { text } = linuxChip(linux);
+  const reason =
+    linux.status === "over-limit"
+      ? linux.overLimits?.map((over) => over.reason).join("; ") || linux.overLimitBy
+      : linux.status === "unresponsive"
+        ? (linux.error ?? "too loaded to answer")
+        : linux.online === false
+          ? linux.error
+          : undefined;
+  return [linux.host, text, reason].filter((part) => part !== undefined && part !== "").join(" · ");
+};
+
 /** One machine of the machine bar. */
 export interface MachineBarRow {
   readonly runner: HeavyRunner;
@@ -564,17 +589,22 @@ export function machineBar(
   const linuxRunning = work.linux.running.length;
   const live = linux.online === true && linux.status !== "unresponsive";
   const cores = linux.cpuCount;
+  const statusHint = linuxStatusHint(linux);
+  const past = (on: "cpu" | "memory") => {
+    const reasons = (linux.status === "over-limit" ? (linux.overLimits ?? []) : [])
+      .filter((over) => LIMIT_GAUGE[over.limit] === on)
+      .map((over) => over.reason);
+    return reasons.length === 0 ? null : reasons.join("; ");
+  };
+  const cpuPast = past("cpu");
+  const memoryPast = past("memory");
   return {
     mac,
     linux: {
       runner: "linux",
       online: linux.online,
       chip: linuxChip(linux),
-      statusHint: !live
-        ? linuxLine(linux)
-        : linux.status === "over-limit" && linux.overLimitBy !== undefined
-          ? `${linux.host} · over its limits: ${linux.overLimitBy}`
-          : `${linux.host} · online`,
+      statusHint,
       cpu: !live
         ? null
         : linux.cpuPercent === undefined || linux.cpuPercent === null
@@ -582,8 +612,11 @@ export function machineBar(
           : {
               share: linux.cpuPercent / 100,
               value: `${Math.round(linux.cpuPercent)}%`,
-              warn: false,
-              hint: `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
+              warn: cpuPast !== null,
+              hint: withWarning(
+                `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
+                cpuPast,
+              ),
             },
       memory: !live
         ? null
@@ -595,8 +628,11 @@ export function machineBar(
                   ? null
                   : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
               value: gb(linux.availableMemoryBytes),
-              warn: false,
-              hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
+              warn: memoryPast !== null,
+              hint: withWarning(
+                `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
+                memoryPast,
+              ),
             },
       offline: live
         ? null
@@ -607,7 +643,7 @@ export function machineBar(
                 : linux.online === false
                   ? "Offline"
                   : "Checking…",
-            hint: linuxLine(linux),
+            hint: statusHint,
           },
       slots: {
         running: linuxRunning,

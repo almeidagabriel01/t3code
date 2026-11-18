@@ -727,10 +727,10 @@ describe("machineBar", () => {
     [true, null, "remoto · online"],
     [
       false,
-      { text: "Offline", hint: "Linux offline: ssh timed out" },
-      "Linux offline: ssh timed out",
+      { text: "Offline", hint: "remoto · offline · ssh timed out" },
+      "remoto · offline · ssh timed out",
     ],
-    [null, { text: "Checking…", hint: "Checking Linux (remoto)…" }, "Checking Linux (remoto)…"],
+    [null, { text: "Checking…", hint: "remoto · checking" }, "remoto · checking"],
   ] as const)("Linux online=%s shows gauges only while online", (online, offline, statusHint) => {
     const { linux } = machineBar(
       state({ linux: { ...LINUX, online, error: "ssh timed out" }, paused: true }),
@@ -743,27 +743,89 @@ describe("machineBar", () => {
 
   it.each([
     // One timed-out check while still online already hides gauges that would be stale.
-    [true, "unresponsive", undefined, { text: "Not responding" }, null],
-    [false, "unresponsive", undefined, { text: "Not responding" }, null],
-    [
-      true,
-      "over-limit",
-      "memory stalled 57% of the time (limit 10%)",
-      null,
-      "remoto · over its limits: memory stalled 57% of the time (limit 10%)",
-    ],
-  ] as const)("Linux online=%s %s says so", (online, status, overLimitBy, offline, statusHint) => {
+    [true, "unresponsive", "remoto · not responding · ssh timed out"],
+    [false, "unresponsive", "remoto · not responding · ssh timed out"],
+    [false, "offline", "remoto · offline · ssh timed out"],
+  ] as const)("Linux online=%s %s says so as host · state · reason", (online, status, hint) => {
     const { linux } = machineBar(
-      state({
-        linux: { ...LINUX, online, status, ...(overLimitBy === undefined ? {} : { overLimitBy }) },
-        paused: true,
-      }),
+      state({ linux: { ...LINUX, online, status, error: "ssh timed out" }, paused: true }),
       null,
     );
-    expect(linux).toMatchObject({ offline });
-    if (statusHint !== null) expect(linux!.statusHint).toBe(statusHint);
-    expect(linux!.cpu === null).toBe(status === "unresponsive");
+    expect(linux).toMatchObject({ statusHint: hint, offline: { hint } });
+    expect(linux!.cpu).toBeNull();
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
+  const FLOOR = { limit: "memory", reason: "0.8 GB free, keeping 10%" } as const;
+  const CPU = { limit: "cpu", reason: "CPU 92%, limit 70%" } as const;
+  const SATURATED = {
+    limit: "cpu-pressure",
+    reason: "CPU saturated: work waited 95% of the time",
+  } as const;
+  const STALLED = {
+    limit: "memory-pressure",
+    reason: "memory stalled 57% of the time (limit 10%)",
+  } as const;
+  const SWAP = { limit: "swap", reason: "swap nearly full: 0.2 GB of 4.0 GB free" } as const;
+  const DISK = {
+    limit: "io-pressure",
+    reason: "disk stalled 40% of the time (limit 30%)",
+  } as const;
+  it.each([
+    ["free memory", [FLOOR], false, true],
+    ["CPU in use", [CPU], true, false],
+    ["CPU saturation", [SATURATED], true, false],
+    // No gauge of their own: only the status hint names them.
+    ["memory stalls", [STALLED], false, false],
+    ["swap", [SWAP], false, false],
+    ["disk stalls", [DISK], false, false],
+    ["free memory and CPU at once", [FLOOR, CPU], true, true],
+  ] as const)(
+    "Linux over its %s limit warns on that gauge only",
+    (_name, overLimits, cpu, memory) => {
+      const { linux } = machineBar(
+        state({
+          linux: { ...LINUX, status: "over-limit", overLimitBy: overLimits[0].reason, overLimits },
+        }),
+        null,
+      );
+      expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([cpu, memory]);
+      const reasons = overLimits.map((over) => over.reason);
+      expect(linux!.statusHint).toBe(`remoto · over limits · ${reasons.join("; ")}`);
+      // A warning gauge names its own limit and no other.
+      for (const [gauge, warns] of [
+        [linux!.cpu!, cpu],
+        [linux!.memory!, memory],
+      ] as const) {
+        const named = overLimits.filter((over) => gauge.hint.includes(over.reason));
+        expect(named).toHaveLength(warns ? 1 : 0);
+      }
+    },
+  );
+
+  it.each([
+    // An older server names the reason only; a status alone (easing back) still says over limits.
+    [
+      { overLimitBy: "memory stalled 57% of the time (limit 10%)" },
+      " · memory stalled 57% of the time (limit 10%)",
+    ],
+    [{}, ""],
+  ] as const)("Linux over limits without the limits listed warns on no gauge", (extra, reason) => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, status: "over-limit", ...extra } }),
+      null,
+    );
+    expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([false, false]);
+    expect(linux!.statusHint).toBe(`remoto · over limits${reason}`);
+  });
+
+  it("an online Linux warns on no gauge even with stale limits", () => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, status: "online", overLimits: [FLOOR, CPU] } }),
+      null,
+    );
+    expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([false, false]);
+    expect(linux!.statusHint).toBe("remoto · online");
   });
 
   it.each([
