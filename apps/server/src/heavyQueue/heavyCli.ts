@@ -1699,7 +1699,9 @@ const runLinuxPart = async (
   }
   if (stopped) process.exit(143);
   // Linux never ran it or dropped it: this call alone goes again, so its line never repeats. On
-  // Linux while it answers, then here; a job asked for Linux ends instead.
+  // Linux while it answers, then as "If a Linux run fails" (dropped) or "When Linux is offline"
+  // (never started) says, for this call alone; a job asked for Linux ends instead. ponytail: "ask"
+  // ends the call like "agent": the queue's question belongs to a waiting job, not a running call.
   for (
     let attempt = 1;
     (outcome.kind === "unavailable" || outcome.kind === "dropped") && worktree === null;
@@ -1740,7 +1742,23 @@ const runLinuxPart = async (
           code: LINUX_UNAVAILABLE_EXIT,
         });
       }
-      process.exit(await spawnCall(dir, "mac", [given, ...givenArgs], { reason: why }));
+      const policy = lost.kind === "dropped" ? config.runnerDropped : config.runnerUnavailable;
+      if (policy === "mac") {
+        process.exit(await spawnCall(dir, "mac", [given, ...givenArgs], { reason: why }));
+      }
+      if (policy !== "wait") {
+        process.stderr.write(`[t3 heavy] Linux couldn't run this: ${why}.\n`);
+        process.exit(LINUX_UNAVAILABLE_EXIT);
+      }
+      jobNote(`[t3 heavy] ${why}: waiting for Linux to run this call again.\n`);
+      for (let up = health.ok; !up;) {
+        await pause(machine.runnerSshTimeoutSeconds * 1000);
+        if (stopped) process.exit(143);
+        const again = await checkLinux(linkMachine(machine, doc.sample), process.env);
+        recordHealth(dir, again);
+        up = again.ok;
+      }
+      attempt = 0;
     }
     recorded = null;
     failure = null;

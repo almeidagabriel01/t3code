@@ -1277,17 +1277,100 @@ describe("t3 heavy", () => {
     });
 
     // A call Linux never started or dropped goes again alone, the rest of its line never twice: on
-    // Linux while it answers, else here. Output it already wrote, or a job asked for Linux, keeps it.
-    it.each([
-      ["dropped, Linux back", "drop", "", "up", 0, "on-linux\nafter\n", "2", null],
-      ["unavailable, Linux back", "never", "", "up", 0, "on-linux\nafter\n", "2", null],
-      ["dropped, asked for Linux", "drop", "", "up", 0, "on-linux\nafter\n", "2", null],
-      ["dropped, Linux gone", "drop", "", "down", 0, "vp on mac: test run\nafter\n", "1", null],
+    // Linux while it answers, then as "If a Linux run fails" (dropped) or "When Linux is offline"
+    // (never started) says, for that call. Output it already wrote, or a job asked for Linux, keeps it.
+    const back = "on-linux\ncode 0\n";
+    const mac = "vp on mac: test run\ncode 0\n";
+    const told = (why: string) => `[t3 heavy] Linux couldn't run this: ${why}.\n`;
+    it.each<
+      [
+        string,
+        "drop" | "never",
+        string,
+        "up" | "down" | "flaky",
+        Partial<typeof DEFAULT_PROJECT_CONFIG>,
+        number,
+        string,
+        string,
+        string | null,
+      ]
+    >([
+      ["dropped, Linux back", "drop", "", "up", {}, 0, back, "2", null],
+      ["unavailable, Linux back", "never", "", "up", {}, 0, back, "2", null],
+      ["dropped, asked for Linux", "drop", "", "up", {}, 0, back, "2", null],
+      ["dropped, Linux gone, mac", "drop", "", "down", { runnerDropped: "mac" }, 0, mac, "1", null],
+      [
+        "dropped, Linux gone, agent",
+        "drop",
+        "",
+        "down",
+        {},
+        0,
+        "code 75\n",
+        "1",
+        told("Linux dropped it mid-run"),
+      ],
+      [
+        "dropped, Linux gone, ask",
+        "drop",
+        "",
+        "down",
+        { runnerDropped: "ask" },
+        0,
+        "code 75\n",
+        "1",
+        told("Linux dropped it mid-run"),
+      ],
+      [
+        "dropped, Linux back later, wait",
+        "drop",
+        "",
+        "flaky",
+        { runnerDropped: "wait" },
+        0,
+        back,
+        "2",
+        null,
+      ],
+      [
+        "unavailable, Linux gone, mac",
+        "never",
+        "",
+        "down",
+        { runnerUnavailable: "mac" },
+        0,
+        mac,
+        "1",
+        null,
+      ],
+      [
+        "unavailable, Linux gone, ask",
+        "never",
+        "",
+        "down",
+        {},
+        0,
+        "code 75\n",
+        "1",
+        told("Linux is unavailable"),
+      ],
+      [
+        "unavailable, Linux back later, wait",
+        "never",
+        "",
+        "flaky",
+        { runnerUnavailable: "wait" },
+        0,
+        back,
+        "2",
+        null,
+      ],
       [
         "dropped, Linux gone, asked for Linux",
         "drop",
         "",
         "down",
+        { runnerDropped: "mac" },
         75,
         "",
         "1",
@@ -1298,14 +1381,15 @@ describe("t3 heavy", () => {
         "drop",
         "echo partial;",
         "up",
+        { runnerDropped: "mac" },
         0,
-        "partial\nafter\n",
+        "partial\ncode 75\n",
         "1",
         "Linux dropped it mid-run; it already wrote output, so it does not run again",
       ],
-    ] as const)(
+    ])(
       "a call %s runs alone again, never its line",
-      async (name, lost, before, linux, code, output, linuxRuns, said) => {
+      async (name, lost, before, linux, config, code, output, linuxRuns, said) => {
         const linuxOnly = name.endsWith("asked for Linux");
         const { dir, env } = setup(
           failingOnce(
@@ -1313,15 +1397,21 @@ describe("t3 heavy", () => {
               ? "exit 75"
               : `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; ${before} exit 255`,
           ),
+          config,
         );
-        // Heartbeats fail from the first Linux run on; a stop always confirms.
+        // After the first Linux run, heartbeats fail (down) or fail once (flaky); a stop confirms.
+        const failing = {
+          up: "",
+          down: `[ -e ${env.T3CODE_REMOTO}.count ] && exit 255;`,
+          flaky: `[ -e ${env.T3CODE_REMOTO}.count ] && [ ! -e "$0.failed" ] && { : > "$0.failed"; exit 255; };`,
+        }[linux];
         const ssh = script(
           dir,
           "ssh-after",
-          `case "$*" in *loadavg*) ${linux === "down" ? `[ -e ${env.T3CODE_REMOTO}.count ] && exit 255;` : ""} printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+          `case "$*" in *loadavg*) ${failing} printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
         );
         const marker = NodePath.join(dir, "marker");
-        const line = `echo x >> ${marker} && vp test run; echo after`;
+        const line = `echo x >> ${marker} && vp test run; echo "code $?"`;
         const run = heavyHere(
           dir,
           ["/bin/sh", "-c", line],
@@ -1498,15 +1588,15 @@ describe("t3 heavy", () => {
       });
     });
 
-    // A call Linux dropped and confirmed stopped runs again here alone, whatever "If a Linux run
-    // fails" says. A PC that went away answers no stop check: the job hands it back unconfirmed.
+    // A call Linux dropped and confirmed stopped ends alone with why; its line runs on, once. A PC
+    // that went away answers no stop check: the job hands it back unconfirmed.
     it.each([
       [
         "answers the stop check",
         "echo gone",
         0,
-        "vp on mac: test run\nafter\n",
-        "[t3 heavy] Linux dropped it mid-run; running this call on this Mac.\n",
+        "code 75\n",
+        "[t3 heavy] Linux couldn't run this: Linux dropped it mid-run.\n",
       ],
       [
         "is gone",
@@ -1540,7 +1630,7 @@ describe("t3 heavy", () => {
         );
         const run = heavyHere(
           dir,
-          ["/bin/sh", "-c", "vp test run; echo after"],
+          ["/bin/sh", "-c", 'vp test run; echo "code $?"'],
           { ...env, T3CODE_RUNNER_SSH: ssh },
           ["--"],
           dir,
