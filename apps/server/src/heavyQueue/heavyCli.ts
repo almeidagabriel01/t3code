@@ -50,6 +50,7 @@ import {
   recordFault,
   recordHealth,
   recordSampleIfStale,
+  remove,
   requeue,
   scriptReader,
   setProgress,
@@ -58,6 +59,7 @@ import {
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
+  eligibilityOf,
   INSTALL_FAILED,
   linkAttempts,
   linkMachine,
@@ -719,8 +721,20 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 
   const readHost = makeHostReader();
   const environment = process.env;
+  const queuedCall = environment[CALL_ENV] === "1";
   while (true) {
-    const start = await waitForStart(dir, id, readHost, environment);
+    const start = await waitForStart(
+      dir,
+      id,
+      readHost,
+      environment,
+      queuedCall && launch.where === "linux",
+    );
+    if (start === null) {
+      // Its parent holds this Mac: run it under that slot rather than wait for a second one.
+      runDirect(launch.program, launch.args, { ...environment, [HEAVY_JOB_ENV]: "1" });
+      return;
+    }
     const doc = readDoc(dir);
     const self = doc.entries.find((entry) => entry.id === id);
     const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
@@ -739,6 +753,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
               workers: start.workers,
               lane: self?.priority,
               environment,
+              shims: !queuedCall && self !== undefined && reasonedMac(doc, self),
             },
             (handler) => (onSignal = handler),
           );
@@ -747,11 +762,21 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
 };
 
+/** On this Mac for a closed-list reason: its other heavy calls may still go to Linux (D3). */
+const reasonedMac = (doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
+  const config = configFor(doc, entry.cwd);
+  if (!config.runnerEnabled) return false;
+  const { mac } = eligibilityOf(entry, { config, home: NodeOS.homedir(), rootOf: gitRootOf });
+  return mac !== undefined && mac.code !== "pinned";
+};
+
+/** Null: `leavesForMac` and the plan sends it to this Mac, so it left the queue. */
 const waitForStart = async (
   dir: string,
   id: string,
   readHost: ReturnType<typeof makeHostReader>,
   environment: NodeJS.ProcessEnv,
+  leavesForMac: boolean,
 ) => {
   let lastSampleTry = 0;
   let lastShown = "";
@@ -773,6 +798,13 @@ const waitForStart = async (
     if (start.status === "started") {
       if (start.reason !== undefined) process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
       return start;
+    }
+    if (leavesForMac && start.runner === "mac") {
+      process.stderr.write(
+        `[t3 heavy] ${start.reason ?? "Sent to this Mac"}; running under the job that called it.\n`,
+      );
+      remove(dir, id);
+      return null;
     }
     const shown = `${start.position}|${start.running?.id ?? ""}|${start.runner ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
@@ -857,19 +889,24 @@ const runMacAttempt = async (
     readonly workers: number | null;
     readonly lane: "low" | "normal" | "high" | undefined;
     readonly environment: NodeJS.ProcessEnv;
+    readonly shims: boolean;
   },
   setSignal: SignalHook,
 ): Promise<Attempt> => {
   // Ungated (queue off) jobs keep their own worker counts and CPU priority.
-  const run =
+  const counted =
     job.workers === null
       ? { args: job.args, env: { ...job.environment, [HEAVY_JOB_ENV]: "1" } }
       : withWorkers(job.program, job.args, job.workers, job.environment, {
           cwd: process.cwd(),
           read: readText,
         });
+  const run = job.shims
+    ? withShims(job.dir, job.id, MAC_JOB_ENV, job.program, counted.args, counted.env)
+    : counted;
   const launch = launchOf(
-    job.program,
+    // The job's own program is never its shim: its calls inside are.
+    job.shims ? realProgram(job.program, job.environment.PATH) : job.program,
     run.args,
     job.workers !== null && AGENT_JOB_CPU === "background" && job.lane === "low",
     // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
@@ -912,7 +949,12 @@ const PHASE_LABEL = { syncing: "syncing", installing: "installing deps", running
 const runnerName = (runner: "mac" | "linux") => (runner === "linux" ? "Linux" : "this Mac");
 
 const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
+const MAC_JOB_ENV = "T3CODE_HEAVY_MAC_JOB";
 const GROUP_ENV = "T3CODE_HEAVY_GROUP";
+/** On a job a heavy call queued: its program never goes through the shims again. */
+const CALL_ENV = "T3CODE_HEAVY_CALL";
+/** What the queuing job's line set for that call, by name: Linux gets them as `env` words. */
+const CALL_KEYS_ENV = "T3CODE_HEAVY_CALL_KEYS";
 
 /** The environment a job gave its line, as hashes: a call sends only what the line set. */
 const envFile = (dir: string, id: string) => NodePath.join(dir, `env-${id}.json`);
@@ -967,9 +1009,11 @@ const lineKeys = (dir: string, id: string) => {
   );
 };
 
-/** `NAME=value` words for what the line set for this call. */
+/** `NAME=value` words for what the line set for this call, here or in the job that queued it. */
 const lineEnv = (dir: string, id: string) =>
-  lineKeys(dir, id).map((key) => `${key}=${process.env[key] ?? ""}`);
+  [...lineKeys(dir, id), ...(process.env[CALL_KEYS_ENV]?.split(" ") ?? [])]
+    .filter((key) => key !== "")
+    .map((key) => `${key}=${process.env[key] ?? ""}`);
 
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
@@ -1203,13 +1247,16 @@ const queueCall = (
   dir: string,
   where: "mac" | "linux",
   values: ReadonlyArray<string>,
-  { reason }: { readonly reason?: string },
+  { reason, keys = [] }: { readonly reason?: string; readonly keys?: ReadonlyArray<string> },
 ) => {
   const env = {
     ...process.env,
     PATH: withoutShims(process.env.PATH),
+    [CALL_ENV]: "1",
+    [CALL_KEYS_ENV]: keys.join(" "),
     [HEAVY_JOB_ENV]: undefined,
     [LINUX_JOB_ENV]: undefined,
+    [MAC_JOB_ENV]: undefined,
   };
   if (reason !== undefined) {
     process.stderr.write(`[t3 heavy] ${reason}; running this call on this Mac.\n`);
@@ -1223,9 +1270,10 @@ const queueCall = (
 };
 
 /**
- * `t3 heavy call -- <program> [args...]`: a heavy program called inside a Linux job, through its
- * shim, judged expanded. A light call runs here; a heavy one runs on Linux unless it needs this
- * Mac, then as a Mac job of its own. `linux-part` is a Linux job's own program: no light check.
+ * `t3 heavy call -- <program> [args...]`: a heavy program called inside a queue job, through its
+ * shim, judged expanded. A light call runs here. In a Linux job it runs on Linux unless it needs
+ * this Mac, then as a Mac job of its own; in a Mac job it runs here when it needs this Mac, else
+ * as a Linux job of its own. `linux-part` is a Linux job's own program: no light check.
  */
 const runCall = (
   dir: string,
@@ -1235,18 +1283,32 @@ const runCall = (
 ) => {
   const environment = process.env;
   const linuxJob = environment[LINUX_JOB_ENV];
+  const macJob = environment[MAC_JOB_ENV];
   if (given === undefined) {
     process.stderr.write("[t3 heavy] call needs a program.\n");
     process.exit(2);
   }
   if (
     environment[HEAVY_JOB_ENV] !== "1" ||
-    linuxJob === undefined ||
+    (linuxJob === undefined && macJob === undefined) ||
     (light && heavySegment(jobLine(given, args)) === null)
   ) {
     return runHere(given, args, false);
   }
-  void runLinuxPart(dir, given, args, linuxJob);
+  if (linuxJob !== undefined) return void runLinuxPart(dir, given, args, linuxJob);
+  const cwd = process.cwd();
+  const doc = readDoc(dir);
+  const config = configFor(doc, cwd);
+  const mac =
+    gitRootOf(cwd) === null ||
+    macReasonOf(
+      [given, ...args],
+      cwd,
+      { config, home: NodeOS.homedir(), rootOf: gitRootOf },
+      scriptReader(cwd),
+    ) !== null;
+  if (mac || !config.runnerEnabled) return runHere(given, args, true);
+  queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
 
 /** Progress for the job's own stderr, outside any redirect the line put on this part. */

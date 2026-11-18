@@ -609,6 +609,44 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe("status 3\n");
     });
 
+    // A Mac job's heavy calls without a reason of their own go to Linux as Linux-only jobs (D3).
+    // Linux offline, one that "When Linux is offline" sends here runs under its job's own slot.
+    it.each([
+      [true, "vp on mac: run knip:check"],
+      [false, "env|K=1|vp|run|knip:check| in REAL"],
+    ] as const)(
+      "inside a Mac job (Linux offline: %s), xcodebuild runs here and knip goes out",
+      async (offline, knip) => {
+        const { dir, env } = setup(echoArgs, { runnerUnavailable: "mac" });
+        script(NodePath.join(dir, "bin"), "xcodebuild", 'echo "xcodebuild on mac: $*"');
+        if (offline) {
+          const path = NodePath.join(dir, "queue.json");
+          const doc = JSON.parse(NodeFS.readFileSync(path, "utf8")) as Record<string, object>;
+          NodeFS.writeFileSync(
+            path,
+            JSON.stringify({ ...doc, linux: { ...doc.linux, online: false, failures: 3 } }),
+          );
+        }
+        // One Mac slot, held by the job itself: its call must never wait for a second one.
+        Queue.setEnabled(dir, true);
+        Queue.setMaxRunning(dir, 1);
+        const line = 'xcodebuild -version; K=1 vp run knip:check; echo "code $?"';
+        const run = heavyHere(
+          dir,
+          ["/bin/sh", "-c", line],
+          offline ? { ...env, T3CODE_RUNNER_SSH: script(dir, "ssh-down", "exit 255") } : env,
+          ["--"],
+          dir,
+        );
+        expect(await run.exited).toBe(0);
+        const [xcodebuild, ...rest] = run.stdout().split("\n");
+        // The job's worker cap reaches xcodebuild as `-jobs N`.
+        expect(xcodebuild).toMatch(/^xcodebuild on mac: (-jobs \d+ )?-version$/);
+        expect(rest).toEqual([knip.replace("REAL", NodeFS.realpathSync(dir)), "code 0", ""]);
+        expect(run.stderr().includes("running under the job that called it")).toBe(offline);
+      },
+    );
+
     /** The faults the job logged for the problem detector, without the per-run fields. */
     const faults = (dir: string) =>
       Queue.readDoc(dir).events.flatMap((event) =>
