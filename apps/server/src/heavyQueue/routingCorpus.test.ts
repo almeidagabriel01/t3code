@@ -10,6 +10,8 @@ const context = {
   config: DEFAULT_PROJECT_CONFIG,
   home: "/Users/dev",
   rootOf: (cwd: string) => CHECKOUT.exec(cwd)?.[1] ?? null,
+  // The dev server the rows name listens on 5733; nothing else listens.
+  listening: (port: number) => port === 5733,
 };
 const routeOf = ({ eligibility, mac }: Verdict) =>
   eligibility === "linux" || eligibility === "exclusive"

@@ -62,6 +62,7 @@ import {
   type SyncBack,
   withRecord,
 } from "./heavyNotices.ts";
+import { listensHere } from "./localPorts.ts";
 import {
   beforeBoot,
   bootAtOf,
@@ -547,6 +548,17 @@ export const gitRootOf = (cwd: string) => {
   return found;
 };
 
+// `lsof` blocks and plans run often: a port's answer holds a few seconds.
+const LISTEN_TTL_MS = 5_000;
+const listens = new Map<number, { readonly at: number; readonly listens: boolean }>();
+const listening = (port: number) => {
+  const known = listens.get(port);
+  if (known !== undefined && Date.now() - known.at < LISTEN_TTL_MS) return known.listens;
+  const answer = listensHere(port);
+  listens.set(port, { at: Date.now(), listens: answer });
+  return answer;
+};
+
 const contextOf =
   (doc: QueueDoc) =>
   (cwd: string): WorkContext => ({
@@ -554,6 +566,7 @@ const contextOf =
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
+    listening,
   });
 
 /** Some project uses the Runner, so jobs can wait on either machine. */

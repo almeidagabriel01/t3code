@@ -231,9 +231,17 @@ work queue, and each section says what the two do together.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
-    `expo start`, or a `dev`, `start` or `serve` script.
+    `expo start`, a `dev`, `start` or `serve` script or `turbo`/`nx` task, or a
+    test runner's `--ui`.
+  - **Watches this Mac's files**: `--watch`, or `-w` on a test runner or `tsc`.
+    On Linux it would watch a copy your edits never reach.
+  - **Uses this Mac's Docker**: `docker` and `podman` commands, whose images
+    and containers live in this Mac's daemon.
+  - **Talks to a port open here**: an argument names `localhost`,
+    `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
+    `--base-url http://localhost:5733`.
 
-  A seventh reason is learned: **Linux couldn't run this before** (see **If a
+  A tenth reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.

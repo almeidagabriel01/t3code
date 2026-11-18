@@ -40,6 +40,7 @@ import {
   type ReadScript,
 } from "./heavyHook.ts";
 import type { SyncBack } from "./heavyNotices.ts";
+import { localPortsIn } from "./localPorts.ts";
 import type { Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
@@ -166,6 +167,9 @@ export interface MacReason {
     | "mac-state"
     | "pinned"
     | "serves-port"
+    | "watches"
+    | "mac-docker"
+    | "mac-port"
     | "learned";
   /** The program, pattern or path that keeps it here. */
   readonly subject: string;
@@ -185,6 +189,9 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   "mac-state": "Changes this Mac's checkout",
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
+  watches: "Watches this Mac's files",
+  "mac-docker": "Uses this Mac's Docker",
+  "mac-port": "Talks to a port open here",
   learned: "Linux couldn't run this before",
 };
 
@@ -290,6 +297,11 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
 };
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
+const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
+// `-w` means watch only to these; to `pnpm` it is the workspace root.
+const SHORT_WATCH = new Set(["vitest", "jest", "mocha", "tsc", "tsgo"]);
+const WATCH = /^--watch(All)?(=true)?$/;
+const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
   "rustc",
@@ -331,10 +343,22 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
  */
 const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
   let { program, words } = part;
-  if (EXECUTORS.has(program) || (PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? ""))) {
-    const at = EXECUTORS.has(program) ? 0 : 1;
-    program = words[at]?.split("/").pop() ?? "";
-    words = words.slice(at + 1);
+  let after = part.values.slice(part.programAt + 1);
+  // `pnpm -F web exec vitest`: a flag's value can sit before `exec`.
+  const execAt = EXECUTORS.has(program)
+    ? -1
+    : !PACKAGE_MANAGERS.has(program)
+      ? null
+      : EXEC.test(words[0] ?? "")
+        ? 0
+        : part.flags.length > 0 && EXEC.test(words[1] ?? "")
+          ? 1
+          : null;
+  if (execAt !== null) {
+    const raw = words[execAt + 1] ?? "";
+    program = raw.split("/").pop() ?? "";
+    words = words.slice(execAt + 2);
+    after = after.slice(after.indexOf(raw) + 1);
   }
   const [first = "", second = ""] = words;
   const named = `${program} ${first}`.trim();
@@ -346,8 +370,22 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   }
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
   if (DEV_PROGRAMS[program]?.test(first) === true) return { code: "serves-port", subject: named };
-  if (program === "docker" && first === "compose" && words.includes("up")) {
-    return { code: "serves-port", subject: named };
+  if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
+  const task = TASK_RUNNERS.has(program)
+    ? words.find((word) => word.split(":").some((each) => DEV_SERVER.test(each)))
+    : undefined;
+  if (task !== undefined) return { code: "serves-port", subject: `${program} ${task}` };
+  const watch = after.find(
+    (word) => WATCH.test(word) || (word === "-w" && SHORT_WATCH.has(program)),
+  );
+  if (watch !== undefined) return { code: "watches", subject: `${program} ${watch}` };
+  if (program === "vitest" && /^(watch|dev)$/.test(first)) {
+    return { code: "watches", subject: named };
+  }
+  if (DOCKERS.has(program) && first !== "") {
+    return first === "compose" && words.includes("up")
+      ? { code: "serves-port", subject: named }
+      : { code: "mac-docker", subject: named };
   }
   if (!PACKAGE_MANAGERS.has(program)) return null;
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
@@ -368,6 +406,7 @@ const tieOf = (
   vars: ReadonlyMap<string, string | null>,
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
+  listening: (port: number) => boolean,
 ): MacReason | null => {
   const own = programReason(part, config.runnerMacTools);
   if (own !== null) return own;
@@ -389,8 +428,11 @@ const tieOf = (
       continue;
     }
     const expanded = expand(word, vars, cwd);
-    const path = "value" in expanded ? outsidePath(expanded.value, cwd, root) : null;
+    if (!("value" in expanded)) continue;
+    const path = outsidePath(expanded.value, cwd, root);
     if (path !== null) return { code: "mac-env", subject: path };
+    const port = localPortsIn(expanded.value).find(listening);
+    if (port !== undefined) return { code: "mac-port", subject: `localhost:${port}` };
   }
   return null;
 };
@@ -473,10 +515,10 @@ const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 const lineReason = (
   line: string,
   start: string | null,
-  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
   read: ReadScript | undefined,
 ): MacReason | null => {
-  const { config, home, rootOf } = context;
+  const { config, home, rootOf, listening = () => false } = context;
   const parsed = readLine(line, read);
   // The parser keeps a `case` arm's pattern as the command's first word: `a) xcodebuild` runs it.
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
@@ -506,7 +548,7 @@ const lineReason = (
               rootOf,
             );
       const at = moved?.cwd ?? cwd;
-      const mac = tieOf(part, at, vars, rootOf, config);
+      const mac = tieOf(part, at, vars, rootOf, config, listening);
       if (mac !== null) return mac;
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
@@ -574,7 +616,7 @@ const lineReason = (
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -594,7 +636,7 @@ export const eligibilityOf = (
 export const macReasonOf = (
   values: ReadonlyArray<string>,
   cwd: string,
-  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
   read: ReadScript,
 ) => lineReason(values.map(shellQuote).join(" "), cwd, context, read);
 
@@ -871,6 +913,8 @@ export interface WorkContext {
   readonly home: string;
   /** The git checkout `remoto` would sync from a folder, or null outside any. */
   readonly rootOf: (cwd: string) => string | null;
+  /** Whether something on this Mac listens on a TCP port; nothing does when absent. */
+  readonly listening?: (port: number) => boolean;
 }
 
 export interface RoutePlanInput extends PlanInput {

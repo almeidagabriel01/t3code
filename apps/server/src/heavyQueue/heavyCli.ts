@@ -84,6 +84,7 @@ import {
   startLinuxRun,
   stopRemote,
 } from "./runnerExec.ts";
+import { listensHere } from "./localPorts.ts";
 import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
 import {
   forgetRoutes,
@@ -797,7 +798,12 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 const reasonedMac = (doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
   const config = configFor(doc, entry.cwd);
   if (!config.runnerEnabled) return false;
-  const { mac } = eligibilityOf(entry, { config, home: NodeOS.homedir(), rootOf: gitRootOf });
+  const { mac } = eligibilityOf(entry, {
+    config,
+    home: NodeOS.homedir(),
+    rootOf: gitRootOf,
+    listening: listensHere,
+  });
   return mac !== undefined && mac.code !== "pinned";
 };
 
@@ -1341,7 +1347,7 @@ const callMacReason = (
   macReasonOf(
     values,
     cwd,
-    { config, home: NodeOS.homedir(), rootOf: gitRootOf },
+    { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
     scriptReader(cwd),
   ) ?? learnedOf(dir, values[0]!, cwd, root, config);
 

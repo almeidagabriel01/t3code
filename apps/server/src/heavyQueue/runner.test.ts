@@ -1607,8 +1607,12 @@ describe("patterns and eligibility", () => {
     ).toMatchObject({ eligibility, reason });
   });
 
-  // Every mode, even with nothing on Always on this Mac.
-  const open = { ...at, config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [] } };
+  // Every mode, even with nothing on Always on this Mac; only port 5733 listens here.
+  const open = {
+    ...at,
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [] },
+    listening: (port: number) => port === 5733,
+  };
   it.each([
     ["pnpm install", "mac-state", "pnpm install"],
     ["vp i", "mac-state", "vp i"],
@@ -1630,6 +1634,17 @@ describe("patterns and eligibility", () => {
     ["make -C native/x", "native-build", "make"],
     ["pnpm exec cmake --build build", "native-build", "cmake"],
     ["sh -c 'cd native && clang++ -O2 a.cc'", "native-build", "clang++"],
+    ["pnpm exec playwright test --base-url http://127.0.0.1:5733", "mac-port", "localhost:5733"],
+    ["curl -s --url=http://[::1]:5733/api", "mac-port", "localhost:5733"],
+    ["pnpm exec vitest --ui", "serves-port", "vitest --ui"],
+    ["pnpm -F web exec playwright test --ui", "serves-port", "playwright --ui"],
+    ["pnpm exec turbo run dev", "serves-port", "turbo dev"],
+    ["nx run web:serve", "serves-port", "nx web:serve"],
+    ["jest --watch", "watches", "jest --watch"],
+    ["pnpm exec vitest -w", "watches", "vitest -w"],
+    ["vitest watch", "watches", "vitest watch"],
+    ["docker build -t app .", "mac-docker", "docker build"],
+    ["docker compose exec db psql", "mac-docker", "docker compose"],
   ] as const)("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
@@ -1653,6 +1668,10 @@ describe("patterns and eligibility", () => {
     "npm run watch:css",
     "cargo fmt --check",
     "go mod tidy",
+    "pnpm exec playwright test --base-url http://localhost:4173",
+    "pnpm -w exec vitest run",
+    "turbo run build --filter web",
+    "docker --version",
   ])("%s may still leave", (label) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
   });
