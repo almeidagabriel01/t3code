@@ -1067,11 +1067,17 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--runner linux, wait",
       "vp test run",
-      { where: "linux" },
+      { where: "linux", linuxOnly: true },
       { runnerUnavailable: "wait" },
       "linux-wait",
     ],
-    ["--runner linux, ask", "vp test run", { where: "linux" }, { runnerUnavailable: "ask" }, "ask"],
+    [
+      "--runner linux, ask",
+      "vp test run",
+      { where: "linux", linuxOnly: true },
+      { runnerUnavailable: "ask" },
+      "ask",
+    ],
     [
       "--runner linux, unanswered → Mac",
       "vp test run",
@@ -1685,6 +1691,7 @@ describe("patterns and eligibility", () => {
     "S=/tmp/x; vp test run",
     "DATABASE_URL=postgres://localhost:5432/db vp test run",
     "PATH=/opt/bin:$PATH vp test run",
+    "jest -w 4",
   ])("%s may still leave", (label) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
   });

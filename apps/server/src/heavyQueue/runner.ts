@@ -298,8 +298,8 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
-// `-w` means watch only to these; to `pnpm` it is the workspace root.
-const SHORT_WATCH = new Set(["vitest", "jest", "mocha", "tsc", "tsgo"]);
+// `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
+const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
 const WATCH = /^--watch(All)?(=true)?$/;
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
