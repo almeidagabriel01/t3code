@@ -1477,6 +1477,18 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Always on this Mac: integration" },
     },
     {
+      name: "an agent's remoto that needs this Mac is canceled, never run",
+      line: "remoto vp test run /etc/hosts",
+      over: { runnerWhere: "linux" as const },
+      expected: {
+        runsOn: "linux",
+        canceled: true,
+        startsNow: false,
+        reason:
+          "Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts",
+      },
+    },
+    {
       name: "Runner off",
       line: "vp test run",
       over: { runnerEnabled: false },
@@ -1703,6 +1715,7 @@ describe("Runner in the queue file", () => {
         reason: "No commit hook in this repository: runs directly",
         startsNow: true,
         linuxFull: false,
+        canceled: false,
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
       expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();

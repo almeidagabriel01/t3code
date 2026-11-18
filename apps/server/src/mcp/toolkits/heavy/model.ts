@@ -20,6 +20,8 @@ export interface Destination {
   readonly startsNow: boolean;
   /** Linux is offline, over its limits or out of slots. */
   readonly linuxFull: boolean;
+  /** It asked for Linux but needs this Mac: it ends with `reason`, so waiting is no question. */
+  readonly canceled?: boolean;
 }
 
 /** Each machine answers for itself: Linux jobs never count against this Mac, nor its pressure against them. */
@@ -85,7 +87,7 @@ export const heavyStatus = (input: {
   const runnerOfEntry = new Map(input.entries.map((entry) => [entry.id, runnerOf(entry)]));
   return {
     askUser:
-      destination?.runsOn === "direct"
+      destination?.runsOn === "direct" || destination?.canceled === true
         ? false
         : destination?.runsOn === "linux"
           ? !destination.startsNow && destination.linuxFull

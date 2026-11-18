@@ -906,6 +906,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       reason: handedOff ? HANDED_OFF_RUNS_DIRECT : COMMIT_RUNS_DIRECT,
       startsNow: true,
       linuxFull: false,
+      canceled: false,
     };
   }
   const id = `probe-${now}`;
@@ -930,11 +931,14 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       withProbe.entries.findIndex((e) => e.id === id),
     )
     .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  // A job asked for Linux that needs this Mac never runs: it ends with this reason.
+  const cancel = plan.cancels[id];
   return {
     runsOn: plan.routes[id] ?? ("mac" as const),
-    reason: plan.reasons[id] ?? null,
-    startsNow: plan.admits[id] !== undefined,
+    reason: cancel ?? plan.reasons[id] ?? null,
+    startsNow: cancel === undefined && plan.admits[id] !== undefined,
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
+    canceled: cancel !== undefined,
   };
 };
 

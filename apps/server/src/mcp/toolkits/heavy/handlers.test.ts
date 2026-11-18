@@ -164,6 +164,21 @@ describe("heavyStatus", () => {
       reason: "Linux is unavailable: waiting for it",
     },
     {
+      name: "canceled before it runs: never ask, and say why",
+      change: {
+        linux: { ...linux, online: false },
+        destination: {
+          ...toLinux,
+          reason: "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+          startsNow: false,
+          linuxFull: true,
+          canceled: true,
+        },
+      },
+      askUser: false,
+      reason: "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+    },
+    {
       name: "Linux-bound, a short wait such as a first health check: no ask",
       change: { linux, destination: { ...toLinux, startsNow: false } },
       askUser: false,
@@ -378,6 +393,7 @@ const callTool = (
                     reason: "Linux is unavailable: waiting for it",
                     startsNow: false,
                     linuxFull: true,
+                    canceled: false,
                   };
                 }),
           promote: (id, note) =>
