@@ -888,6 +888,9 @@ const dropHolds = (
     (config.runnerDropped === "ask" &&
       !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
 
+/** A running job's own call, queued by it: the slot it would wait for is its job's. */
+const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
+
 /** Pending owner decision: whether an agent's `remoto` asks for Linux as `--runner linux` does. */
 const REMOTO_ASKS_LINUX = true;
 
@@ -897,7 +900,7 @@ const REMOTO_ASKS_LINUX = true;
  */
 export const askedLinux = (entry: HeavyQueueEntry) =>
   entry.where === "linux" &&
-  (entry as QueuedEntry).call !== true &&
+  !isCall(entry) &&
   ((entry as QueuedEntry).linuxOnly === true || REMOTO_ASKS_LINUX);
 
 const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
@@ -990,8 +993,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
-    if (queueOn) macWaiters.push(entry);
-    else admits[entry.id] = { runner: "mac", ungated: true };
+    if (!queueOn) admits[entry.id] = { runner: "mac", ungated: true };
+    // Its job's slot is its own: waiting for another could wait on that job (pause included). A
+    // Linux call sent here leaves the queue instead, to run under its job (`leavesForMac`).
+    else if (isCall(entry) && entry.where === "mac") {
+      admits[entry.id] = { runner: "mac", ungated: false };
+    } else macWaiters.push(entry);
   };
   const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
@@ -1018,7 +1025,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           jobVerdict(input, sample, entry).hold === null)));
   /** Why Linux cannot take `entry` (of `worktree`) now, or null when it can. */
   const linuxBusy = (entry: HeavyQueueEntry, worktree: string): LinuxBusy | null => {
-    if (linuxFree <= 0) {
+    if (linuxFree <= 0 && !isCall(entry)) {
       return { kind: "slots", why: `all ${machine.runnerLinuxSlots} Linux slots are busy` };
     }
     // Its stop check there would end the new run too, in the same folder.
@@ -1032,7 +1039,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return { kind: "worktree", why: "this worktree is already running on Linux" };
     }
     // Linux drains for a job that runs there alone: admitting others would starve it.
-    if ([...alone].some((id) => id !== entry.id)) {
+    if (!isCall(entry) && [...alone].some((id) => id !== entry.id)) {
       return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };

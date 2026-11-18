@@ -1414,6 +1414,35 @@ describe("Linux unavailable, deadline and dropped policies", () => {
   });
 });
 
+// A running job's own call never waits for a slot its job holds: A (Mac) calls B (Linux), which
+// waits for C (Linux, same worktree), which calls D (Mac). With D waiting on A's slot, none moved.
+describe("a running job's own calls", () => {
+  const W = "/work/w";
+  const call = (id: string, where: "mac" | "linux") =>
+    job(id, "vp test run", { cwd: W, where, call: true } as never);
+  const full = { ...CALM, availableMemoryBytes: 1 * GIB };
+  it.each([
+    ["A holds the only Mac slot", "vp run build", CALM, 1],
+    ["A runs alone", "xcrun simctl boot iPhone", CALM, 3],
+    ["the Mac has no memory for D", "vp run build", full, 3],
+  ] as const)("%s: D starts, then B once C ends", (_, aLine, sample, maxRunning) => {
+    const a = job("a", aLine, { cwd: W, startedAt: ago(600_000) });
+    const c = runningOn("c", "linux", W);
+    // Linux's slots are full of other worktrees' jobs: B still starts.
+    const others = Array.from({ length: DEFAULT_MACHINE_CONFIG.runnerLinuxSlots }, (_, i) =>
+      runningOn(`x${i}`, "linux"),
+    );
+    const over = { maxRunning, sample };
+    const first = planRoutes(input([a, c, call("b", "linux"), call("d", "mac")], {}, over));
+    expect(first.admits.d).toEqual({ runner: "mac", ungated: false });
+    expect(first.admits.b).toBeUndefined();
+    expect(first.reasons.b).toBe("waiting for Linux: this worktree is already running on Linux");
+    const d = { ...call("d", "mac"), startedAt: ago(1000) };
+    const then = planRoutes(input([a, d, ...others, call("b", "linux")], {}, over));
+    expect(then.admits.b).toEqual({ runner: "linux", ungated: false });
+  });
+});
+
 describe("runtime toggles", () => {
   const entries = [
     runningOn("r", "mac"),
