@@ -145,10 +145,12 @@ const make = Effect.gen(function* () {
       if (!thread.length) return yield* new MemoryWorkerError({ code: "source_unavailable" });
       if (yield* query(SourceScan.isDelegatedChildThread(sql, meta.sourceThread.threadId)))
         return yield* new MemoryWorkerError({ code: "source_unavailable" });
-      // The scan is frozen at the observed mark, so later turns belong to the next chunk; only a
-      // rollback or deletion can change what was already read. An always-busy thread must progress.
+      // The scan is frozen at the observed mark, so new turns belong to the next chunk and an
+      // always-busy thread still progresses. What changes the text already read is a deletion, a
+      // rollback, or an update to a message that existed by the watermark (an edit).
+      const sourceThreadId = meta.sourceThread.threadId;
       const newer = yield* query(
-        sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${meta.sourceThread.threadId} AND sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (event_type='thread.deleted' OR (event_type='run.updated' AND json_extract(payload_json,'$.status')='rolled_back')) LIMIT 1`,
+        sql`SELECT 1 FROM orchestration_events e WHERE e.application_event_version=2 AND e.aggregate_kind='thread' AND e.stream_id=${sourceThreadId} AND e.sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (e.event_type='thread.deleted' OR (e.event_type='run.updated' AND json_extract(e.payload_json,'$.status')='rolled_back') OR (e.event_type='message.updated' AND EXISTS (SELECT 1 FROM orchestration_events p WHERE p.application_event_version=2 AND p.aggregate_kind='thread' AND p.stream_id=${sourceThreadId} AND p.event_type='message.updated' AND p.sequence<=${meta.sourceWatermark.throughSequence} AND json_extract(p.payload_json,'$.id')=json_extract(e.payload_json,'$.id')))) LIMIT 1`,
       );
       if (newer.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
       const excluded = yield* store.readSuppressions(
@@ -322,7 +324,6 @@ const make = Effect.gen(function* () {
                 }),
               )
             : [];
-          const continuationSequences = new Set(continuations.map((row) => row.sequence));
           const actions: Array<{ kind: "delete" | "cancel"; thread: M.ScopedThreadRef }> = [];
           const work: Array<Store.MemoryWork & { readonly failureCode?: M.MemoryFailureCode }> = [];
           // What the write phase must find unchanged before applying this plan.
@@ -425,14 +426,13 @@ const make = Effect.gen(function* () {
             if (candidate.metadata.kind !== "summary") continue;
             if (typeof chunk === "string") {
               // Events only append, so a run invalidated by later events stays invalidated.
-              // Record that as settled, or every scan would read this source again.
-              if (continuationSequences.has(row.sequence))
-                work.push({
-                  ...candidate,
-                  id: `${workId}:chunk:${row.sequence}`,
-                  status: "cancelled",
-                  failureCode: chunk,
-                });
+              // Record it as settled with its reason, so it is neither re-read nor silent.
+              work.push({
+                ...candidate,
+                id: `${workId}:chunk:${row.sequence}`,
+                status: "cancelled",
+                failureCode: chunk,
+              });
               continue;
             }
             const chunkId = `${workId}:chunk:${chunk.watermark.throughSequence}`;

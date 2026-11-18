@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Statement from "effect/sql/Statement";
@@ -1164,6 +1165,35 @@ describe("MemoryWorker", () => {
       assert.isBelow((yield* store.measureAllocation()).memoryBytes!, M.MEMORY_STORE_TARGET_BYTES);
     }).pipe(Effect.provide(live())),
   );
+  it.effect("an edit to a message the run already read invalidates it", () => {
+    const settled: string[] = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      const text = JSON.stringify(message);
+      if (logLevel === "Warn" && text.includes("settled without a run")) settled.push(text);
+    });
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* Worker.MemoryWorker;
+      const original = (yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_events WHERE sequence=1`)[0]!;
+      const message = yield* decodeMessage(original.payload_json);
+      // Same message id as the one at sequence 1: an edit after the run's mark, not a new turn.
+      yield* sql`INSERT INTO orchestration_events VALUES (3,${id(30)},${threadId},'message.updated',${encodeMessage({ ...message, text: "edited after the mark" })},${now},2,'thread')`;
+      yield* worker.sweepDue();
+      // The stale read writes no summary, and the reason is on record.
+      assert.deepStrictEqual(
+        yield* sql`SELECT status,failure_code FROM memory_outbox WHERE kind='summary'`,
+        [{ status: "cancelled", failure_code: "source_invalidated" }],
+      );
+      assert.strictEqual(settled.length, 1);
+      assert.include(settled[0], "source_invalidated");
+    }).pipe(
+      Effect.provide(Layer.merge(live(), Logger.layer([logger], { mergeWithExisting: false }))),
+    );
+  });
   it.effect("completes a run that later turns follow instead of cancelling it", () => {
     const spans = new Map<string, number>();
     const reads = () => spans.get("MemoryWorker.readSource") ?? 0;
