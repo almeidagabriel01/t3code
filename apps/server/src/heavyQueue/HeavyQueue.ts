@@ -185,10 +185,9 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
   }
   const { linux } = doc;
   const status = linuxStatus(linux);
+  const overLimits = status === "over-limit" ? linuxOverBy(linux, block.machine) : [];
   const overLimitBy =
-    status !== "over-limit"
-      ? null
-      : (linuxOverBy(linux, block.machine) ?? "easing back under its limits");
+    status !== "over-limit" ? null : (overLimits[0]?.reason ?? "easing back under its limits");
   return {
     host: block.machine.runnerHost,
     online: linux.online,
@@ -205,6 +204,7 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
       : {}),
     ...(status === undefined ? {} : { status }),
     ...(overLimitBy === null ? {} : { overLimitBy }),
+    ...(overLimits.length === 0 ? {} : { overLimits }),
   };
 };
 

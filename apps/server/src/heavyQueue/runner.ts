@@ -9,6 +9,7 @@ import {
   type HeavyQueueEntry,
   type HeavyRunner,
   type HeavyRunnerAskReason,
+  type HeavyRunnerLinuxOver,
   type RunnerMachineConfig,
   type RunnerProjectConfig,
   type RunnerWhere,
@@ -799,9 +800,9 @@ const LINUX_SWAP_FREE_SHARE = 0.1;
 const gbOf = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 
 /**
- * Which of Linux's limits a reading is past, with the metric and its value, or null when none or
- * unknown. The load average never counts: WSL adds tasks blocked on disk and swap to it. Without
- * PSI only free memory, swap and CPU in use (`/proc/stat`) decide.
+ * Every limit of Linux's a reading is past, each with its metric and value, the most urgent first;
+ * empty when none or unknown. The load average never counts: WSL adds tasks blocked on disk and
+ * swap to it. Without PSI only free memory, swap and CPU in use (`/proc/stat`) decide.
  */
 export const linuxOverBy = (
   reading: Pick<
@@ -814,18 +815,22 @@ export const linuxOverBy = (
     | "pressure"
   >,
   machine: RunnerMachineConfig,
-): string | null => {
+): ReadonlyArray<HeavyRunnerLinuxOver> => {
   const { availableMemoryBytes: free, totalMemoryBytes: total, cpuPercent: cpu } = reading;
   const pressure = reading.pressure ?? null;
+  const over: Array<HeavyRunnerLinuxOver> = [];
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
-    return `${gbOf(free)} free, keeping ${floor}%`;
+    over.push({ limit: "memory", reason: `${gbOf(free)} free, keeping ${floor}%` });
   }
   const stall = (share: number | null | undefined, limit: number) =>
     share !== null && share !== undefined && share >= limit ? Math.round(share) : null;
   const memory = stall(pressure?.memoryFull, LINUX_MEMORY_STALL_LIMIT);
   if (memory !== null) {
-    return `memory stalled ${memory}% of the time (limit ${LINUX_MEMORY_STALL_LIMIT}%)`;
+    over.push({
+      limit: "memory-pressure",
+      reason: `memory stalled ${memory}% of the time (limit ${LINUX_MEMORY_STALL_LIMIT}%)`,
+    });
   }
   const { swapTotalBytes: swap, swapFreeBytes: swapFree } = reading;
   if (
@@ -836,16 +841,32 @@ export const linuxOverBy = (
     swapFree !== undefined &&
     swapFree < swap * LINUX_SWAP_FREE_SHARE
   ) {
-    return `swap nearly full: ${gbOf(swapFree)} of ${gbOf(swap)} free`;
+    over.push({
+      limit: "swap",
+      reason: `swap nearly full: ${gbOf(swapFree)} of ${gbOf(swap)} free`,
+    });
   }
   const io = stall(pressure?.ioFull, LINUX_IO_STALL_LIMIT);
-  if (io !== null) return `disk stalled ${io}% of the time (limit ${LINUX_IO_STALL_LIMIT}%)`;
+  if (io !== null) {
+    over.push({
+      limit: "io-pressure",
+      reason: `disk stalled ${io}% of the time (limit ${LINUX_IO_STALL_LIMIT}%)`,
+    });
+  }
   const waited = stall(pressure?.cpu, LINUX_CPU_STALL_LIMIT);
-  if (waited !== null) return `CPU saturated: work waited ${waited}% of the time`;
-  if (cpu === null) return null;
-  return cpu > machine.runnerLinuxCpuCeilingPercent
-    ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
-    : null;
+  if (waited !== null) {
+    over.push({
+      limit: "cpu-pressure",
+      reason: `CPU saturated: work waited ${waited}% of the time`,
+    });
+  }
+  if (cpu !== null && cpu > machine.runnerLinuxCpuCeilingPercent) {
+    over.push({
+      limit: "cpu",
+      reason: `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`,
+    });
+  }
+  return over;
 };
 
 /** What clients show: offline, reached but not answering, over its limits, or online. */
@@ -936,7 +957,7 @@ export const nextHealth = (
   if (check.ok) {
     // One missed beat keeps the run of readings; a longer silence starts over from "has room".
     const continuous = previous.okAt !== null && now - previous.okAt <= readingGapMs(machine);
-    const over = linuxOverBy(check.reading, machine) !== null;
+    const over = linuxOverBy(check.reading, machine).length > 0;
     const backOnlineAt = previous.online === false ? now : previous.backOnlineAt;
     return {
       online: true,
@@ -1154,7 +1175,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
-  const linuxOverNow = linuxOverBy(health, machine);
+  const linuxOverNow = linuxOverBy(health, machine)[0]?.reason ?? null;
   const okAt = health.okAt ?? -Infinity;
   const stale = now - okAt > readingGapMs(machine);
   const linuxHistory = input.linuxHistory ?? {};

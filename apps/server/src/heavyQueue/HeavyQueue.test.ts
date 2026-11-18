@@ -690,6 +690,9 @@ describe("Linux as clients see it", () => {
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
       status: "over-limit",
       overLimitBy: "memory stalled 57% of the time (limit 10%)",
+      overLimits: [
+        { limit: "memory-pressure", reason: "memory stalled 57% of the time (limit 10%)" },
+      ],
     });
     const timedOut = { ok: false as const, error: "Connection timed out during banner exchange" };
     Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 60_000);
@@ -700,5 +703,6 @@ describe("Linux as clients see it", () => {
       error: "Connection timed out during banner exchange",
     });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimitBy");
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimits");
   });
 });

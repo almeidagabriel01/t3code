@@ -171,41 +171,64 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
 });
 
 describe("Linux's ceiling reads pressure and free memory, never the load", () => {
-  it.each<[string, Partial<LinuxReading>, RegExp | null]>([
-    ["load 206 over an idle CPU", { load1: 206, cpuPercent: 3 }, null],
+  it.each<[string, Partial<LinuxReading>, ReadonlyArray<string>, RegExp | null]>([
+    ["load 206 over an idle CPU", { load1: 206, cpuPercent: 3 }, [], null],
     [
       "load 206 while memory is stalled 57%",
       { load1: 206, cpuPercent: 3, pressure: { ...QUIET.pressure!, memoryFull: 57 } },
+      ["memory-pressure"],
       /^memory stalled 57% of the time/,
     ],
-    ["12 GB with 0.5 GB free", { availableMemoryBytes: 0.5 * GIB }, /^0\.5 GB free, keeping 20%$/],
+    [
+      "12 GB with 0.5 GB free",
+      { availableMemoryBytes: 0.5 * GIB },
+      ["memory"],
+      /^0\.5 GB free, keeping 20%$/,
+    ],
     [
       "swap nearly used up",
       { swapFreeBytes: 0.2 * GIB },
+      ["swap"],
       /^swap nearly full: 0\.2 GB of 4\.0 GB free$/,
     ],
     [
       "disk stalled 40%",
       { pressure: { ...QUIET.pressure!, ioFull: 40 } },
+      ["io-pressure"],
       /^disk stalled 40% of the time/,
     ],
     [
       "every task waiting for a core",
       { pressure: { ...QUIET.pressure!, cpu: 95 } },
+      ["cpu-pressure"],
       /^CPU saturated: work waited 95% of the time/,
     ],
     // Busy tests keep some task waiting most of the time: that alone is not a ceiling.
     [
       "tests keeping cores busy",
       { cpuPercent: 60, pressure: { ...QUIET.pressure!, cpu: 70 } },
+      [],
       null,
     ],
-    ["no PSI and a busy CPU", { cpuPercent: 90, pressure: null }, /^CPU 90%, limit 70%$/],
-    ["no PSI and an idle CPU under load 206", { load1: 206, cpuPercent: 3, pressure: null }, null],
-  ])("%s", (_name, reading, expected) => {
+    ["no PSI and a busy CPU", { cpuPercent: 90, pressure: null }, ["cpu"], /^CPU 90%, limit 70%$/],
+    [
+      "no PSI and an idle CPU under load 206",
+      { load1: 206, cpuPercent: 3, pressure: null },
+      [],
+      null,
+    ],
+    // Every limit past is named, so each gauge can warn; the most urgent stays the reason.
+    [
+      "short of memory, swapping and a busy CPU at once",
+      { availableMemoryBytes: 0.5 * GIB, swapFreeBytes: 0.2 * GIB, cpuPercent: 90 },
+      ["memory", "swap", "cpu"],
+      /^0\.5 GB free, keeping 20%$/,
+    ],
+  ])("%s", (_name, reading, limits, reason) => {
     const over = linuxOverBy({ ...QUIET, ...reading }, machine);
-    if (expected === null) expect(over).toBeNull();
-    else expect(over).toMatch(expected);
+    expect(over.map((item) => item.limit)).toEqual(limits);
+    if (reason === null) expect(over).toEqual([]);
+    else expect(over[0]!.reason).toMatch(reason);
   });
 });
 

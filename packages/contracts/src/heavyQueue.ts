@@ -157,6 +157,23 @@ export const HeavyRunnerLinuxStatus = Schema.Literals([
 ]);
 export type HeavyRunnerLinuxStatus = typeof HeavyRunnerLinuxStatus.Type;
 
+/** One of Linux's limits: free memory, PSI stalls (memory, disk, CPU), swap, CPU in use. */
+export const HeavyRunnerLinuxLimit = Schema.Literals([
+  "memory",
+  "memory-pressure",
+  "swap",
+  "io-pressure",
+  "cpu-pressure",
+  "cpu",
+]);
+export type HeavyRunnerLinuxLimit = typeof HeavyRunnerLinuxLimit.Type;
+
+export const HeavyRunnerLinuxOver = Schema.Struct({
+  limit: HeavyRunnerLinuxLimit,
+  reason: Schema.String,
+});
+export type HeavyRunnerLinuxOver = typeof HeavyRunnerLinuxOver.Type;
+
 /** Linux as the heartbeat last saw it; `online` is null until the first check. */
 export const HeavyRunnerLinux = Schema.Struct({
   host: Schema.String,
@@ -179,6 +196,8 @@ export const HeavyRunnerLinux = Schema.Struct({
   status: Schema.optionalKey(HeavyRunnerLinuxStatus),
   /** The limit Linux is past, with its reading ("memory stalled 57% of the time (limit 10%)"). */
   overLimitBy: Schema.optionalKey(Schema.String),
+  /** Every limit the latest reading is past, `overLimitBy` first; absent from older servers. */
+  overLimits: Schema.optionalKey(Schema.Array(HeavyRunnerLinuxOver)),
 });
 export type HeavyRunnerLinux = typeof HeavyRunnerLinux.Type;
 
