@@ -302,6 +302,46 @@ const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
 const WATCH = /^--watch(All)?(=true)?$/;
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
+const COMPOSE_SUBCOMMAND =
+  /^(attach|build|commit|config|cp|create|down|events|exec|export|images|kill|logs|ls|pause|port|ps|pull|push|restart|rm|run|scale|start|stats|stop|top|unpause|up|version|wait|watch)$/;
+// `-dp 80:80` and `-itP` end a short cluster with a publish flag; `-ePATH=…` does not.
+const PUBLISHES = /^(-[dit]*[pP]|--publish(-all)?(=|$)|--service-ports$|--net(work)?=host$)/;
+
+/**
+ * A container tool's reason: a fresh build or run needs nothing of this Mac's daemon, unless it
+ * publishes a port here; any other subcommand acts on containers or images that daemon has.
+ */
+const dockerReason = (
+  program: string,
+  first: string,
+  after: ReadonlyArray<string>,
+): MacReason | null => {
+  const named = { subject: `${program} ${first}` };
+  const compose =
+    program === "docker-compose"
+      ? after
+      : first === "compose"
+        ? after.slice(after.indexOf("compose") + 1)
+        : null;
+  const args = compose ?? after;
+  // In compose, `-p` before the subcommand names the project.
+  const at =
+    compose === null
+      ? args.indexOf(first)
+      : args.findIndex((word) => COMPOSE_SUBCOMMAND.test(word));
+  const sub = args[at] ?? "";
+  const rest = args.slice(at + 1);
+  const publishes = rest.some(
+    (word, index) =>
+      PUBLISHES.test(word) || (/^--net(work)?$/.test(word) && rest[index + 1] === "host"),
+  );
+  if ((compose !== null && sub === "up") || (sub === "run" && publishes)) {
+    return { code: "serves-port", ...named };
+  }
+  return (compose === null ? /^(build|buildx|run)$/ : /^(build|run)$/).test(sub)
+    ? null
+    : { code: "mac-docker", ...named };
+};
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
   "rustc",
@@ -382,11 +422,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   if (program === "vitest" && /^(watch|dev)$/.test(first)) {
     return { code: "watches", subject: named };
   }
-  if (DOCKERS.has(program) && first !== "") {
-    return first === "compose" && words.includes("up")
-      ? { code: "serves-port", subject: named }
-      : { code: "mac-docker", subject: named };
-  }
+  if (DOCKERS.has(program) && first !== "") return dockerReason(program, first, after);
   if (!PACKAGE_MANAGERS.has(program)) return null;
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
   const install = [first, second].find((word) => INSTALLS.test(word));
