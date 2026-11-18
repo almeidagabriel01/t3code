@@ -1,4 +1,5 @@
 import * as M from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type { CoreReads } from "./CoreReads.ts";
@@ -61,6 +62,7 @@ export const makeItemWrites = (
           })
         : held.scope;
     const generation = (previous?.generation ?? 0) + 1;
+    const deferredSince = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
     const safeProjection =
       held.status === "active" ? (({ payload: _payload, ...rest }) => rest)(held) : held;
     const scannerDeferred =
@@ -74,7 +76,7 @@ export const makeItemWrites = (
               reason: "scanner_pending" as const,
               revisionId: heads.length === 1 ? heads[0]! : null,
               generation,
-              sinceAtUtc: DateTime.formatIso(DateTime.makeUnsafe(0)),
+              sinceAtUtc: deferredSince,
             },
           ]
         : held.localAvailability.deferred;
@@ -90,7 +92,7 @@ export const makeItemWrites = (
               reason: "index_unavailable" as const,
               revisionId: heads[0]!,
               generation,
-              sinceAtUtc: DateTime.formatIso(DateTime.makeUnsafe(0)),
+              sinceAtUtc: deferredSince,
             },
           ]
         : scannerDeferred;

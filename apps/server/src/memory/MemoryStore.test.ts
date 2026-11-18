@@ -5190,7 +5190,14 @@ it.effect(
       const empty = yield* store.readProcessing(input);
       assert.strictEqual(empty.processing.deferred, 0);
       assert.strictEqual(empty.processing.oldestDeferredAtUtc, null);
+      const appliedAt = "2026-10-12T00:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(appliedAt));
       yield* store.apply(decision());
+      // A deferral starts when the write that deferred it commits, never at the epoch.
+      assert.strictEqual(
+        (yield* store.readProcessing(input)).processing.oldestDeferredAtUtc,
+        appliedAt,
+      );
       const since = "2026-10-13T00:00:00.000Z";
       const later = "2026-10-14T00:00:00.000Z";
       const deferred = [
