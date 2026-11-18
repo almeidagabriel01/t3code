@@ -126,6 +126,11 @@ export const HeavyQueueEntry = Schema.Struct({
   where: Schema.optionalKey(RunnerWhere),
   /** A waiter the user or a Linux policy sent to one runner; admission keeps it there. */
   route: Schema.optionalKey(HeavyRunner),
+  /**
+   * Its heavy work goes to Linux over the agent's own `ssh <Runner host>`: it holds a Linux slot and
+   * runs as written, with no copy synced; stopping it ends the local ssh, not what it started there.
+   */
+  ssh: Schema.optionalKey(Schema.Boolean),
   /** Linux jobs: what `remoto` is doing now. */
   phase: Schema.optionalKey(HeavyRunnerPhase),
   /** The `~/runs/<id>` folder and process group a Linux job uses there. */
@@ -182,6 +187,32 @@ export const HeavyRunnerLinuxOver = Schema.Struct({
 export type HeavyRunnerLinuxOver = typeof HeavyRunnerLinuxOver.Type;
 
 /** Linux as the heartbeat last saw it; `online` is null until the first check. */
+/**
+ * Heavy work on Linux no queue job holds: one cgroup (a container, an ssh session, a service) past
+ * half a core or 1 GiB. Origin fields are set when known.
+ */
+export const HeavyRunnerLinuxOutside = Schema.Struct({
+  /** Its cgroup there, which names it uniquely while it runs. */
+  cgroup: Schema.String,
+  /** Its busiest process. */
+  pid: Schema.Int,
+  /** Cores and resident bytes of the whole cgroup, from the latest heartbeat. */
+  cpu: Schema.Number,
+  memoryBytes: Schema.Number,
+  /** Its busiest process's command line, cut to 300 characters. */
+  command: Schema.String,
+  /** The `~/runs/<id>` copy it works in: a checkout synced from this Mac. */
+  runId: Schema.optionalKey(Schema.String),
+  container: Schema.optionalKey(
+    Schema.Struct({ id: Schema.String, name: Schema.String, image: Schema.String }),
+  ),
+  /** The thread it belongs to: a container's `t3.thread` label, or the thread whose worktree its copy is. */
+  threadId: Schema.optionalKey(Schema.String),
+  /** The project whose checkout its copy is. */
+  projectId: Schema.optionalKey(Schema.String),
+});
+export type HeavyRunnerLinuxOutside = typeof HeavyRunnerLinuxOutside.Type;
+
 export const HeavyRunnerLinux = Schema.Struct({
   host: Schema.String,
   online: Schema.NullOr(Schema.Boolean),
@@ -205,6 +236,8 @@ export const HeavyRunnerLinux = Schema.Struct({
   overLimitBy: Schema.optionalKey(Schema.String),
   /** Every limit the latest reading is past, `overLimitBy` first; absent from older servers. */
   overLimits: Schema.optionalKey(Schema.Array(HeavyRunnerLinuxOver)),
+  /** Heavy work there outside the queue, busiest first, at most 8; absent when none or from older servers. */
+  outside: Schema.optionalKey(Schema.Array(HeavyRunnerLinuxOutside)),
 });
 export type HeavyRunnerLinux = typeof HeavyRunnerLinux.Type;
 
