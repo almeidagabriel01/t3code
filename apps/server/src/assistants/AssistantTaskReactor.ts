@@ -17,7 +17,9 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
@@ -47,6 +49,8 @@ const TERMINAL = new Set<string>([
 ] satisfies ReadonlyArray<TaskEventStatus>);
 const LIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const LAST_MESSAGE_CHARS = 1_500;
+/** Approvals a policy or the agent itself settles within seconds never reach an assistant. */
+export const REQUEST_WAKE_GRACE = Duration.seconds(10);
 
 export function taskWakeText(input: {
   readonly title: string;
@@ -251,7 +255,8 @@ const make = Effect.gen(function* () {
   )(
     function* ({ type, wait }) {
       const task = yield* tasks.forThread(wait.threadId);
-      if (yield* forRequest(task, groups.syncWaitingThread(wait.threadId))) return;
+      const toGroup = yield* forRequest(task, groups.syncWaitingThread(wait.threadId));
+      // The default assistant hears of a group's waits too, so a settled one is taken back from it.
       if (type === "resolved") {
         // Answered before the assistants got to it: take back the wakes still queued.
         // Each conversation on its own: one failing read or cancel never keeps the other's wake.
@@ -272,6 +277,7 @@ const make = Effect.gen(function* () {
         }
         return;
       }
+      if (toGroup) return;
       const owner = yield* needsUser.owner(wait.threadId);
       if (Option.isNone(owner)) return;
       // DelegatedTaskQuestionReactor already brings a delegated task's question to its parent.
@@ -367,9 +373,23 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+      // A request waits a short grace before it wakes anyone, keyed by wait so its resolution
+      // cancels the wake; the wake still checks the request is open when the grace ends.
+      const graces = yield* FiberMap.make<string>();
+      const onWait = (change: UserWaitChange) =>
+        change.wait.source === "decision"
+          ? handleWait(change)
+          : change.type === "opened"
+            ? FiberMap.run(
+                graces,
+                change.wait.key,
+                Effect.sleep(REQUEST_WAKE_GRACE).pipe(Effect.andThen(handleWait(change))),
+                { onlyIfMissing: true },
+              ).pipe(Effect.asVoid)
+            : FiberMap.remove(graces, change.wait.key).pipe(Effect.andThen(handleWait(change)));
       // `changes` opens with what already waits, so a start also catches up.
       yield* forkParked(
-        keepRunning("assistant task wait stream", Stream.runForEach(needsUser.changes, handleWait)),
+        keepRunning("assistant task wait stream", Stream.runForEach(needsUser.changes, onWait)),
       );
       // A dismissed thread stops holding the group request it was launched for.
       yield* forkParked(
