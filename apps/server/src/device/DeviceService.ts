@@ -1794,15 +1794,23 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       "get-started-user-state",
       current.code === 0 && /^\d+$/.test(userId) ? userId : "0",
     );
-    if (user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout))
+    const storageLocked = user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout);
+    // A user unlocked once stays RUNNING_UNLOCKED behind a lock screen shown again; which
+    // of the two keyguard markers dumpsys prints depends on the Android version.
+    const screen = storageLocked ? null : yield* shell("dumpsys", "window");
+    const screenLocked =
+      screen?.code === 0 &&
+      /\b(?:isKeyguardShowing|mDreamingLockscreen)=true\b/.test(screen.stdout);
+    if (storageLocked || screenLocked)
       return yield* new DeviceNotReadyError({
         hostId: device.hostId,
         deviceId: device.id,
         deviceName: device.name,
         reason: "locked",
+        // A headless emulator's only screen is the Device panel; a phone is unlocked in hand.
         detail: device.physical
-          ? "unlock the phone itself"
-          : "open it in the Device panel and enter its PIN",
+          ? "unlock its screen on the phone itself"
+          : "open it in the Device panel and unlock its screen there",
       });
   });
 
