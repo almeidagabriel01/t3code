@@ -70,6 +70,29 @@ describe("Memory schema", () => {
       assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
     }).pipe(Effect.provide(database)),
   );
+  it.effect("QA: discard counter follows status and ignores hub rejections", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* ensureForkSchema();
+      const counted = sql<{
+        value: number;
+      }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_discarded_sync'`;
+      yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES ('a','space','sync','failed','{}',0,'invalid_output')`;
+      assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
+      // A rejection the hub answered carries its receipt and is counted elsewhere.
+      yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code,completed_receipt_json) VALUES ('r','space','sync','failed','{}',0,'not_found','{}')`;
+      assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
+      // Leaving failed uncounts it; coming back counts it again.
+      yield* sql`UPDATE memory_outbox SET status='retry' WHERE id='a'`;
+      assert.deepStrictEqual(yield* counted, [{ value: 0 }]);
+      yield* sql`UPDATE memory_outbox SET status='failed' WHERE id='a'`;
+      assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
+      // A restart with the marker present keeps the live value even when it differs from a recount.
+      yield* sql`UPDATE memory_quota_counters SET value=7 WHERE space='space' AND dimension='processing_discarded_sync'`;
+      yield* ensureForkSchema();
+      assert.deepStrictEqual(yield* counted, [{ value: 7 }]);
+    }).pipe(Effect.provide(database)),
+  );
   it.effect("keeps rows across restarts and enforces constraints", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
