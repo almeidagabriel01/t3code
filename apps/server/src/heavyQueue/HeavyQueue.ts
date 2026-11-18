@@ -39,7 +39,7 @@ import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 import * as RouteMemory from "./routeMemory.ts";
-import { linuxOverBy, linuxStatus, type QueuedEntry } from "./runner.ts";
+import { linuxOutside, linuxOverBy, linuxStatus, type QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
@@ -198,6 +198,8 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
   }
   const { linux } = doc;
   const status = linuxStatus(linux);
+  // An offline Linux's last list is stale: nothing there is known to run now.
+  const outside = linux.online === true ? linuxOutside(linux, doc.entries) : [];
   const overLimits = status === "over-limit" ? linuxOverBy(linux, block.machine) : [];
   const overLimitBy =
     status !== "over-limit"
@@ -222,6 +224,7 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     ...(status === undefined ? {} : { status }),
     ...(overLimitBy === null ? {} : { overLimitBy }),
     ...(overLimits.length === 0 ? {} : { overLimits }),
+    ...(outside.length === 0 ? {} : { outside }),
   };
 };
 

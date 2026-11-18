@@ -25,10 +25,16 @@ import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../config.ts";
 import { devWorktreeCleanupBlocked } from "../devWorktreeCleanupGuard.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
-import { RUNNER_COPY_RETENTION_DAYS, runnerCopyId, type RunnerBlock } from "./runner.ts";
+import {
+  RUNNER_COPY_RETENTION_DAYS,
+  runnerCopyId,
+  type HealthCheck,
+  type RunnerBlock,
+} from "./runner.ts";
 import { checkLinux, drainLostRuns, idleRunnerCopies, removeRunnerCopy } from "./runnerExec.ts";
 
 const pick = <K extends string>(
@@ -60,6 +66,68 @@ export const runnerOnAnywhere = (block: RunnerBlock) =>
   block.global.runnerEnabled || block.projects.some((project) => project.config.runnerEnabled);
 
 const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+
+export interface CopyOrigin {
+  readonly threadId?: string;
+  readonly projectId?: string;
+}
+
+/**
+ * Whose checkout each `~/runs/<id>` copy is: a project's own folder, or a thread's worktree.
+ * `copyIdOf` is null for a folder that is gone.
+ */
+export const copyOrigins = (
+  projects: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>,
+  worktrees: ReadonlyArray<{ readonly threadId: string; readonly worktreePath: string }>,
+  copyIdOf: (path: string) => string | null,
+): ReadonlyMap<string, CopyOrigin> => {
+  const origins = new Map<string, CopyOrigin>();
+  for (const project of projects) {
+    const id = copyIdOf(project.workspaceRoot);
+    if (id !== null) origins.set(id, { projectId: project.id });
+  }
+  for (const worktree of worktrees) {
+    const id = copyIdOf(worktree.worktreePath);
+    if (id !== null) origins.set(id, { ...origins.get(id), threadId: worktree.threadId });
+  }
+  return origins;
+};
+
+/** The reading with each outside item's origin from its copy; a container's own label stays. */
+export const withCopyOrigins = (
+  check: HealthCheck,
+  origins: ReadonlyMap<string, CopyOrigin>,
+): HealthCheck =>
+  !check.ok || check.reading.outside === undefined
+    ? check
+    : {
+        ...check,
+        reading: {
+          ...check.reading,
+          outside: check.reading.outside.map((item) => {
+            const origin = item.runId === undefined ? undefined : origins.get(item.runId);
+            return origin === undefined ? item : { ...origin, ...item };
+          }),
+        },
+      };
+
+/** A folder's copy id by its real path, cached: the same path keeps its id while it exists. */
+const copyIdCache = () => {
+  const cache = new Map<string, string | null>();
+  return (path: string) => {
+    const known = cache.get(path);
+    if (known !== undefined) return known;
+    let id: string | null;
+    try {
+      id = runnerCopyId(NodeFS.realpathSync(path), sha1);
+    } catch {
+      id = null;
+    }
+    // A missing folder is asked again next time: it may be created later.
+    if (id !== null) cache.set(path, id);
+    return id;
+  };
+};
 
 /**
  * The Linux copy to delete with a removed worktree, or null when no Runner is set up here. `remoto`
@@ -178,6 +246,33 @@ export const layer = (
       const settingsService = yield* ServerSettingsService;
       const removalsBlocked = yield* devWorktreeCleanupBlocked();
       const projectStore = yield* ProjectStoreV2;
+      const projections = yield* ProjectionStoreV2;
+      const copyIdOf = copyIdCache();
+      /** Origins only when an outside item names a copy: most beats have none. */
+      const originsFor = Effect.fn("RunnerPublisher.originsFor")(
+        function* (check: HealthCheck) {
+          if (
+            !check.ok ||
+            !(check.reading.outside ?? []).some((item) => item.runId !== undefined)
+          ) {
+            return check;
+          }
+          const projects = yield* projectStore.list();
+          const worktrees = yield* projections.getThreadWorktreePaths();
+          return withCopyOrigins(
+            check,
+            copyOrigins(
+              projects.map((project) => ({
+                id: project.projectId,
+                workspaceRoot: project.workspaceRoot,
+              })),
+              worktrees,
+              copyIdOf,
+            ),
+          );
+        },
+        (effect, check) => Effect.orElseSucceed(effect, () => check),
+      );
       const config = yield* ServerConfig;
       const publisher: RunnerBlock["publisher"] = {
         pid: process.pid,
@@ -220,7 +315,9 @@ export const layer = (
         }
         if (!always && checkedHost === block.machine.runnerHost) return;
         checkedHost = block.machine.runnerHost;
-        const reading = yield* Effect.promise(() => check(block.machine, process.env));
+        const reading = yield* originsFor(
+          yield* Effect.promise(() => check(block.machine, process.env)),
+        );
         yield* Effect.try({
           try: () => QueueFile.recordHealth(dir, reading),
           catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),

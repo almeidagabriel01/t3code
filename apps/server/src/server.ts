@@ -779,7 +779,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   KeepAwake.layer.pipe(Layer.provide(KeepAwake.layerHost)),
   HeavyQueue.layer(),
   HeavyQueueSampler.layer(),
-  RunnerPublisher.layer(),
+  RunnerPublisher.layer().pipe(Layer.provide(ProjectionStoreV2.layer)),
   HeavyCommands.layer(),
   layerHeavyQueueNotices,
   Layer.effectDiscard(

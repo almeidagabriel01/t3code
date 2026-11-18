@@ -2080,7 +2080,13 @@ describe("Linux health", () => {
       "MemTotal:       11718750 kB",
       "MemAvailable:    8300781 kB",
     ].join("\n");
-    const none = { swapTotalBytes: null, swapFreeBytes: null, pressure: null, jobMemory: {} };
+    const none = {
+      swapTotalBytes: null,
+      swapFreeBytes: null,
+      pressure: null,
+      jobMemory: {},
+      outside: [],
+    };
     expect(parseHeartbeat(text)).toEqual({
       cpuPercent: null,
       load1: 1.25,

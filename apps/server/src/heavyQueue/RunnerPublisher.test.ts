@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../config.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
@@ -29,6 +30,8 @@ import {
   idleSweeper,
   runnerOnAnywhere,
   sweepIdleCopies,
+  copyOrigins,
+  withCopyOrigins,
 } from "./RunnerPublisher.ts";
 import type { HealthCheck } from "./runner.ts";
 
@@ -275,6 +278,50 @@ describe("the daily idle sweep", () => {
   });
 });
 
+describe("work outside the queue names its thread and project by its copy", () => {
+  const origins = copyOrigins(
+    [{ id: "erp", workspaceRoot: "/w/erp" }],
+    [
+      { threadId: "t-feat", worktreePath: "/w/.t3/feat" },
+      { threadId: "t-gone", worktreePath: "/w/.t3/gone" },
+    ],
+    (path) => (path.endsWith("gone") ? null : `${path.split("/").pop()}-0123abcd`),
+  );
+  const item = (extra: object) => ({
+    cgroup: "/s.scope",
+    pid: 1,
+    cpu: 2,
+    memoryBytes: 1,
+    command: "node",
+    ...extra,
+  });
+  it.each<[string, object, object]>([
+    ["a project's own checkout", { runId: "erp-0123abcd" }, { projectId: "erp" }],
+    ["a thread's worktree", { runId: "feat-0123abcd" }, { threadId: "t-feat" }],
+    ["a copy nobody here knows", { runId: "other-89abcdef" }, {}],
+    ["no copy at all", {}, {}],
+    [
+      "a container's own label wins",
+      { runId: "feat-0123abcd", threadId: "label" },
+      { threadId: "label" },
+    ],
+  ])("%s", (_name, given, expected) => {
+    const check = withCopyOrigins(
+      { ok: true, reading: { ...READING, outside: [item(given)] } },
+      origins,
+    );
+    expect(check.ok && check.reading.outside?.[0]).toEqual({ ...item(given), ...expected });
+  });
+});
+
+const READING = {
+  cpuPercent: 1,
+  load1: 1,
+  cpuCount: 6,
+  totalMemoryBytes: 8,
+  availableMemoryBytes: 4,
+};
+
 describe("the publisher layer", () => {
   it.effect(
     "publishes on start, checks Linux while the Runner is on, and republishes each tick",
@@ -314,6 +361,9 @@ describe("the publisher layer", () => {
                 },
               ]),
           } as unknown as ProjectStoreV2["Service"]),
+          Layer.succeed(ProjectionStoreV2, {
+            getThreadWorktreePaths: () => Effect.succeed([]),
+          } as unknown as ProjectionStoreV2["Service"]),
           Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
           NodeServices.layer,
         );
@@ -367,6 +417,9 @@ describe("the publisher layer", () => {
         Layer.succeed(ProjectStoreV2, {
           list: () => Effect.succeed([]),
         } as unknown as ProjectStoreV2["Service"]),
+        Layer.succeed(ProjectionStoreV2, {
+          getThreadWorktreePaths: () => Effect.succeed([]),
+        } as unknown as ProjectionStoreV2["Service"]),
         Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
         NodeServices.layer,
       );

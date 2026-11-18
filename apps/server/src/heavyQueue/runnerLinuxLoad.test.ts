@@ -23,6 +23,7 @@ import {
   unresponsiveFailure,
   UNKNOWN_HEALTH,
   type LinuxHealth,
+  type LinuxOutside,
   type LinuxReading,
   type RoutePlanInput,
 } from "./runner.ts";
@@ -153,6 +154,62 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
     expect(Math.round(reading.cpuPercent!)).toBe(2);
   });
 
+  it("lists heavy work outside the queue by cgroup, one bad line hiding nothing", () => {
+    const DOCKER = "a".repeat(64);
+    const SESSION = "/user.slice/user-1001.slice/session-7.scope";
+    const lines = [
+      "206.12 180.00 120.00 9/900 4321",
+      "6",
+      // 600 ticks over 6 cores: 100 ticks per core in the window.
+      "cpu  1000 0 0 0 0 0 0 0 0 0",
+      "cpu  1300 0 0 300 0 0 0 0 0 0",
+      "self 0::/user.slice/user-1001.slice/session-9.scope",
+      "job t3-a-0123abcd 4242 2097152 /user.slice/user-1001.slice/session-3.scope",
+      // A container: 580 ticks is 5.8 cores, 8 GiB.
+      `out 580 ${8 * GIB} 900 /system.slice/docker-${DOCKER}.scope`,
+      `outcmd 900 yes`,
+      `dock\t${DOCKER}\terp-ci-3\tnode:22\tthread-1\t`,
+      // A direct remoto run in its copy, not the queue's.
+      `out 120 ${2 * GIB} 950 ${SESSION}`,
+      "outcmd 950 node --test",
+      "outcwd 950 /home/dev/runs/erp-feat-89abcdef/apps/api",
+      // The queue's own job, by its session and by its copy, and the heartbeat itself.
+      `out 300 ${GIB} 960 /user.slice/user-1001.slice/session-3.scope`,
+      `out 300 ${GIB} 961 /user.slice/user-1001.slice/session-4.scope`,
+      "outcwd 961 /home/dev/runs/t3-a-0123abcd",
+      `out 300 ${GIB} 962 /user.slice/user-1001.slice/session-9.scope`,
+      // Light: under half a core and 1 GiB.
+      "out 20 1000 970 /system.slice/cron.service",
+      // Garbage never hides the rest.
+      "out x y z",
+      "out 50",
+      "outcmd notapid ls",
+    ].join("\n");
+    expect(parseHeartbeat(lines).outside).toEqual([
+      {
+        cgroup: `/system.slice/docker-${DOCKER}.scope`,
+        pid: 900,
+        cpu: 5.8,
+        memoryBytes: 8 * GIB,
+        command: "yes",
+        container: { id: DOCKER.slice(0, 12), name: "erp-ci-3", image: "node:22" },
+        threadId: "thread-1",
+      },
+      {
+        cgroup: SESSION,
+        pid: 950,
+        cpu: 1.2,
+        memoryBytes: 2 * GIB,
+        command: "node --test",
+        runId: "erp-feat-89abcdef",
+      },
+    ]);
+  });
+
+  it("lists nothing outside the queue from a heartbeat without those lines", () => {
+    expect(parseHeartbeat(text(true)).outside).toEqual([]);
+  });
+
   it("reads no pressure where the kernel has no PSI", () => {
     expect(parseHeartbeat(text(false)).pressure).toBeNull();
   });
@@ -244,6 +301,15 @@ describe("Linux's ceiling reads pressure and free memory, never the load", () =>
   });
 });
 
+const CONTAINER: LinuxOutside = {
+  cgroup: "/system.slice/docker-0123.scope",
+  pid: 900,
+  cpu: 5.8,
+  memoryBytes: 7 * GIB,
+  command: "node ci.js",
+  container: { id: "0123456789ab", name: "erp-ci-3", image: "node:22" },
+};
+
 describe("admission on Linux reserves each job's memory", () => {
   const SUITE = "vp test run";
   // Learned peaks: the suite with its mysql container reached 4 GB, the lint 1 GB.
@@ -254,6 +320,7 @@ describe("admission on Linux reserves each job's memory", () => {
   it.each<{
     name: string;
     running: ReadonlyArray<HeavyQueueEntry>;
+    outside?: ReadonlyArray<LinuxOutside>;
     free: number;
     waiting: string;
     linux: "linux-start" | "linux-wait";
@@ -302,7 +369,26 @@ describe("admission on Linux reserves each job's memory", () => {
       linux: "linux-start",
       hybrid: "linux-start",
     },
-  ])("$name", ({ running, free, waiting, linux, hybrid }) => {
+    {
+      // The ERP incident: 16 containers started by ssh, outside the queue, hold 7 GB of a 12 GB PC.
+      name: "work outside the queue makes Linux not empty: a job must fit beside it",
+      running: [],
+      outside: [CONTAINER],
+      free: 3 * GIB,
+      waiting: SUITE,
+      linux: "linux-wait",
+      hybrid: "mac-start",
+    },
+    {
+      name: "a job that fits beside work outside the queue starts",
+      running: [],
+      outside: [CONTAINER],
+      free: 4 * GIB,
+      waiting: "vp lint",
+      linux: "linux-start",
+      hybrid: "linux-start",
+    },
+  ])("$name", ({ running, outside, free, waiting, linux, hybrid }) => {
     const entries = [...running, job("w", waiting)];
     for (const [where, expected] of [
       ["linux", linux],
@@ -311,7 +397,7 @@ describe("admission on Linux reserves each job's memory", () => {
       const plan = planRoutes(
         input(entries, where, {
           linuxHistory,
-          health: health({ availableMemoryBytes: free }),
+          health: health({ availableMemoryBytes: free, ...(outside ? { outside } : {}) }),
           // Hybrid: the Mac has a job of its own, so the tie goes to Linux when it fits.
           ...(where === "automatic"
             ? { entries: [job("m", "vp build", { startedAt: ago(5000) }), ...entries] }
@@ -321,7 +407,11 @@ describe("admission on Linux reserves each job's memory", () => {
       const admit = plan.admits.w;
       const outcome = admit === undefined ? `${plan.routes.w}-wait` : `${admit.runner}-start`;
       expect(outcome).toBe(expected);
-      if (expected === "linux-wait") expect(plan.reasons.w).toMatch(/held for running jobs/);
+      if (expected === "linux-wait") {
+        expect(plan.reasons.w).toMatch(
+          outside === undefined ? /held for running jobs/ : /outside the queue/,
+        );
+      }
     }
   });
 

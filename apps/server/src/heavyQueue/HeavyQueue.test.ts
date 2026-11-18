@@ -708,6 +708,35 @@ describe("Linux as clients see it", () => {
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
   });
 
+  it("lists work outside the queue while Linux answers, never a running job's own copy", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const container = {
+      cgroup: "/system.slice/docker-1.scope",
+      pid: 9,
+      cpu: 5.8,
+      memoryBytes: 8 * 1024 ** 3,
+      command: "yes",
+      container: { id: "0123456789ab", name: "erp-ci", image: "alpine" },
+      threadId: "teste",
+    };
+    // Still syncing: its copy has no session yet, so the heartbeat cannot tell it is the queue's.
+    const syncing = { ...container, cgroup: "/s.scope", runId: "app-0123abcd" };
+    Queue.enqueue(dir, {
+      ...holder,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      remote: { id: "app-0123abcd" },
+    });
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const reading = { ...parseHeartbeat("1 1 1 1/1 1\n6\n"), outside: [container, syncing] };
+    Queue.recordHealth(dir, { ok: true, reading }, at);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))?.outside).toEqual([container]);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("outside");
+  });
+
   it("words free memory as its gauge does: 819 MB, never 0.8 GB", () => {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
     Queue.publishRunner(dir, block(true));

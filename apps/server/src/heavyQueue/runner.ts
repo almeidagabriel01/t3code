@@ -10,6 +10,7 @@ import {
   type HeavyRunner,
   type HeavyRunnerAskReason,
   type HeavyRunnerLinuxOver,
+  type HeavyRunnerLinuxOutside,
   formatBytes,
   linuxOverText,
   type RunnerMachineConfig,
@@ -32,6 +33,7 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
+import { HEAVY_CORES, HEAVY_MEMORY_BYTES, roundMemory } from "./classifyHeavyCommands.ts";
 import {
   commitOnly,
   FOLDER_FLAGS,
@@ -700,6 +702,7 @@ export interface LinuxHealth extends Sustained {
   readonly swapFreeBytes?: number | null;
   readonly pressure?: LinuxPressure | null;
   readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
+  readonly outside?: ReadonlyArray<LinuxOutside>;
   /** The failing checks reached the host but got no answer in time: alive, too loaded to reply. */
   readonly unresponsive?: boolean;
 }
@@ -744,7 +747,11 @@ export interface LinuxReading {
   readonly pressure?: LinuxPressure | null;
   /** Resident memory of the session in each `runs/<id>.pgid`, with that group. */
   readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
+  /** Heavy cgroups there no queue job holds, busiest first. */
+  readonly outside?: ReadonlyArray<LinuxOutside>;
 }
+
+export type LinuxOutside = HeavyRunnerLinuxOutside;
 
 /** A pgid file can outlive its run, and its number can come back as another process. */
 export interface LinuxJobMemory {
@@ -757,12 +764,13 @@ export interface LinuxJobMemory {
  * over user..steal (guest time is already inside user and nice). Null when either line is
  * missing or the counters did not move forward.
  */
+const cpuTimes = (line: string | undefined) => {
+  const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
+  return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
+};
+
 const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
-  const times = (line: string | undefined) => {
-    const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
-    return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
-  };
-  const [a, b] = [times(before), times(after)];
+  const [a, b] = [cpuTimes(before), cpuTimes(after)];
   if (a === null || b === null) return null;
   const total = b.reduce((sum, n) => sum + n, 0) - a.reduce((sum, n) => sum + n, 0);
   const idle = b[3]! + b[4]! - (a[3]! + a[4]!);
@@ -787,20 +795,23 @@ export const parseHeartbeat = (text: string): LinuxReading => {
   };
   const hasPressure = lines.some((line) => line.startsWith("psi "));
   const jobMemory: Record<string, LinuxJobMemory> = Object.create(null);
+  const jobCgroups = new Set<string>();
   for (const line of lines) {
-    const [tag, id, pgid, rss] = line.split(/\s+/);
+    const [tag, id, pgid, rss, cgroup] = line.split(/\s+/);
     // `ps` reports KiB.
     if (tag === "job" && id !== undefined && /^\d+$/.test(pgid ?? "") && /^\d+$/.test(rss ?? "")) {
       jobMemory[id] = { pgid: Number(pgid), bytes: Number(rss) * 1024 };
+      if (cgroup !== undefined) jobCgroups.add(cgroupPath(cgroup));
     }
   }
   const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
+  const valid = Number.isInteger(cpuCount) && cpuCount > 0;
   // `/proc/uptime`: the only line of exactly two numbers.
   const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line));
   return {
     cpuPercent: cpuPercentBetween(before, after),
     load1: value(load1),
-    cpuCount: Number.isInteger(cpuCount) && cpuCount > 0 ? cpuCount : null,
+    cpuCount: valid ? cpuCount : null,
     totalMemoryBytes: kib("MemTotal"),
     availableMemoryBytes: kib("MemAvailable"),
     swapTotalBytes: kib("SwapTotal"),
@@ -814,8 +825,111 @@ export const parseHeartbeat = (text: string): LinuxReading => {
         }
       : null,
     jobMemory,
+    outside: outsideOf(lines, ticksPerCore(before, after, valid ? cpuCount : null), {
+      cgroups: jobCgroups,
+      runIds: new Set(Object.keys(jobMemory)),
+    }),
     ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.split(/\s+/)[0]) }),
   };
+};
+
+/** `0::/a.slice` (cgroup v2) as `/a.slice`. */
+const cgroupPath = (text: string) => text.replace(/^0::/, "");
+
+const RUN_DIR = /\/runs\/([A-Za-z0-9_-][A-Za-z0-9._-]*-[0-9a-f]{8})(?:\/|$)/;
+const CONTAINER_CGROUP = /(?:docker-|\/docker\/)([0-9a-f]{64})(?:\.scope)?$/;
+/** Heavy cgroups listed, busiest first: enough for a person, small on the wire. */
+const OUTSIDE_MAX = 8;
+
+/**
+ * `/proc/stat` ticks one core gives in the heartbeat's window, from its two `cpu` lines. Without
+ * them, USER_HZ (always 100) over the half-second sleep.
+ */
+const ticksPerCore = (
+  before: string | undefined,
+  after: string | undefined,
+  cpuCount: number | null,
+) => {
+  const [a, b] = [cpuTimes(before), cpuTimes(after)];
+  const total =
+    a === null || b === null ? 0 : b.reduce((sum, n) => sum + n, 0) - a.reduce((s, n) => s + n, 0);
+  return cpuCount !== null && total > 0 ? total / cpuCount : 50;
+};
+
+/**
+ * The heartbeat's `out` cgroups (`out <ticks> <bytes> <pid> <cgroup>`) past half a core or 1 GiB,
+ * less the heartbeat's own (`self`) and the queue's: a job's session (`job … <cgroup>`) or its copy.
+ * `outcmd`/`outcwd <pid> <text>` and docker's `dock\t<id>\t<name>\t<image>\t<t3.thread>\t<dir>`
+ * name each one. A line that doesn't parse is skipped alone.
+ */
+const outsideOf = (
+  lines: ReadonlyArray<string>,
+  perCore: number,
+  queue: { readonly cgroups: ReadonlySet<string>; readonly runIds: ReadonlySet<string> },
+): ReadonlyArray<LinuxOutside> => {
+  const rest = (tag: string) =>
+    new Map(
+      lines.flatMap((line) => {
+        const match = new RegExp(`^${tag} (\\d+) (.+)$`).exec(line);
+        return match === null ? [] : [[Number(match[1]), match[2]!.trim()] as const];
+      }),
+    );
+  const commands = rest("outcmd");
+  const cwds = rest("outcwd");
+  const self = lines
+    .find((line) => line.startsWith("self "))
+    ?.slice(5)
+    .trim();
+  const containers = new Map(
+    lines.flatMap((line) => {
+      const [tag, id, name, image, thread, dir] = line.split("\t");
+      return tag === "dock" && /^[0-9a-f]{64}$/.test(id ?? "")
+        ? [[id!, { name: name ?? "", image: image ?? "", thread, dir }] as const]
+        : [];
+    }),
+  );
+  const items: LinuxOutside[] = [];
+  for (const line of lines) {
+    const match = /^out (\d+) (\d+) (\d+) (\/\S*)$/.exec(line);
+    if (match === null) continue;
+    const [, ticks, bytes, pidText, cgroup] = match as unknown as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const pid = Number(pidText);
+    const containerId = CONTAINER_CGROUP.exec(cgroup)?.[1];
+    const container = containerId === undefined ? undefined : containers.get(containerId);
+    const runId = (RUN_DIR.exec(cwds.get(pid) ?? "") ?? RUN_DIR.exec(container?.dir ?? ""))?.[1];
+    const cpu = Math.round((Number(ticks) / perCore) * 10) / 10;
+    const memoryBytes = roundMemory(Number(bytes));
+    if (cgroup === (self === undefined ? undefined : cgroupPath(self))) continue;
+    if (queue.cgroups.has(cgroup) || (runId !== undefined && queue.runIds.has(runId))) continue;
+    if (cpu < HEAVY_CORES && memoryBytes < HEAVY_MEMORY_BYTES) continue;
+    items.push({
+      cgroup,
+      pid,
+      cpu,
+      memoryBytes,
+      command: commands.get(pid) ?? "",
+      ...(runId === undefined ? {} : { runId }),
+      ...(containerId === undefined
+        ? {}
+        : {
+            container: {
+              id: containerId.slice(0, 12),
+              name: container?.name ?? "",
+              image: container?.image ?? "",
+            },
+          }),
+      ...(container?.thread ? { threadId: container.thread } : {}),
+    });
+  }
+  return items
+    .toSorted((a, b) => b.cpu - a.cpu || b.memoryBytes - a.memoryBytes)
+    .slice(0, OUTSIDE_MAX);
 };
 
 export type HealthCheck =
@@ -924,6 +1038,26 @@ export const LINUX_SETTLE_MS = 60_000;
 
 // Half the entry floor, so a stop never makes room that lets the same start back in at once.
 export const LINUX_EVICT_SHARE = 0.5;
+
+/**
+ * Linux's heavy work outside the queue: the heartbeat already leaves out each job's own session,
+ * and this the copies of jobs still syncing or installing, before they have a session to show.
+ */
+export const linuxOutside = (
+  health: Pick<LinuxHealth, "outside">,
+  entries: ReadonlyArray<HeavyQueueEntry>,
+): ReadonlyArray<LinuxOutside> => {
+  const queued = new Set(
+    entries.flatMap((entry) =>
+      entry.startedAt !== null && entry.runner === "linux" && entry.remote !== undefined
+        ? [entry.remote.id]
+        : [],
+    ),
+  );
+  return (health.outside ?? []).filter(
+    (item) => item.runId === undefined || !queued.has(item.runId),
+  );
+};
 
 /** When Linux last booted, from the latest reading; null without one. */
 export const bootAtOf = (health: LinuxHealth) =>
@@ -1175,6 +1309,8 @@ export const intentOf = (
     const why = commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK;
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
+  // Its own ssh already runs it there: this Mac's checks on the line don't apply.
+  if (entry.ssh === true) return { intent: "linux", reason: "" };
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
     const reason = verdict.reason!;
@@ -1246,8 +1382,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * read of its session (`memory`). `MemAvailable` already counts what they hold, and anything
    * else there (docker containers, other users) along with it.
    */
+  const outside = linuxOutside(health, entries);
+  const outsideNote =
+    outside.length === 0
+      ? ""
+      : ` · outside the queue: ${outside.length} using ${Math.round(outside.reduce((sum, item) => sum + item.cpu, 0) * 10) / 10} cores, ${formatBytes(outside.reduce((sum, item) => sum + item.memoryBytes, 0))}`;
+  // ponytail: an ssh job's session there has no pgid file, so no heartbeat measures it: it reserves
+  // nothing, and its work shows in MemAvailable and among the work outside the queue.
   let linuxReserved = linuxRunning.reduce(
-    (sum, entry) => sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
+    (sum, entry) =>
+      entry.ssh === true ? sum : sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
     0,
   );
 
@@ -1323,10 +1467,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return { kind: "limits", why: "Linux isn't answering: too loaded to reply" };
     }
     if (health.overLimit) {
-      return { kind: "limits", why: linuxOverNow ?? "easing back under its limits" };
+      return {
+        kind: "limits",
+        why: `${linuxOverNow ?? "easing back under its limits"}${outsideNote}`,
+      };
     }
     // Only the sustained limits move work elsewhere, but no new start goes past the instant ones.
-    if (linuxOverNow !== null) return { kind: "limits", why: linuxOverNow };
+    if (linuxOverNow !== null) return { kind: "limits", why: `${linuxOverNow}${outsideNote}` };
     // Bounds stop and start on a job that only fits there alone.
     if (runsAlone(entry) && linuxFree < machine.runnerLinuxSlots) {
       return {
@@ -1334,15 +1481,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         why: "Linux ran short of memory beside other jobs: waiting to run there alone",
       };
     }
-    // One job always runs there, as on this Mac: an empty Linux reserves nothing. Checked
-    // before the settle wait, so a job started this pass already holds its peak here.
+    // One job always runs on an empty Linux, as on this Mac; work outside the queue makes it
+    // not empty. Checked before the settle wait, so a job started this pass holds its peak here.
     const free = health.availableMemoryBytes;
-    if (free !== null && totalMemory !== null && linuxFree < machine.runnerLinuxSlots) {
+    const empty = linuxFree === machine.runnerLinuxSlots && outside.length === 0;
+    if (free !== null && totalMemory !== null && !empty) {
       const need = linuxNeed(entry);
       if (free - linuxReserved - need < memoryFloor) {
         return {
           kind: "limits",
-          why: `needs ~${formatBytes(need)}; ${formatBytes(free)} free, ${formatBytes(linuxReserved)} held for running jobs, ${formatBytes(memoryFloor)} kept spare`,
+          why: `needs ~${formatBytes(need)}; ${formatBytes(free)} free, ${formatBytes(linuxReserved)} held for running jobs, ${formatBytes(memoryFloor)} kept spare${outsideNote}`,
         };
       }
     }
@@ -1575,6 +1723,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   };
 };
 
+/**
+ * What an agent reads when the queue fails its job for Linux's or T3's reasons: going around the
+ * queue hides the work from admission and loads the PC unseen, so the failure goes to T3's board.
+ */
+export const linuxFailedNote = (host: string) =>
+  `[t3 heavy] This failed in T3's queue or on Linux, not in your command. Do not get around it by running the work with \`ssh ${host} '…'\` or outside the queue: T3 then can't see or limit it. Treat it as a T3 bug: unless T3 already filed a problem card for it, file one on the T3 Code project's board (t3_kanban create_card) with this command and the error above, then tell the user the work is blocked on it.\n`;
+
 /** Stderr lines `remoto` prints with `REMOTO_MARKERS=1`; people never see them. */
 export const MARKER = "\u001eremoto ";
 
@@ -1735,16 +1890,31 @@ export const idleCopiesScript = (days: number, nowSeconds: number) => {
   ].join("\n");
 };
 
+// `t3cg` prints each process's `pid ticks rss-pages cgroup` (the v2 path, or systemd's on v1).
+// Its readings around the `/proc/stat` pair give each cgroup's CPU in the same half second; only
+// cgroups past a quarter core or 512 MB come back as `out` lines, with their busiest process.
+const CGROUP_TICKS = `t3cg() { awk '{ split(FILENAME, f, "/"); p = f[3] } FILENAME ~ /cgroup$/ { if (sub(/^0::/, "") || sub(/^[0-9]+:name=systemd:/, "")) g[p] = $0; next } (p in g) && g[p] != "/" { s = $0; sub(/^.*\\) /, "", s); split(s, x, " "); print p, x[12] + x[13], x[22], g[p] }' /proc/[0-9]*/cgroup /proc/[0-9]*/stat 2>/dev/null; }`;
+const OUTSIDE = [
+  `O=$({ printf '%s\\n' "$A" | awk '{ print "a", $0 }'; printf '%s\\n' "$B"; } | awk '$1 == "a" { t[$2] = $3; next } { d = ($1 in t) ? $2 - t[$1] : 0; if (d < 0) d = 0; k = $4; c[k] += d; m[k] += $3 * 4096; if (!(k in b) || d > b[k]) { b[k] = d; top[k] = $1 } } END { for (k in c) if (c[k] >= 12 || m[k] >= 536870912) printf "out %.0f %.0f %d %s\\n", c[k], m[k], top[k], k }')`,
+  `[ -z "$O" ] || printf '%s\\n' "$O"`,
+  `for p in $(printf '%s\\n' "$O" | awk '{ print $4 }'); do printf 'outcmd %s %s\\n' "$p" "$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-300)"; printf 'outcwd %s %s\\n' "$p" "$(readlink /proc/$p/cwd 2>/dev/null)"; done`,
+  `case "$O" in *docker*) timeout 2 docker ps --no-trunc --format 'dock\\t{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Label "t3.thread"}}\\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null ;; esac`,
+  `{ read -r s < /proc/self/cgroup; } 2>/dev/null; echo "self $s"`,
+];
 // Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.
 // `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone. Memory
 // comes from `/proc/meminfo` and pressure from `/proc/pressure` (absent without PSI).
 export const HEARTBEAT_COMMAND = [
-  "cat /proc/loadavg; nproc; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; cat /proc/uptime",
+  CGROUP_TICKS,
+  "cat /proc/loadavg; nproc; head -1 /proc/stat; A=$(t3cg); sleep 0.5; head -1 /proc/stat; B=$(t3cg); cat /proc/uptime",
   "grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo",
   `for r in cpu memory io; do sed "s/^/psi $r /" /proc/pressure/$r 2>/dev/null; done`,
   // ponytail: a run's session only; containers it starts live under dockerd and show in
   // MemAvailable and PSI, not in its own peak. Attribute them by cgroup if that undercounts.
-  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; echo "job \${b%.pgid} $p $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}')"; done`,
+  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; c=$(awk '/^0::/ || /^[0-9]+:name=systemd:/ { sub(/^[0-9]+:[^:]*:/, ""); print; exit }' "/proc/$p/cgroup" 2>/dev/null); echo "job \${b%.pgid} $p $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}') $c"; done`,
+  ...OUTSIDE,
+  // Docker missing or slow never fails the heartbeat: its status is the last command's.
+  ":",
 ].join("; ");
 
 /**
