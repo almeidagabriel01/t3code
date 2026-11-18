@@ -74,6 +74,11 @@ export const RUNNER_SETTING_COPY: Record<
     description:
       "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone.",
   },
+  runnerRouteMemoryDays: {
+    title: "Remember Linux failures for",
+    description:
+      "A command Linux twice failed to run for a tool or file it lacks runs on this Mac for this many days. `t3 heavy routes --forget` clears one sooner.",
+  },
   runnerHost: {
     title: "Linux host",
     description: "The Linux PC, as an alias from ~/.ssh/config or user@host.",

@@ -32,6 +32,7 @@ describe("Runner settings", () => {
       runnerBringBack: false,
     };
     const saved = { ...current, runnerLinuxCommands: ["test"], runnerLinuxEverything: false };
-    expect(decodeProjectConfig(saved)).toEqual(current);
+    // Saved before route memory existed, it reads that default too.
+    expect(decodeProjectConfig(saved)).toEqual({ ...current, runnerRouteMemoryDays: 7 });
   });
 });

@@ -51,6 +51,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerMacOnly: RUNNER_DEFAULTS.runnerMacOnly,
   runnerMacFirstAfter: RUNNER_DEFAULTS.runnerMacFirstAfter,
   runnerBringBack: RUNNER_DEFAULTS.runnerBringBack,
+  runnerRouteMemoryDays: RUNNER_DEFAULTS.runnerRouteMemoryDays,
 };
 
 export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {

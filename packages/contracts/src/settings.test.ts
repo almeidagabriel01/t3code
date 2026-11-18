@@ -754,13 +754,14 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerMacFirstAfter",
     "runnerLinuxEverything",
     "runnerBringBack",
+    "runnerRouteMemoryDays",
   ] as const;
   it.each([
-    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false]],
+    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false, 7]],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, false],
+      ["automatic", "ask", 4, false, false, 7],
     ],
     [
       "the new values",
@@ -770,8 +771,9 @@ describe("ServerSettings project overrides across versions", () => {
         runnerMacFirstAfter: 32,
         runnerLinuxEverything: true,
         runnerBringBack: true,
+        runnerRouteMemoryDays: 30,
       },
-      ["macFirst", "agent", 32, true, true],
+      ["macFirst", "agent", 32, true, true, 30],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");

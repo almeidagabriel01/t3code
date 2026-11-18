@@ -2,6 +2,7 @@
  * Runner: where heavy work runs, this Mac or a Linux PC reached over SSH. Every value is a server
  * setting; the ones in `RUNNER_PROJECT_KEYS` also take a per-project override.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -47,6 +48,7 @@ export const RUNNER_DEFAULTS = {
   runnerMacFirstAfter: 4,
   runnerLinuxEverything: false,
   runnerBringBack: false,
+  runnerRouteMemoryDays: 7,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -104,6 +106,7 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerMacFirstAfter",
   "runnerLinuxEverything",
   "runnerBringBack",
+  "runnerRouteMemoryDays",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -171,6 +174,10 @@ export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
 export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
 export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
+/** Days a call Linux twice failed to run for its environment keeps going to this Mac. */
+export const RunnerRouteMemoryDays = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 90) || "Use 1 to 90 days."),
+);
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -189,6 +196,10 @@ export const RunnerProjectConfig = Schema.Struct({
   runnerMacOnly: Schema.Array(Schema.String),
   runnerMacFirstAfter: Schema.Int,
   runnerBringBack: Schema.Boolean,
+  // Older publishers' blocks lack it.
+  runnerRouteMemoryDays: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;
 

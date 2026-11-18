@@ -51,6 +51,7 @@ import {
   RunnerHost,
   RunnerLinuxSlots,
   RunnerMacFirstAfter,
+  RunnerRouteMemoryDays,
   RunnerOfflineAfterFailures,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
@@ -1399,6 +1400,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerMacFirstAfter",
   "runnerLinuxEverything",
   "runnerBringBack",
+  "runnerRouteMemoryDays",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1471,6 +1473,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
+  runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1780,6 +1783,9 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerBringBack: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBack)),
+  ),
+  runnerRouteMemoryDays: RunnerRouteMemoryDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
   ),
   runnerHost: RunnerHost.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
@@ -2327,6 +2333,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
+  runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
   runnerHost: Schema.optionalKey(RunnerHost),
   runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
   runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),
