@@ -1495,7 +1495,10 @@ const runLinuxPart = async (
     });
     if (found !== null) recordFault(dir, id, found);
   };
-  const input = forwardedInput(0);
+  // Only a call that names stdin gets it: ssh would drain a `while read` loop's input otherwise.
+  const input = args.some((arg) => arg === "-" || arg.startsWith("--stdin"))
+    ? forwardedInput(0)
+    : undefined;
   /**
    * What Linux lacked: this call alone runs again here, once, and counts toward its learned route.
    * Input it handed Linux is spent, so then the call ends with Linux's code.

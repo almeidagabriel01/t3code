@@ -845,6 +845,23 @@ describe("t3 heavy", () => {
       expect(listed).toContain("on this Mac until");
     });
 
+    // Only a call that asks for stdin gets it: any other would drain a loop's input over ssh.
+    it("hands Linux stdin only for a call that asks for it", async () => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `printf '%s|' "$@"; tr -d '\\n'; echo`,
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      NodeFS.writeFileSync(NodePath.join(dir, "files.txt"), "a.ts\nb.ts\n");
+      const line =
+        'while read f; do vp lint "$f"; done < files.txt; echo x | vp lint --stdin-filepath=a.ts';
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp|lint|a.ts|\nvp|lint|b.ts|\nvp|lint|--stdin-filepath=a.ts|x\n");
+    });
+
     // Linux already read the input it was handed, so a rerun here would get none.
     it("does not rerun a call whose input went to Linux", async () => {
       const { dir, env } = setup(
@@ -855,7 +872,7 @@ describe("t3 heavy", () => {
         ].join("\n"),
       );
       NodeFS.writeFileSync(NodePath.join(dir, "in.txt"), "input\n");
-      const line = 'vp test run < in.txt; echo "code $?"';
+      const line = 'vp lint --stdin-filepath=a.ts < in.txt; echo "code $?"';
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("code 127\n");
