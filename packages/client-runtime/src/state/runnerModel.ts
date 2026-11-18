@@ -49,7 +49,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerDropped: {
     title: "If a Linux run fails",
     description:
-      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
+      "What a job does when the PC drops its run and its retries run out. A command Linux lacks a tool or folder for runs again on this Mac by itself.",
   },
   runnerAskMinutes: {
     title: "Wait for an answer",

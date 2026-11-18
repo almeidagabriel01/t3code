@@ -239,14 +239,17 @@ work queue, and each section says what the two do together.
   restarting) goes back to Linux by itself, up to 3 attempts by default; while
   Linux is offline it follows **When Linux is offline**. Jobs going back start
   there one at a time, as **Linux limits** describes. After the last attempt,
-  or when Linux couldn't run a job at all (a tool or folder is missing there),
   this setting decides. **Tell the agent** (the default) ends the job with
   Linux's error and "Linux couldn't run this: <reason>", and nothing reruns it.
   **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job to this
-  Mac, back to Linux, or to you instead. When Linux runs very short of memory
-  with several jobs, it stops the newest one and queues it again; that is not a
-  failure. A command that fails on Linux for its own reasons, such as a failing
-  test, returns its exit code and output unchanged and never reruns.
+  Mac, back to Linux, or to you instead. A command Linux lacks a tool or folder
+  for runs again on this Mac by itself, whatever this setting says. Two such
+  failures teach the route for a while; `t3 heavy routes` lists what it
+  learned and `t3 heavy routes --forget <key|all>` clears it. When Linux runs
+  very short of memory with several jobs, it stops the newest one and queues it
+  again; that is not a failure. A command that fails on Linux for its own
+  reasons, such as a failing test, returns its exit code and output unchanged
+  and never reruns.
 - **Bring results back.** On by default. The files a Linux command created or
   changed come back to this Mac when it ends, whether it passed or failed, with
   their file modes, except names in **Never bring back** (`node_modules`,

@@ -665,7 +665,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
+      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n",
     );
     process.exit(2);
   }

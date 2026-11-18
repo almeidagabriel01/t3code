@@ -243,6 +243,7 @@ describe("t3 heavy", () => {
     const none = heavy(dir, []);
     expect(await none.exited).toBe(2);
     expect(none.stderr()).toContain("Usage: t3 heavy");
+    expect(none.stderr()).toContain("t3 heavy routes [--forget <key|all>]");
     const missing = heavy(dir, ["/nonexistent/t3-heavy-program"]);
     expect(await missing.exited).toBe(127);
     expect(Queue.read(dir)).toEqual([]);
