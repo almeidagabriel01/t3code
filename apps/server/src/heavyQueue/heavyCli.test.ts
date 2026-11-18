@@ -584,14 +584,20 @@ describe("t3 heavy", () => {
       expect(linted.stdout()).toBe(`vp|lint|src/a.ts|src/b.ts| in ${real}\n`);
       const cased = heavyHere(
         dir,
-        ["/bin/sh", "-c", "case x in x) A=1 vp test run a.test.ts;; *) echo no;; esac"],
+        [
+          "/bin/sh",
+          "-c",
+          "case x in x) A=1 NPM_TOKEN=s3cret vp test run a.test.ts;; *) echo no;; esac",
+        ],
         env,
         ["--"],
         dir,
       );
       expect(await cased.exited).toBe(0);
-      // What the line set for the call reaches Linux too.
+      // What the line set for the call reaches Linux too, except secrets: argv shows in `ps` there.
       expect(cased.stdout()).toBe(`env|A=1|vp|test|run|a.test.ts| in ${real}\n`);
+      expect(cased.stderr()).toContain("NPM_TOKEN");
+      expect(cased.stderr()).not.toContain("s3cret");
       // A script's own steps run here; only its heavy call crosses.
       NodeFS.writeFileSync(
         NodePath.join(dir, "check.sh"),

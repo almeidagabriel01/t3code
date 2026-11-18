@@ -1031,11 +1031,24 @@ const lineKeys = (dir: string, id: string) => {
   );
 };
 
-/** `NAME=value` words for what the line set for this call, here or in the job that queued it. */
-const lineEnv = (dir: string, id: string) =>
-  [...lineKeys(dir, id), ...(process.env[CALL_KEYS_ENV]?.split(" ") ?? [])]
-    .filter((key) => key !== "")
+const SECRET_KEY = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH/i;
+
+/**
+ * `NAME=value` words for what the line set for this call, here or in the job that queued it.
+ * They travel as argv, which `ps` shows there, so secrets stay behind and the job hears their names.
+ */
+const lineEnv = (dir: string, id: string) => {
+  const keys = [...lineKeys(dir, id), ...(process.env[CALL_KEYS_ENV]?.split(" ") ?? [])].filter(
+    (key) => key !== "",
+  );
+  const secret = keys.filter((key) => SECRET_KEY.test(key));
+  if (secret.length > 0) {
+    jobNote(`[t3 heavy] Not sent to Linux (looks secret): ${[...new Set(secret)].join(", ")}\n`);
+  }
+  return keys
+    .filter((key) => !SECRET_KEY.test(key))
     .map((key) => `${key}=${process.env[key] ?? ""}`);
+};
 
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
