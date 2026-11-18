@@ -109,7 +109,8 @@ const SWEEP_EVERY_MS = 24 * 60 * 60 * 1000;
 /**
  * Removes Linux copies idle past the retention, one at a time and only while nothing is queued: a
  * waiter's sync may start into any copy before `remoto-rodar` takes its lock. The queue is read
- * again before each removal, so a job queued mid-sweep stops it. Null when Linux is unreachable.
+ * again before each removal, so a job queued mid-sweep stops it. `queued` when work kept it from
+ * listing, null when Linux is unreachable.
  */
 export const sweepIdleCopies = async (
   dir: string,
@@ -118,12 +119,12 @@ export const sweepIdleCopies = async (
   now: number,
   list: typeof idleRunnerCopies = idleRunnerCopies,
   remove: typeof removeRunnerCopy = removeRunnerCopy,
-): Promise<ReadonlyArray<string> | null> => {
+): Promise<ReadonlyArray<string> | "queued" | null> => {
   const quiet = () => {
     const doc = QueueFile.readDoc(dir);
     return doc.entries.length === 0 && doc.lostRuns.length === 0;
   };
-  if (!quiet()) return [];
+  if (!quiet()) return "queued";
   const idle = await list(machine, environment, RUNNER_COPY_RETENTION_DAYS, now);
   if (idle === null) return null;
   const removed: string[] = [];
@@ -134,6 +135,36 @@ export const sweepIdleCopies = async (
     if (result === "removed") removed.push(id);
   }
   return removed;
+};
+
+/**
+ * One sweep a day at most, and one at a time. The day counts from a sweep that listed: a busy
+ * queue or an unreachable Linux leaves it due, so the next quiet heartbeat sweeps.
+ */
+export const idleSweeper = (
+  dir: string,
+  list: typeof idleRunnerCopies = idleRunnerCopies,
+  remove: typeof removeRunnerCopy = removeRunnerCopy,
+) => {
+  /** In memory: a restart sweeps again, which the sweep's own rules make harmless. */
+  let sweptAt = -Infinity;
+  let sweeping = false;
+  return async (
+    machine: RunnerBlock["machine"],
+    environment: Readonly<Record<string, string | undefined>>,
+    now: number,
+  ): Promise<ReadonlyArray<string>> => {
+    if (sweeping || now - sweptAt < SWEEP_EVERY_MS) return [];
+    sweeping = true;
+    try {
+      const result = await sweepIdleCopies(dir, machine, environment, now, list, remove);
+      if (result === "queued" || result === null) return [];
+      sweptAt = now;
+      return result;
+    } finally {
+      sweeping = false;
+    }
+  };
 };
 
 export const layer = (
@@ -180,8 +211,7 @@ export const layer = (
       );
       // The host last checked; null while the Runner is off, so turning it on checks at once.
       let checkedHost: string | null = null;
-      /** In memory: a restart sweeps again, which the sweep's own rules make harmless. */
-      let sweptAt = -Infinity;
+      const sweepIdle = idleSweeper(dir, listIdle);
       const checkHealth = Effect.fn("RunnerPublisher.checkHealth")(function* (always: boolean) {
         const block = current;
         if (block === null || !owner || !runnerOnAnywhere(block)) {
@@ -208,16 +238,15 @@ export const layer = (
               new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
           }).pipe(Effect.ignore({ log: true }));
         const now = yield* Clock.currentTimeMillis;
-        if (reading.ok && !removalsBlocked && now - sweptAt >= SWEEP_EVERY_MS) {
+        if (reading.ok && !removalsBlocked) {
           // Deleting copies can take minutes: it runs beside the heartbeat, never in its way.
-          sweptAt = now;
           yield* Effect.tryPromise({
-            try: () => sweepIdleCopies(dir, block.machine, process.env, now, listIdle),
+            try: () => sweepIdle(block.machine, process.env, now),
             catch: (cause) =>
               new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
           }).pipe(
             Effect.flatMap((removed) =>
-              removed === null || removed.length === 0
+              removed.length === 0
                 ? Effect.void
                 : Effect.logInfo("Removed idle Linux copies", { removed: removed.length }),
             ),

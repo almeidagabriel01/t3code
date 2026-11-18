@@ -26,6 +26,7 @@ import {
   drainCopyRemovals,
   layer,
   runnerBlockOf,
+  idleSweeper,
   runnerOnAnywhere,
   sweepIdleCopies,
 } from "./RunnerPublisher.ts";
@@ -205,7 +206,7 @@ describe("Linux copies of removed worktrees", () => {
       expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toEqual(["a-00000000"]);
       expect(asked).toEqual(["a-00000000"]);
       // Queued work: nothing is even listed.
-      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toEqual([]);
+      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toBe("queued");
       expect(listed).toEqual(["list"]);
       expect(
         await sweepIdleCopies(
@@ -216,6 +217,51 @@ describe("Linux copies of removed worktrees", () => {
           async () => null,
         ),
       ).toBeNull();
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the daily idle sweep", () => {
+  it("counts its day from a sweep that listed, never from one queued work or a lost Linux skipped", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-sweeper-"));
+    try {
+      const machine = runnerBlockOf(
+        { ...DEFAULT_SERVER_SETTINGS, runnerEnabled: true, runnerHost: "pc" },
+        [{ id: app, workspaceRoot: "/code/app" }],
+        publisher,
+      ).machine;
+      const HOUR = 3_600_000;
+      let reachable = false;
+      let lists = 0;
+      const list = async () => {
+        lists += 1;
+        return reachable ? [] : null;
+      };
+      const sweep = idleSweeper(dir, list);
+      QueueFile.enqueue(dir, {
+        id: "j",
+        pid: process.pid,
+        threadId: null,
+        label: "vp test run",
+        cwd: "/w/app",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: null,
+      });
+      await sweep(machine, {}, 0);
+      expect(lists).toBe(0);
+      QueueFile.remove(dir, "j");
+      // Linux unreachable: listed, but nothing learned, so still due.
+      await sweep(machine, {}, 1 * HOUR);
+      reachable = true;
+      await sweep(machine, {}, 2 * HOUR);
+      expect(lists).toBe(2);
+      // Swept at 2 h: the next one is a day after that, not after the queued attempt at 0.
+      await sweep(machine, {}, 25 * HOUR);
+      expect(lists).toBe(2);
+      await sweep(machine, {}, 26 * HOUR);
+      expect(lists).toBe(3);
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
