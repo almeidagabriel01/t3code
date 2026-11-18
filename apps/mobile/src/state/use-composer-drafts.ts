@@ -717,13 +717,23 @@ export function migrateLegacyNewTaskDraft(
   ];
 }
 
+/** A draft already under its current key wins; one moved from an old key fills only an empty one. */
 function withCurrentGroupDraftKeys(
   drafts: Readonly<Record<string, ComposerDraft>>,
 ): Array<[string, ComposerDraft]> {
-  return Object.entries(drafts).flatMap(([key, draft]): Array<[string, ComposerDraft]> => {
+  const result = new Map<string, ComposerDraft>();
+  const moved: Array<[string, ComposerDraft]> = [];
+  for (const [key, draft] of Object.entries(drafts)) {
     const current = migratePersistedAssistantGroupDraftKey(key);
-    return current === null ? [] : [[current, draft]];
-  });
+    if (current === null) continue;
+    if (current === key) result.set(key, draft);
+    else moved.push([current, draft]);
+  }
+  for (const [key, draft] of moved) {
+    const existing = result.get(key);
+    if (existing === undefined || !composerDraftHasUserContent(existing)) result.set(key, draft);
+  }
+  return [...result];
 }
 
 export function decodePersistedComposerState(value: unknown): {

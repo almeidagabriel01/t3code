@@ -2353,6 +2353,25 @@ describe("mobile composer drafts", () => {
       "environment-1:thread-1": DRAFT,
     });
     expect(groupKey).toBe("environment-1:assistant-group:team-1");
+
+    const decodeBoth = (entries: Array<[string, ComposerDraft]>) =>
+      decodePersistedComposerState({ schemaVersion: 1, drafts: Object.fromEntries(entries) })
+        .drafts[groupKey];
+    const legacy: [string, ComposerDraft] = [
+      "assistant-group:environment-1:team-1",
+      { text: "old text", attachments: [] },
+    ];
+    // The draft under the current key wins whatever order the file lists them in.
+    const current: [string, ComposerDraft] = [groupKey, { text: "new text", attachments: [] }];
+    expect(decodeBoth([legacy, current])?.text).toBe("new text");
+    expect(decodeBoth([current, legacy])?.text).toBe("new text");
+    // A current key holding only settings takes the old key's text.
+    const settingsOnly: [string, ComposerDraft] = [
+      groupKey,
+      { text: "  ", attachments: [], runtimeMode: "full-access" },
+    ];
+    expect(decodeBoth([settingsOnly, legacy])?.text).toBe("old text");
+    expect(decodeBoth([legacy, settingsOnly])?.text).toBe("old text");
   });
 
   it("removes only drafts owned by the selected environment", () => {
