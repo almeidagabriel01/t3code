@@ -1087,6 +1087,7 @@ describe("t3 heavy", () => {
         true,
         "command not found on this Mac either: t3-no-such-tool",
       ],
+      ["an option-shaped word", "--help", false, false, "--help: not a command"],
     ])(
       "a program neither machine can run (%s) ends 127 saying why, with no Linux fault",
       async (_, program, project, reaches, reason) => {

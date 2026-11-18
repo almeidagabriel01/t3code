@@ -1522,8 +1522,13 @@ const runLinuxPart = async (
   if (root === null || program === undefined) {
     return toMac(macReasonText({ code: "mac-env", subject: cwd }));
   }
-  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
-  const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
+  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`). No program
+  // starts with `-`: that is an option that missed its command's, never Linux's to lack.
+  const absent = program.startsWith("-")
+    ? `${program}: not a command`
+    : program.includes("/")
+      ? notFoundHere(program, cwd, root)
+      : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
