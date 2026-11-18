@@ -1249,10 +1249,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         why: "Linux ran short of memory beside other jobs: waiting to run there alone",
       };
     }
-    if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
-      return { kind: "reading", why: "a reading a minute after the last job started there" };
-    }
-    // One job always runs there, as on this Mac: an empty Linux reserves nothing.
+    // One job always runs there, as on this Mac: an empty Linux reserves nothing. Checked
+    // before the settle wait, so a job started this pass already holds its peak here.
     const free = health.availableMemoryBytes;
     if (free !== null && totalMemory !== null && linuxFree < machine.runnerLinuxSlots) {
       const need = linuxNeed(entry);
@@ -1262,6 +1260,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           why: `needs ~${gbOf(need)}; ${gbOf(free)} free, ${gbOf(linuxReserved)} held for running jobs, ${gbOf(memoryFloor)} kept spare`,
         };
       }
+    }
+    if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
+      return { kind: "reading", why: "a reading a minute after the last job started there" };
     }
     return null;
   };

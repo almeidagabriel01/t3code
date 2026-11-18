@@ -306,6 +306,19 @@ describe("admission on Linux reserves each job's memory", () => {
     }
   });
 
+  it("a job started this pass holds its peak against the next one", () => {
+    // 7 GB free, 2.4 GB kept spare: one 4 GB suite fits, a second only if the first reserved nothing.
+    const plan = planRoutes(
+      input([job("a", SUITE), job("b", SUITE)], "linux", {
+        linuxHistory,
+        health: health({ availableMemoryBytes: 7 * GIB }),
+      }),
+    );
+    expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
+    expect(plan.admits.b).toBeUndefined();
+    expect(plan.reasons.b).toMatch(/4\.0 GB held for running jobs/);
+  });
+
   it("holds every start while Linux is not answering", () => {
     const plan = planRoutes(
       input([job("w", "vp lint")], "linux", {
