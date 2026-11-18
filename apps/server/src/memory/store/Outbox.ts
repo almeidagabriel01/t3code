@@ -40,6 +40,23 @@ export const makeOutbox = (
   const { enqueueWork, putItem } = itemWrites;
   const { persistImportLineageTx, settleImportOperationTx } = importLineage;
   const { finishWork } = workQueue;
+  // A row that can never be encoded is held with its reason instead of blocking the queue head.
+  const parkUnsendable = Effect.fnUntraced(function* (
+    id: string,
+    version: number,
+    code: "invalid_output" | "unsupported_protocol" | "not_found",
+  ) {
+    const parked = yield* stored(
+      "sync-outbox-park",
+      sql`UPDATE memory_outbox SET status='retry',claimed_by=NULL,claimed_until=NULL,next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code=${code} WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
+    );
+    if (parked.length)
+      yield* Effect.logWarning("memory: unsendable sync work held", {
+        workId: id,
+        failureCode: code,
+      });
+    return parked.length === 1;
+  });
   const readEligibleOutbox = Effect.fn("MemoryStore.readEligibleOutbox")(function* (
     space: M.MemorySpaceId,
     now: number,
@@ -48,9 +65,14 @@ export const makeOutbox = (
     // Filter before LIMIT: a page of derived work must not hide its unsent inputs. CROSS JOIN
     // keeps edge iteration ahead of PK probes instead of scanning all revisions in a space.
     // Only live local submissions wait; missing or terminal inputs reach the hub's typed rejection.
-    const rows = yield* stored(
-      "sync-outbox",
-      sql<WorkRow & { sync_version: number; operation_digest: string | null }>`
+    const pageLimit = Math.max(0, Math.min(limit, M.MEMORY_PAGE_MAX_ITEMS));
+    const candidates: SyncWorkCandidate[] = [];
+    // Parked rows leave the eligible set, so each re-read reaches the work queued behind them.
+    for (let parked = 1; parked > 0 && candidates.length < pageLimit;) {
+      parked = 0;
+      const rows = yield* stored(
+        "sync-outbox",
+        sql<WorkRow & { sync_version: number; operation_digest: string | null }>`
       SELECT o.* FROM memory_outbox o LEFT JOIN memory_events e ON e.memory_space_id=o.space AND e.operation_id=json_extract(o.metadata_json,'$.operationId')
       WHERE o.space=${space} AND o.kind IN ('sync','revert_intent')
       AND (o.status IN ('pending','retry') OR (o.status='running' AND o.claimed_until<=${now})) AND o.next_attempt_at<=${now}
@@ -65,25 +87,36 @@ export const makeOutbox = (
         THEN CASE WHEN json_extract(e.receipt_json,'$.forgetRetryOf') IS NOT NULL OR
           EXISTS (SELECT 1 FROM memory_events b WHERE b.memory_space_id=o.space AND json_extract(b.receipt_json,'$.forgetExpansion.operationId')=json_extract(o.metadata_json,'$.operationId'))
           THEN 1 ELSE 0 END ELSE 2 END, o.next_attempt_at,o.attempt,o.id
-      LIMIT ${Math.max(0, Math.min(limit, M.MEMORY_PAGE_MAX_ITEMS))}`,
-    );
-    const works = yield* workRows(rows);
-    const candidates: SyncWorkCandidate[] = [];
-    for (let i = 0; i < rows.length; i++) {
-      const work = works[i]!;
-      if (!("protocolVersion" in work.metadata)) continue;
-      let operationDigest = rows[i]!.operation_digest;
-      if (!operationDigest) {
-        const op = yield* readWorkOperation(work.id);
-        if (!op) continue;
-        operationDigest = hashText(M.encodeMemoryOperation(op));
+      LIMIT ${pageLimit - candidates.length}`,
+      );
+      for (const row of rows) {
+        const version = row.sync_version;
+        const decoded = yield* Effect.result(workRows([row]));
+        if (decoded._tag === "Failure") {
+          if (yield* parkUnsendable(row.id, version, "invalid_output")) parked++;
+          continue;
+        }
+        const work = decoded.success[0]!;
+        if (!("protocolVersion" in work.metadata)) {
+          if (yield* parkUnsendable(work.id, version, "unsupported_protocol")) parked++;
+          continue;
+        }
+        let operationDigest = row.operation_digest;
+        if (!operationDigest) {
+          const op = yield* readWorkOperation(work.id);
+          if (!op) {
+            if (yield* parkUnsendable(work.id, version, "not_found")) parked++;
+            continue;
+          }
+          operationDigest = hashText(M.encodeMemoryOperation(op));
+        }
+        candidates.push({
+          work,
+          operationId: work.metadata.operationId,
+          operationDigest,
+          version,
+        });
       }
-      candidates.push({
-        work,
-        operationId: work.metadata.operationId,
-        operationDigest,
-        version: rows[i]!.sync_version,
-      });
     }
     return candidates;
   });

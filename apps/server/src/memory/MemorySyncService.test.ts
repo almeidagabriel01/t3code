@@ -38,6 +38,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Context from "effect/Context";
 import * as FileSystem from "effect/FileSystem";
 import * as Statement from "effect/sql/Statement";
@@ -284,6 +285,61 @@ it.effect("blocked generation leaves unrelated push and cursor movement free", (
         yield* sync.shutdown;
         assert.strictEqual(yield* sync.activeResolutions, 0);
       }).pipe(Effect.provide(fixture(client, model))),
+    );
+  }),
+);
+
+it.effect("unsendable work at the queue head is held with its reason and the rest ships", () =>
+  Effect.gen(function* () {
+    const pushed: M.MemoryOperationId[] = [];
+    const held: string[] = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      const text = JSON.stringify(message);
+      if (logLevel === "Warn" && text.includes("unsendable sync work held")) held.push(text);
+    });
+    const client = peer({
+      push: (_c, i) =>
+        Effect.sync(() => {
+          pushed.push(...i.operations.map((op) => op.operationId));
+          return {
+            receipts: i.operations.map((op) => ({
+              operationId: op.operationId,
+              memoryId: op.memoryId,
+              operationDigest: memoryOperationDigest(op),
+              hubSequence: 1,
+              outcome: "accepted" as const,
+            })),
+          };
+        }),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* ready;
+        for (let n = 0; n < 103; n++) yield* enqueue(1000 + n, M.MemoryId.make(id(5000 + n)));
+        const head = sql`SELECT id FROM memory_outbox WHERE kind='sync' ORDER BY id`;
+        const ids = (yield* head).map((row) => String(row.id));
+        yield* sql`UPDATE memory_outbox SET metadata_json=json_remove(metadata_json,'$.protocolVersion') WHERE id IN ${sql.in(ids.slice(0, 50))}`;
+        yield* sql`DELETE FROM memory_payloads WHERE payload_ref IN (SELECT json_extract(metadata_json,'$.revision.payloadRef') FROM memory_outbox WHERE id IN ${sql.in(ids.slice(50, 100))})`;
+        const sync = yield* Sync.MemorySyncService;
+        yield* sync.syncOnce;
+        assert.deepStrictEqual(
+          pushed,
+          [1100, 1101, 1102].map((n) => operation(n).operationId),
+        );
+        assert.strictEqual(held.length, 100);
+        assert.deepStrictEqual(
+          yield* sql`SELECT failure_code, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
+          [
+            { failure_code: "invalid_output", n: 50 },
+            { failure_code: "not_found", n: 50 },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.merge(fixture(client), Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      ),
     );
   }),
 );

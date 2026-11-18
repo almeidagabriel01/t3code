@@ -1687,7 +1687,13 @@ const make = Effect.gen(function* () {
     let bytes = 0;
     for (const candidate of candidates) {
       const operation = yield* store.readWorkOperation(candidate.work.id);
-      if (!operation) continue;
+      if (!operation) {
+        yield* Effect.logWarning("memory: sync work skipped", {
+          workId: candidate.work.id,
+          reason: "operation_unreadable",
+        });
+        continue;
+      }
       const input: M.MemoryHubPushInput = {
         protocolVersion: 1,
         memorySpaceId: r.space!,
@@ -1711,7 +1717,13 @@ const make = Effect.gen(function* () {
           ownedUntil: now + 30000,
         }),
       );
-      if (!acquired) continue;
+      if (!acquired) {
+        yield* Effect.logWarning("memory: sync work skipped", {
+          workId: candidate.work.id,
+          reason: "claim_lost",
+        });
+        continue;
+      }
       const result = yield* Effect.result(
         Effect.gen(function* () {
           yield* ensureEpoch(r.settings.memoryHubVersion);
