@@ -84,6 +84,10 @@ produce catches them.
   the prompt can be ignored while the turn runs to completion, or can leave a session the provider
   never saved. Find the provider's own turn-started signal, and test a Stop pressed right after
   sending.
+- **A stopped turn still holds the turn slot.** Stop can end a run before its turn is recorded, so
+  the server interrupts that turn when it appears and, if the next start is refused with
+  `previous_turn_active`, interrupts the stopped turn and retries for about ten seconds. Free the
+  slot when the turn really ends, and refuse with that reason only while a turn is open.
 - **Work the provider starts on its own.** Background commands, subagents, workflows, and goals can
   finish or start a turn after T3's turn settled. Offer a continuation through
   [`ProviderContinuationRequests`](../../packages/provider-core/src/server/ProviderContinuationRequests.ts)

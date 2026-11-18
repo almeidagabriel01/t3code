@@ -25,6 +25,7 @@ import * as Option from "effect/Option";
 import * as Cause from "effect/Cause";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -103,6 +104,19 @@ const PROMPT_REFUSAL_TAGS = [
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+const refusedForActiveTurn = (error: unknown): boolean =>
+  (Predicate.isTagged(error, "ProviderAdapterProtocolError") &&
+    Predicate.hasProperty(error, "reason") &&
+    error.reason === "previous_turn_active") ||
+  (Predicate.hasProperty(error, "cause") && refusedForActiveTurn(error.cause));
+
+const STOPPED_ATTEMPT_STATUSES: ReadonlySet<OrchestrationV2RunAttempt["status"]> = new Set([
+  "interrupted",
+  "failed",
+  "cancelled",
+  "superseded",
+]);
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -247,6 +261,85 @@ export const layer: Layer.Layer<
               }),
               Effect.catchCause(() => Effect.undefined),
             ),
+      };
+    };
+
+    // A stopped run's native turn can outlive its Stop and refuse the next start; end it, then retry.
+    const recoverStoppedTurns = (
+      session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
+      const compactThread = session.compactThread;
+      const recover = <E>(
+        start: Effect.Effect<void, E>,
+        turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      ) =>
+        start.pipe(
+          Effect.catchIf(refusedForActiveTurn, (refusal) =>
+            Effect.gen(function* () {
+              const { providerTurns } = yield* projectionStore
+                .getThreadRecords(turnInput.threadId, ["providerTurns"], {
+                  providerTurnThreadIds: [turnInput.providerThread.id],
+                })
+                .pipe(Effect.orElseSucceed(() => ({ providerTurns: [] })));
+              const running = providerTurns.filter((turn) => turn.status === "running");
+              const { attempts } =
+                running.length === 0
+                  ? { attempts: [] }
+                  : yield* projectionStore
+                      .getThreadRecords(turnInput.threadId, ["attempts"])
+                      .pipe(Effect.orElseSucceed(() => ({ attempts: [] })));
+              const stopped = running.filter((turn) =>
+                attempts.some(
+                  (attempt) =>
+                    attempt.id === turn.runAttemptId &&
+                    STOPPED_ATTEMPT_STATUSES.has(attempt.status),
+                ),
+              );
+              if (stopped.length === 0) return yield* Effect.fail(refusal);
+              yield* Effect.logWarning("orchestration-v2.stopped-turn-blocks-start", {
+                runId: turnInput.runId,
+                providerTurnIds: stopped.map((turn) => turn.id),
+              });
+              yield* Effect.forEach(
+                stopped,
+                (turn) =>
+                  session
+                    .interruptTurn({
+                      providerThread: turnInput.providerThread,
+                      providerTurnId: turn.id,
+                    })
+                    .pipe(Effect.ignoreCause({ log: true })),
+                { discard: true },
+              );
+              // A Stop of this run during the wait ends it; its start must not land after that.
+              let runEnded = false;
+              const startWhileCurrent = Effect.gen(function* () {
+                const run = yield* projectionStore
+                  .getRun(turnInput.threadId, turnInput.runId)
+                  .pipe(Effect.orElseSucceed(() => undefined));
+                if (run?.activeAttemptId !== turnInput.attemptId || run.status !== "running") {
+                  runEnded = true;
+                  return yield* Effect.fail(refusal);
+                }
+                return yield* start;
+              });
+              // Some adapters free the turn slot only when the native stop event arrives.
+              return yield* startWhileCurrent.pipe(
+                Effect.retry({
+                  while: (error) => !runEnded && refusedForActiveTurn(error),
+                  schedule: Schedule.spaced("250 millis"),
+                  times: 40,
+                }),
+              );
+            }),
+          ),
+        );
+      return {
+        ...session,
+        startTurn: (turnInput) => recover(session.startTurn(turnInput), turnInput),
+        ...(compactThread === undefined
+          ? {}
+          : { compactThread: (turnInput) => recover(compactThread(turnInput), turnInput) }),
       };
     };
 
@@ -840,7 +933,7 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const session = sessionResult.success;
+      const session = recoverStoppedTurns(sessionResult.success);
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
