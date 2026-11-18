@@ -523,7 +523,7 @@ describe("t3 heavy", () => {
 
     it("finds the copy from the folder as remoto sees it, past a link inside the checkout", async () => {
       const { dir, env } = setup("");
-      const other = tempDir();
+      const other = NodeFS.realpathSync(tempDir());
       NodeFS.mkdirSync(NodePath.join(other, ".git"));
       NodeFS.mkdirSync(NodePath.join(other, "apps", "server"), { recursive: true });
       NodeFS.symlinkSync(NodePath.join(other, "apps", "server"), NodePath.join(other, "link"));
