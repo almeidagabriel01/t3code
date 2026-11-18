@@ -938,9 +938,9 @@ export const intentOf = (
 };
 
 /**
- * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie), and
- * a machine that can start it now takes it from one that can't. Mac first: this Mac up to
- * `runnerMacFirstAfter` jobs, then Linux. A machine over its sustained limits takes nothing new;
+ * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie).
+ * Mac first: this Mac up to `runnerMacFirstAfter` jobs, then Linux. In both, a machine that can
+ * start it now takes it from one that can't, and one over its sustained limits takes nothing new;
  * past both, the job holds. Neither asks: Linux offline or unknown keeps the job on the Mac.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
@@ -1197,7 +1197,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           macRoom(entry)
         )
           onMac = true;
-      } else onMac = !macOver && (!past || health.overLimit);
+      } else {
+        onMac = !macOver && (!past || health.overLimit);
+        // Under its count, a full Mac still yields to a Linux that can start it now.
+        if (onMac && busy === null && !macRoom(entry)) onMac = false;
+      }
       if (onMac) {
         toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
         continue;

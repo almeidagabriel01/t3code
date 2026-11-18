@@ -687,16 +687,19 @@ describe("Mac first, Hybrid and Everything", () => {
         ),
       ),
     ),
-  )("%s, this Mac's %i slots full and %j waiting there: Linux takes the next job", (where, slots, head) => {
-    const entries = [
-      ...Array.from({ length: slots }, (_, at) => runningOn(`m${at}`, "mac")),
-      job("head", head),
-      job("a", "vp test run"),
-    ];
-    const plan = planned(entries, { runnerWhere: where }, { maxRunning: slots });
-    expect(plan.routes.head).toBe("mac");
-    expect(plan.admits).toEqual({ a: { runner: "linux", ungated: false } });
-  });
+  )(
+    "%s, this Mac's %i slots full and %j waiting there: Linux takes the next job",
+    (where, slots, head) => {
+      const entries = [
+        ...Array.from({ length: slots }, (_, at) => runningOn(`m${at}`, "mac")),
+        job("head", head),
+        job("a", "vp test run"),
+      ];
+      const plan = planned(entries, { runnerWhere: where }, { maxRunning: slots });
+      expect(plan.routes.head).toBe("mac");
+      expect(plan.admits).toEqual({ a: { runner: "linux", ungated: false } });
+    },
+  );
 
   // RUN-14: a hand route holds in every mode, with the queue on or off.
   it.each(
