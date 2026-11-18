@@ -42,7 +42,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
 import * as NeedsUser from "./NeedsUser.ts";
-import { requestThreadId } from "../assistants/AssistantGroups.ts";
+import { requestThreadId } from "@t3tools/shared/assistantGroupThreads";
 
 const awake: AssistantAutonomy = {
   mode: "reply-and-notify",
