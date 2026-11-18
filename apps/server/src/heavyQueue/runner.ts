@@ -1087,6 +1087,8 @@ export interface RoutePlan {
   readonly asks: Readonly<Record<string, HeavyRunnerAskReason>>;
   /** Waiters whose unanswered question ended in Cancel. */
   readonly cancels: Readonly<Record<string, string>>;
+  /** Waiters "When Linux is full" moved to this Mac, with why: they stay there (`route`). */
+  readonly moved: Readonly<Record<string, string>>;
   readonly room: boolean;
   readonly holding: boolean;
   readonly mac: Plan | null;
@@ -1202,6 +1204,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const reasons: Record<string, string> = {};
   const asks: Record<string, HeavyRunnerAskReason> = {};
   const cancels: Record<string, string> = {};
+  const moved: Record<string, string> = {};
   const linuxOver: Record<string, string> = {};
   const macWaiters: HeavyQueueEntry[] = [];
   /** Why each job runs on this Mac, shown with what it waits for there. */
@@ -1289,6 +1292,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Hybrid's balance: this Mac's backlog per slot is no longer than Linux's (the Mac on a tie). */
   const macShorter = () =>
     macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
+  /** Each machine's wait for `entry` in rounds of its slots; one that can't start it now counts one. */
+  const macWaitsLess = (entry: HeavyQueueEntry) => {
+    const macSlots = Math.max(1, input.maxRunning);
+    const macWait = macRoom(entry) ? 0 : Math.max(1, macCount + 1 - macSlots) / macSlots;
+    const linuxSlots = machine.runnerLinuxSlots;
+    return macWait < Math.max(1, linuxCount + 1 - linuxSlots) / linuxSlots;
+  };
   /**
    * "When Linux is full", in Linux mode: a waiter that only Linux's slots or limits hold back may
    * take this Mac. A job that asked for Linux, a job's own call or a chosen wait never moves.
@@ -1302,10 +1312,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       !isCall(entry) &&
       entry.route !== "linux";
     const policy = full ? config.runnerLinuxFull : "wait";
-    if (policy === "mac" && macRoom(entry)) return toMac(entry, LINUX_FULL_MAC);
-    if (policy === "balance" && macRoom(entry) && macShorter()) {
-      return toMac(entry, LINUX_FULL_SHORTER);
-    }
+    const move = (reason: string) => {
+      moved[entry.id] = reason;
+      toMac(entry, reason);
+    };
+    if (policy === "mac" && macRoom(entry)) return move(LINUX_FULL_MAC);
+    if (policy === "balance" && !macOver && macWaitsLess(entry)) return move(LINUX_FULL_SHORTER);
     toLinux(entry, busy);
     if (policy === "balance") reasons[entry.id] = LINUX_FULL_WAITING;
   };
@@ -1503,6 +1515,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       linuxOver,
       asks,
       cancels,
+      moved,
       room: true,
       holding: false,
       mac: null,
@@ -1526,6 +1539,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     linuxOver,
     asks,
     cancels,
+    moved,
     room: mac.room,
     holding: mac.holding,
     mac,

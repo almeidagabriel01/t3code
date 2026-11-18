@@ -870,21 +870,27 @@ describe("When Linux is full", () => {
     expect(plan.reasons.a).toMatch(REASON[expected]);
   });
 
+  // Backlog per slot, the job's own place included; a machine that can't start it now counts one.
   it.each([
-    // [name, maxRunning, Mac jobs, Linux jobs, health, route]
-    ["0/0 is a tie: the Mac", 3, 0, 0, OVERLOADED, "mac"],
-    ["2/4 against 1/2 is a tie: the Mac", 4, 2, 1, OVERLOADED, "mac"],
-    ["3/4 against 1/2: Linux", 4, 3, 1, OVERLOADED, "linux"],
-  ] as const)("balance: %s", (_, maxRunning, mac, linux, health, route) => {
+    // [name, maxRunning, Mac jobs, policy, route]
+    ["Mac has room", 3, 0, "balance", "mac"],
+    ["no room, but 1/4 waits against Linux's 1/2", 4, 4, "balance", "mac"],
+    ["the same queue under mac: no room, Linux", 4, 4, "mac", "linux"],
+    ["1/2 against 1/2 is a tie: Linux", 2, 2, "balance", "linux"],
+    ["1/1 against 1/2: Linux", 1, 1, "balance", "linux"],
+  ] as const)("balance by wait: %s", (_, maxRunning, mac, policy, route) => {
     const plan = planRoutes(
       input(
-        [...macJobs(mac), ...linuxJobs(linux), a()],
-        { runnerWhere: "linux", runnerLinuxFull: "balance" },
-        { health, maxRunning, runnerOn: true },
+        [...macJobs(mac), ...linuxJobs(2), a()],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health: READ, maxRunning, runnerOn: true },
       ),
     );
     expect(plan.routes.a).toBe(route);
-    expect(plan.reasons.a).toBe(route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING);
+    if (policy === "balance") {
+      const reason = route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING;
+      expect(plan.reasons.a?.split(" · ")[0]).toBe(reason);
+    }
   });
 
   it.each([
