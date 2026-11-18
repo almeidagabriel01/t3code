@@ -1430,9 +1430,16 @@ describe("runtime toggles", () => {
     expect(plan.routes.linuxWaiter).toBe("linux");
   });
 
-  it("Runner off sends Linux waiters down the Mac path", () => {
-    const off = planRoutes(input(entries, { runnerEnabled: false }, { health: OFFLINE }));
+  it("Runner off sends Linux waiters down the Mac path, and cancels one that asked for Linux", () => {
+    const asked = job("asked", "vp test run", { where: "linux", linuxOnly: true } as never);
+    const off = planRoutes(
+      input([...entries, asked], { runnerEnabled: false }, { health: OFFLINE }),
+    );
     expect(off.routes.linuxWaiter).toBe("mac");
+    expect(off.cancels.asked).toBe(
+      "The Runner is off for this project and this job asked for Linux",
+    );
+    expect(off.admits.asked).toBeUndefined();
     const offAndNoQueue = planRoutes(
       input(entries, { runnerEnabled: false }, { enabled: false, health: OFFLINE }),
     );

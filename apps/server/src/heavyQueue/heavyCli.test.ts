@@ -1622,6 +1622,13 @@ describe("t3 heavy", () => {
       });
     });
 
+    // The queue cancels it with why (`intentOf`): run as written it would land on this Mac silently.
+    it("queues --runner linux with the queue and the Runner off", () => {
+      const off = () => ({ enabled: false, runner: false });
+      const linux = { program: "vp", args: ["test"], where: "linux" as const };
+      expect(heavyLaunch(linux, "/w", "/h", off, false)).toMatchObject({ kind: "queue" });
+    });
+
     // A job whose heavy work already queues or goes to `remoto` inside would hold a Mac slot only to
     // wait for its own inner ones. Run as written, it keeps no job env, so those still queue.
     it.each([

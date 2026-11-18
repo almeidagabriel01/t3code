@@ -256,7 +256,13 @@ export const heavyLaunch = (
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
   const mode = modeAt(job.cwd);
-  if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
+  // `--runner linux` queues even then: the queue cancels it with why instead of a Mac run.
+  if (
+    (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) &&
+    command.where !== "linux"
+  ) {
+    return { kind: "direct" };
+  }
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
   if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
     return { kind: "direct" };

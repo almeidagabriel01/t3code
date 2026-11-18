@@ -900,6 +900,8 @@ export const askedLinux = (entry: HeavyQueueEntry) =>
   (entry as QueuedEntry).call !== true &&
   ((entry as QueuedEntry).linuxOnly === true || REMOTO_ASKS_LINUX);
 
+const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
+
 /**
  * Where the entry's own settings send it before Linux health is considered. `cancel`: it asked for
  * Linux but must run on this Mac.
@@ -911,7 +913,8 @@ export const intentOf = (
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
     // Only a commit whose hook runs is queued, so the queue can say why it waits.
-    return mac(commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK);
+    const why = commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK;
+    return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
