@@ -170,6 +170,17 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
   readonly agentDevice: DeviceHost.AgentDeviceEndpoint | null;
 }
 
+/** Whether `dumpsys lock_settings` names a PIN, pattern or password for `userId`.
+ * Android 11-12 print `CredentialType: Pin`, 14+ `PIN`. */
+const androidCredentialIsSecure = (dump: string, userId: string) => {
+  const blocks = dump.split(/^\s*User (\d+)\s*$/m);
+  const index = blocks.indexOf(userId, 1);
+  const type =
+    index === -1 ? undefined : /^\s*CredentialType:\s*(\w+)/m.exec(blocks[index + 1] ?? "");
+  // Android 9 prints no type: an unknown credential lets the agent in, as any unclear reading does.
+  return /^(?:pin|pattern|password)$/i.test(type?.[1] ?? "");
+};
+
 const DeviceHostName = Schema.Struct({ id: DeviceHostId, label: Schema.optional(Schema.String) });
 const hostName = (host: typeof DeviceHostName.Type) => host.label ?? `host ${host.id}`;
 
@@ -1787,20 +1798,22 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const shell = (...args: ReadonlyArray<string>) =>
       ready.run("adb", ["-s", device.id, "shell", ...args], { timeoutMs: 10_000 });
     const current = yield* shell("am", "get-current-user");
-    const userId = current.stdout.trim();
+    const currentId = current.stdout.trim();
     // Apps open as the foreground user; an unreadable answer means the primary one.
-    const user = yield* shell(
-      "am",
-      "get-started-user-state",
-      current.code === 0 && /^\d+$/.test(userId) ? userId : "0",
-    );
+    const userId = current.code === 0 && /^\d+$/.test(currentId) ? currentId : "0";
+    const user = yield* shell("am", "get-started-user-state", userId);
     const storageLocked = user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout);
     // A user unlocked once stays RUNNING_UNLOCKED behind a lock screen shown again; which
     // of the two keyguard markers dumpsys prints depends on the Android version.
     const screen = storageLocked ? null : yield* shell("dumpsys", "window");
-    const screenLocked =
+    const keyguard =
       screen?.code === 0 &&
       /\b(?:isKeyguardShowing|mDreamingLockscreen)=true\b/.test(screen.stdout);
+    // agent-device swipes a lock screen away itself, so only a PIN, pattern or password
+    // refuses. The keyguard's own `secure=` is a cached default that reads true without one.
+    const credential = keyguard ? yield* shell("dumpsys", "lock_settings") : null;
+    const screenLocked =
+      credential?.code === 0 && androidCredentialIsSecure(credential.stdout, userId);
     if (storageLocked || screenLocked)
       return yield* new DeviceNotReadyError({
         hostId: device.hostId,
