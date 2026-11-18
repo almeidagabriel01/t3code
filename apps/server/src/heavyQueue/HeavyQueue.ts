@@ -34,7 +34,7 @@ import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
-import type { QueuedEntry } from "./runner.ts";
+import { linuxOverBy, linuxStatus, type QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
@@ -184,6 +184,11 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     return null;
   }
   const { linux } = doc;
+  const status = linuxStatus(linux);
+  const overLimitBy =
+    status !== "over-limit"
+      ? null
+      : (linuxOverBy(linux, block.machine) ?? "easing back under its limits");
   return {
     host: block.machine.runnerHost,
     online: linux.online,
@@ -195,7 +200,11 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     cpuCount: linux.cpuCount,
     availableMemoryBytes: linux.availableMemoryBytes,
     totalMemoryBytes: linux.totalMemoryBytes,
-    ...(linux.online === false && linux.error !== undefined ? { error: linux.error } : {}),
+    ...((status === "offline" || status === "unresponsive") && linux.error !== undefined
+      ? { error: linux.error }
+      : {}),
+    ...(status === undefined ? {} : { status }),
+    ...(overLimitBy === null ? {} : { overLimitBy }),
   };
 };
 

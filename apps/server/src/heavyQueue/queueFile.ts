@@ -143,7 +143,7 @@ const withLock = <A>(dir: string, run: () => A): A => {
 
 const queuePath = (dir: string) => NodePath.join(dir, "queue.json");
 
-interface QueueDoc {
+export interface QueueDoc {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   /** False: every waiter starts at once. Absent in older files, which read as on. */
   readonly enabled: boolean;
@@ -584,6 +584,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     health: doc.linux,
     runnerOn: runnerOn(doc),
     lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
+    linuxHistory: doc.linuxHistory,
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -853,7 +854,13 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      remember(linuxHistory, signature, { durationMs }, after.historyCommands);
+      const memoryBytes = gone.peakMemory;
+      remember(
+        linuxHistory,
+        signature,
+        memoryBytes === undefined ? { durationMs } : { durationMs, memoryBytes },
+        after.historyCommands,
+      );
     } else {
       if (gone.peakMemory === undefined) continue;
       const run = {
@@ -1283,6 +1290,19 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
       : { doc, result: false },
   );
 
+/** A running Linux job's session memory from a heartbeat, and its peak, for what it reserves and learns. */
+const withLinuxMemory = (
+  entry: QueuedEntry,
+  jobMemory: Readonly<Record<string, number>> | undefined,
+): QueuedEntry => {
+  const id = entry.remote?.id;
+  if (entry.startedAt === null || entry.runner !== "linux" || id === undefined) return entry;
+  const memory =
+    jobMemory !== undefined && Object.hasOwn(jobMemory, id) ? jobMemory[id] : undefined;
+  if (memory === undefined) return entry;
+  return { ...entry, memory, peakMemory: Math.max(entry.peakMemory ?? 0, memory) };
+};
+
 /**
  * Folds one heartbeat into Linux health, offline only after the configured failures in a row. A
  * reading also marks the Linux runs that must stop (`linuxStops`), and settles the lost runs a
@@ -1303,7 +1323,8 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
       const ended = new Set(
         doc.lostRuns.filter((lost) => !lostRuns.includes(lost)).map((lost) => lost.entryId),
       );
-      const entries = doc.entries.map((entry: QueuedEntry): QueuedEntry => {
+      const entries = doc.entries.map((each: QueuedEntry): QueuedEntry => {
+        const entry = withLinuxMemory(each, linux.jobMemory);
         const stop = stops[entry.id];
         // A restart outranks a memory stop: that run's process group is gone with it.
         if (stop !== undefined && (entry.stop === undefined || stop === "reboot")) {

@@ -18,6 +18,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -27,8 +28,8 @@ import { devWorktreeCleanupBlocked } from "../devWorktreeCleanupGuard.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
-import { runnerCopyId, type RunnerBlock } from "./runner.ts";
-import { checkLinux, drainLostRuns, removeRunnerCopy } from "./runnerExec.ts";
+import { RUNNER_COPY_RETENTION_DAYS, runnerCopyId, type RunnerBlock } from "./runner.ts";
+import { checkLinux, drainLostRuns, idleRunnerCopies, removeRunnerCopy } from "./runnerExec.ts";
 
 const pick = <K extends string>(
   source: Readonly<Record<string, unknown>>,
@@ -103,9 +104,46 @@ export const drainCopyRemovals = async (
   return done.length;
 };
 
-export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLinux) =>
+const SWEEP_EVERY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Removes Linux copies idle past the retention, one at a time and only while nothing is queued: a
+ * waiter's sync may start into any copy before `remoto-rodar` takes its lock. The queue is read
+ * again before each removal, so a job queued mid-sweep stops it. Null when Linux is unreachable.
+ */
+export const sweepIdleCopies = async (
+  dir: string,
+  machine: RunnerBlock["machine"],
+  environment: Readonly<Record<string, string | undefined>>,
+  now: number,
+  list: typeof idleRunnerCopies = idleRunnerCopies,
+  remove: typeof removeRunnerCopy = removeRunnerCopy,
+): Promise<ReadonlyArray<string> | null> => {
+  const quiet = () => {
+    const doc = QueueFile.readDoc(dir);
+    return doc.entries.length === 0 && doc.lostRuns.length === 0;
+  };
+  if (!quiet()) return [];
+  const idle = await list(machine, environment, RUNNER_COPY_RETENTION_DAYS, now);
+  if (idle === null) return null;
+  const removed: string[] = [];
+  for (const id of idle) {
+    if (!quiet()) break;
+    const result = await remove(machine, environment, id);
+    if (result === "unreachable") break;
+    if (result === "removed") removed.push(id);
+  }
+  return removed;
+};
+
+export const layer = (
+  dir: string = QueueFile.defaultQueueDir(),
+  check = checkLinux,
+  listIdle: typeof idleRunnerCopies = idleRunnerCopies,
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
+      const scope = yield* Effect.scope;
       const settingsService = yield* ServerSettingsService;
       const removalsBlocked = yield* devWorktreeCleanupBlocked();
       const projectStore = yield* ProjectStoreV2;
@@ -142,6 +180,8 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
       );
       // The host last checked; null while the Runner is off, so turning it on checks at once.
       let checkedHost: string | null = null;
+      /** In memory: a restart sweeps again, which the sweep's own rules make harmless. */
+      let sweptAt = -Infinity;
       const checkHealth = Effect.fn("RunnerPublisher.checkHealth")(function* (always: boolean) {
         const block = current;
         if (block === null || !owner || !runnerOnAnywhere(block)) {
@@ -167,6 +207,24 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
             catch: (cause) =>
               new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
           }).pipe(Effect.ignore({ log: true }));
+        const now = yield* Clock.currentTimeMillis;
+        if (reading.ok && !removalsBlocked && now - sweptAt >= SWEEP_EVERY_MS) {
+          // Deleting copies can take minutes: it runs beside the heartbeat, never in its way.
+          sweptAt = now;
+          yield* Effect.tryPromise({
+            try: () => sweepIdleCopies(dir, block.machine, process.env, now, listIdle),
+            catch: (cause) =>
+              new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+          }).pipe(
+            Effect.flatMap((removed) =>
+              removed === null || removed.length === 0
+                ? Effect.void
+                : Effect.logInfo("Removed idle Linux copies", { removed: removed.length }),
+            ),
+            Effect.ignore({ log: true }),
+            Effect.forkIn(scope),
+          );
+        }
       });
 
       yield* settingsService.streamChanges.pipe(

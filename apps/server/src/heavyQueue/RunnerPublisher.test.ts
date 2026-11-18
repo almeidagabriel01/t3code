@@ -27,6 +27,7 @@ import {
   layer,
   runnerBlockOf,
   runnerOnAnywhere,
+  sweepIdleCopies,
 } from "./RunnerPublisher.ts";
 import type { HealthCheck } from "./runner.ts";
 
@@ -174,6 +175,51 @@ describe("Linux copies of removed worktrees", () => {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("sweeps idle copies only while nothing is queued, and stops when a job arrives", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-sweep-"));
+    try {
+      const machine = block(true).machine;
+      const idle = ["a-00000000", "b-11111111", "c-22222222"];
+      const listed: string[] = [];
+      const list = async () => {
+        listed.push("list");
+        return idle;
+      };
+      const asked: string[] = [];
+      const job = {
+        id: "j",
+        pid: process.pid,
+        threadId: null,
+        label: "vp test run",
+        cwd: "/w/app",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: null,
+      };
+      // A job queued while the first copy goes: the rest stay for the next sweep.
+      const remove = async (_machine: unknown, _env: unknown, id: string) => {
+        asked.push(id);
+        QueueFile.enqueue(dir, job);
+        return "removed" as const;
+      };
+      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toEqual(["a-00000000"]);
+      expect(asked).toEqual(["a-00000000"]);
+      // Queued work: nothing is even listed.
+      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toEqual([]);
+      expect(listed).toEqual(["list"]);
+      expect(
+        await sweepIdleCopies(
+          NodeFS.mkdtempSync(NodePath.join(dir, "e-")),
+          machine,
+          {},
+          0,
+          async () => null,
+        ),
+      ).toBeNull();
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the publisher layer", () => {
@@ -219,7 +265,7 @@ describe("the publisher layer", () => {
           NodeServices.layer,
         );
         yield* Effect.gen(function* () {
-          yield* Layer.build(layer(dir, check).pipe(Layer.provide(services)));
+          yield* Layer.build(layer(dir, check, async () => []).pipe(Layer.provide(services)));
           yield* Deferred.await(checks[0]!);
           settings = { ...settings, runnerHost: "pc" };
           yield* TestClock.adjust(`${RUNNER_DEFAULTS.runnerHeartbeatSeconds} seconds`);

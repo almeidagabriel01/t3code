@@ -1,0 +1,466 @@
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off
+// The 17/11 incident on a 6-core, 12 GB WSL PC: the OOM killer took a container's mysqld while
+// PSI memory full sat at 57%, load1 read 206 over an idle CPU, and T3 showed "Offline" and then an
+// unexplained "over its limits". These cases hold its numbers.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { describe, expect, it } from "@effect/vitest";
+import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
+
+import {
+  DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
+  linuxOverBy,
+  linuxStatus,
+  linuxStops,
+  nextHealth,
+  parseHeartbeat,
+  planRoutes,
+  idleCopiesScript,
+  removeCopyScript,
+  unresponsiveFailure,
+  UNKNOWN_HEALTH,
+  type LinuxHealth,
+  type LinuxReading,
+  type RoutePlanInput,
+} from "./runner.ts";
+
+const GIB = 1024 ** 3;
+const NOW = Date.parse("2026-11-17T22:18:00.000Z");
+const ago = (ms: number) => new Date(NOW - ms).toISOString();
+const machine = DEFAULT_MACHINE_CONFIG;
+
+const job = (id: string, label: string, extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
+  id,
+  pid: 1,
+  threadId: null,
+  label,
+  cwd: `/work/${id}`,
+  createdAt: ago(1000),
+  startedAt: null,
+  ...extra,
+});
+const onLinux = (id: string, label: string, memory?: number) =>
+  job(id, label, {
+    startedAt: ago(600_000),
+    runner: "linux",
+    phase: "running",
+    remote: { id: `${id}-0123abcd` },
+    ...(memory === undefined ? {} : { memory, peakMemory: memory }),
+  });
+
+/** The PC at rest: 6 cores, 12 GB, nothing stalled. */
+const QUIET: LinuxReading = {
+  cpuPercent: 4,
+  load1: 0.4,
+  cpuCount: 6,
+  availableMemoryBytes: 10 * GIB,
+  totalMemoryBytes: 12 * GIB,
+  swapTotalBytes: 4 * GIB,
+  swapFreeBytes: 4 * GIB,
+  pressure: { cpu: 1, memorySome: 0, memoryFull: 0, ioFull: 0 },
+};
+const health = (reading: Partial<LinuxReading> = {}, extra: Partial<LinuxHealth> = {}) =>
+  ({
+    ...UNKNOWN_HEALTH,
+    online: true,
+    okAt: NOW - 1000,
+    ...QUIET,
+    ...reading,
+    ...extra,
+  }) as LinuxHealth;
+
+const input = (
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  where: "linux" | "automatic",
+  over: Partial<RoutePlanInput> = {},
+): RoutePlanInput => ({
+  entries,
+  maxRunning: 3,
+  enabled: true,
+  paused: false,
+  history: {},
+  sample: {
+    at: NOW - 1000,
+    busyCores: 1,
+    cpuCount: 10,
+    availableMemoryBytes: 20 * GIB,
+    totalMemoryBytes: 32 * GIB,
+    headroomSince: NOW - 60_000,
+  },
+  lastStartAt: null,
+  holding: false,
+  ...HEAVY_QUEUE_DEFAULTS,
+  now: NOW,
+  contextOf: (cwd) => ({
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: where },
+    worktree: cwd,
+    home: "/home/me",
+    rootOf: () => "/work",
+  }),
+  machine: { ...machine, runnerLinuxSlots: 5 },
+  health: health(),
+  ...over,
+});
+
+describe("the heartbeat reads memory, swap, pressure and each run's memory", () => {
+  const STAT = "cpu  2255340 3412 2290112 22625563 6290 0 4562 0 0 0";
+  const IDLE = "cpu  2255344 3412 2290114 22625857 6290 0 4562 0 0 0";
+  const text = (psi: boolean) =>
+    [
+      "206.12 180.00 120.00 9/900 4321",
+      "6",
+      STAT,
+      IDLE,
+      "21231.50 90000.00",
+      "MemTotal:       12251236 kB",
+      "MemAvailable:     512000 kB",
+      "SwapTotal:       4194304 kB",
+      "SwapFree:          65536 kB",
+      ...(psi
+        ? [
+            "psi cpu some avg10=2.10 avg60=1.00 avg300=0.50 total=1",
+            "psi cpu full avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+            "psi memory some avg10=60.00 avg60=58.00 avg300=60.00 total=2",
+            "psi memory full avg10=57.00 avg60=55.00 avg300=57.00 total=3",
+            "psi io some avg10=70.00 avg60=60.00 avg300=50.00 total=4",
+            "psi io full avg10=40.00 avg60=30.00 avg300=20.00 total=5",
+          ]
+        : []),
+      "job t3-a-0123abcd 2097152",
+      "job t3-b-89abcdef 0",
+    ].join("\n");
+
+  it("reads the incident's numbers", () => {
+    const reading = parseHeartbeat(text(true));
+    expect(reading).toMatchObject({
+      load1: 206.12,
+      cpuCount: 6,
+      totalMemoryBytes: 12251236 * 1024,
+      availableMemoryBytes: 512000 * 1024,
+      swapTotalBytes: 4194304 * 1024,
+      swapFreeBytes: 65536 * 1024,
+      uptimeSeconds: 21231.5,
+      pressure: { cpu: 2.1, memorySome: 60, memoryFull: 57, ioFull: 40 },
+      jobMemory: { "t3-a-0123abcd": 2 * GIB, "t3-b-89abcdef": 0 },
+    });
+    expect(Math.round(reading.cpuPercent!)).toBe(2);
+  });
+
+  it("reads no pressure where the kernel has no PSI", () => {
+    expect(parseHeartbeat(text(false)).pressure).toBeNull();
+  });
+
+  it("reads nothing from garbage", () => {
+    expect(parseHeartbeat("garbage")).toMatchObject({
+      load1: null,
+      availableMemoryBytes: null,
+      totalMemoryBytes: null,
+      swapTotalBytes: null,
+      swapFreeBytes: null,
+      pressure: null,
+      jobMemory: {},
+    });
+  });
+});
+
+describe("Linux's ceiling reads pressure and free memory, never the load", () => {
+  it.each<[string, Partial<LinuxReading>, RegExp | null]>([
+    ["load 206 over an idle CPU", { load1: 206, cpuPercent: 3 }, null],
+    [
+      "load 206 while memory is stalled 57%",
+      { load1: 206, cpuPercent: 3, pressure: { ...QUIET.pressure!, memoryFull: 57 } },
+      /^memory stalled 57% of the time/,
+    ],
+    ["12 GB with 0.5 GB free", { availableMemoryBytes: 0.5 * GIB }, /^0\.5 GB free, keeping 20%$/],
+    [
+      "swap nearly used up",
+      { swapFreeBytes: 0.2 * GIB },
+      /^swap nearly full: 0\.2 GB of 4\.0 GB free$/,
+    ],
+    [
+      "disk stalled 40%",
+      { pressure: { ...QUIET.pressure!, ioFull: 40 } },
+      /^disk stalled 40% of the time/,
+    ],
+    [
+      "every task waiting for a core",
+      { pressure: { ...QUIET.pressure!, cpu: 95 } },
+      /^CPU saturated: work waited 95% of the time/,
+    ],
+    // Busy tests keep some task waiting most of the time: that alone is not a ceiling.
+    [
+      "tests keeping cores busy",
+      { cpuPercent: 60, pressure: { ...QUIET.pressure!, cpu: 70 } },
+      null,
+    ],
+    ["no PSI and a busy CPU", { cpuPercent: 90, pressure: null }, /^CPU 90%, limit 70%$/],
+    ["no PSI and an idle CPU under load 206", { load1: 206, cpuPercent: 3, pressure: null }, null],
+  ])("%s", (_name, reading, expected) => {
+    const over = linuxOverBy({ ...QUIET, ...reading }, machine);
+    if (expected === null) expect(over).toBeNull();
+    else expect(over).toMatch(expected);
+  });
+});
+
+describe("admission on Linux reserves each job's memory", () => {
+  const SUITE = "vp test run";
+  // Learned peaks: the suite with its mysql container reached 4 GB, the lint 1 GB.
+  const linuxHistory = {
+    "vp test run": [{ durationMs: 60_000, memoryBytes: 4 * GIB }],
+    "vp lint": [{ durationMs: 10_000, memoryBytes: 1 * GIB }],
+  };
+  it.each<{
+    name: string;
+    running: ReadonlyArray<HeavyQueueEntry>;
+    free: number;
+    waiting: string;
+    linux: "linux-start" | "linux-wait";
+    hybrid: "linux-start" | "mac-start";
+  }>([
+    {
+      // 3 GB free, 2.4 GB kept spare, a running suite still 3 GB short of its 4 GB peak.
+      name: "a suite still growing holds back the next",
+      running: [onLinux("a", SUITE, 1 * GIB)],
+      free: 3 * GIB,
+      waiting: "vp lint",
+      linux: "linux-wait",
+      hybrid: "mac-start",
+    },
+    {
+      name: "a suite at its peak leaves room for a lint",
+      running: [onLinux("a", SUITE, 4 * GIB)],
+      free: 4 * GIB,
+      waiting: "vp lint",
+      linux: "linux-start",
+      hybrid: "linux-start",
+    },
+    {
+      name: "a second suite does not fit beside one at its peak",
+      running: [onLinux("a", SUITE, 4 * GIB)],
+      free: 6 * GIB,
+      waiting: SUITE,
+      linux: "linux-wait",
+      hybrid: "mac-start",
+    },
+    {
+      // A running job no heartbeat measured yet counts its whole estimate as still to come.
+      name: "an unmeasured run reserves all of its estimate",
+      running: [onLinux("a", SUITE)],
+      free: 6 * GIB,
+      waiting: "vp lint",
+      linux: "linux-wait",
+      hybrid: "mac-start",
+    },
+    {
+      // One job always runs: a job bigger than what is free still starts on an empty Linux.
+      name: "an empty Linux takes a job bigger than its free memory",
+      running: [],
+      free: 3 * GIB,
+      waiting: SUITE,
+      linux: "linux-start",
+      hybrid: "linux-start",
+    },
+  ])("$name", ({ running, free, waiting, linux, hybrid }) => {
+    const entries = [...running, job("w", waiting)];
+    for (const [where, expected] of [
+      ["linux", linux],
+      ["automatic", hybrid],
+    ] as const) {
+      const plan = planRoutes(
+        input(entries, where, {
+          linuxHistory,
+          health: health({ availableMemoryBytes: free }),
+          // Hybrid: the Mac has a job of its own, so the tie goes to Linux when it fits.
+          ...(where === "automatic"
+            ? { entries: [job("m", "vp build", { startedAt: ago(5000) }), ...entries] }
+            : {}),
+        }),
+      );
+      const admit = plan.admits.w;
+      const outcome = admit === undefined ? `${plan.routes.w}-wait` : `${admit.runner}-start`;
+      expect(outcome).toBe(expected);
+      if (expected === "linux-wait") expect(plan.reasons.w).toMatch(/held for running jobs/);
+    }
+  });
+
+  it("the incident: jobs past 12 GB never start there, they wait or go to the Mac", () => {
+    // Two unmeasured suites running (8 GB still to come), 1.5 GB free, memory full 57%, free slots.
+    const running = [onLinux("a", SUITE), onLinux("b", SUITE)];
+    const waiting = ["c", "d", "e"].map((id) => job(id, SUITE));
+    const incident = health({
+      availableMemoryBytes: 1.5 * GIB,
+      load1: 206,
+      cpuPercent: 3,
+      pressure: { cpu: 1, memorySome: 60, memoryFull: 57, ioFull: 30 },
+    });
+    for (const where of ["linux", "automatic"] as const) {
+      const plan = planRoutes(
+        input([...running, ...waiting], where, { linuxHistory, health: incident }),
+      );
+      expect(Object.values(plan.admits).filter((admit) => admit.runner === "linux")).toEqual([]);
+      if (where === "linux") for (const w of waiting) expect(plan.routes[w.id]).toBe("linux");
+      else expect(plan.admits.c).toEqual({ runner: "mac", ungated: false });
+    }
+  });
+
+  it("holds every start while Linux is not answering", () => {
+    const plan = planRoutes(
+      input([job("w", "vp lint")], "linux", {
+        health: health({}, { failures: 1, unresponsive: true }),
+      }),
+    );
+    expect(plan.admits.w).toBeUndefined();
+    expect(plan.reasons.w).toMatch(/isn't answering/);
+  });
+});
+
+describe("a memory stall stops the newest Linux run", () => {
+  const three = [
+    { ...onLinux("old", "vp test run"), startedAt: ago(900_000) },
+    { ...onLinux("mid", "vp test run"), startedAt: ago(600_000) },
+    { ...onLinux("new", "vp test run"), startedAt: ago(300_000) },
+  ];
+  it.each<[string, Partial<LinuxReading>, Record<string, string>]>([
+    [
+      "memory full 57% with free memory left",
+      { pressure: { ...QUIET.pressure!, memoryFull: 57 } },
+      { new: "memory" },
+    ],
+    ["memory full 5%", { pressure: { ...QUIET.pressure!, memoryFull: 5 } }, {}],
+    ["a quiet PC", {}, {}],
+  ])("%s", (_name, reading, stops) => {
+    expect(linuxStops(health(reading), three, machine)).toEqual(stops);
+  });
+});
+
+describe("Linux's status tells offline from not answering from over its limits", () => {
+  it.each<[string, boolean, string, boolean]>([
+    ["refused", false, "ssh: connect to host pc port 22: Connection refused", false],
+    ["no route", false, "ssh: connect to host pc port 22: No route to host", false],
+    ["powered off", false, "ssh: connect to host pc port 22: Operation timed out", false],
+    ["no ssh here", false, "", false],
+    ["thrashing sshd", false, "Connection timed out during banner exchange", true],
+    ["heartbeat hung after login", true, "", true],
+  ])("a failed check, %s, is unresponsive: %s", (_name, timedOut, stderr, expected) => {
+    expect(unresponsiveFailure(timedOut, stderr)).toBe(expected);
+  });
+
+  const beat = machine.runnerHeartbeatSeconds * 1000;
+  const fail = (unresponsive: boolean) => ({ ok: false as const, error: "x", unresponsive });
+  const twice = (unresponsive: boolean) =>
+    [1, 2].reduce<LinuxHealth>(
+      (h, at) => nextHealth(h, fail(unresponsive), machine, 20_000, NOW + at * beat),
+      health(),
+    );
+  it.each<[string, LinuxHealth, string | undefined]>([
+    ["never checked", UNKNOWN_HEALTH, undefined],
+    ["answering with room", health(), "online"],
+    ["over its limits", health({}, { overLimit: true }), "over-limit"],
+    ["two refused checks", twice(false), "offline"],
+    ["two checks that timed out on a live host", twice(true), "unresponsive"],
+    [
+      "one timed-out check while still online",
+      nextHealth(health(), fail(true), machine, 20_000, NOW + beat),
+      "unresponsive",
+    ],
+  ])("%s", (_name, h, status) => {
+    expect(linuxStatus(h)).toBe(status);
+  });
+
+  it("an answer clears not answering", () => {
+    const back = nextHealth(
+      twice(true),
+      { ok: true, reading: QUIET },
+      machine,
+      20_000,
+      NOW + 3 * beat,
+    );
+    expect(back.unresponsive).toBeUndefined();
+    expect(linuxStatus(back)).toBe("online");
+  });
+});
+
+describe("~/runs copies", () => {
+  const hasFlock = NodeChildProcess.spawnSync("sh", ["-c", "command -v flock"]).status === 0;
+  const sh = (home: string, script: string) =>
+    NodeChildProcess.spawnSync("sh", ["-c", script], {
+      env: { ...process.env, HOME: home },
+      encoding: "utf8",
+    }).stdout.trim();
+  const withRuns = (body: (home: string, runs: string) => void) => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runs-"));
+    try {
+      const runs = NodePath.join(home, "runs");
+      NodeFS.mkdirSync(runs);
+      body(home, runs);
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  };
+  const copy = (runs: string, id: string, daysIdle: number) => {
+    NodeFS.mkdirSync(NodePath.join(runs, id, "src"), { recursive: true });
+    const lock = NodePath.join(runs, `${id}.lock`);
+    NodeFS.writeFileSync(lock, "");
+    const at = (NOW - daysIdle * 86_400_000) / 1000;
+    NodeFS.utimesSync(lock, at, at);
+  };
+  /** `remoto-rodar` holds `runs/<id>.lock` with flock for its whole run, installs included. */
+  const holding = (runs: string, id: string) =>
+    NodeChildProcess.spawn("flock", [NodePath.join(runs, `${id}.lock`), "sleep", "60"], {
+      stdio: "ignore",
+    });
+  const waitHeld = (runs: string, id: string) => {
+    for (let i = 0; i < 50; i++) {
+      const free = NodeChildProcess.spawnSync("flock", [
+        "-n",
+        NodePath.join(runs, `${id}.lock`),
+        "true",
+      ]);
+      if (free.status !== 0) return;
+      NodeChildProcess.spawnSync("sleep", ["0.1"]);
+    }
+    throw new Error("flock never took the lock");
+  };
+
+  it.runIf(hasFlock)("a removed worktree's copy stays while a run holds its lock", () =>
+    withRuns((home, runs) => {
+      copy(runs, "gone-0123abcd", 0);
+      const holder = holding(runs, "gone-0123abcd");
+      try {
+        waitHeld(runs, "gone-0123abcd");
+        expect(sh(home, removeCopyScript("gone-0123abcd"))).toBe("busy");
+        expect(NodeFS.existsSync(NodePath.join(runs, "gone-0123abcd"))).toBe(true);
+      } finally {
+        holder.kill();
+      }
+    }),
+  );
+
+  it("lists only copies idle past the retention, with a lock", () =>
+    withRuns((home, runs) => {
+      copy(runs, "idle-0123abcd", 30);
+      copy(runs, "recent-0123abcd", 2);
+      NodeFS.mkdirSync(NodePath.join(runs, "nolock-0123abcd"));
+      NodeFS.writeFileSync(NodePath.join(runs, "gone-0123abcd.lock"), "");
+      expect(sh(home, idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("idle idle-0123abcd");
+    }));
+
+  it.runIf(hasFlock)("never lists a copy a run holds, however old its lock", () =>
+    withRuns((home, runs) => {
+      copy(runs, "busy-0123abcd", 30);
+      const holder = holding(runs, "busy-0123abcd");
+      try {
+        waitHeld(runs, "busy-0123abcd");
+        // Taking the lock does not move its time: the copy still reads 30 days idle.
+        const at = (NOW - 30 * 86_400_000) / 1000;
+        NodeFS.utimesSync(NodePath.join(runs, "busy-0123abcd.lock"), at, at);
+        expect(sh(home, idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("");
+      } finally {
+        holder.kill();
+      }
+    }),
+  );
+});

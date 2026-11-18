@@ -660,13 +660,45 @@ describe("Linux as clients see it", () => {
       availableMemoryBytes: null,
       totalMemoryBytes: null,
       error: "refused",
+      status: "offline",
     });
     Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("1.234 1 1 1/1 1\n6\n") });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
       online: true,
       load1: 1.2,
       cpuCount: 6,
+      status: "online",
     });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
+  });
+
+  it("names the limit Linux is over, and tells not answering from offline", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    // Load 206 over an idle CPU, memory stalled 57%: held for memory, never for the load.
+    const thrashing = [
+      "206.00 180.00 120.00 9/900 4321",
+      "6",
+      "MemTotal:       12582912 kB",
+      "MemAvailable:    5242880 kB",
+      "psi memory full avg10=57.00 avg60=55.00 avg300=57.00 total=3",
+    ].join("\n");
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(thrashing) }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      overLimitBy: "memory stalled 57% of the time (limit 10%)",
+    });
+    const timedOut = { ok: false as const, error: "Connection timed out during banner exchange" };
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 60_000);
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      online: false,
+      status: "unresponsive",
+      error: "Connection timed out during banner exchange",
+    });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimitBy");
   });
 });

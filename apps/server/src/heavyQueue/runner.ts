@@ -17,6 +17,8 @@ import {
 import {
   jobVerdict,
   kindOf,
+  linuxEstimate,
+  type LinuxHistory,
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
@@ -647,6 +649,12 @@ export interface LinuxHealth extends Sustained {
   readonly backOnlineAt?: number;
   /** Seconds since Linux booted, as of `okAt`. */
   readonly uptimeSeconds?: number;
+  readonly swapTotalBytes?: number | null;
+  readonly swapFreeBytes?: number | null;
+  readonly pressure?: LinuxPressure | null;
+  readonly jobMemory?: Readonly<Record<string, number>>;
+  /** The failing checks reached the host but got no answer in time: alive, too loaded to reply. */
+  readonly unresponsive?: boolean;
 }
 
 export const UNKNOWN_HEALTH: LinuxHealth = {
@@ -664,13 +672,31 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
   underLimitSince: null,
 };
 
+/** `/proc/pressure` share of the last 10 s, 0–100: how long work stalled on each resource. */
+export interface LinuxPressure {
+  /** Some task waited for a core. */
+  readonly cpu: number | null;
+  readonly memorySome: number | null;
+  /** Every task stalled on memory at once: reclaim and swap thrashing. */
+  readonly memoryFull: number | null;
+  readonly ioFull: number | null;
+}
+
 export interface LinuxReading {
   readonly cpuPercent: number | null;
+  /** Informational only: on WSL it counts tasks blocked on disk and swap, not CPU in use. */
   readonly load1: number | null;
   readonly cpuCount: number | null;
+  /** `MemAvailable`: free plus what the kernel can reclaim, page cache of the copies included. */
   readonly availableMemoryBytes: number | null;
   readonly totalMemoryBytes: number | null;
   readonly uptimeSeconds?: number;
+  readonly swapTotalBytes?: number | null;
+  readonly swapFreeBytes?: number | null;
+  /** Null where the kernel has no PSI. */
+  readonly pressure?: LinuxPressure | null;
+  /** Resident memory of each run's session there, by `runs/<id>` copy. */
+  readonly jobMemory?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -693,46 +719,137 @@ const cpuPercentBetween = (before: string | undefined, after: string | undefined
 
 /** `HEARTBEAT_COMMAND` output. */
 export const parseHeartbeat = (text: string): LinuxReading => {
-  const lines = text.split("\n");
-  const load1 = Number(lines[0]?.trim().split(/\s+/)[0]);
-  const cpuCount = Number(lines[1]?.trim());
-  const mem = lines
-    .find((line) => line.startsWith("Mem:"))
-    ?.trim()
-    .split(/\s+/);
-  const total = Number(mem?.[1]);
-  const available = Number(mem?.[6]);
+  const lines = text.split("\n").map((line) => line.trim());
+  const load1 = Number(lines[0]?.split(/\s+/)[0]);
+  const cpuCount = Number(lines[1]);
   const value = (n: number) => (Number.isFinite(n) ? n : null);
+  const kib = (label: string) => {
+    const line = lines.find((each) => each.startsWith(`${label}:`));
+    return line === undefined ? null : value(Number(line.split(/\s+/)[1]) * 1024);
+  };
+  const avg10 = (resource: string, kind: "some" | "full") => {
+    const line = lines.find((each) => each.startsWith(`psi ${resource} ${kind} `));
+    const match = line === undefined ? null : /\bavg10=([\d.]+)/.exec(line);
+    return match === null ? null : value(Number(match[1]));
+  };
+  const hasPressure = lines.some((line) => line.startsWith("psi "));
+  const jobMemory: Record<string, number> = Object.create(null);
+  for (const line of lines) {
+    const [tag, id, rss] = line.split(/\s+/);
+    // `ps` reports KiB.
+    if (tag === "job" && id !== undefined && /^\d+$/.test(rss ?? "")) {
+      jobMemory[id] = Number(rss) * 1024;
+    }
+  }
   const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
   // `/proc/uptime`: the only line of exactly two numbers.
-  const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line.trim()));
+  const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line));
   return {
     cpuPercent: cpuPercentBetween(before, after),
     load1: value(load1),
     cpuCount: Number.isInteger(cpuCount) && cpuCount > 0 ? cpuCount : null,
-    totalMemoryBytes: value(total),
-    availableMemoryBytes: value(available),
-    ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.trim().split(/\s+/)[0]) }),
+    totalMemoryBytes: kib("MemTotal"),
+    availableMemoryBytes: kib("MemAvailable"),
+    swapTotalBytes: kib("SwapTotal"),
+    swapFreeBytes: kib("SwapFree"),
+    pressure: hasPressure
+      ? {
+          cpu: avg10("cpu", "some"),
+          memorySome: avg10("memory", "some"),
+          memoryFull: avg10("memory", "full"),
+          ioFull: avg10("io", "full"),
+        }
+      : null,
+    jobMemory,
+    ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.split(/\s+/)[0]) }),
   };
 };
 
 export type HealthCheck =
   | { readonly ok: true; readonly reading: LinuxReading }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly unresponsive?: boolean };
+
+/**
+ * A failed check that reached the host: sshd accepted TCP but never finished its banner, or the
+ * heartbeat logged in and then hung. A host that refuses, has no route or never answers the
+ * connect is offline instead.
+ */
+export const unresponsiveFailure = (timedOut: boolean, stderr: string) =>
+  timedOut || /banner exchange/i.test(stderr);
 
 const GIB = 1024 ** 3;
 
-/** Which of Linux's own limits a reading is past, for the waiting reason; null when none or unknown. */
-const linuxOverBy = (reading: LinuxReading, machine: RunnerMachineConfig): string | null => {
+/** PSI ceilings over the last 10 s. Memory and disk stalls are thrashing whatever the CPU says. */
+export const LINUX_MEMORY_STALL_LIMIT = 10;
+export const LINUX_IO_STALL_LIMIT = 30;
+/**
+ * `cpu some` passes 50% on any multi-threaded test run, so only near-constant waiting is a ceiling;
+ * the CPU limit setting stays on CPU in use.
+ */
+export const LINUX_CPU_STALL_LIMIT = 90;
+/** Less swap free than this share is the last step before the OOM killer. */
+export const LINUX_SWAP_FREE_SHARE = 0.1;
+
+const gbOf = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
+
+/**
+ * Which of Linux's limits a reading is past, with the metric and its value, or null when none or
+ * unknown. The load average never counts: WSL adds tasks blocked on disk and swap to it. Without
+ * PSI only free memory, swap and CPU in use (`/proc/stat`) decide.
+ */
+export const linuxOverBy = (
+  reading: Pick<
+    LinuxReading,
+    | "availableMemoryBytes"
+    | "totalMemoryBytes"
+    | "cpuPercent"
+    | "swapTotalBytes"
+    | "swapFreeBytes"
+    | "pressure"
+  >,
+  machine: RunnerMachineConfig,
+): string | null => {
   const { availableMemoryBytes: free, totalMemoryBytes: total, cpuPercent: cpu } = reading;
+  const pressure = reading.pressure ?? null;
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
-    return `${(Math.max(0, free) / GIB).toFixed(1)} GB free, keeping ${floor}%`;
+    return `${gbOf(free)} free, keeping ${floor}%`;
   }
+  const stall = (share: number | null | undefined, limit: number) =>
+    share !== null && share !== undefined && share >= limit ? Math.round(share) : null;
+  const memory = stall(pressure?.memoryFull, LINUX_MEMORY_STALL_LIMIT);
+  if (memory !== null) {
+    return `memory stalled ${memory}% of the time (limit ${LINUX_MEMORY_STALL_LIMIT}%)`;
+  }
+  const { swapTotalBytes: swap, swapFreeBytes: swapFree } = reading;
+  if (
+    swap !== null &&
+    swap !== undefined &&
+    swap > 0 &&
+    swapFree !== null &&
+    swapFree !== undefined &&
+    swapFree < swap * LINUX_SWAP_FREE_SHARE
+  ) {
+    return `swap nearly full: ${gbOf(swapFree)} of ${gbOf(swap)} free`;
+  }
+  const io = stall(pressure?.ioFull, LINUX_IO_STALL_LIMIT);
+  if (io !== null) return `disk stalled ${io}% of the time (limit ${LINUX_IO_STALL_LIMIT}%)`;
+  const waited = stall(pressure?.cpu, LINUX_CPU_STALL_LIMIT);
+  if (waited !== null) return `CPU saturated: work waited ${waited}% of the time`;
   if (cpu === null) return null;
   return cpu > machine.runnerLinuxCpuCeilingPercent
     ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
     : null;
+};
+
+/** What clients show: offline, reached but not answering, over its limits, or online. */
+export const linuxStatus = (
+  health: LinuxHealth,
+): "online" | "over-limit" | "unresponsive" | "offline" | undefined => {
+  if (health.online === null) return undefined;
+  if (health.failures > 0 && health.unresponsive === true) return "unresponsive";
+  if (health.online === false) return "offline";
+  return health.overLimit ? "over-limit" : "online";
 };
 
 /** Readings further apart than this are not one run of them: one missed beat at most. */
@@ -757,7 +874,7 @@ export const beforeBoot = (bootAt: number | null, startedAt: number) =>
 
 /**
  * Running Linux attempts to stop after a reading: every one from before Linux restarted, and,
- * once memory falls below half the floor, the newest of two or more. Never the only one (alone,
+ * once memory falls below half the floor or stalls past twice its ceiling, the newest of two or more. Never the only one (alone,
  * a job that fills memory is its own problem) and one at a time: the next waits for a reading
  * taken after the last stop.
  */
@@ -774,7 +891,9 @@ export const linuxStops = (
   }
   const { okAt, availableMemoryBytes: free, totalMemoryBytes: total } = health;
   const floor = (machine.runnerLinuxMemoryFloorPercent / 100) * LINUX_EVICT_SHARE;
-  if (okAt === null || free === null || total === null || !(free < total * floor)) return stops;
+  const short = free !== null && total !== null && free < total * floor;
+  const stalled = (health.pressure?.memoryFull ?? 0) >= 2 * LINUX_MEMORY_STALL_LIMIT;
+  if (okAt === null || !(short || stalled)) return stops;
   const live = running.filter(
     (entry) => (entry as QueuedEntry).stop === undefined && stops[entry.id] === undefined,
   );
@@ -805,7 +924,9 @@ export const nextHealth = (
     previous.failures > 0 &&
     previous.failedAt !== undefined &&
     now - previous.failedAt < (machine.runnerHeartbeatSeconds * 1000) / 2;
-  if (sameEvent) return { ...previous, error: check.error };
+  if (sameEvent) {
+    return { ...previous, error: check.error, unresponsive: check.unresponsive === true };
+  }
   if (check.ok) {
     // One missed beat keeps the run of readings; a longer silence starts over from "has room".
     const continuous = previous.okAt !== null && now - previous.okAt <= readingGapMs(machine);
@@ -830,6 +951,7 @@ export const nextHealth = (
     checkedAt: now,
     failedAt: now,
     error: check.error,
+    unresponsive: check.unresponsive === true,
   };
 };
 
@@ -914,6 +1036,8 @@ export interface RoutePlanInput extends PlanInput {
   readonly runnerOn?: boolean;
   /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
   readonly lostCwds?: ReadonlyArray<string>;
+  /** What Linux runs used there, for the memory each start reserves. */
+  readonly linuxHistory?: LinuxHistory;
 }
 
 interface LinuxBusy {
@@ -1027,6 +1151,24 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const linuxOverNow = linuxOverBy(health, machine);
   const okAt = health.okAt ?? -Infinity;
   const stale = now - okAt > readingGapMs(machine);
+  const linuxHistory = input.linuxHistory ?? {};
+  const totalMemory = health.totalMemoryBytes;
+  const memoryFloor =
+    totalMemory === null ? 0 : (machine.runnerLinuxMemoryFloorPercent / 100) * totalMemory;
+  /** A run's peak, capped at what Linux could ever give it: one bigger never waits for nothing. */
+  const linuxNeed = (entry: HeavyQueueEntry) => {
+    const need = linuxEstimate(linuxHistory, entry, input);
+    return totalMemory === null ? need : Math.min(need, totalMemory - memoryFloor);
+  };
+  /**
+   * Memory the running Linux jobs have yet to take: each one's peak less what the heartbeat last
+   * read of its session (`memory`). `MemAvailable` already counts what they hold, and anything
+   * else there (docker containers, other users) along with it.
+   */
+  let linuxReserved = linuxRunning.reduce(
+    (sum, entry) => sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
+    0,
+  );
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -1091,6 +1233,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
+    // Its last checks reached it but got no answer: thrashing, not gone. Nothing new goes there.
+    if (health.failures > 0 && health.unresponsive === true) {
+      return { kind: "limits", why: "Linux isn't answering: too loaded to reply" };
+    }
     if (health.overLimit) {
       return { kind: "limits", why: linuxOverNow ?? "easing back under its limits" };
     }
@@ -1105,6 +1251,17 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
       return { kind: "reading", why: "a reading a minute after the last job started there" };
+    }
+    // One job always runs there, as on this Mac: an empty Linux reserves nothing.
+    const free = health.availableMemoryBytes;
+    if (free !== null && totalMemory !== null && linuxFree < machine.runnerLinuxSlots) {
+      const need = linuxNeed(entry);
+      if (free - linuxReserved - need < memoryFloor) {
+        return {
+          kind: "limits",
+          why: `needs ~${gbOf(need)}; ${gbOf(free)} free, ${gbOf(linuxReserved)} held for running jobs, ${gbOf(memoryFloor)} kept spare`,
+        };
+      }
     }
     return null;
   };
@@ -1159,6 +1316,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     linuxFree -= 1;
     busyWorktrees.add(worktree);
     lastLinuxStart = now;
+    linuxReserved += linuxNeed(entry);
     admits[entry.id] = { runner: "linux", ungated: !queueOn };
   };
 
@@ -1423,23 +1581,62 @@ export const runnerCopyId = (realPath: string, sha1: (text: string) => string) =
 const RUNNER_COPY_ID = /^[A-Za-z0-9._-]+-[0-9a-f]{8}$/;
 
 /**
- * Deletes `runs/<id>` and the lock and pgid files `remoto-rodar` keeps beside it. Prints `busy` when
- * a run still holds it, `removed` otherwise.
+ * Deletes `runs/<id>` and its pgid file. Prints `busy` when a run still holds the lock
+ * `remoto-rodar` takes for its whole run (installs included) or its process group lives, `removed`
+ * otherwise. The lock is held while deleting and the lock file stays, so every later run locks the
+ * same file and none can start in the folder meanwhile.
  */
 export const removeCopyScript = (id: string) => {
   if (!RUNNER_COPY_ID.test(id) || id.startsWith(".")) throw new Error(`Unsafe run id: ${id}`);
   const folder = `"$HOME/runs/${id}"`;
   return [
+    "(",
+    `if [ -e ${folder}.lock ] && command -v flock >/dev/null; then exec 9>>${folder}.lock; flock -n 9 || exit 3; fi`,
     `p=$(cat ${folder}.pgid 2>/dev/null)`,
-    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then echo busy; exit 0; fi`,
-    `rm -rf -- ${folder} ${folder}.lock ${folder}.pgid && echo removed`,
+    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then exit 3; fi`,
+    `rm -rf -- ${folder} ${folder}.pgid && echo removed`,
+    ")",
+    `[ $? -eq 3 ] && echo busy`,
+    "exit 0",
+  ].join("\n");
+};
+
+/** Copies unused this long go; the next run of their worktree syncs a fresh one. */
+export const RUNNER_COPY_RETENTION_DAYS = 14;
+
+/**
+ * Prints `idle <id>` for each copy whose last run (`remoto-rodar` truncates `runs/<id>.lock` on
+ * every start) is older than `days` and that no run holds now. A copy with no lock is left: a sync
+ * may be writing it before its first run.
+ */
+export const idleCopiesScript = (days: number, nowSeconds: number) => {
+  const cutoff = Math.floor(nowSeconds) - Math.max(1, Math.floor(days)) * 86_400;
+  return [
+    `cd "$HOME/runs" 2>/dev/null || exit 0`,
+    "for l in *.lock; do",
+    "  id=${l%.lock}",
+    `  case "$id" in ''|.*|*[!A-Za-z0-9._-]*) continue ;; esac`,
+    `  [ -d "$id" ] || continue`,
+    `  t=$(stat -c %Y "$l" 2>/dev/null || stat -f %m "$l" 2>/dev/null) || continue`,
+    `  [ "$t" -lt ${cutoff} ] || continue`,
+    `  if command -v flock >/dev/null; then flock -n "$l" true || continue; fi`,
+    `  echo "idle $id"`,
+    "done",
+    "exit 0",
   ].join("\n");
 };
 
 // Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.
-// `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone.
-export const HEARTBEAT_COMMAND =
-  "cat /proc/loadavg; nproc; free -b; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; cat /proc/uptime";
+// `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone. Memory
+// comes from `/proc/meminfo` and pressure from `/proc/pressure` (absent without PSI).
+export const HEARTBEAT_COMMAND = [
+  "cat /proc/loadavg; nproc; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; cat /proc/uptime",
+  "grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo",
+  `for r in cpu memory io; do sed "s/^/psi $r /" /proc/pressure/$r 2>/dev/null; done`,
+  // ponytail: a run's session only; containers it starts live under dockerd and show in
+  // MemAvailable and PSI, not in its own peak. Attribute them by cgroup if that undercounts.
+  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; echo "job \${b%.pgid} $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}')"; done`,
+].join("; ");
 
 /**
  * Stops what is left of run `id` there: its process group, then anything still naming its

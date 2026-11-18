@@ -132,6 +132,28 @@ describe("heavy queue file", () => {
     });
   });
 
+  it("a Linux run learns its session's peak memory from the heartbeats", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const GIB = 1024 ** 3;
+    const run = { ...entry("r1"), runner: "linux" as const, phase: "running" as const };
+    Queue.enqueue(
+      dir,
+      { ...run, startedAt: new Date(at).toISOString(), remote: { id: "w-0123abcd" } },
+      at,
+    );
+    // `ps` reports KiB: 2 GiB, then 1 GiB, and a copy no job here owns.
+    for (const kib of [2097152, 1048576]) {
+      const beat = `job w-0123abcd ${kib}\njob other-89abcdef 4194304`;
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(beat) }, at + 1000);
+    }
+    expect(Queue.read(dir)[0]).toMatchObject({ memory: 1 * GIB, peakMemory: 2 * GIB });
+    Queue.finish(dir, "r1", 0, at + 60_000);
+    expect(Queue.readDoc(dir).linuxHistory.r1).toEqual([
+      { durationMs: 60_000, memoryBytes: 2 * GIB },
+    ]);
+  });
+
   it("keeps the last 200 results", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");
@@ -1608,11 +1630,11 @@ describe("Runner in the queue file", () => {
 
   const stops = (dir: string) =>
     Object.fromEntries(Queue.read(dir).map((e: QueuedEntry) => [e.id, e.stop ?? null]));
-  /** A heartbeat with `available` of 100 bytes free, and `/proc/uptime` when given. */
+  /** A heartbeat with `available` of 100 kB free, and `/proc/uptime` when given. */
   const reading = (available: number, uptime?: number) => ({
     ok: true as const,
     reading: parseHeartbeat(
-      `0.5 0.4 0.3 1/2 3\n6\nMem: 100 10 20 0 0 ${available}${uptime === undefined ? "" : `\n${uptime} 1000`}`,
+      `0.5 0.4 0.3 1/2 3\n6\nMemTotal: 100 kB\nMemAvailable: ${available} kB${uptime === undefined ? "" : `\n${uptime} 1000`}`,
     ),
   });
 

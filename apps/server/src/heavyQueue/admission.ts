@@ -95,8 +95,10 @@ export const workersFor = (cpuCount: number, busyCores: number | null): number =
   Math.max(2, Math.min(cpuCount - 1, Math.floor(cpuCount - (busyCores ?? 0))));
 
 export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
-/** Linux runs by command: only their time, since their usage is measured on the PC, not here. */
-export type LinuxHistory = Readonly<Record<string, ReadonlyArray<{ readonly durationMs: number }>>>;
+/** Linux runs by command: their time, and their session's peak memory once a heartbeat read it. */
+export type LinuxHistory = Readonly<
+  Record<string, ReadonlyArray<{ readonly durationMs: number; readonly memoryBytes?: number }>>
+>;
 
 const median = (values: ReadonlyArray<number>) =>
   values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)] ?? null;
@@ -229,6 +231,26 @@ export const estimate = (
     memoryBytes: (medium ? guesses.unseenMediumMegabytes : guesses.unseenHeavyMegabytes) * MIB,
     durationMs: null,
   };
+};
+
+/**
+ * The memory a Linux run of `entry` is taken to reach: its command's worst run there, not the
+ * usual one, since Linux re-reads only once a minute and its OOM killer takes whatever is
+ * running; a command never measured there gets the unseen guess.
+ */
+export const linuxEstimate = (
+  history: LinuxHistory,
+  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  guesses: Guesses,
+) => {
+  const peaks = runsOf(history, entry).flatMap((run) =>
+    typeof run.memoryBytes === "number" && run.memoryBytes > 0 ? [run.memoryBytes] : [],
+  );
+  if (peaks.length > 0) return Math.max(...peaks);
+  return (
+    (kindOf(entry) === "medium" ? guesses.unseenMediumMegabytes : guesses.unseenHeavyMegabytes) *
+    MIB
+  );
 };
 
 /** Learned to stay small; a command never seen is not light. */
