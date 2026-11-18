@@ -74,6 +74,7 @@ import {
   checkLinux,
   confirmed,
   drainLostRuns,
+  forwardedInput,
   resolveRemoto,
   startLinuxRun,
   stopRemote,
@@ -1403,6 +1404,7 @@ const runLinuxPart = async (
     );
     if (found !== null) recordFault(dir, id, found);
   };
+  const input = forwardedInput(0);
   const start = () => {
     since = Date.now();
     return startLinuxRun({
@@ -1417,6 +1419,7 @@ const runLinuxPart = async (
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
       ...(bringsBack ? { startMarker: id } : {}),
+      ...(input === undefined ? {} : { input }),
       stdout: (chunk) => process.stdout.write(chunk),
       stderr: (text) => {
         process.stderr.write(text);
@@ -1455,11 +1458,14 @@ const runLinuxPart = async (
   let { outcome, progress, platform, install, worktree } = await run.done;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
-    jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
-    recorded = null;
-    failure = null;
-    run = start();
-    ({ outcome, progress, platform, install, worktree } = await run.done);
+    // The first run read the input: a rerun would get none.
+    if (input === undefined) {
+      jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
+      recorded = null;
+      failure = null;
+      run = start();
+      ({ outcome, progress, platform, install, worktree } = await run.done);
+    }
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return endLine(dir, id, {

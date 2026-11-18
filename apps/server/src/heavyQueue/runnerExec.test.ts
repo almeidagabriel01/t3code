@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTty from "node:tty";
 import { describe, expect, it } from "@effect/vitest";
 
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
@@ -10,6 +12,7 @@ import {
   changedInputs,
   checkLinux,
   confirmed,
+  forwardedInput,
   remoteCommand,
   removeRunnerCopy,
   resolveRemoto,
@@ -29,7 +32,7 @@ const fake = (body: string) => {
 };
 const M = "\\036remoto";
 
-const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
+const runWith = (remoto: string, script = "vp test run", cwd = dir, input?: number) => {
   const stdout: Buffer[] = [];
   let stderr = "";
   const phases: string[] = [];
@@ -44,6 +47,7 @@ const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
     environment: process.env,
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
+    ...(input === undefined ? {} : { input }),
     onProgress: (progress) => {
       phases.push(progress.phase ?? "");
       if (progress.running) started();
@@ -61,6 +65,60 @@ const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
 };
 
 describe("running on Linux through remoto", () => {
+  it.each([
+    ["a file", () => NodeFS.openSync(NodePath.join(dir, "input.txt"), "w+"), true],
+    [
+      "a pipe",
+      () => {
+        const fifo = NodePath.join(dir, "input.fifo");
+        NodeChildProcess.execFileSync("mkfifo", [fifo]);
+        return NodeFS.openSync(fifo, NodeFS.constants.O_RDWR | NodeFS.constants.O_NONBLOCK);
+      },
+      true,
+    ],
+    ["/dev/null", () => NodeFS.openSync("/dev/null", "r"), false],
+    [
+      "a TTY",
+      () => {
+        const fd = NodeFS.openSync("/dev/ptmx", "r+");
+        expect(NodeTty.isatty(fd)).toBe(true);
+        return fd;
+      },
+      false,
+    ],
+  ])("forwards %s as the command's input: %s", (_, open, forwarded) => {
+    const fd = open();
+    try {
+      expect(forwardedInput(fd)).toBe(forwarded ? fd : undefined);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+  });
+
+  it.each([
+    ["with input", "x", "1|x"],
+    ["without input", undefined, "|"],
+  ])("hands remoto the job's stdin %s and keeps the code", async (_, text, sent) => {
+    const file = NodePath.join(dir, "stdin.txt");
+    NodeFS.writeFileSync(file, text ?? "");
+    const fd = text === undefined ? undefined : NodeFS.openSync(file, "r");
+    try {
+      const remoto = fake(
+        [
+          `printf '${M} phase=running pgid=4\n' >&2`,
+          'printf "%s|" "$REMOTO_STDIN"; cat',
+          `printf '${M} exit=3\n' >&2`,
+          "exit 3",
+        ].join("\n"),
+      );
+      const { run, out } = runWith(remoto, "vp fmt --stdin-filepath=a.ts", dir, fd);
+      expect((await run.done).outcome).toEqual({ kind: "finished", code: 3 });
+      expect(out()).toBe(sent);
+    } finally {
+      if (fd !== undefined) NodeFS.closeSync(fd);
+    }
+  });
+
   it.each([
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
     ["/opt/homebrew/bin/node", ["--test"], ["node", "--test"]],

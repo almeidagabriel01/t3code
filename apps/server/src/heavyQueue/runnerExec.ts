@@ -573,6 +573,8 @@ export interface LinuxRunOptions {
   readonly env?: ReadonlyArray<string>;
   /** The job whose start the wrapper marks there, so `bringBack` finds what it wrote. */
   readonly startMarker?: string;
+  /** An fd `remoto` gets as its stdin and passes to the command there (`forwardedInput`). */
+  readonly input?: number;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -612,6 +614,16 @@ const lineSplitter = (onLine: (line: string, newline: boolean) => void) => {
   };
 };
 
+/** `fd` when it is a pipe or a file: a TTY or `/dev/null` is no input to send to Linux. */
+export const forwardedInput = (fd: number) => {
+  try {
+    const stat = NodeFS.fstatSync(fd);
+    return stat.isFIFO() || stat.isFile() ? fd : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * `REMOTO_FALLBACK=nao`, so an unreachable host exits 75 instead of running here. Output passes
  * through unchanged except the marker lines, which become progress.
@@ -629,9 +641,11 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     ),
     {
       cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.input ?? "ignore", "pipe", "pipe"],
       env: {
         ...options.environment,
+        // Without it `remoto` runs `ssh -n`, which hands the command no input.
+        REMOTO_STDIN: options.input === undefined ? "" : "1",
         REMOTO_FALLBACK: "nao",
         REMOTO_HOST: machine.runnerHost,
         REMOTO_MARKERS: "1",
@@ -663,11 +677,11 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     scan(line);
     options.stderr(newline ? `${line}\n` : line);
   });
-  child.stdout.on("data", (chunk: Buffer) => {
+  child.stdout?.on("data", (chunk: Buffer) => {
     options.stdout(chunk);
     out.push(chunk.toString("utf8"));
   });
-  child.stderr.on("data", (chunk: Buffer) => err.push(chunk.toString("utf8")));
+  child.stderr?.on("data", (chunk: Buffer) => err.push(chunk.toString("utf8")));
   const done = new Promise<{
     outcome: RemoteOutcome;
     progress: RemoteProgress;
