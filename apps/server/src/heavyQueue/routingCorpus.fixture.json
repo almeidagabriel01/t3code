@@ -3,7 +3,7 @@
     "Verdicts are decided by hand from context.md and design.md; never regenerate them by running the code.",
     "exclusive: the queue kind (admission's EXCLUSIVE words anywhere in the line) stays on this Mac as before.",
     "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs is judged the same way, one level down. A -c text made by $(...) is judged only when it runs.",
-    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument or --flag= value naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
+    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
     "The first part in source order with a reason decides; otherwise linux. Never a reason: redirects, cd targets, glue, read-only git, Python, sourced files, pipes, stdin, &, syntax the parser cannot follow, an unreadable script inside the checkout, the retired Can-run-on-Linux list.",
     "Subjects: the program (plus the subcommand that decides), the pattern, or the resolved path.",
     "Sanitized: home is /Users/dev, session and scratch ids are ID (a literal <id> would parse as a redirect), commit messages are msg, Python heredoc bodies are pass, company projects are left out."
@@ -1355,6 +1355,39 @@
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
       "expect": "mac-docker:docker run"
+    },
+    {
+      "line": "T3CODE_HOME=/Users/dev/.t3/dev pnpm exec vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.t3/dev",
+      "why": "a variable's value is judged like an argument"
+    },
+    {
+      "line": "BASE_URL=http://localhost:5733 pnpm exec playwright test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-port:localhost:5733"
+    },
+    {
+      "line": "export CLAUDE_CONFIG_DIR=~/.claude-test; vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.claude-test",
+      "why": "an exported variable reaches the command"
+    },
+    {
+      "line": "env DATABASE_URL=postgres://u:p@127.0.0.1:5733/db vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-port:localhost:5733"
+    },
+    {
+      "line": "S=/tmp/x; CI=1 vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an unexported variable never reaches the command"
     }
   ]
 }

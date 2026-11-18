@@ -1645,6 +1645,15 @@ describe("patterns and eligibility", () => {
     ["vitest watch", "watches", "vitest watch"],
     ["docker build -t app .", "mac-docker", "docker build"],
     ["docker compose exec db psql", "mac-docker", "docker compose"],
+    ["T3CODE_HOME=/home/me/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
+    ["T3CODE_HOME=~/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
+    ["env CLAUDE_CONFIG_DIR=/home/me/.claude vp test run", "mac-env", "/home/me/.claude"],
+    [
+      "export DATABASE_URL=postgres://u@localhost:5733/db; vp test run",
+      "mac-port",
+      "localhost:5733",
+    ],
+    ["BASE_URL=http://localhost:5733 pnpm exec playwright test", "mac-port", "localhost:5733"],
   ] as const)("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
@@ -1672,6 +1681,10 @@ describe("patterns and eligibility", () => {
     "pnpm -w exec vitest run",
     "turbo run build --filter web",
     "docker --version",
+    "CI=1 NODE_OPTIONS=--max-old-space-size=8192 vp test run",
+    "S=/tmp/x; vp test run",
+    "DATABASE_URL=postgres://localhost:5432/db vp test run",
+    "PATH=/opt/bin:$PATH vp test run",
   ])("%s may still leave", (label) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
   });

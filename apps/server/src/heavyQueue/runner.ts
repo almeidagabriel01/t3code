@@ -407,6 +407,7 @@ const tieOf = (
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
   listening: (port: number) => boolean,
+  env: ReadonlyArray<string>,
 ): MacReason | null => {
   const own = programReason(part, config.runnerMacTools);
   if (own !== null) return own;
@@ -418,6 +419,12 @@ const tieOf = (
   const root = rootOf(cwd);
   if (root === null) return { code: "mac-env", subject: cwd };
   const { script } = part;
+  const valueReason = (value: string): MacReason | null => {
+    const path = outsidePath(value, cwd, root);
+    if (path !== null) return { code: "mac-env", subject: path };
+    const port = localPortsIn(value).find(listening);
+    return port === undefined ? null : { code: "mac-port", subject: `localhost:${port}` };
+  };
   for (const word of part.command.words.slice(part.programAt)) {
     // A script read with the job travels as its text; one that couldn't be read is only here.
     if (
@@ -428,11 +435,12 @@ const tieOf = (
       continue;
     }
     const expanded = expand(word, vars, cwd);
-    if (!("value" in expanded)) continue;
-    const path = outsidePath(expanded.value, cwd, root);
-    if (path !== null) return { code: "mac-env", subject: path };
-    const port = localPortsIn(expanded.value).find(listening);
-    if (port !== undefined) return { code: "mac-port", subject: `localhost:${port}` };
+    const mac = "value" in expanded ? valueReason(expanded.value) : null;
+    if (mac !== null) return mac;
+  }
+  for (const value of env) {
+    const mac = valueReason(value);
+    if (mac !== null) return mac;
   }
   return null;
 };
@@ -503,6 +511,7 @@ const literalValue = (word: Word, vars: ReadonlyMap<string, string | null>, cwd:
 };
 
 const DECLARES = new Set(["export", "declare", "local", "readonly"]);
+const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 
@@ -526,6 +535,20 @@ const lineReason = (
   const work = new Set(workParts(parts));
   const cwds = new Map<string, string | null>([["", start]]);
   const vars = new Map<string, string | null>([["HOME", home]]);
+  // What reaches a command's environment from earlier in the line; plain `K=V;` does not.
+  const exported = new Set<string>();
+  const nameOf = (word: Word) => word.value.slice(0, word.value.indexOf("="));
+  const assigned = (word: Word, cwd: string) =>
+    literalValue(
+      // `D=~/x` expands the `~` when it is not quoted.
+      {
+        ...word,
+        value: word.value.slice(nameOf(word).length + 1),
+        tilde: source[word.start + nameOf(word).length + 1] === "~",
+      },
+      vars,
+      cwd,
+    );
   const cwdAt = (scope: ReadonlyArray<number>): string | null => {
     const key = scope.join("/");
     if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
@@ -548,7 +571,20 @@ const lineReason = (
               rootOf,
             );
       const at = moved?.cwd ?? cwd;
-      const mac = tieOf(part, at, vars, rootOf, config, listening);
+      const env = [
+        ...command.assigns,
+        ...command.words.slice(0, part.programAt).filter((word) => ASSIGNMENT.test(word.value)),
+      ].map((word) => assigned(word, at ?? "/"));
+      for (const name of exported) env.push(vars.get(name) ?? null);
+      const mac = tieOf(
+        part,
+        at,
+        vars,
+        rootOf,
+        config,
+        listening,
+        env.filter((value) => value !== null),
+      );
       if (mac !== null) return mac;
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
@@ -590,21 +626,15 @@ const lineReason = (
       command.words.length === 0
         ? command.assigns
         : DECLARES.has(first ?? "")
-          ? command.words.slice(1).filter((word) => /^[A-Za-z_]\w*=/.test(word.value))
+          ? command.words.slice(1).filter((word) => ASSIGNMENT.test(word.value))
           : [];
     for (const word of assignments) {
-      const name = word.value.slice(0, word.value.indexOf("="));
-      const value = literalValue(
-        // `D=~/x` expands the `~` when it is not quoted.
-        {
-          ...word,
-          value: word.value.slice(name.length + 1),
-          tilde: source[word.start + name.length + 1] === "~",
-        },
-        vars,
-        cwd ?? "/",
-      );
-      vars.set(name, command.conditional ? null : value);
+      vars.set(nameOf(word), command.conditional ? null : assigned(word, cwd ?? "/"));
+    }
+    if (first === "export") {
+      for (const word of command.words.slice(1)) {
+        if (/^[A-Za-z_]\w*(=|$)/.test(word.value)) exported.add(word.value.split("=")[0]!);
+      }
     }
   }
   return null;

@@ -224,8 +224,9 @@ work queue, and each section says what the two do together.
     `cargo build` or `cargo test`, `go build` or `go test`, `swift`, `make`,
     `cmake`, `clang`, `gcc` and `codesign`. Linux would build binaries this Mac
     can't run, and skip its macOS-only code.
-  - **Uses a file only this Mac has**: an argument names a path outside the
-    project, such as `~/.t3`, `~/Library` or another checkout.
+  - **Uses a file only this Mac has**: an argument, or a variable set for the
+    command (`T3CODE_HOME=~/.t3/dev vp test run`, `env`, `export`), names a
+    path outside the project, such as `~/.t3`, `~/Library` or another checkout.
   - **Changes this Mac's checkout**: git commands that write (commits run here,
     since the pre-commit hook edits this Mac's repository) and installs.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
@@ -237,7 +238,7 @@ work queue, and each section says what the two do together.
     On Linux it would watch a copy your edits never reach.
   - **Uses this Mac's Docker**: `docker` and `podman` commands, whose images
     and containers live in this Mac's daemon.
-  - **Talks to a port open here**: an argument names `localhost`,
+  - **Talks to a port open here**: an argument or variable names `localhost`,
     `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
     `--base-url http://localhost:5733`.
 
