@@ -1101,10 +1101,10 @@ export const intentOf = (
 };
 
 /**
- * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie).
- * Mac first: this Mac up to `runnerMacFirstAfter` jobs, then Linux. In both, a machine that can
- * start it now takes it from one that can't, and one over its sustained limits takes nothing new;
- * past both, the job holds. Neither asks: Linux offline or unknown keeps the job on the Mac.
+ * Decides every waiter in queue order. Automatic: Linux whenever it can start the job now; else
+ * this Mac, if it has room and no waiter; else the job waits for Linux. Mac first: this Mac up to
+ * `runnerMacFirstAfter` jobs, then Linux, a full Mac yielding to a Linux that can start it now.
+ * Past both sustained limits, the job holds. Neither asks: Linux offline or unknown keeps it here.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const { entries, now, health, machine, sample } = input;
@@ -1272,9 +1272,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     cancel(`${what} and nobody answered in time: canceled`);
   };
-  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string, reason: string) => {
     alone.delete(entry.id);
     routes[entry.id] = "linux";
+    reasons[entry.id] = reason;
     linuxCount += 1;
     linuxFree -= 1;
     busyWorktrees.add(worktree);
@@ -1331,9 +1332,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       (up || !droppedFinal(entry, machine))
     ) {
       const hybrid = intent === "automatic";
-      const mode = hybrid ? "Hybrid" : "Mac first";
+      const mode = hybrid ? "Automatic" : "Mac first";
       if (hybrid && paused) {
-        toMac(entry, "Hybrid: queue paused");
+        toMac(entry, "Automatic: queue paused");
         continue;
       }
       if (!up) {
@@ -1350,36 +1351,32 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       const past = macCount >= config.runnerMacFirstAfter;
       let onMac: boolean;
       if (hybrid) {
-        onMac = macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
-        if (onMac && macOver) onMac = false;
-        else if (!onMac && health.overLimit) onMac = true;
-        // A machine that can start it now takes it from the other one, which can't.
-        if (onMac && busy === null && !macRoom(entry)) onMac = false;
-        else if (
-          !onMac &&
-          busy !== null &&
-          !startsOnLinux(entry, busy) &&
-          macWaiters.length === 0 &&
-          macRoom(entry)
-        )
-          onMac = true;
+        onMac =
+          busy !== null && !startsOnLinux(entry, busy) && macWaiters.length === 0 && macRoom(entry);
       } else {
         onMac = !macOver && (!past || health.overLimit);
         // Under its count, a full Mac still yields to a Linux that can start it now.
         if (onMac && busy === null && !macRoom(entry)) onMac = false;
       }
       if (onMac) {
-        toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
+        toMac(
+          entry,
+          hybrid && busy !== null
+            ? `This Mac took it: ${busy.kind === "slots" ? "Linux is full" : busy.why}`
+            : "Mac first: this Mac has room",
+        );
         continue;
       }
+      const macFirstWhy = past
+        ? `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`
+        : "Mac first: this Mac has no room";
       if (paused && entry.forced !== true) toLinux(entry, "paused");
-      else if (busy === null || startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
-      else {
+      else if (busy === null || startsOnLinux(entry, busy)) {
+        toLinuxNow(entry, worktree, hybrid ? "Linux first: the PC can start it now" : macFirstWhy);
+      } else {
         toLinux(entry, busy);
-        if (hybrid && macOver) reasons[entry.id] = "Hybrid: this Mac is over its limits";
-        if (!hybrid && past) {
-          reasons[entry.id] = `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`;
-        }
+        if (hybrid) reasons[entry.id] = `Linux can't start it yet: ${busy.why}`;
+        else if (past) reasons[entry.id] = macFirstWhy;
       }
       continue;
     }
@@ -1391,7 +1388,17 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (up) {
       const busy = linuxBusy(entry, worktree);
       if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
-      else toLinuxNow(entry, worktree);
+      else {
+        toLinuxNow(
+          entry,
+          worktree,
+          entry.route === "linux"
+            ? "Moved to Linux"
+            : entry.where === "linux"
+              ? "Asked for Linux"
+              : "Runner set to Linux",
+        );
+      }
       continue;
     }
     if (health.online === null && entry.linuxFailedAt === undefined) {

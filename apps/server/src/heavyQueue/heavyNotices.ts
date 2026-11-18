@@ -84,7 +84,7 @@ export type HeavyEvent =
       readonly kind: "displaced";
       readonly cause: "unavailable" | "dropped" | "deadline";
     }
-  /** Hybrid placed it on Linux: planned, shown only for every machine change. */
+  /** Automatic placed it on Linux: planned, shown only for every machine change. */
   | { readonly kind: "hybrid" }
   /** Linux couldn't run it for a reason of T3's or the PC's own; the problem detector files it and tells. */
   | ({ readonly kind: "t3-fault" } & Fault);
@@ -895,7 +895,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         machine: "linux",
         one: `${name} went to Linux`,
         many: (n) => `${jobs(n)} went to Linux`,
-        description: "Each job goes to the machine with the shorter queue.",
+        description: "Automatic sends each job to Linux first.",
       });
   }
 };

@@ -1418,11 +1418,8 @@ describe("Runner in the queue file", () => {
       });
     }
     Queue.enqueue(dir, test("a"));
-    // Hybrid with room on the Mac keeps it here, however low the old overflow was.
-    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
-      status: "started",
-      workers: expect.any(Number),
-    });
+    // Automatic sends it to Linux first, however low the old overflow was.
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
     expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).runner.global.runnerOverflow).toBe(0);
   });
 
@@ -1493,7 +1490,22 @@ describe("Runner in the queue file", () => {
       name: "Linux-bound with room starts on Linux",
       line: "vp test run",
       over: { runnerWhere: "linux" as const },
-      expected: { runsOn: "linux", startsNow: true, linuxFull: false, reason: null },
+      expected: {
+        runsOn: "linux",
+        startsNow: true,
+        linuxFull: false,
+        reason: "Runner set to Linux",
+      },
+    },
+    {
+      name: "Automatic with room starts on Linux first",
+      line: "vp test run",
+      over: { runnerWhere: "automatic" as const },
+      expected: {
+        runsOn: "linux",
+        startsNow: true,
+        reason: "Linux first: the PC can start it now",
+      },
     },
     {
       name: "a leading cd decides the folder and its settings",

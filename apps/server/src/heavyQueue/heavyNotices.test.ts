@@ -861,7 +861,7 @@ describe("notices for machine changes", () => {
     expect(titles({ records: [record(startRecord(waiter, "automatic", "linux", NOW))] })).toEqual([
       {
         one: "pnpm test went to Linux",
-        description: "Each job goes to the machine with the shorter queue.",
+        description: "Automatic sends each job to Linux first.",
         category: "planned",
         machine: "linux",
       },

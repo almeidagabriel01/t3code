@@ -767,7 +767,7 @@ describe("ServerSettings project overrides across versions", () => {
     [
       "an older file reads the new defaults",
       {},
-      ["mac", "agent", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
+      ["automatic", "agent", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
     ],
     [
       "a stored Ask me stays Ask me",

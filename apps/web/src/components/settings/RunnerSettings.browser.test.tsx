@@ -102,7 +102,7 @@ const patches = () => mocks.update.mock.calls.map(([patch]) => patch);
 const ON = { runnerEnabled: true } as const;
 
 it("writes each Runner control to its own setting", async () => {
-  await using screen = await setup(ON);
+  await using screen = await setup({ ...ON, runnerWhere: "mac" });
   await userEvent.click(screen.getByRole("switch", { name: "Use the Runner" }));
   const where = screen.getByRole("group", { name: "Where heavy work runs" });
   await expect
@@ -214,7 +214,12 @@ it("shows only the fields the current choices use", async () => {
   expect(off.container.textContent).not.toContain("Where heavy work runs");
   expect(off.container.textContent).not.toContain("Linux host");
 
-  await using mac = await setup({ ...ON, runnerUnavailable: "mac", runnerDropped: "wait" });
+  await using mac = await setup({
+    ...ON,
+    runnerWhere: "mac",
+    runnerUnavailable: "mac",
+    runnerDropped: "wait",
+  });
   for (const hidden of ["Can run on Linux", "Wait for an answer", "If nobody answers"]) {
     expect(mac.container.textContent).not.toContain(hidden);
   }
@@ -288,7 +293,7 @@ it("resets to the built-in value, but leaves machine rows alone in a project", a
   await using env = await setup({ ...ON, runnerWhere: "linux", runnerLinuxSlots: 4 });
   await userEvent.click(env.getByRole("button", { name: "Reset Where heavy work runs" }));
   await userEvent.click(env.getByRole("button", { name: "Reset Jobs at once on Linux" }));
-  expect(patches()).toEqual([{ runnerWhere: "mac" }, { runnerLinuxSlots: 2 }]);
+  expect(patches()).toEqual([{ runnerWhere: "automatic" }, { runnerLinuxSlots: 2 }]);
 
   await using project = await setup(
     { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },

@@ -205,7 +205,7 @@ async function mount(
 
 describe("RunnerSection", () => {
   it("writes each environment setting from its control", async () => {
-    const view = await mount();
+    const view = await mount({ settings: { runnerWhere: "mac" } });
     await act(async () =>
       view.host.querySelector<HTMLInputElement>('input[aria-label="Use the Runner"]')!.click(),
     );
@@ -334,7 +334,11 @@ describe("RunnerSection", () => {
   });
 
   it("shows which project fields inherit and resets an overridden one", async () => {
-    const view = await mount({ projectSelected: true, overridden: ["runnerWhere"] });
+    const view = await mount({
+      projectSelected: true,
+      overridden: ["runnerWhere"],
+      settings: { runnerWhere: "mac" },
+    });
     expect(view.host.textContent).toContain(
       "Everything runs on this Mac. A job's menu can still send it to Linux. Set for this project.",
     );

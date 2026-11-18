@@ -479,7 +479,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
     expect(JSON.parse(queue.dataset.runner!)).toEqual({
       enabled: false,
-      where: "mac",
+      where: "automatic",
       everything: DEFAULT_SERVER_SETTINGS.runnerLinuxEverything,
     });
     act(() => queue.click());

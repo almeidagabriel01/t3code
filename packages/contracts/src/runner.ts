@@ -40,7 +40,7 @@ export const RUNNER_PATTERN_CHARS = 200;
 
 export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
-  runnerWhere: "mac" as RunnerWhere,
+  runnerWhere: "automatic" as RunnerWhere,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
