@@ -1512,6 +1512,13 @@
       "observed": "QA 2026-11-18",
       "expect": "mac-tool:fastlane",
       "why": "fastlane signs and ships with this Mac's keychain"
+    },
+    {
+      "line": "pnpm -w add zod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-state:pnpm add",
+      "why": "pnpm's -w is the workspace root and takes no value"
     }
   ]
 }

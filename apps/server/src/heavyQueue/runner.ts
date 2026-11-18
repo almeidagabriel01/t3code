@@ -356,8 +356,6 @@ const VALUE_FLAGS = new Set([
   "-F",
   "--filter",
   "--filter-prod",
-  "-w",
-  "--workspace",
   "-C",
   "--dir",
   "--prefix",
@@ -378,8 +376,11 @@ const VALUE_FLAGS = new Set([
  * (`yarn workspace web dev` → `dev`).
  */
 const subcommandWords = (program: string, after: ReadonlyArray<string>) => {
+  // npm's `-w <name>` is a workspace; pnpm's `-w` is the workspace root and takes no value.
+  const takesValue = (flag: string) =>
+    VALUE_FLAGS.has(flag) || (program === "npm" && (flag === "-w" || flag === "--workspace"));
   const words = after.filter(
-    (value, at) => !value.startsWith("-") && !VALUE_FLAGS.has(after[at - 1] ?? ""),
+    (value, at) => !value.startsWith("-") && !takesValue(after[at - 1] ?? ""),
   );
   return program === "yarn" && words[0] === "workspace" ? words.slice(2) : words;
 };
@@ -1577,6 +1578,7 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
   const phase = fields.phase;
   const int = (value: string | undefined) =>
     value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  // ponytail: the command can still print an `exit=`; a per-run nonce in the markers closes that.
   if (progress.commandStarted) {
     const exit = int(fields.exit);
     return exit === null ? progress : { ...progress, exit };
