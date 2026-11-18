@@ -1219,7 +1219,20 @@
       "line": "./gradlew assembleDebug",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "pinned:gradlew"
+      "expect": "mac-tool:gradlew",
+      "why": "every program on the Always-on-this-Mac defaults is a Mac-only tool, as xcodebuild is"
+    },
+    {
+      "line": "gradle :app:assembleDebug",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:gradle"
+    },
+    {
+      "line": "cd apps/mobile/android && ./gradlew app:installDebug",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:gradlew"
     },
     {
       "line": "vp run mobile:install ios",

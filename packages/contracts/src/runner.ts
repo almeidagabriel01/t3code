@@ -78,6 +78,8 @@ export const RUNNER_DEFAULTS = {
     "simctl",
     "emulator",
     "adb",
+    "gradle",
+    "gradlew",
     "instruments",
     "pod",
     "pbcopy",
