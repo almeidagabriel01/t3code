@@ -183,12 +183,13 @@ export interface LocalStoreShape {
   ) => Effect.Effect<MemoryWork | undefined, MemoryStorageError>;
   readonly cancelThreadWork: (
     thread: M.ScopedThreadRef,
+    failureCode: M.MemoryFailureCode,
   ) => Effect.Effect<number, MemoryStorageError>;
   readonly readThreadHookWatermark: () => Effect.Effect<number, MemoryStorageError>;
   readonly commitThreadHook: (input: {
     readonly expectedWatermark: number;
     readonly throughWatermark: number;
-    readonly work: ReadonlyArray<MemoryWork>;
+    readonly work: ReadonlyArray<MemoryWork & { readonly failureCode?: M.MemoryFailureCode }>;
   }) => Effect.Effect<void, MemoryStorageError | MemoryStoreConflict>;
   readonly enqueueWork: (work: MemoryWork) => Effect.Effect<void, MemoryStorageError>;
   /** Makes summary and consolidation retries due now, after the model they waited on changed. */
@@ -203,6 +204,7 @@ export interface LocalStoreShape {
     id: string,
     status: "completed" | "cancelled" | "failed",
     receipt?: M.MemoryHubReceipt,
+    failureCode?: M.MemoryFailureCode,
   ) => Effect.Effect<void, MemoryStorageError>;
   readonly readEligibleOutbox: (
     space: M.MemorySpaceId,
@@ -260,7 +262,11 @@ export interface LocalStoreShape {
       readonly ruleIds?: ReadonlyArray<string>;
     },
   ) => Effect.Effect<boolean, MemoryStorageError>;
-  readonly completeSummaryWork: (work: MemoryWork) => Effect.Effect<boolean, MemoryStorageError>;
+  /** `refused` records why a run that consumed its source wrote no summary text. */
+  readonly completeSummaryWork: (
+    work: MemoryWork,
+    refused?: M.MemoryFailureCode,
+  ) => Effect.Effect<boolean, MemoryStorageError>;
   readonly finishDeferred: (
     target: MemoryDeferredWork,
     outcome: {

@@ -1550,6 +1550,7 @@ describe("MemoryStore", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* Store.MemoryStore;
+        const sql = yield* SqlClient.SqlClient;
         yield* store.enqueueWork(summaryWork(1));
         yield* store.enqueueWork({ ...summaryWork(2), kind: "consolidate", nextAttemptAt: 10000 });
         yield* store.enqueueWork(summaryWork(3));
@@ -1557,9 +1558,13 @@ describe("MemoryStore", () => {
         yield* store.enqueueWork({ ...summaryWork(4), status: "completed" });
         yield* store.enqueueWork(summaryWork(5, M.EnvironmentId.make("other")));
         const thread = { environmentId: env, threadId: M.ThreadId.make(id(70)) };
-        assert.strictEqual(yield* store.cancelThreadWork(thread), 3);
-        assert.strictEqual(yield* store.cancelThreadWork(thread), 0);
+        assert.strictEqual(yield* store.cancelThreadWork(thread, "source_invalidated"), 3);
+        assert.strictEqual(yield* store.cancelThreadWork(thread, "source_unavailable"), 0);
         assert.strictEqual((yield* store.readWork(summaryWork(3).id))?.status, "cancelled");
+        assert.deepStrictEqual(
+          yield* sql`SELECT DISTINCT failure_code FROM memory_outbox WHERE status='cancelled'`,
+          [{ failure_code: "source_invalidated" }],
+        );
         assert.isNull((yield* store.readWork(summaryWork(3).id))?.claimedBy);
         assert.strictEqual((yield* store.readWork(summaryWork(4).id))?.status, "completed");
         assert.strictEqual((yield* store.readWork(summaryWork(5).id))?.status, "pending");

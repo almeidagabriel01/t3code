@@ -34,6 +34,8 @@ export type SummaryCommit = {
   readonly recheckSource: Effect.Effect<void, MemoryServiceError>;
   readonly promotions?: SummaryPromotionCommit | undefined;
   readonly rules?: SummaryRulesCommit | undefined;
+  /** Why no summary text is written though the run consumed its source; recorded on the work. */
+  readonly refused?: M.MemoryFailureCode | undefined;
 };
 
 const strict = { onExcessProperty: "error" } as const;
@@ -423,7 +425,7 @@ export const makeCommitSummary = (deps: {
             yield* promote(input, head.revision.revisionId, dependencies);
           }
           yield* commitRules(input);
-          if (!(yield* store.completeSummaryWork(work)))
+          if (!(yield* store.completeSummaryWork(work, input.refused)))
             return yield* new Store.MemoryStoreConflict({ code: "attempt_expired" });
           return undefined;
         }

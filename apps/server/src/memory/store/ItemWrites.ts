@@ -262,7 +262,7 @@ export const makeItemWrites = (
         "cancel-work",
         // Forget syncs carry delete knowledge; a later purge of the same memory
         // (an expansion or retry) must not cancel an earlier forget's delivery.
-        sql`UPDATE memory_outbox SET status='cancelled',payload_ref=NULL WHERE space=${space} AND memory_id=${current} AND status NOT IN ('completed','failed') AND NOT (kind='sync' AND json_extract(metadata_json,'$.kind')='forget')`,
+        sql`UPDATE memory_outbox SET status='cancelled',payload_ref=NULL,failure_code=CASE WHEN status='cancelled' THEN failure_code ELSE 'forgotten' END WHERE space=${space} AND memory_id=${current} AND status NOT IN ('completed','failed') AND NOT (kind='sync' AND json_extract(metadata_json,'$.kind')='forget')`,
       );
       yield* stored(
         "purge-ticket-submission",
