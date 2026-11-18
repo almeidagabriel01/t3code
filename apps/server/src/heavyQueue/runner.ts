@@ -1574,12 +1574,20 @@ const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
   [/Executable doesn't exist at \S*ms-playwright/, "playwright"],
   [/Could not find Chrom(?:e|ium) \(ver\./, "puppeteer"],
   [/Cypress (?:binary is missing|executable not found)/i, "cypress"],
-  [/^(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))(?=.*node_modules\/)/, null],
+  // Matched where the failure is named, so a quote around it shows.
+  [/(?:\bEEXIST\b|File exists \(os error 17\))(?=.*node_modules\/)/, null],
+  [/\S*node_modules\/\S*(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))/, null],
 ];
 
 /** The package an output line says is not installed yet there, else null. */
-export const installFailure = (line: string): string | null => {
-  const hit = INSTALL_FAILURES.find(([pattern]) => pattern.test(line));
+export const installFailure = (output: string): string | null => {
+  const line = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  // A test runner's row (`✓ name`), or text inside a double-quoted string, only quotes one.
+  if (/^\s*[✓↓×✗○❯→√]/.test(line)) return null;
+  const hit = INSTALL_FAILURES.find(([pattern]) => {
+    const at = line.search(pattern);
+    return at >= 0 && (line.slice(0, at).match(/(?<!\\)"/g)?.length ?? 0) % 2 === 0;
+  });
   if (hit === undefined) return null;
   return (
     hit[1] ??

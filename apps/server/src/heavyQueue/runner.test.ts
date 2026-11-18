@@ -2196,6 +2196,13 @@ describe("an install unfinished in a fresh Linux copy", () => {
     ["AssertionError: expected 1 to be 2", null],
     ["Error: EEXIST: file already exists, mkdir '/tmp/out'", null],
     ["FAIL src/node_modules.test.ts > writes the folder", null],
+    // Text that only quotes one: a test runner listing test names, a command echoed as data.
+    [
+      '     \u001b[2m\u001b[90m↓\u001b[39m\u001b[22m an install that really fails while installing is an install failure of ["echo \\"Error: EEXIST: file already exists, mkdir \'node_modules/sharp/vendor\'\\" >&2"]',
+      null,
+    ],
+    ["  ✓ Electron failed to install correctly reruns once", null],
+    ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);
   });
