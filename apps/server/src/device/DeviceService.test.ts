@@ -84,6 +84,9 @@ it.effect.each([400, 500])(
     }),
 );
 
+type AdbAnswer = { readonly code: number; readonly stdout: string; readonly stderr: string };
+const adbAnswer = (stdout: string, code = 0): AdbAnswer => ({ code, stdout, stderr: "" });
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
@@ -209,25 +212,36 @@ const fixture = Effect.fn("fixture")(function* (
       );
     }),
   );
-  const androidUser = yield* Ref.make({ code: 0, stdout: "RUNNING_UNLOCKED\n", stderr: "" });
-  const run = (command: string) =>
-    command === "emulator"
-      ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : command === "adb"
-        ? Ref.get(androidUser)
-        : Ref.get(encoderResult);
+  /** What the fake phone's `adb shell` answers, by command; started-user states by user id. */
+  const adb = {
+    users: { "0": adbAnswer("RUNNING_UNLOCKED\n") } as Record<string, AdbAnswer>,
+  };
+  const run = (command: string, args: ReadonlyArray<string> = []) => {
+    if (command === "emulator")
+      return Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" });
+    if (command !== "adb") return Ref.get(encoderResult);
+    const shell = args.slice(args.indexOf("shell") + 1);
+    if (shell[0] === "am" && shell[1] === "get-started-user-state")
+      return Effect.succeed(adb.users[shell[2] ?? ""] ?? adbAnswer("Unknown user\n"));
+    return Effect.succeed(adbAnswer(""));
+  };
+  const attaches: string[] = [];
+  const hubOperations = makeDeviceHubOperations({
+    hostId: LOCAL_DEVICE_HOST_ID,
+    origin: "http://device.test",
+    http,
+    run,
+    platformAvailable: (platform) => Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
+  });
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     devices: {
-      ...makeDeviceHubOperations({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        origin: "http://device.test",
-        http,
-        run,
-        platformAvailable: (platform) =>
-          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
-      }),
+      ...hubOperations,
+      attach: (device, context) => {
+        attaches.push(device.id);
+        return hubOperations.attach(device, context);
+      },
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -356,7 +370,8 @@ const fixture = Effect.fn("fixture")(function* (
     connection,
     devices,
     encoderResult,
-    androidUser,
+    adb,
+    attaches,
     discoveryErrors,
     androidAvailable,
     iosAvailable,
@@ -550,7 +565,7 @@ describe("device setup consent", () => {
     "refuses agents $case while its Android user is locked, and the user opens it to unlock",
     (row) =>
       Effect.gen(function* () {
-        const { service, devices, androidUser, requests } = yield* fixture();
+        const { service, devices, adb, attaches, requests } = yield* fixture();
         if (row.booted)
           devices.push({
             id: DeviceId.make(row.deviceId),
@@ -561,7 +576,7 @@ describe("device setup consent", () => {
             physical: row.physical,
           });
         yield* service.configure({ enabled: true });
-        yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_LOCKED\n", stderr: "" });
+        adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
         const agentThread = ThreadId.make("locked-android");
         const asAgent = { agent: { ask: () => Effect.succeed("allowed" as const) } };
         const refused = yield* service
@@ -582,6 +597,8 @@ describe("device setup consent", () => {
         expect(locked.sessions).toEqual([]);
         expect(locked.bootingDevices ?? []).toEqual([]);
         expect(locked.devices.every((device) => (device.issues ?? []).length === 0)).toBe(true);
+        // Refused before attaching, so nothing was set up for the agent.
+        expect(attaches).toEqual([]);
 
         const running = (refused as { deviceId: string }).deviceId;
         // A headless emulator's lock screen is reachable only through the user's own open.
@@ -592,7 +609,7 @@ describe("device setup consent", () => {
         });
         expect(user.deviceId).toBe(running);
 
-        yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_UNLOCKED\n", stderr: "" });
+        adb.users["0"] = adbAnswer("RUNNING_UNLOCKED\n");
         const session = yield* service.open(
           { threadId: agentThread, deviceId: running, platform: "android" },
           asAgent,
@@ -606,9 +623,9 @@ describe("device setup consent", () => {
 
   it.effect("powers off an emulator it booted locked once it sits idle", () =>
     Effect.gen(function* () {
-      const { service, androidUser, requests } = yield* fixture();
+      const { service, adb, requests } = yield* fixture();
       yield* service.configure({ enabled: true });
-      yield* Ref.set(androidUser, { code: 0, stdout: "RUNNING_LOCKED\n", stderr: "" });
+      adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
       yield* service
         .open(
           {
@@ -630,9 +647,9 @@ describe("device setup consent", () => {
     { case: "the state is unknown", result: { code: 0, stdout: "Unknown command\n", stderr: "" } },
   ])("opens an Android device when $case, since only a locked reading refuses", ({ result }) =>
     Effect.gen(function* () {
-      const { service, androidUser } = yield* fixture();
+      const { service, adb } = yield* fixture();
       yield* service.configure({ enabled: true });
-      yield* Ref.set(androidUser, result);
+      adb.users["0"] = result;
       const session = yield* service.open({
         threadId: ThreadId.make("unknown-lock"),
         deviceId: "Pixel_API_35",

@@ -1679,6 +1679,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           });
         }
       }
+      // Only agents are refused: a hub-booted emulator has no window, so the user's own
+      // open is the way to its lock screen. Routed hosts check on the side running it.
+      const refusesLocked = context?.agent && device.platform === "android" && !ready.upstream;
       if (!device.booted && input.boot !== false) {
         if (device.physical)
           return yield* new DeviceActionUnavailableError({
@@ -1716,13 +1719,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         }
         // The idle reaper owns what this boot started, even if the open fails from here on.
         yield* markUsed(host.id, device.id);
+        if (refusesLocked) yield* ensureAndroidUnlocked(ready, device);
       } else if (device.booted) {
+        if (refusesLocked) yield* ensureAndroidUnlocked(ready, device);
         yield* ready.devices.attach(device, hostContext);
       }
-      // Only agents are refused: a hub-booted emulator has no window, so the user's own
-      // open is the way to its lock screen. Routed hosts check on the side running it.
-      if (context?.agent && device.platform === "android" && !ready.upstream)
-        yield* ensureAndroidUnlocked(ready, device);
       if (hosts.get(host.id) !== host)
         return yield* new DeviceHostUnavailableError({
           hostId: host.id,
