@@ -603,6 +603,15 @@ describe("t3 heavy", () => {
       expect(scripted.stdout()).toBe(
         `before\nvp|test|run|x.test.ts| in ${real}\npnpm on mac: --version\nafter\n`,
       );
+      // A script whose last line is `git status` still goes to Linux; its git runs here.
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "gate.sh"),
+        "vp test run x.test.ts\ngit status --short gate.sh\n",
+      );
+      const gated = heavyHere(dir, ["/bin/sh", "-c", "sh gate.sh"], env, ["--"], dir);
+      expect(await gated.exited).toBe(0);
+      expect(gated.stdout()).toBe(`vp|test|run|x.test.ts| in ${real}\n?? gate.sh\n`);
+      expect(gated.stderr()).toContain("Linux: running");
     });
 
     it("ends with the line's own exit code, whatever its calls ended with", async () => {
@@ -983,12 +992,16 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe(`vp|test|run|--fast| in ${NodeFS.realpathSync(dir)}\n`);
     });
 
+    // Asked for Linux, it never moves: the agent hears why instead.
     it("judges the whole line, not the label cut short for the row", async () => {
       const { dir, env } = setup(echoArgs);
       const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
-      expect(await run.exited).toBe(0);
-      expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
+      expect(await run.exited).toBe(75);
+      expect(run.stdout()).toBe("");
+      expect(run.stderr()).toContain(
+        "[t3 heavy] Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts.\n",
+      );
     });
 
     /** Fails its first run with `first`, then runs as Linux would; `$0.count` counts the runs. */
@@ -1211,6 +1224,7 @@ describe("t3 heavy", () => {
       await run.exited;
     });
 
+    // Asked for Linux, it never runs here: the agent gets the cancel code and why.
     it("without remoto installed, Linux counts as unavailable", async () => {
       const { dir, env } = setup("exit 0", { runnerUnavailable: "mac" });
       const run = heavyHere(
@@ -1219,9 +1233,11 @@ describe("t3 heavy", () => {
         { ...env, T3CODE_REMOTO: undefined, HOME: dir, PATH: "/usr/bin:/bin" },
         ["--runner", "linux", "--"],
       );
-      expect(await run.exited).toBe(0);
-      expect(run.stderr()).toContain("remoto is not installed");
-      expect(run.stdout()).toBe("ran on mac\n");
+      expect(await run.exited).toBe(75);
+      expect(run.stdout()).toBe("");
+      expect(run.stderr()).toContain(
+        "[t3 heavy] Linux couldn't run this: remoto is not installed, and this job asked for Linux.\n",
+      );
     });
   });
 

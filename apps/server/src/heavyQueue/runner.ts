@@ -208,6 +208,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly evictions?: number;
   readonly evictedAt?: number;
   readonly syncBack?: SyncBack;
+  /** A Mac job's own call queued for Linux: when Linux can't take it, it runs under that job. */
+  readonly call?: boolean;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 
@@ -898,11 +900,18 @@ const dropHolds = (
     (config.runnerDropped === "ask" &&
       !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
 
-/** Where the entry's own settings send it before Linux health is considered. */
+/** The job itself asked for Linux (`--runner linux`, an agent's `remoto`): it never changes machine. */
+const askedLinux = (entry: HeavyQueueEntry) =>
+  entry.where === "linux" && (entry as QueuedEntry).call !== true;
+
+/**
+ * Where the entry's own settings send it before Linux health is considered. `cancel`: it asked for
+ * Linux but must run on this Mac.
+ */
 export const intentOf = (
   entry: HeavyQueueEntry,
   context: WorkContext,
-): { readonly intent: RunnerWhere; readonly reason: string } => {
+): { readonly intent: RunnerWhere; readonly reason: string; readonly cancel?: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
     // Only a commit whose hook runs is queued, so the queue can say why it waits.
@@ -910,7 +919,10 @@ export const intentOf = (
   }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
-    return mac(verdict.reason!);
+    const reason = verdict.reason!;
+    return askedLinux(entry)
+      ? { ...mac(reason), cancel: `Asked for Linux, but it needs this Mac: ${reason}` }
+      : mac(reason);
   }
   if (entry.route === "mac") return mac((entry as QueuedEntry).routeReason ?? "Moved to this Mac");
   if (entry.route === "linux") return { intent: "linux", reason: "" };
@@ -1060,17 +1072,25 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           ? "Linux dropped it mid-run"
           : "Linux is unavailable";
     const unconfirmed = entry.unconfirmed === true;
-    const runHere = (why: string) => {
-      if (!unconfirmed) return toMac(entry, why);
-      routes[entry.id] = "mac";
-      reasons[entry.id] = `${what}: running here once Linux confirms it stopped`;
-    };
+    const asked = askedLinux(entry);
+    const refused =
+      what === "Linux is unavailable"
+        ? "Linux is offline and this job asked for Linux"
+        : `${what}, and this job asked for Linux`;
     const cancel = (why: string) => {
       routes[entry.id] = "linux";
       cancels[entry.id] = unconfirmed ? `${why}, and hasn't confirmed it stopped there` : why;
     };
+    const runHere = (why: string) => {
+      if (asked) return cancel(refused);
+      if (!unconfirmed) return toMac(entry, why);
+      routes[entry.id] = "mac";
+      reasons[entry.id] = `${what}: running here once Linux confirms it stopped`;
+    };
     // Tell the agent: a job Linux dropped or couldn't run ends with that, never rerunning here.
-    if (policy === "agent") return cancel(`Linux couldn't run this: ${failure ?? what}`);
+    if (policy === "agent") {
+      return cancel(asked ? refused : `Linux couldn't run this: ${failure ?? what}`);
+    }
     if (policy === "mac") return runHere(`${what}: running here`);
     if (policy === "wait") return toLinux(entry, `${what}: waiting for it`);
     if (entry.ask === undefined) {
@@ -1103,7 +1123,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);
     const { config, worktree } = context;
-    const { intent, reason: why } = intentOf(entry, context);
+    const { intent, reason: why, cancel } = intentOf(entry, context);
+    if (cancel !== undefined) {
+      routes[entry.id] = "linux";
+      cancels[entry.id] = cancel;
+      continue;
+    }
     if (entry.unconfirmed === true) {
       // This Mac never shares the lost run's folder, whose record holds back only Linux: work bound
       // here runs now, so a Runner turned off, which confirms nothing, never strands it.

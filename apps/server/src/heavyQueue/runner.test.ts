@@ -995,6 +995,88 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     );
   });
 
+  // A job that asked for Linux itself (`--runner linux`, an agent's `remoto`) never changes
+  // machine; a Mac job's own nested call (`call`) still runs under that job's slot.
+  const OFFLINE_ASKED = "Linux is offline and this job asked for Linux";
+  it.each([
+    [
+      "--runner linux, mac",
+      "vp test run",
+      { where: "linux" },
+      { runnerUnavailable: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "--runner linux, dropped, agent",
+      "vp test run",
+      { where: "linux", dropped: true, linkFailures: 3 },
+      { runnerDropped: "agent", runnerUnavailable: "wait" },
+      "Linux dropped it mid-run, and this job asked for Linux",
+    ],
+    [
+      "--runner linux, dropped, mac",
+      "vp test run",
+      { where: "linux", dropped: true, linkFailures: 3 },
+      { runnerDropped: "mac", runnerUnavailable: "wait" },
+      "Linux dropped it mid-run, and this job asked for Linux",
+    ],
+    [
+      "remoto line, mac",
+      "remoto vp test run",
+      { where: "linux" },
+      { runnerUnavailable: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "--now, mac",
+      "vp test run",
+      { where: "linux", forced: true },
+      { runnerUnavailable: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "--runner linux, wait",
+      "vp test run",
+      { where: "linux" },
+      { runnerUnavailable: "wait" },
+      "linux-wait",
+    ],
+    ["--runner linux, ask", "vp test run", { where: "linux" }, { runnerUnavailable: "ask" }, "ask"],
+    [
+      "--runner linux, unanswered → Mac",
+      "vp test run",
+      { where: "linux", ask: asked(-1) },
+      { runnerUnavailable: "ask", runnerDeadlineAction: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "a Mac job's call, mac",
+      "vp test run",
+      { where: "linux", call: true },
+      { runnerUnavailable: "mac" },
+      "mac-start",
+    ],
+    ["no --runner, mac", "vp test run", {}, { runnerUnavailable: "mac" }, "mac-start"],
+    [
+      "--runner linux, needs this Mac",
+      "xcodebuild test",
+      { where: "linux" },
+      { runnerUnavailable: "mac" },
+      "Asked for Linux, but it needs this Mac: Always on this Mac: xcodebuild",
+    ],
+  ] as const)("asked for Linux: %s, Linux offline → %s", (_, label, fields, config, outcome) => {
+    const plan = offline(job("a", label, fields as never), config);
+    expect(plan.cancels.a ?? outcomeOf(plan, "a")).toBe(outcome);
+  });
+
+  it("asked for Linux and needing this Mac cancels even with Linux up", () => {
+    const plan = planRoutes(input([job("a", "xcodebuild test", { where: "linux" })]));
+    expect(plan.cancels.a).toBe(
+      "Asked for Linux, but it needs this Mac: Always on this Mac: xcodebuild",
+    );
+    expect(plan.admits).toEqual({});
+  });
+
   it.each([
     ["mac", "mac-start"],
     ["wait", "linux-wait"],
