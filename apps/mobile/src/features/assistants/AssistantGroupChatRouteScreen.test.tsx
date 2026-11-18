@@ -2855,7 +2855,7 @@ describe("requests", () => {
     expect(mocks.voiceStart).toHaveBeenCalledOnce();
     expect(byLabel("Mention a member")).not.toBeNull();
     const voice = mocks.voiceInput!;
-    expect(voice.ownerKey).toBe("assistant-group:hub:g1");
+    expect(voice.ownerKey).toBe("hub:assistant-group:g1");
     const changed = vi.fn();
     const unsubscribe = voice.subscribeToDraftChanges(changed);
     await type("typed");

@@ -2,7 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useCallback } from "react";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
-import { clearComposerDraftContent } from "../../state/use-composer-drafts";
+import { discardComposerDraft } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -40,24 +40,15 @@ export function usePendingTaskListActions(
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
     if (pendingTask.kind === "draft") {
-      Dialog.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Discard",
-          style: "destructive",
-          onPress: () => {
-            void withThreadDismissal(
-              pendingTask.key,
-              async () =>
-                clearComposerDraftContent(pendingTask.draftKey, {
-                  clearModelSelection: true,
-                  clearWorkspaceSelection: true,
-                }),
-              () => true,
-            );
-          },
-        },
-      ]);
+      void withThreadDismissal(
+        pendingTask.key,
+        async () =>
+          discardComposerDraft(pendingTask.draftKey, {
+            clearModelSelection: true,
+            clearWorkspaceSelection: true,
+          }),
+        () => true,
+      );
       return;
     }
     Dialog.alert(
