@@ -1,6 +1,7 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -504,7 +505,7 @@ export const layerWithOptions = (
       /** Projection work tied to this live process: a pending live request, and optionally its background roster. */
       const hasUnfinishedRecords = (
         entry: LiveSessionEntry,
-        include: { readonly backgroundRoster: boolean },
+        include: { readonly backgroundRoster: false | "any" | "awaited" },
       ) => {
         const providerSessionId = entry.runtime.providerSessionId;
         return Effect.forEach(entry.attachedThreadIds, (threadId) =>
@@ -520,11 +521,15 @@ export const layerWithOptions = (
                     request.responseCapability.type === "live" &&
                     request.responseCapability.providerSessionId === providerSessionId,
                 ) ||
-                (include.backgroundRoster &&
+                (include.backgroundRoster !== false &&
                   projection.providerThreads.some(
                     (providerThread) =>
                       providerThread.providerSessionId === providerSessionId &&
-                      (providerThread.pendingBackgroundTasks ?? []).length > 0,
+                      (include.backgroundRoster === "any"
+                        ? (providerThread.pendingBackgroundTasks ?? []).length > 0
+                        : backgroundWorkHoldsCompletion(
+                            providerThread.pendingBackgroundTasks ?? [],
+                          )),
                   )),
             ),
           ),
@@ -1381,7 +1386,12 @@ export const layerWithOptions = (
                     Effect.catchCause(() => Effect.succeed(true)),
                   );
             const pinnedForMs = (yield* Clock.currentTimeMillis) - pinnedSinceMs;
-            if (backgroundPending && pinnedForMs >= MAX_IDLE_PIN_MS) {
+            // The ceiling reclaims leaked work; work the agent waits on would end without waking it.
+            if (
+              backgroundPending &&
+              pinnedForMs >= MAX_IDLE_PIN_MS &&
+              !(yield* hasUnfinishedRecords(entry, { backgroundRoster: "awaited" }))
+            ) {
               yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
                 providerSessionId: input.providerSessionId,
                 pinnedForMs,
@@ -2006,7 +2016,7 @@ export const layerWithOptions = (
           reason: "idle_timeout",
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords(entry, { backgroundRoster: true }),
+          keepIf: hasUnfinishedRecords(entry, { backgroundRoster: "any" }),
           holdsOpenLock: true,
         }).pipe(logReleaseFailure(providerSessionId));
       });

@@ -3258,6 +3258,23 @@ const openIdleClaudeSession = (fixtureName: string) =>
           ),
         });
       });
+    const writeAwaitedTask = Effect.gen(function* () {
+      yield* eventSink.write({
+        events: [
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            driver: CLAUDE_DRIVER,
+            occurredAt: now,
+            payload: {
+              ...providerThread,
+              pendingBackgroundTasks: [{ taskId: "tests", kind: "command", awaited: true }],
+            },
+          },
+        ],
+      });
+    });
     return {
       threadId,
       providerSessionId,
@@ -3265,6 +3282,7 @@ const openIdleClaudeSession = (fixtureName: string) =>
       runtime,
       startBusyTurn,
       writeRequest,
+      writeAwaitedTask,
     };
   });
 
@@ -3307,6 +3325,7 @@ it.effect("ProviderSessionManagerV2 idle-releases Claude after the live idle-tim
 it.effect.each([
   { name: "a busy turn", arrange: "turn" },
   { name: "a pending request", arrange: "request" },
+  { name: "background work its agent awaits", arrange: "awaited" },
 ] as const)(
   "ProviderSessionManagerV2 keeps an idle Claude session past 4 hours with $name",
   ({ arrange }) =>
@@ -3317,6 +3336,7 @@ it.effect.each([
         const session = yield* openIdleClaudeSession(`provider-session-manager-keep-${arrange}`);
         if (arrange === "turn") yield* session.startBusyTurn;
         if (arrange === "request") yield* session.writeRequest("pending");
+        if (arrange === "awaited") yield* session.writeAwaitedTask;
 
         yield* TestClock.adjust("5 hours");
 
@@ -3330,6 +3350,7 @@ it.effect.each([
           layerTest({
             state,
             driver: CLAUDE_DRIVER,
+            hasPendingBackgroundWork: Effect.succeed(arrange === "awaited"),
             serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
           }),
         ),
