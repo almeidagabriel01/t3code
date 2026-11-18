@@ -1380,6 +1380,13 @@ const make = Effect.gen(function* () {
     yield* settleThreads(yield* requestThreads(requestId));
   });
 
+  const startedByUser = (threadId: string, messageId: MessageId) =>
+    engine.getThreadRecords(threadId as ThreadId, ["messages"], { messageIds: [messageId] }).pipe(
+      Effect.map(({ messages }) => messages.some((message) => message.createdBy === "user")),
+      // An unreadable author is treated as the user's, which leaves the thread as it is.
+      Effect.orElseSucceed(() => true),
+    );
+
   const settleThreads = Effect.fn("AssistantGroups.settleThreads")(function* (
     rows: ReadonlyArray<ThreadRow>,
   ) {
@@ -2895,6 +2902,11 @@ const make = Effect.gen(function* () {
             const owner = yield* threadRowOf(event.payload.threadId);
             if (owner?.request_id == null) return;
             yield* applyPendingModel(owner.thread_id);
+            // Work the member waited on wakes it after its request closed; settling was refused
+            // until then. The user's own turn in a closed request stays active.
+            if (!(yield* startedByUser(owner.thread_id, event.payload.userMessageId))) {
+              yield* closeRequestIfDone(owner.request_id);
+            }
             yield* pump(owner.team_id);
           }),
         );

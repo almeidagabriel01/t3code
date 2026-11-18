@@ -86,6 +86,8 @@ interface FakeThread {
   deletedAt: string | null;
   settledOverride: "settled" | null;
   modelSelection: ModelSelection;
+  /** Background work its agent waits on, which the Orchestrator refuses to settle over. */
+  awaitedWork?: boolean;
 }
 interface FakeRun {
   id: string;
@@ -171,6 +173,8 @@ const harness = (options: Options = {}) => {
   /** What the projection answers for a runtime request, by id. */
   const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
+  /** Who wrote a run's message, by id; unlisted ones are the user's. */
+  const authors = new Map<string, string>();
   /** The last chat counters (`scopes_json`) refreshTeamChat published, by team. */
   const published = new Map<string, string | null>();
   const routeCalls: unknown[] = [];
@@ -225,9 +229,15 @@ const harness = (options: Options = {}) => {
           runs: (runs.get(threadId) ?? []).filter(
             (run) => statuses === undefined || statuses.includes(run.status),
           ),
-          messages: (runIds ?? []).flatMap((runId) =>
-            answers.has(runId) ? [{ role: "assistant", text: answers.get(runId) }] : [],
-          ),
+          messages: [
+            ...(runIds ?? []).flatMap((runId) =>
+              answers.has(runId) ? [{ role: "assistant", text: answers.get(runId) }] : [],
+            ),
+            ...((filter?.messageIds as ReadonlyArray<string> | undefined) ?? []).map((id) => ({
+              id,
+              createdBy: authors.get(id) ?? "user",
+            })),
+          ],
         });
       }) as never,
       dispatch: ((command: {
@@ -289,7 +299,9 @@ const harness = (options: Options = {}) => {
         const live = (runs.get(input.threadId) ?? []).some((run) =>
           ["queued", "running"].includes(run.status),
         );
-        if (thread === undefined || live) return Effect.fail(new Boom());
+        if (thread === undefined || live || thread.awaitedWork === true) {
+          return Effect.fail(new Boom());
+        }
         thread.settledOverride = "settled";
         dispatched.push({ type: "thread.settle", ...input });
         return Effect.succeed({ sequence: 1 });
@@ -557,6 +569,7 @@ const harness = (options: Options = {}) => {
     runs,
     limits,
     answers,
+    authors,
     runtimeRequests,
     live,
     deletedTeams,
@@ -5855,6 +5868,26 @@ it.effect(
       );
       assert.deepEqual(commands("thread.unsettle"), [ada, beto, ada, beto]);
       assert.equal(h.sent.at(-1)!.threadId, ada);
+
+      // Ada ends her turn waiting on background work, so her conversation refuses to settle.
+      h.fakeThreads.get(ada)!.awaitedWork = true;
+      yield* h.finish(3, "completed", "Running the tests in the background");
+      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto, beto]);
+      h.fakeThreads.get(ada)!.awaitedWork = false;
+      const ended = (id: string, createdBy: string) => {
+        h.authors.set(id, createdBy);
+        h.runs.get(ada)!.push({ id: `run:${id}`, userMessageId: id, status: "completed" });
+        return groups.handleRunEvent({
+          type: "run.updated",
+          payload: { id: `run:${id}`, threadId: ada, userMessageId: id, status: "completed" },
+        } as never as OrchestrationV2DomainEvent);
+      };
+      // The user's own turn in a closed request leaves the conversation active.
+      yield* ended("manual", "user");
+      assert.lengthOf(commands("thread.settle"), 5);
+      // The work wakes Ada; the turn that wake starts settles what was refused.
+      yield* ended("wake", "agent");
+      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto, beto, ada]);
     }).pipe(Effect.provide(h.layer));
   },
 );
