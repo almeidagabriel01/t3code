@@ -95,6 +95,16 @@ export function backgroundWorkHoldsCompletion(
   );
 }
 
+/**
+ * Work the agent said it waits on. Only that keeps a process alive past settling, a move or the
+ * idle ceiling: a subagent or task nobody waits on must not pin it forever.
+ */
+export function hasAwaitedBackgroundWork(
+  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "awaited">>,
+): boolean {
+  return tasks.some((task) => task.awaited === true);
+}
+
 // Commands and monitors are as often a dev server or its watchdog as a wait, so they hold
 // only when the agent marks them awaited.
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {

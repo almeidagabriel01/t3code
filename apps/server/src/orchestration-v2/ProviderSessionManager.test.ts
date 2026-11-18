@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -3258,23 +3259,22 @@ const openIdleClaudeSession = (fixtureName: string) =>
           ),
         });
       });
-    const writeAwaitedTask = Effect.gen(function* () {
-      yield* eventSink.write({
-        events: [
-          {
-            id: yield* idAllocator.allocate.event({ threadId }),
-            type: "provider-thread.updated",
-            threadId,
-            driver: CLAUDE_DRIVER,
-            occurredAt: now,
-            payload: {
-              ...providerThread,
-              pendingBackgroundTasks: [{ taskId: "tests", kind: "command", awaited: true }],
+    const writeRosterTask = (task: OrchestrationV2PendingBackgroundTask) =>
+      Effect.gen(function* () {
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CLAUDE_DRIVER,
+              occurredAt: now,
+              payload: { ...providerThread, pendingBackgroundTasks: [task] },
             },
-          },
-        ],
+          ],
+        });
       });
-    });
+    const writeAwaitedTask = writeRosterTask({ taskId: "tests", kind: "command", awaited: true });
     return {
       threadId,
       providerSessionId,
@@ -3283,6 +3283,7 @@ const openIdleClaudeSession = (fixtureName: string) =>
       startBusyTurn,
       writeRequest,
       writeAwaitedTask,
+      writeRosterTask,
     };
   });
 
@@ -3362,9 +3363,15 @@ it.effect.each([
   { name: "silent background work", probe: Effect.succeed(true), activity: false },
   { name: "a failing background probe", probe: Effect.die("probe failed"), activity: false },
   { name: "background work with recent activity", probe: Effect.succeed(true), activity: true },
+  {
+    name: "a background task nobody awaits",
+    probe: Effect.succeed(true),
+    activity: false,
+    unawaitedTask: true,
+  },
 ] as const)(
   "ProviderSessionManagerV2 caps the idle pin of $name at 4 hours since its last activity",
-  ({ probe, activity }) =>
+  ({ probe, activity, ...rest }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const warnings: unknown[] = [];
@@ -3374,6 +3381,9 @@ it.effect.each([
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const session = yield* openIdleClaudeSession("provider-session-manager-pin-expired");
+        if ("unawaitedTask" in rest) {
+          yield* session.writeRosterTask({ taskId: "agent", kind: "background_task" });
+        }
 
         yield* TestClock.adjust("3 hours");
         assert.isTrue(yield* manager.isLive(session.providerSessionId));

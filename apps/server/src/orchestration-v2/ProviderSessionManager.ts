@@ -1,7 +1,7 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { hasAwaitedBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -527,9 +527,7 @@ export const layerWithOptions = (
                       providerThread.providerSessionId === providerSessionId &&
                       (include.backgroundRoster === "any"
                         ? (providerThread.pendingBackgroundTasks ?? []).length > 0
-                        : backgroundWorkHoldsCompletion(
-                            providerThread.pendingBackgroundTasks ?? [],
-                          )),
+                        : hasAwaitedBackgroundWork(providerThread.pendingBackgroundTasks ?? [])),
                   )),
             ),
           ),

@@ -4873,18 +4873,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   // A group request that finishes settles its members' threads right after their last turn.
   it.effect.each([
-    ["thread.settle", true, false],
-    ["thread.settle", false, true],
-    ["thread.metadata.update", true, false],
-    ["thread.model-selection.set", true, false],
-    ["thread.archive", true, true],
+    ["thread.settle", "command", true, false],
+    ["thread.settle", "command", false, true],
+    // Only the agent's explicit wait holds the process; a forgotten subagent must not pin it.
+    ["thread.settle", "subagent", false, true],
+    ["thread.metadata.update", "command", true, false],
+    ["thread.model-selection.set", "command", true, false],
+    ["thread.archive", "command", true, true],
   ] as const)(
-    "%s with an awaited command: %s keeps the session: %s",
-    ([commandType, awaited, detaches]) =>
+    "%s with a %s, awaited: %s, keeps the session: %s",
+    ([commandType, kind, awaited, detaches]) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make(`runtime-layer-awaited-${commandType}-${awaited}`);
+        const threadId = ThreadId.make(`runtime-layer-awaited-${commandType}-${kind}-${awaited}`);
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
@@ -4945,7 +4947,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 ...providerThread,
                 providerSessionId,
                 pendingBackgroundTasks: [
-                  { taskId: "be0fc333p", kind: "command", ...(awaited ? { awaited } : {}) },
+                  { taskId: "be0fc333p", kind, ...(awaited ? { awaited } : {}) },
                 ],
                 updatedAt: now,
               },

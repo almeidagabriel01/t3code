@@ -87,6 +87,7 @@ import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  hasAwaitedBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
@@ -4791,7 +4792,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (yield* loadProjectionForCommand(command, ["providerThreads"])).providerThreads.some(
           (providerThread) =>
             liveSessions.some((session) => session.id === providerThread.providerSessionId) &&
-            backgroundWorkHoldsCompletion(providerThread.pendingBackgroundTasks ?? []),
+            hasAwaitedBackgroundWork(providerThread.pendingBackgroundTasks ?? []),
         )
       ) {
         return yield* new OrchestratorThreadAwaitingBackgroundWorkError({
