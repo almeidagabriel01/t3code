@@ -635,6 +635,71 @@ it.effect("mark unread retires an expired snooze so a dismissed wake stays dismi
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([
+  { name: "settle", via: "settle", newerVisit: false },
+  { name: "settle-after-run", via: "settle-after-run", newerVisit: false },
+  { name: "auto-settle", via: "auto-settle", newerVisit: false },
+  { name: "settle-keeps-newer-visit", via: "settle", newerVisit: true },
+] as const)(
+  "$name records the visit so the settled thread reads as read",
+  ({ name, via, newerVisit }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const { threadId, completedAt } = yield* completeAndSnoozeThread(name, 60);
+      assert.isBelow(
+        DateTime.toEpochMillis((yield* projections.getThread(threadId)).lastVisitedAt!),
+        DateTime.toEpochMillis(completedAt),
+      );
+      const newerVisitAt = DateTime.add(yield* DateTime.now, { hours: 2 });
+      if (newerVisit) {
+        yield* orchestrator.dispatch({
+          type: "thread.visit",
+          commandId: CommandId.make(`visit-${name}`),
+          threadId,
+          visitedAt: DateTime.formatIso(newerVisitAt),
+        });
+      }
+      yield* TestClock.adjust("1 second");
+      const settledAt = yield* DateTime.now;
+      const commandId = CommandId.make(`settle-${name}`);
+      yield* orchestrator.dispatch(
+        via === "auto-settle"
+          ? { type: "thread.auto-settle", commandId, threadId, snapshotAt: settledAt }
+          : {
+              type: "thread.settle",
+              commandId,
+              threadId,
+              ...(via === "settle-after-run"
+                ? {
+                    expectedLatestRunId: (yield* projections.getThreadProjection(threadId)).runs[0]!
+                      .id,
+                  }
+                : {}),
+            },
+      );
+      const settled = yield* projections.getThreadShell(threadId);
+      assert.equal(settled?.settledOverride, "settled");
+      assert.deepEqual(settled?.lastVisitedAt, newerVisit ? newerVisitAt : settledAt);
+      assert.isAtLeast(
+        DateTime.toEpochMillis(settled!.lastVisitedAt!),
+        DateTime.toEpochMillis(settled!.latestRunCompletedAt!),
+      );
+
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make(`unsettle-${name}`),
+        threadId,
+        reason: "user",
+      });
+      assert.deepEqual(
+        (yield* projections.getThreadShell(threadId))?.lastVisitedAt,
+        settled?.lastVisitedAt,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("mark unread leaves a future snooze untouched", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1870,6 +1935,7 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
         snoozedUntil: null,
         snoozedAt: null,
         updatedAt: yield* DateTime.now,
+        lastVisitedAt: yield* DateTime.now,
       } as const;
       const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);
       assert.lengthOf(committed, 1);
