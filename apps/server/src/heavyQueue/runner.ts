@@ -780,15 +780,15 @@ export const unresponsiveFailure = (timedOut: boolean, stderr: string) =>
 const GIB = 1024 ** 3;
 
 /** PSI ceilings over the last 10 s. Memory and disk stalls are thrashing whatever the CPU says. */
-export const LINUX_MEMORY_STALL_LIMIT = 10;
-export const LINUX_IO_STALL_LIMIT = 30;
+const LINUX_MEMORY_STALL_LIMIT = 10;
+const LINUX_IO_STALL_LIMIT = 30;
 /**
  * `cpu some` passes 50% on any multi-threaded test run, so only near-constant waiting is a ceiling;
  * the CPU limit setting stays on CPU in use.
  */
-export const LINUX_CPU_STALL_LIMIT = 90;
+const LINUX_CPU_STALL_LIMIT = 90;
 /** Less swap free than this share is the last step before the OOM killer. */
-export const LINUX_SWAP_FREE_SHARE = 0.1;
+const LINUX_SWAP_FREE_SHARE = 0.1;
 
 const gbOf = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 
