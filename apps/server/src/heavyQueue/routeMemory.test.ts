@@ -164,7 +164,7 @@ describe("route memory", () => {
       expect(moved[0]).toMatch(/^routes\.json\.corrupt-\d/);
       expect(NodeFS.readFileSync(NodePath.join(dir, moved[0]!), "utf8")).toBe(text);
       expect(warnings).toEqual([expect.stringContaining(moved[0]!)]);
-      recordRouteFault(dir, routeKey("vp", ".", "missing-program"), MISSING, NOW, 7, 2);
+      recordRouteFault(dir, routeKey(["vp"], ".", "missing-program"), MISSING, NOW, 7, 2);
       expect(listRoutes(dir, NOW, 7).map(([key]) => key)).toEqual(["vp@.#missing-program"]);
       expect(NodeFS.readFileSync(NodePath.join(dir, moved[0]!), "utf8")).toBe(text);
     },
