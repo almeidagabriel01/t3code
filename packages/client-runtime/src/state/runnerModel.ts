@@ -86,7 +86,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerMacTools: {
     title: "Mac-only tools",
     description:
-      "Programs only this Mac has. A heavy command that runs one stays here, even when sent to Linux by hand.",
+      "Programs only this Mac has. A heavy command that runs one stays here; one asked to run on Linux ends with why instead.",
   },
   runnerRouteMemoryDays: {
     title: "Remember Linux failures for",
