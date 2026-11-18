@@ -668,7 +668,9 @@ describe("t3 heavy", () => {
       const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run\n");
-      expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+      expect(run.stderr()).toContain(
+        "Linux couldn't run this: Not installed on Linux: vp; running this call on this Mac",
+      );
       expect(faults(dir)).toEqual([
         { reason: "command-not-found", cause: "command-not-found:vp", command: "vp test run" },
       ]);
@@ -684,37 +686,108 @@ describe("t3 heavy", () => {
         const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
         expect(await run.exited).toBe(code);
         expect(run.stdout()).not.toContain("vp on mac");
+        expect(NodeFS.existsSync(NodePath.join(dir, "routes.json"))).toBe(false);
       },
     );
 
-    // A tool or file Linux lacks (126, 127) is its environment's: "If a Linux run fails" decides,
-    // and Tell the agent hands back Linux's code and error without rerunning anywhere.
+    // A tool or file Linux lacks (126, 127) is its environment's, whatever "If a Linux run fails"
+    // says: that call alone runs again here, and the line goes on.
     it.each([
-      [127, "agent", 127, ""],
-      [126, "agent", 126, ""],
-      // The whole line runs again here; under Tell the agent nothing after the failure runs.
-      [127, "mac", 0, "vp on mac: test run\nafter\n"],
-    ] as const)("exit %i, %s: ends %i", async (code, policy, exit, stdout) => {
+      [127, "agent"],
+      [126, "agent"],
+      [127, "mac"],
+    ] as const)("exit %i (%s) reruns that call here once", async (code, policy) => {
       const error = "sh: 1: tsgo: not found";
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=${code}\\n' >&2; exit ${code}`,
         { runnerDropped: policy },
       );
-      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
-      expect(await run.exited).toBe(exit);
-      expect(run.stdout()).toBe(stdout);
+      const marker = NodePath.join(dir, "marker");
+      const line = `echo x >> ${marker}; vp test run; echo after`;
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run\nafter\n");
+      expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
       expect(run.stderr()).toContain(`${error}\n`);
-      expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}\n`);
+      expect(run.stderr()).toContain(
+        `[t3 heavy] Linux couldn't run this: ${error}; running this call on this Mac.\n`,
+      );
       expect(Queue.read(dir)).toEqual([]);
     });
 
-    // A lazy install that raced in a fresh copy is Linux's failure: once more there, never the Mac.
+    // Two environment faults of one program in one package teach the route: the next call skips
+    // Linux. Forgetting it, or its expiry, sends calls to Linux again.
+    it("learns a call Linux failed twice, then forgets it", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=running pgid=4\\n' >&2; echo 'sh: 1: vp: not found' >&2`,
+          `printf '${M} exit=127\\n' >&2; exit 127`,
+        ].join("\n"),
+      );
+      const linuxRuns = () =>
+        Number(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim());
+      const call = async () => {
+        const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(0);
+        expect(run.stdout()).toBe("vp on mac: test run\n");
+        return run.stderr();
+      };
+      await call();
+      expect(linuxRuns()).toBe(1);
+      expect(await call()).toContain("Learned: vp@.#missing-program");
+      expect(linuxRuns()).toBe(2);
+      expect(await call()).toMatch(
+        /Linux failed this before: sh: 1: vp: not found \(\d{4}-\d{2}-\d{2}\); running this call on this Mac/,
+      );
+      expect(linuxRuns()).toBe(2);
+      // One card per failure Linux had; the learned call never reached it.
+      expect(faults(dir).map((fault) => fault.cause)).toEqual([
+        "command-not-found:vp",
+        "command-not-found:vp",
+      ]);
+      const listed = NodeChildProcess.execFileSync(
+        process.execPath,
+        [BIN, "heavy", "routes", "--queue-dir", dir],
+        { cwd: dir, encoding: "utf8" },
+      );
+      expect(listed).toContain("vp@.#missing-program");
+      NodeChildProcess.execFileSync(
+        process.execPath,
+        [BIN, "heavy", "routes", "--queue-dir", dir, "--forget", "vp@.#missing-program"],
+        { cwd: dir },
+      );
+      await call();
+      expect(linuxRuns()).toBe(3);
+    });
+
+    // Linux already read the input it was handed, so a rerun here would get none.
+    it("does not rerun a call whose input went to Linux", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=running pgid=4\\n' >&2; echo 'sh: 1: vp: not found' >&2`,
+          `printf '${M} exit=127\\n' >&2; exit 127`,
+        ].join("\n"),
+      );
+      NodeFS.writeFileSync(NodePath.join(dir, "in.txt"), "input\n");
+      const line = 'vp test run < in.txt; echo "code $?"';
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("code 127\n");
+      expect(run.stderr()).toContain("its input went to Linux, so it does not run again here");
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
+      expect(faults(dir).map((fault) => fault.cause)).toEqual(["command-not-found:vp"]);
+    });
+
+    // A lazy install that raced in a fresh copy is Linux's failure: once more there, then the call
+    // runs here whatever "If a Linux run fails" says.
     it.each([
       ["output", 1, "mac", 0, 2, "linux-ok\n"],
       ["output", 2, "mac", 0, 2, "vp on mac: test run\n"],
       ["marker", 1, "mac", 0, 2, "linux-ok\n"],
       ["marker", 2, "mac", 0, 2, "vp on mac: test run\n"],
-      ["output", 2, "agent", 1, 2, ""],
+      ["output", 2, "agent", 0, 2, "vp on mac: test run\n"],
     ] as const)(
       "an install failure seen in the %s %i time(s), %s, ends %i after %i Linux runs",
       async (seen, fails, policy, code, runs, output) => {

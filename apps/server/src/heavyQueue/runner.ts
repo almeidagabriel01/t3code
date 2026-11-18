@@ -170,9 +170,11 @@ const COMMITS = "Commits run here: the pre-commit edits this Mac's repository";
 export const macReasonText = ({ code, subject }: MacReason) =>
   code === "mac-env"
     ? `Uses a file outside the project: ${subject}`
-    : subject === "git commit"
-      ? COMMITS
-      : `Always on this Mac: ${subject}`;
+    : code === "learned"
+      ? `Linux failed this before: ${subject}`
+      : subject === "git commit"
+        ? COMMITS
+        : `Always on this Mac: ${subject}`;
 
 const macOnly = (mac: MacReason): Verdict => ({
   eligibility: "mac-only",

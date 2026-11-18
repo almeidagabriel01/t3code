@@ -30,6 +30,7 @@ import { commitRoute } from "./commitHooks.ts";
 import {
   appendTail,
   environmentFaultOf,
+  type EnvironmentFault,
   errorLineOf,
   faultOf,
   type FaultSeen,
@@ -81,7 +82,15 @@ import {
   startLinuxRun,
   stopRemote,
 } from "./runnerExec.ts";
-import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
+import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
+import {
+  forgetRoutes,
+  learnedRoute,
+  listRoutes,
+  packageFolder,
+  recordRouteFault,
+  routeKey,
+} from "./routeMemory.ts";
 import { ensureShims, realProgram, withoutShims } from "./shims.ts";
 
 /**
@@ -642,6 +651,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
     return;
   }
+  if (argv[0] === "routes") {
+    runRoutes(argv.slice(1));
+    return;
+  }
   if (argv[0] === "linux-part" || argv[0] === "call") {
     const part = parseHeavyArgs(argv.slice(1));
     runCall(part.dir, part.program, part.args, argv[0] === "call");
@@ -1021,12 +1034,9 @@ const lineEnv = (dir: string, id: string) =>
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
 
-/** Linux never ran a part or dropped it, couldn't run it, or it turned out to need this Mac. */
+/** Linux never ran a part or dropped it, or the part can't run anywhere as it is. */
 type PartOutcome =
   | RemoteOutcome
-  | { readonly kind: "mac"; readonly reason: string }
-  /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
-  | { readonly kind: "environment"; readonly reason: string; readonly code?: number }
   /** The worktree's own files broke the install there; `reason` is the fix. */
   | { readonly kind: "worktree"; readonly reason: string }
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
@@ -1191,11 +1201,6 @@ const runLinuxAttempt = async (
   if (outcome === null || outcome.kind === "finished") {
     return { kind: "exit", code: exitCodeOf(exit.code, exit.signal) };
   }
-  if (outcome.kind === "mac") {
-    process.stderr.write(`[t3 heavy] ${outcome.reason}; running the line on this Mac.\n`);
-    requeue(dir, id, { route: "mac", routeReason: outcome.reason });
-    return { kind: "requeued" };
-  }
   if (outcome.kind === "command") {
     commandFailure = outcome.reason;
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
@@ -1205,15 +1210,6 @@ const runLinuxAttempt = async (
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
     setProgress(dir, id, { worktree: outcome.reason });
     return { kind: "exit", code: 1 };
-  }
-  if (outcome.kind === "environment") {
-    // It ended there with its exit code, so nothing is left to confirm.
-    process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
-    if (configFor(readDoc(dir), process.cwd()).runnerDropped === "agent") {
-      return { kind: "exit", code: outcome.code ?? LINUX_UNAVAILABLE_EXIT };
-    }
-    requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
-    return { kind: "requeued" };
   }
   if (outcome.kind === "unavailable") {
     process.stderr.write("[t3 heavy] Linux is unavailable; it never started there.\n");
@@ -1239,6 +1235,49 @@ const runLinuxAttempt = async (
     ...(clean ? {} : { unconfirmed: true }),
   });
   return { kind: "requeued" };
+};
+
+/** The route memory's reason to keep this program's calls in this package here, if learned. */
+const learnedOf = (
+  dir: string,
+  program: string,
+  cwd: string,
+  root: string,
+  days: number,
+): MacReason | null => {
+  const found = learnedRoute(dir, program, packageFolder(cwd, root), Date.now(), days);
+  return found === null
+    ? null
+    : {
+        code: "learned",
+        subject: `${found.route.line} (${new Date(found.route.at).toISOString().slice(0, 10)})`,
+      };
+};
+
+/** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
+const runRoutes = (args: ReadonlyArray<string>) => {
+  const valueOf = (flag: string) => {
+    const at = args.indexOf(flag);
+    return at === -1 ? undefined : (args[at + 1] ?? "");
+  };
+  const dir = valueOf("--queue-dir") || defaultQueueDir();
+  const forget = valueOf("--forget");
+  if (forget === "") {
+    process.stderr.write("Usage: t3 heavy routes [--forget <key|all>]\n");
+    process.exit(2);
+  }
+  if (forget !== undefined) {
+    process.stdout.write(`Forgot ${forgetRoutes(dir, forget)} route(s).\n`);
+    return;
+  }
+  const days = configFor(readDoc(dir), process.cwd()).runnerRouteMemoryDays;
+  const routes = listRoutes(dir, Date.now(), days);
+  if (routes.length === 0) process.stdout.write("No routes learned.\n");
+  for (const [key, route] of routes) {
+    const until = new Date(route.at + days * 86_400_000).toISOString().slice(0, 10);
+    const state = route.faults >= 2 ? `on this Mac until ${until}` : "1 fault, not learned yet";
+    process.stdout.write(`${key}\t${state}\t${route.line}\n`);
+  }
 };
 
 /** Runs a call here as the program it names, past the shims; `strip` keeps its own calls here. */
@@ -1306,14 +1345,16 @@ const runCall = (
   const cwd = process.cwd();
   const doc = readDoc(dir);
   const config = configFor(doc, cwd);
+  const root = gitRootOf(cwd);
   const mac =
-    gitRootOf(cwd) === null ||
+    root === null ||
     macReasonOf(
       [given, ...args],
       cwd,
       { config, home: NodeOS.homedir(), rootOf: gitRootOf },
       scriptReader(cwd),
-    ) !== null;
+    ) !== null ||
+    learnedOf(dir, given, cwd, root, config.runnerRouteMemoryDays) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1368,8 +1409,10 @@ const runLinuxPart = async (
     { config: configFor(doc, cwd), home, rootOf: gitRootOf },
     scriptReader(cwd),
   );
-  if (mac !== null) {
-    return queueCall(dir, "mac", [given, ...givenArgs], { reason: macReasonText(mac) });
+  const days = configFor(doc, cwd).runnerRouteMemoryDays;
+  const here = mac ?? learnedOf(dir, program, cwd, root, days);
+  if (here !== null) {
+    return queueCall(dir, "mac", [given, ...givenArgs], { reason: macReasonText(here) });
   }
   const env = [
     ...lineEnv(dir, id),
@@ -1405,6 +1448,27 @@ const runLinuxPart = async (
     if (found !== null) recordFault(dir, id, found);
   };
   const input = forwardedInput(0);
+  /**
+   * What Linux lacked: this call alone runs again here, once, and counts toward its learned route.
+   * Input it handed Linux is spent, so then the call ends with Linux's code.
+   */
+  const fallBack = (lacked: EnvironmentFault, code: number) => {
+    const key = routeKey(program, packageFolder(cwd, root), lacked.kind);
+    if (recordRouteFault(dir, key, lacked, Date.now(), days).learned) {
+      jobNote(
+        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${key}\` undoes it).\n`,
+      );
+    }
+    if (input !== undefined) {
+      process.stderr.write(
+        `[t3 heavy] Linux couldn't run this: ${lacked.line}; its input went to Linux, so it does not run again here.\n`,
+      );
+      process.exit(code);
+    }
+    queueCall(dir, "mac", [given, ...givenArgs], {
+      reason: `Linux couldn't run this: ${lacked.line}`,
+    });
+  };
   const start = () => {
     since = Date.now();
     tail = "";
@@ -1473,11 +1537,10 @@ const runLinuxPart = async (
     }
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
-      return endLine(dir, id, {
-        kind: "environment",
-        reason: INSTALL_FAILED,
-        code: outcome.code ?? 1,
-      });
+      return fallBack(
+        { kind: "install", subject: install, line: INSTALL_FAILED },
+        outcome.code ?? 1,
+      );
     }
   }
   if (stopped) process.exit(143);
@@ -1506,7 +1569,7 @@ const runLinuxPart = async (
     });
     if (lacked !== null) {
       fault({ kind: "environment", fault: lacked });
-      return endLine(dir, id, { kind: "environment", reason: lacked.line, code: outcome.code });
+      return fallBack(lacked, outcome.code);
     }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
@@ -1520,7 +1583,14 @@ const runLinuxPart = async (
     const nowhere = notFoundHere(outcome.tool, cwd, root);
     if (nowhere !== undefined) return endLine(dir, id, { kind: "command", reason: nowhere });
     fault({ kind: "missing", tool: outcome.tool });
-    return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
+    return fallBack(
+      {
+        kind: "missing-program",
+        subject: outcome.tool,
+        line: `Not installed on Linux: ${outcome.tool}`,
+      },
+      127,
+    );
   }
   // A lost link is retried: it's a fault only once this job has used up its attempts.
   if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {

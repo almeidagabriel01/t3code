@@ -112,7 +112,7 @@ export const isAlive = (pid: number) => {
 
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-const withLock = <A>(dir: string, run: () => A): A => {
+export const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
   NodeFS.mkdirSync(dir, { recursive: true });
   while (true) {
