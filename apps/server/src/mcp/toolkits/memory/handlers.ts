@@ -126,19 +126,19 @@ const failureShape = (error: unknown) => {
   };
 };
 
-/** Failures the caller cannot act on are logged by shape so they are never silent. */
+/** Every failure is logged with its code, and the opaque ones by shape, so none is silent. */
 const memoryFailure =
   (tool: string) =>
   (error: unknown): Effect.Effect<never, M.MemoryRpcError | M.OrchestratorMcpFailure> => {
     if (isRefusal(error)) return Effect.fail(error);
     const mapped = memoryError(error);
-    return mapped.code === "invalid_output" || mapped.code === "storage_failed"
-      ? Effect.logWarning("memory tool failed", {
-          tool,
-          code: mapped.code,
-          ...failureShape(error),
-        }).pipe(Effect.andThen(Effect.fail(mapped)))
-      : Effect.fail(mapped);
+    return Effect.logWarning("memory tool failed", {
+      tool,
+      code: mapped.code,
+      ...(mapped.code === "invalid_output" || mapped.code === "storage_failed"
+        ? failureShape(error)
+        : {}),
+    }).pipe(Effect.andThen(Effect.fail(mapped)));
   };
 
 const decodeRecall = argumentsOf("memory_recall", M.MemoryRecallInput);
