@@ -90,7 +90,7 @@ import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
 import {
   forgetRoutes,
   learnedRoute,
-  listRoutes,
+  learnedRoutes,
   recordRouteFault,
   resetRoutes,
   routeFolder,
@@ -1373,19 +1373,13 @@ const runRoutes = (args: ReadonlyArray<string>) => {
     process.stdout.write(`Forgot ${forgetRoutes(dir, forget)} route(s).\n`);
     return;
   }
-  const { runnerRouteMemoryDays: days, runnerRouteLearnAfter: learnAfter } = configFor(
-    readDoc(dir),
-    process.cwd(),
-  );
-  const routes = listRoutes(dir, Date.now(), days);
+  const routes = learnedRoutes(dir, process.cwd(), Date.now());
   if (routes.length === 0) process.stdout.write("No routes learned.\n");
-  for (const [key, route] of routes) {
-    const until = new Date(route.at + days * 86_400_000).toISOString().slice(0, 10);
-    const state =
-      route.faults >= learnAfter
-        ? `on this Mac until ${until}`
-        : `${route.faults} of ${learnAfter} faults, not learned yet`;
-    process.stdout.write(`${key}\t${state}\t${route.line}\n`);
+  for (const route of routes) {
+    const state = route.learned
+      ? `on this Mac until ${route.expiresAt.slice(0, 10)}`
+      : `${route.faults} of ${route.learnAfter} faults, not learned yet`;
+    process.stdout.write(`${route.key}\t${state}\t${route.line}\n`);
   }
 };
 

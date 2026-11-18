@@ -6,9 +6,10 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import type { HeavyLearnedRoute } from "@t3tools/contracts";
 
 import type { EnvironmentFault, EnvironmentFaultKind } from "./heavyNotices.ts";
-import { withLock } from "./queueFile.ts";
+import { configFor, readDoc, withLock } from "./queueFile.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -249,3 +250,26 @@ export const forgetRoutes = (dir: string, which: string, warn: Warn = toStderr) 
     if (removed > 0) writeAll(dir, kept);
     return removed;
   });
+
+/** Every entry in force, with the Runner settings that apply to `cwd`, as clients show it. */
+export const learnedRoutes = (
+  dir: string,
+  cwd: string,
+  now: number,
+  warn: Warn = toStderr,
+): ReadonlyArray<HeavyLearnedRoute> => {
+  const { runnerRouteMemoryDays: days, runnerRouteLearnAfter: learnAfter } = configFor(
+    readDoc(dir),
+    cwd,
+  );
+  return listRoutes(dir, now, days, warn).map(([key, route]) => ({
+    key,
+    kind: route.kind,
+    faults: route.faults,
+    learnAfter,
+    learned: route.faults >= learnAfter,
+    line: route.line,
+    lastFaultAt: new Date(route.at).toISOString(),
+    expiresAt: new Date(route.at + days * DAY_MS).toISOString(),
+  }));
+};

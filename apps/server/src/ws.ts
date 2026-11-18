@@ -2755,6 +2755,8 @@ export const layerWsRpc = (
           heavyQueue.route(id, runner, force === true),
         [WS_METHODS.heavyQueueRouteAll]: ({ runner }) =>
           heavyQueue.routeAll(runner).pipe(Effect.map((moved) => ({ moved }))),
+        [WS_METHODS.heavyQueueListRoutes]: ({ cwd }) => heavyQueue.listRoutes(cwd),
+        [WS_METHODS.heavyQueueForgetRoutes]: ({ key }) => heavyQueue.forgetRoutes(key),
         [WS_METHODS.heavyQueueSetPriority]: ({ id, priority }) =>
           heavyQueue.setPriority(id, priority),
         [WS_METHODS.heavyQueueSetClaudeHook]: ({ installed }) =>

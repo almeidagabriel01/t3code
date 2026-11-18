@@ -72,6 +72,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSetRule]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueRoute]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueRouteAll]: AuthTerminalOperateScope,
+  // Forgetting a learned route sends that program back to Linux.
+  [WS_METHODS.heavyQueueForgetRoutes]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMaxRunning]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: AuthTerminalOperateScope,
@@ -347,6 +349,7 @@ const UNGUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribeCommands]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribeNotices]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueListRoutes]: AuthOrchestrationReadScope,
   [INTEGRATIONS_WS_METHODS.integrationsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelSubscribeStatus]: AuthOrchestrationReadScope,

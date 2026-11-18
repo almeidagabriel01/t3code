@@ -398,6 +398,43 @@ export type HeavyQueueRouteAllInput = typeof HeavyQueueRouteAllInput.Type;
 export const HeavyQueueRouteAllResult = Schema.Struct({ moved: Schema.Array(Schema.String) });
 export type HeavyQueueRouteAllResult = typeof HeavyQueueRouteAllResult.Type;
 
+/**
+ * What route memory learned: Linux failed `key` (program, package folder, fault kind) for its
+ * environment `faults` times; once `learned`, it runs on this Mac until `expiresAt`.
+ */
+export const HeavyLearnedRoute = Schema.Struct({
+  key: Schema.String,
+  kind: Schema.String,
+  faults: Schema.Int,
+  /** Faults it takes to learn the route, from the Runner settings that apply. */
+  learnAfter: Schema.Int,
+  learned: Schema.Boolean,
+  /** The output line that showed the last fault. */
+  line: Schema.String,
+  lastFaultAt: Schema.String,
+  expiresAt: Schema.String,
+});
+export type HeavyLearnedRoute = typeof HeavyLearnedRoute.Type;
+
+/** `cwd` picks the project whose Runner settings (memory days, faults to learn) apply. */
+export const HeavyQueueListRoutesInput = Schema.Struct({ cwd: Schema.optionalKey(Schema.String) });
+export type HeavyQueueListRoutesInput = typeof HeavyQueueListRoutesInput.Type;
+/** `warning`: routes.json was unreadable, so it was moved aside and memory started over. */
+export const HeavyQueueListRoutesResult = Schema.Struct({
+  routes: Schema.Array(HeavyLearnedRoute),
+  warning: Schema.optionalKey(Schema.String),
+});
+export type HeavyQueueListRoutesResult = typeof HeavyQueueListRoutesResult.Type;
+
+/** `key` from the list, or `all`; forgetting one already gone removes 0. */
+export const HeavyQueueForgetRoutesInput = Schema.Struct({ key: Schema.NonEmptyString });
+export type HeavyQueueForgetRoutesInput = typeof HeavyQueueForgetRoutesInput.Type;
+export const HeavyQueueForgetRoutesResult = Schema.Struct({
+  removed: Schema.Int,
+  warning: Schema.optionalKey(Schema.String),
+});
+export type HeavyQueueForgetRoutesResult = typeof HeavyQueueForgetRoutesResult.Type;
+
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,
   priority: Schema.NullOr(Schema.Literals(["first", "last"])),
