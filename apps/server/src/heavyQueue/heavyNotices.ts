@@ -22,6 +22,37 @@ import type {
 /** What the Runner does next with a job Linux lost. */
 export type FollowUp = RunnerFailedPolicy;
 
+/** What a Linux job's calls copied back to this Mac, and what they left there, summed. */
+export interface SyncBack {
+  readonly copied: number;
+  /** Changed on this Mac during the run: this Mac's version stays. */
+  readonly skipped: number;
+  /** Deleted on Linux: deletions are not applied here. */
+  readonly deleted: number;
+  /** The largest result over the size cap, in MB: that call copied nothing. */
+  readonly overCapMB?: number;
+  /** Calls whose copy failed. */
+  readonly failed: number;
+}
+
+const counted = (count: number, one: string, many: string) =>
+  `${count} ${count === 1 ? one : many}`;
+
+/** What stayed on Linux, for a card; null when everything came back. */
+const syncBackText = (sync: SyncBack) => {
+  const parts = [
+    ...(sync.overCapMB === undefined ? [] : [`${sync.overCapMB} MB of results, over the size cap`]),
+    ...(sync.failed === 0
+      ? []
+      : [sync.failed === 1 ? "the copy failed" : `${sync.failed} copies failed`]),
+    ...(sync.skipped === 0
+      ? []
+      : [`${counted(sync.skipped, "file", "files")} changed on this Mac during the run`]),
+    ...(sync.deleted === 0 ? [] : [`${counted(sync.deleted, "deletion", "deletions")} there`]),
+  ];
+  return parts.length === 0 ? null : `Not copied back from Linux: ${parts.join("; ")}`;
+};
+
 export type HeavyEvent =
   /** Exited with a failure; `phase` is where a Linux job was. */
   | {
@@ -32,7 +63,10 @@ export type HeavyEvent =
       readonly phase?: HeavyRunnerPhase;
       /** What in its worktree kept Linux from installing it, and the fix. */
       readonly worktree?: string;
+      readonly syncBack?: SyncBack;
     }
+  /** Succeeded on Linux, and part of its results stayed there. */
+  | { readonly kind: "sync-back"; readonly syncBack: SyncBack }
   /** Its Linux question went unanswered and the deadline action is Cancel. */
   | { readonly kind: "deadline"; readonly dropped: boolean }
   /** Linux dropped it mid-run, or was unavailable when it started there. */
@@ -465,26 +499,39 @@ const recordOf = (
 
 /** A job's own process ending; null for success, a stop, or an entry already gone. */
 export const endedRecord = (
-  entry: (HeavyQueueEntry & { readonly worktree?: string; readonly line?: string }) | undefined,
+  entry:
+    | (HeavyQueueEntry & {
+        readonly worktree?: string;
+        readonly line?: string;
+        readonly syncBack?: SyncBack;
+      })
+    | undefined,
   code: number,
   now: number,
   error?: string,
-): HeavyEventRecord | null =>
-  entry === undefined || STOPPED_CODES.has(code)
-    ? null
-    : recordOf(
-        entry,
-        {
-          kind: "ended",
-          code,
-          ...(error === undefined ? {} : { error }),
-          ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
-          ...(entry.runner === "linux" && entry.worktree !== undefined
-            ? { worktree: entry.worktree }
-            : {}),
-        },
-        now,
-      );
+): HeavyEventRecord | null => {
+  if (entry === undefined) return null;
+  const { syncBack } = entry;
+  if (STOPPED_CODES.has(code)) {
+    return code === 0 && syncBack !== undefined && syncBackText(syncBack) !== null
+      ? recordOf(entry, { kind: "sync-back", syncBack }, now)
+      : null;
+  }
+  return recordOf(
+    entry,
+    {
+      kind: "ended",
+      code,
+      ...(error === undefined ? {} : { error }),
+      ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
+      ...(entry.runner === "linux" && entry.worktree !== undefined
+        ? { worktree: entry.worktree }
+        : {}),
+      ...(syncBack === undefined ? {} : { syncBack }),
+    },
+    now,
+  );
+};
 
 export const deadlineRecord = (entry: HeavyQueueEntry, now: number) =>
   recordOf(entry, { kind: "deadline", dropped: entry.dropped === true }, now);
@@ -720,6 +767,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
           description: `Exit code ${record.code}`,
         });
       }
+      const left = record.syncBack === undefined ? null : syncBackText(record.syncBack);
       return notice({
         group: `failed:${job.runner}`,
         category: "problem",
@@ -727,9 +775,19 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         machine: job.runner,
         one: `${name} failed on ${on}`,
         many: (n) => `${jobs(n)} failed on ${on}`,
-        description: `Exit code ${record.code}`,
+        description: `Exit code ${record.code}${left === null ? "" : `. ${left}`}`,
       });
     }
+    case "sync-back":
+      return notice({
+        group: "sync-back",
+        category: "unexpected",
+        tone: "warning",
+        machine: "linux",
+        one: `Not all of ${name}'s results came back from Linux`,
+        many: (n) => `Not all results of ${jobs(n)} came back from Linux`,
+        description: syncBackText(record.syncBack) ?? "",
+      });
     case "deadline":
       return notice({
         group: "deadline",

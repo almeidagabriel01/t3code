@@ -39,6 +39,7 @@ import {
   type Part,
   type ReadScript,
 } from "./heavyHook.ts";
+import type { SyncBack } from "./heavyNotices.ts";
 import type { Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
@@ -206,6 +207,7 @@ export type QueuedEntry = HeavyQueueEntry & {
   /** Its Linux runs stopped for memory so far, and when the last one was. */
   readonly evictions?: number;
   readonly evictedAt?: number;
+  readonly syncBack?: SyncBack;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 

@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 import * as NodeTty from "node:tty";
 import { describe, expect, it } from "@effect/vitest";
 
+import { RUNNER_DEFAULTS } from "@t3tools/contracts";
+
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
   bringBack,
@@ -626,13 +628,14 @@ describe("bringing results back", () => {
       // Copies each listed file from the copy there, as rsync --files-from would.
       T3CODE_RUNNER_RSYNC: fake(
         [
+          'printf "%s\\n" "$@" > "$T3_FAKE_HOME/rsync-args"',
           'for a; do case "$a" in --files-from=*) list="${a#--files-from=}";; esac; done',
           'eval "src=\\${$(($# - 1))}"; eval "dst=\\${$#}"; src="$T3_FAKE_HOME/${src#*:}"',
           'while IFS= read -r f; do mkdir -p "$dst$(dirname "$f")"; cp "$src$f" "$dst$f"; done < "$list"',
         ].join("\n"),
       ),
     };
-    const back = () =>
+    const back = (exclude = RUNNER_DEFAULTS.runnerBringBackExclude, maxBytes = 200 * 1024 ** 2) =>
       bringBack({
         machine: DEFAULT_MACHINE_CONFIG,
         environment,
@@ -640,8 +643,12 @@ describe("bringing results back", () => {
         job: "job-1",
         root,
         since: T0 * 1000,
+        exclude,
+        maxBytes,
       });
-    return { copy, marker, root, environment, back };
+    const rsyncArgs = () =>
+      NodeFS.readFileSync(NodePath.join(home, "rsync-args"), "utf8").trim().split("\n");
+    return { copy, marker, root, environment, back, rsyncArgs };
   };
   const write = (path: string, text: string, at: number) => {
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
@@ -657,6 +664,8 @@ describe("bringing results back", () => {
     ["in node_modules", "node_modules/x/index.js", "after", null, "left"],
     ["in a nested node_modules", "apps/web/node_modules/y.js", "after", null, "left"],
     ["in .git", ".git/HEAD", "after", null, "left"],
+    ["in .turbo", "apps/web/.turbo/cache.json", "after", null, "left"],
+    ["a tsbuildinfo", "apps/web/tsconfig.tsbuildinfo", "after", null, "left"],
   ] as const)("a file %s (%s) is %s", async (_, path, linux, mac, result) => {
     const { copy, marker, root, back } = setup();
     // Linux compares change times, which only the clock sets: the marker moves instead. The
@@ -668,6 +677,8 @@ describe("bringing results back", () => {
     expect(await back()).toEqual({
       copied: result === "copied" ? [path] : [],
       skipped: result === "skipped" ? [path] : [],
+      deleted: [],
+      overCap: null,
     });
     const here = NodePath.join(root, path);
     expect(NodeFS.existsSync(here) ? NodeFS.readFileSync(here, "utf8") : null).toBe(
@@ -676,11 +687,67 @@ describe("bringing results back", () => {
     expect(NodeFS.existsSync(marker)).toBe(false);
   });
 
+  it("keeps modes, and notes what Linux deleted without deleting it here", async () => {
+    const { copy, marker, root, back, rsyncArgs } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    // Both had them at the run's sync; the job deleted `gone.txt` and a folder there.
+    for (const path of ["kept.txt", "gone.txt", "old/a.txt"]) {
+      write(NodePath.join(root, path), "mac", T0 - 100);
+    }
+    write(NodePath.join(copy, "kept.txt"), "mac", 500_000_000);
+    write(NodePath.join(copy, "new.txt"), "linux", 500_000_000);
+    // Never on Linux: ignored by git, excluded, or made here during the run.
+    NodeChildProcess.execFileSync("git", ["init", "-q", root]);
+    NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "dist\n");
+    write(NodePath.join(copy, ".gitignore"), "dist\n", 500_000_000);
+    write(NodePath.join(root, "dist", "x.js"), "mac", T0 - 100);
+    write(NodePath.join(root, ".turbo", "x"), "mac", T0 - 100);
+    write(NodePath.join(root, "fresh.txt"), "mac", T0 + 5);
+    const back1 = await back();
+    expect({ ...back1, copied: [...(back1?.copied ?? [])].sort() }).toEqual({
+      copied: [".gitignore", "kept.txt", "new.txt"],
+      skipped: [],
+      deleted: ["gone.txt", "old"],
+      overCap: null,
+    });
+    expect(NodeFS.readFileSync(NodePath.join(root, "gone.txt"), "utf8")).toBe("mac");
+    expect(rsyncArgs()).toContain("-p");
+  });
+
+  it("leaves out excluded names, and brings nothing back over the size cap", async () => {
+    const { copy, marker, root, back } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    write(NodePath.join(copy, "run.log"), "log", 500_000_000);
+    write(NodePath.join(copy, "logs", "a.txt"), "log", 500_000_000);
+    write(NodePath.join(copy, "out.txt"), "12345", 500_000_000);
+    write(NodePath.join(copy, "mine.txt"), "1234567890", 500_000_000);
+    // Changed here during the run: skipped, so its size does not count.
+    write(NodePath.join(root, "mine.txt"), "mac", T0 + 5);
+    expect(await back(["*.log", "logs"], 4)).toEqual({
+      copied: [],
+      skipped: ["mine.txt"],
+      deleted: [],
+      overCap: 5,
+    });
+    expect(NodeFS.existsSync(NodePath.join(root, "out.txt"))).toBe(false);
+    NodeFS.writeFileSync(marker, "");
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    expect((await back(["*.log", "logs"], 5))?.copied).toEqual(["out.txt"]);
+  });
+
   it("is null when Linux can't list or send them, and leaves this Mac alone", async () => {
     const { copy, root, marker, environment } = setup();
     write(NodePath.join(copy, "new.txt"), "linux", T0 + 10);
     NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
-    const args = { machine: DEFAULT_MACHINE_CONFIG, copyId: COPY, job: "job-1", root, since: 0 };
+    const args = {
+      machine: DEFAULT_MACHINE_CONFIG,
+      copyId: COPY,
+      job: "job-1",
+      root,
+      since: 0,
+      exclude: [],
+      maxBytes: 1024,
+    };
     const down = { ...environment, T3CODE_RUNNER_SSH: fake("exit 255") };
     expect(await bringBack({ ...args, environment: down })).toBeNull();
     const failing = { ...environment, T3CODE_RUNNER_RSYNC: fake("exit 12") };
@@ -721,7 +788,14 @@ describe("bringing results back", () => {
   it("refuses ids that could escape the runs folder", async () => {
     expect(() => withProjectBins(["vp"], "/w", "/w", [], "../x")).toThrow(/Unsafe/);
     const { environment } = setup();
-    const args = { machine: DEFAULT_MACHINE_CONFIG, environment, root: dir, since: 0 };
+    const args = {
+      machine: DEFAULT_MACHINE_CONFIG,
+      environment,
+      root: dir,
+      since: 0,
+      exclude: [],
+      maxBytes: 1024,
+    };
     expect(await bringBack({ ...args, copyId: "..", job: "job-1" })).toBeNull();
     expect(await bringBack({ ...args, copyId: COPY, job: "../x" })).toBeNull();
   });

@@ -10,6 +10,7 @@ import {
   appendTail,
   deadlineRecord,
   endedRecord,
+  type SyncBack,
   errorLineOf,
   environmentFaultOf,
   EVENT_LOG_SIZE,
@@ -560,6 +561,13 @@ describe("notices for each problem", () => {
       "linux",
     ],
     [
+      "failed on Linux, with results left there",
+      endedRecord({ ...linux, syncBack: { copied: 4, skipped: 1, deleted: 2, failed: 0 } }, 1, NOW),
+      "pnpm test failed on Linux",
+      "Exit code 1. Not copied back from Linux: 1 file changed on this Mac during the run; 2 deletions there",
+      "linux",
+    ],
+    [
       "sync failed",
       endedRecord({ ...linux, phase: "syncing" }, 1, NOW),
       "Linux sync failed for pnpm test",
@@ -666,6 +674,36 @@ describe("notices for each problem", () => {
     ["with a heredoc", { name: "gate", line: "x".repeat(1200) }, `${"x".repeat(999)}…`],
   ])("keeps the command line of a job %s", (_case, fields, label) => {
     expect(endedRecord({ ...mac, ...fields }, 127, NOW)!.job.label).toBe(label);
+  });
+
+  it("a job that succeeded tells what of its results stayed on Linux", () => {
+    const left = (syncBack: SyncBack) => endedRecord({ ...linux, syncBack }, 0, NOW);
+    expect(left({ copied: 3, skipped: 0, deleted: 0, failed: 0 })).toBeNull();
+    const notices = rawNotices(
+      tick({
+        records: [
+          record(left({ copied: 0, skipped: 0, deleted: 0, overCapMB: 350, failed: 0 })),
+          record(left({ copied: 0, skipped: 2, deleted: 0, failed: 1 })),
+        ],
+      }),
+    );
+    expect(
+      notices.map(({ one, description, category, tone }) => ({ one, description, category, tone })),
+    ).toEqual([
+      {
+        one: "Not all of pnpm test's results came back from Linux",
+        description: "Not copied back from Linux: 350 MB of results, over the size cap",
+        category: "unexpected",
+        tone: "warning",
+      },
+      {
+        one: "Not all of pnpm test's results came back from Linux",
+        description:
+          "Not copied back from Linux: the copy failed; 2 files changed on this Mac during the run",
+        category: "unexpected",
+        tone: "warning",
+      },
+    ]);
   });
 
   it("a job that could not start says what was missing", () => {

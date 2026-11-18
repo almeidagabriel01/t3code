@@ -41,6 +41,7 @@ import {
 } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
+  addSyncBack,
   answerBashCall,
   claimHealthCheck,
   configFor,
@@ -1548,20 +1549,20 @@ const runLinuxPart = async (
   if (outcome.kind !== "finished" && worktree !== null) {
     return endLine(dir, id, { kind: "worktree", reason: worktree });
   }
+  // The command ran there, whatever its code: what it wrote comes back before anything else.
+  if (outcome.kind === "finished" && bringsBack && progress.id !== null) {
+    await syncBack(dir, id, {
+      machine: linkMachine(machine, doc.sample),
+      environment: process.env,
+      copyId: progress.id,
+      job: id,
+      root,
+      since,
+      exclude: configFor(doc, cwd).runnerBringBackExclude,
+      maxBytes: configFor(doc, cwd).runnerBringBackMaxMB * 1024 ** 2,
+    });
+  }
   if (outcome.kind === "finished") {
-    if (bringsBack && progress.id !== null) {
-      const back = await bringBack({
-        machine: linkMachine(machine, doc.sample),
-        environment: process.env,
-        copyId: progress.id,
-        job: id,
-        root,
-        since,
-      });
-      for (const path of back?.skipped ?? []) {
-        jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
-      }
-    }
     // What Linux lacked is its environment's failure, not the command's.
     const lacked = environmentFaultOf(outcome.code, tail, {
       program: command.program,
@@ -1603,6 +1604,35 @@ const runLinuxPart = async (
     );
   }
   endLine(dir, id, outcome);
+};
+
+/** Brings one call's results back and adds what stayed there to its job; never fails the call. */
+const syncBack = async (dir: string, id: string, options: Parameters<typeof bringBack>[0]) => {
+  try {
+    const back = await bringBack(options);
+    if (back === null) jobNote("[t3 heavy] Could not copy this run's results back from Linux.\n");
+    for (const path of back?.skipped ?? []) {
+      jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
+    }
+    for (const path of back?.deleted ?? []) {
+      jobNote(`[t3 heavy] Deleted on Linux, kept here: ${path}\n`);
+    }
+    const overCapMB = back?.overCap == null ? undefined : Math.ceil(back.overCap / 1024 ** 2);
+    if (overCapMB !== undefined) {
+      jobNote(
+        `[t3 heavy] Nothing copied back: ${overCapMB} MB of results is over the ${options.maxBytes / 1024 ** 2} MB cap.\n`,
+      );
+    }
+    addSyncBack(dir, id, {
+      copied: back?.copied.length ?? 0,
+      skipped: back?.skipped.length ?? 0,
+      deleted: back?.deleted.length ?? 0,
+      failed: back === null ? 1 : 0,
+      ...(overCapMB === undefined ? {} : { overCapMB }),
+    });
+  } catch (error) {
+    jobNote(`[t3 heavy] Could not copy this run's results back from Linux: ${String(error)}\n`);
+  }
 };
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */

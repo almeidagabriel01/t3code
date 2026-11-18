@@ -110,6 +110,18 @@ describe("heavy queue file", () => {
     expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 127, error });
   });
 
+  it("a result sums what its Linux calls did not copy back", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), runner: "linux", phase: "running" }, at);
+    Queue.addSyncBack(dir, "r1", { copied: 2, skipped: 1, deleted: 0, failed: 0 });
+    Queue.addSyncBack(dir, "r1", { copied: 0, skipped: 0, deleted: 3, overCapMB: 250, failed: 1 });
+    Queue.finish(dir, "r1", 1, at);
+    const syncBack = { copied: 2, skipped: 1, deleted: 3, overCapMB: 250, failed: 1 };
+    expect(Queue.readDoc(dir).results[0]).toMatchObject({ id: "r1", code: 1, syncBack });
+    expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 1, syncBack });
+  });
+
   it("a Linux run's 127 keeps its line but not a reason checked on this Mac", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");

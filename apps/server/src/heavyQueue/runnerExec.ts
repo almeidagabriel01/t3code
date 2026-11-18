@@ -383,12 +383,43 @@ export interface BroughtBack {
   readonly copied: ReadonlyArray<string>;
   /** Changed on this Mac after `since`: left as they are. */
   readonly skipped: ReadonlyArray<string>;
+  /** Deleted there and still here: deletions are never applied. */
+  readonly deleted: ReadonlyArray<string>;
+  /** Bytes the copy would have taken when over `maxBytes`; then nothing is copied. */
+  readonly overCap: number | null;
 }
 
+/** A `find -name` pattern (`*`, `?`) as a whole-name test. */
+const nameMatcher = (patterns: ReadonlyArray<string>) => {
+  const sources = patterns.map(
+    (pattern) =>
+      `^${pattern
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".")}$`,
+  );
+  const test = sources.length === 0 ? null : new RegExp(sources.join("|"));
+  return (name: string) => test !== null && test.test(name);
+};
+
+/** Of `paths` (relative to `root`), the ones git ignores there: they never travel to Linux. */
+const ignoredHere = (root: string, paths: ReadonlyArray<string>) => {
+  if (paths.length === 0) return new Set<string>();
+  const result = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "--stdin"], {
+    input: `${paths.join("\n")}\n`,
+    encoding: "utf8",
+  });
+  return new Set(typeof result.stdout === "string" ? result.stdout.split("\n") : []);
+};
+
+/** Changed folders whose entries are compared for deletions. */
+const DELETION_FOLDERS = 500;
+
 /**
- * Copies to `root` what job `job` changed in copy `copyId` after its start marker, outside
- * `node_modules` and `.git`, except files this Mac changed after `since`; null when that fails.
- * Each side reads its own clock: change times there (synced files keep this Mac's mtimes).
+ * Copies to `root` what job `job` changed in copy `copyId` after its start marker, except names
+ * matching `exclude` and files this Mac changed after `since`, keeping their modes; null when
+ * that fails. Nothing is copied when it comes to more than `maxBytes`. Each side reads its own
+ * clock: change times there (synced files keep this Mac's mtimes).
  */
 export const bringBack = async (options: {
   readonly machine: RunnerMachineConfig;
@@ -397,34 +428,79 @@ export const bringBack = async (options: {
   readonly job: string;
   readonly root: string;
   readonly since: number;
+  readonly exclude: ReadonlyArray<string>;
+  readonly maxBytes: number;
 }): Promise<BroughtBack | null> => {
   const { machine, environment, copyId, root } = options;
   if (!SAFE_NAME.test(copyId) || !SAFE_NAME.test(options.job)) return null;
   const marker = `../${copyId}${markerSuffix(options.job)}`;
+  const prune =
+    options.exclude.length === 0
+      ? ""
+      : `\\( ${options.exclude.map((name) => `-name ${shellQuote(name)}`).join(" -o ")} \\) -prune -o`;
+  // `wc -c` sizes the files and adds a `total` line, which has no `./`.
+  // ponytail: deletions are found in the first DELETION_FOLDERS changed folders only, by their
+  // direct entries; a full tree diff if a deeper count ever matters.
   const listed = await ssh(
     machine,
     environment,
     [
       `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
-      `find . \\( -name node_modules -o -name .git \\) -prune -o -type f -cnewer ${marker} -print || exit 1`,
+      `find . ${prune} -type f -cnewer ${marker} -exec wc -c {} + | sed -n 's|^ *\\([0-9][0-9]*\\) \\(\\./.*\\)|F \\1 \\2|p' || exit 1`,
+      `find . ${prune} -type d -cnewer ${marker} -print | head -n ${DELETION_FOLDERS} | while IFS= read -r d; do printf 'D %s\\n' "$d"; ls -A "$d" | while IFS= read -r n; do printf 'E %s/%s\\n' "$d" "$n"; done; done`,
       `rm -f ${marker}`,
     ].join("\n"),
     (machine.runnerSshTimeoutSeconds + 60) * 1000,
   );
   if (listed.code !== 0) return null;
+  const relative = (path: string) => (path === "." ? "" : path.replace(/^\.\//, ""));
   const copied: string[] = [];
   const skipped: string[] = [];
+  let bytes = 0;
+  const folders: string[] = [];
+  const there = new Set<string>();
   for (const line of listed.stdout.split("\n")) {
-    const path = line.replace(/^\.\//, "");
-    if (path === "" || path === line) continue;
-    let changedHere = false;
-    try {
-      changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
-    } catch {
-      // Not on this Mac: the job created it.
-    }
-    (changedHere ? skipped : copied).push(path);
+    const file = /^F (\d+) \.\/(.+)$/.exec(line);
+    if (file !== null) {
+      const path = file[2]!;
+      let changedHere = false;
+      try {
+        changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
+      } catch {
+        // Not on this Mac: the job created it.
+      }
+      if (changedHere) skipped.push(path);
+      else {
+        copied.push(path);
+        bytes += Number(file[1]);
+      }
+    } else if (line.startsWith("D ")) folders.push(relative(line.slice(2)));
+    else if (line.startsWith("E ")) there.add(relative(line.slice(2)));
   }
+  const excluded = nameMatcher(options.exclude);
+  const missing: string[] = [];
+  for (const folder of folders) {
+    let names: string[];
+    try {
+      names = NodeFS.readdirSync(NodePath.join(root, folder));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const path = folder === "" ? name : `${folder}/${name}`;
+      // `remoto` never sends these.
+      if (there.has(path) || excluded(name) || name === ".git" || name === ".DS_Store") continue;
+      try {
+        if (NodeFS.lstatSync(NodePath.join(root, path)).mtimeMs > options.since) continue;
+      } catch {
+        continue;
+      }
+      missing.push(path);
+    }
+  }
+  const ignored = ignoredHere(root, missing);
+  const deleted = missing.filter((path) => !ignored.has(path)).sort();
+  if (bytes > options.maxBytes) return { copied: [], skipped, deleted, overCap: bytes };
   if (copied.length > 0) {
     const list = NodePath.join(NodeOS.tmpdir(), `t3-bring-back-${process.pid}-${copyId}`);
     NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
@@ -439,6 +515,8 @@ export const bringBack = async (options: {
       // The one `remoto` uses (openrsync on macOS).
       environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
       [
+        // Keeps modes: a script made executable there stays executable here.
+        "-p",
         "-e",
         shell.join(" "),
         `--files-from=${list}`,
@@ -450,7 +528,7 @@ export const bringBack = async (options: {
     NodeFS.rmSync(list, { force: true });
     if (sent.code !== 0) return null;
   }
-  return { copied, skipped };
+  return { copied, skipped, deleted, overCap: null };
 };
 
 export type CopyRemovalResult = "removed" | "busy" | "unreachable";

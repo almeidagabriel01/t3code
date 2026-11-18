@@ -1031,19 +1031,28 @@ describe("t3 heavy", () => {
       expect(runs(dir)).toBe("2");
     });
 
-    it.each([true, false])("Bring results back %s copies what the job wrote there", async (on) => {
+    // `vp fmt` passing, a test run failing: either way what it wrote comes back, with its code.
+    it.each([
+      [true, 0],
+      [true, 1],
+      [false, 0],
+    ])("Bring results back %s, exit %i, copies what the job wrote there", async (on, code) => {
       const { dir, env } = setup(
-        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n${M} exit=0\\n' >&2`,
+        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n${M} exit=${code}\\n' >&2; exit ${code}`,
         { runnerBringBack: on },
       );
       // Changed here after the run's sync began.
       const mine = NodePath.join(dir, "mine.txt");
       NodeFS.writeFileSync(mine, "mine");
       NodeFS.utimesSync(mine, 4e9, 4e9);
+      // Deleted there: it stays here.
+      NodeFS.mkdirSync(NodePath.join(dir, "sub"));
+      NodeFS.writeFileSync(NodePath.join(dir, "sub", "gone.txt"), "mine");
+      NodeFS.utimesSync(NodePath.join(dir, "sub", "gone.txt"), 1e9, 1e9);
       const ssh = script(
         dir,
         "ssh-list",
-        `case "$*" in *t3-start*) printf './out.txt\\n./mine.txt\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\nF 4 ./mine.txt\\nD ./sub\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
       );
       const rsync = script(
         dir,
@@ -1057,13 +1066,49 @@ describe("t3 heavy", () => {
         ["--"],
         dir,
       );
-      expect(await run.exited).toBe(0);
+      expect(await run.exited).toBe(code);
       const out = NodePath.join(dir, "out.txt");
       expect(NodeFS.existsSync(out) ? NodeFS.readFileSync(out, "utf8") : null).toBe(
         on ? "from-linux\n" : null,
       );
       expect(NodeFS.readFileSync(mine, "utf8")).toBe("mine");
+      expect(NodeFS.existsSync(NodePath.join(dir, "sub", "gone.txt"))).toBe(true);
       expect(run.stderr().includes("Not copied back (changed on this Mac): mine.txt\n")).toBe(on);
+      expect(run.stderr().includes("Deleted on Linux, kept here: sub/gone.txt\n")).toBe(on);
+      expect(Queue.readDoc(dir).results.at(-1)?.syncBack).toEqual(
+        on ? { copied: 1, skipped: 1, deleted: 1, failed: 0 } : undefined,
+      );
+    });
+
+    it("a sync-back that fails is a note on the result, never the command's code", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n${M} exit=0\\n' >&2`,
+      );
+      const ssh = script(
+        dir,
+        "ssh-list",
+        `case "$*" in *t3-start*) printf 'F 3 ./out.txt\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+      );
+      const run = heavyHere(
+        dir,
+        ["/bin/sh", "-c", "vp test run"],
+        {
+          ...env,
+          T3CODE_RUNNER_SSH: ssh,
+          T3CODE_RUNNER_RSYNC: script(dir, "rsync-down", "exit 12"),
+        },
+        ["--"],
+        dir,
+      );
+      expect(await run.exited).toBe(0);
+      expect(run.stderr()).toContain("Could not copy this run's results back from Linux.");
+      expect(Queue.readDoc(dir).results.at(-1)?.syncBack).toEqual({
+        copied: 0,
+        skipped: 0,
+        deleted: 0,
+        failed: 1,
+      });
+      expect(Queue.readDoc(dir).events.at(-1)).toMatchObject({ kind: "sync-back" });
     });
 
     // On a run's last attempt, a PC that went away answers neither check: the agent hears

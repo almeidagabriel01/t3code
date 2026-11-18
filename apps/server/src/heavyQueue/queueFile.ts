@@ -53,6 +53,7 @@ import {
   parseLog,
   requeueRecord,
   startRecord,
+  type SyncBack,
   withRecord,
 } from "./heavyNotices.ts";
 import {
@@ -224,6 +225,7 @@ interface JobResult {
   readonly line?: string;
   readonly name?: string;
   readonly error?: string;
+  readonly syncBack?: SyncBack;
 }
 const MAX_RESULTS = 200;
 const RESULT_TTL_MS = 3_600_000;
@@ -1061,9 +1063,7 @@ export const finish = (
   mutate(
     dir,
     (doc) => {
-      const entry: (HeavyQueueEntry & { readonly line?: string }) | undefined = doc.entries.find(
-        (each) => each.id === id,
-      );
+      const entry: QueuedEntry | undefined = doc.entries.find((each) => each.id === id);
       const line = entry === undefined ? undefined : lineOf(entry);
       // Checked on this Mac: a 127 from a run that reached Linux is Linux's to explain.
       // `decided` was established for both machines, so it stands either way.
@@ -1076,6 +1076,7 @@ export const finish = (
         ...(line === undefined ? {} : { line }),
         ...(entry?.name === undefined ? {} : { name: entry.name }),
         ...(reason === undefined ? {} : { error: reason }),
+        ...(entry?.syncBack === undefined ? {} : { syncBack: entry.syncBack }),
       };
       return {
         doc: {
@@ -1092,6 +1093,30 @@ export const finish = (
     },
     now,
   );
+
+/** Adds one Linux call's sync-back to its job's totals, for the job's result and card. */
+export const addSyncBack = (dir: string, id: string, back: SyncBack) =>
+  mutate(dir, (doc) => ({
+    doc: {
+      ...doc,
+      entries: doc.entries.map((entry: QueuedEntry) => {
+        if (entry.id !== id) return entry;
+        const sum = entry.syncBack;
+        const overCapMB = Math.max(sum?.overCapMB ?? 0, back.overCapMB ?? 0);
+        return {
+          ...entry,
+          syncBack: {
+            copied: (sum?.copied ?? 0) + back.copied,
+            skipped: (sum?.skipped ?? 0) + back.skipped,
+            deleted: (sum?.deleted ?? 0) + back.deleted,
+            failed: (sum?.failed ?? 0) + back.failed,
+            ...(overCapMB === 0 ? {} : { overCapMB }),
+          },
+        };
+      }),
+    },
+    result: undefined,
+  }));
 
 /** Logs a Linux environment failure of a job still in the queue, for the problem detector to file. */
 export const recordFault = (dir: string, id: string, fault: Fault, now = Date.now()) =>

@@ -247,11 +247,13 @@ work queue, and each section says what the two do together.
   with several jobs, it stops the newest one and queues it again; that is not a
   failure. A command that fails on Linux for its own reasons, such as a failing
   test, returns its exit code and output unchanged and never reruns.
-- **Bring results back.** Off by default. When on, the files a Linux job
-  created or changed are copied back to this Mac when it ends, except
-  `node_modules` and `.git`. A file you changed here during the job is left
-  alone, and the job's output lists it as "Not copied back (changed on this
-  Mac)".
+- **Bring results back.** On by default. The files a Linux command created or
+  changed come back to this Mac when it ends, whether it passed or failed, with
+  their file modes, except names in **Never bring back** (`node_modules`,
+  `.git`, `.turbo` and `*.tsbuildinfo` by default). A file you changed here
+  during the job is left alone, a file the command deleted on Linux stays here,
+  and a run whose results come to more than **Bring back up to** (200 MB)
+  copies nothing back. The job's card says what stayed on Linux.
 - **Moving jobs.** A job's **⋯** menu has **Run on this Mac** and **Run on
   Linux**. Moving a running job stops it and starts it again on the other side.
   A job Linux dropped runs again only once Linux confirms the earlier run
