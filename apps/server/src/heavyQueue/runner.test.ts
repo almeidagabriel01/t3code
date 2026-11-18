@@ -677,6 +677,27 @@ describe("Mac first, Hybrid and Everything", () => {
     expect(plan.admits.a).toEqual({ runner: "mac", ungated: !enabled });
   });
 
+  // ROUTE-051: each machine has its own line. A Mac-only waiter on a full Mac never holds back
+  // a job Linux has room for.
+  it.each(
+    (["linux", "macFirst", "automatic"] as const).flatMap((where) =>
+      [1, 3].flatMap((slots) =>
+        (["xcodebuild test", "xcrun simctl boot iPhone"] as const).map(
+          (head) => [where, slots, head] as const,
+        ),
+      ),
+    ),
+  )("%s, this Mac's %i slots full and %j waiting there: Linux takes the next job", (where, slots, head) => {
+    const entries = [
+      ...Array.from({ length: slots }, (_, at) => runningOn(`m${at}`, "mac")),
+      job("head", head),
+      job("a", "vp test run"),
+    ];
+    const plan = planned(entries, { runnerWhere: where }, { maxRunning: slots });
+    expect(plan.routes.head).toBe("mac");
+    expect(plan.admits).toEqual({ a: { runner: "linux", ungated: false } });
+  });
+
   // RUN-14: a hand route holds in every mode, with the queue on or off.
   it.each(
     QUEUE.flatMap((enabled) =>

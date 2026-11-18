@@ -756,6 +756,15 @@ describe("bringing results back", () => {
     // The listing took the marker: with none left, there is nothing to list.
     expect(NodeFS.existsSync(marker)).toBe(false);
     expect(await bringBack({ ...args, environment })).toBeNull();
+    // A `find` that lists part of the tree, then fails: the partial listing is no listing.
+    const bin = NodeFS.mkdtempSync(NodePath.join(dir, "bin-"));
+    NodeFS.copyFileSync(fake('command -p find "$@"; exit 1'), NodePath.join(bin, "find"));
+    NodeFS.chmodSync(NodePath.join(bin, "find"), 0o755);
+    NodeFS.writeFileSync(marker, "");
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    const partial = { ...environment, PATH: `${bin}:${process.env.PATH}` };
+    expect(await bringBack({ ...args, environment: partial })).toBeNull();
+    expect(NodeFS.existsSync(NodePath.join(root, "new.txt"))).toBe(false);
   });
 
   it.each([

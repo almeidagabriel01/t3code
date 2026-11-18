@@ -438,7 +438,8 @@ export const bringBack = async (options: {
     options.exclude.length === 0
       ? ""
       : `\\( ${options.exclude.map((name) => `-name ${shellQuote(name)}`).join(" -o ")} \\) -prune -o`;
-  // `wc -c` sizes the files and adds a `total` line, which has no `./`.
+  // `wc -c` sizes the files and adds a `total` line, which has no `./`. Captured first: a pipe
+  // would report `sed`'s status, and a `find` that failed partway would read as a full listing.
   // ponytail: deletions are found in the first DELETION_FOLDERS changed folders only, by their
   // direct entries; a full tree diff if a deeper count ever matters.
   const listed = await ssh(
@@ -446,7 +447,8 @@ export const bringBack = async (options: {
     environment,
     [
       `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
-      `find . ${prune} -type f -cnewer ${marker} -exec wc -c {} + | sed -n 's|^ *\\([0-9][0-9]*\\) \\(\\./.*\\)|F \\1 \\2|p' || exit 1`,
+      `files=$(find . ${prune} -type f -cnewer ${marker} -exec wc -c {} +) || exit 1`,
+      `printf '%s\\n' "$files" | sed -n 's|^ *\\([0-9][0-9]*\\) \\(\\./.*\\)|F \\1 \\2|p'`,
       `find . ${prune} -type d -cnewer ${marker} -print | head -n ${DELETION_FOLDERS} | while IFS= read -r d; do printf 'D %s\\n' "$d"; ls -A "$d" | while IFS= read -r n; do printf 'E %s/%s\\n' "$d" "$n"; done; done`,
       `rm -f ${marker}`,
     ].join("\n"),
