@@ -339,6 +339,15 @@ it.effect("unsendable work at the queue head is discarded with its reason and th
             { status: "failed", failure_code: "not_found", hold_class: null, n: 50 },
           ],
         );
+        // The status counts each discard as a change the hub could not accept, across cycles,
+        // and a failure that is not a discard stays out of that count.
+        const failures = sync
+          .syncStatus({}, Effect.void)
+          .pipe(Effect.map((status) => status.processing.hubAdmissionFailures));
+        assert.strictEqual(yield* failures, 100);
+        yield* sql`UPDATE memory_outbox SET status='failed',failure_code='source_invalidated' WHERE id=${ids[100]!}`;
+        yield* sync.syncOnce;
+        assert.strictEqual(yield* failures, 100);
         // Nothing is left for Settings to rearm, so they are never held again.
         const store = yield* Store.MemoryStore;
         assert.deepStrictEqual(

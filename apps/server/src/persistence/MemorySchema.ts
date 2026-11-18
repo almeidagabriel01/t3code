@@ -3,6 +3,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 // End state of GOAT's memory migrations 078-117 minus the report outbox. Every statement is idempotent,
 // so ensureMemorySchema runs on each start like the other fork tables.
+// Sync work discarded as unsendable (Outbox.discardUnsendable): failed locally, with no hub receipt.
+const discardedSync = (row: string) =>
+  `coalesce((${row}.kind IN ('sync','revert_intent') AND ${row}.status='failed' AND ${row}.completed_receipt_json IS NULL AND ${row}.failure_code IN ('invalid_output','not_found','unsupported_protocol')),0)`;
+const countDiscarded = `INSERT INTO memory_quota_counters(space,dimension,scope_key,value) VALUES (NEW.space,'processing_discarded_sync','',${discardedSync("NEW")}) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=value+excluded.value;`;
+const uncountDiscarded = `UPDATE memory_quota_counters SET value=value-${discardedSync("OLD")} WHERE space=OLD.space AND dimension='processing_discarded_sync' AND scope_key='';`;
+
 const MEMORY_DDL: ReadonlyArray<string> = [
   `CREATE TABLE IF NOT EXISTS memory_events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1556,6 +1562,9 @@ UPDATE memory_quota_counters SET value=value-coalesce(((SELECT count(*) FROM jso
   `CREATE TRIGGER IF NOT EXISTS memory_revisions_checkpoint_bytes_reset AFTER UPDATE OF space,revision_id,memory_id,operation_id,parents_json,scope_json,assertion_kind,provenance_json,payload_ref,created_at ON memory_revisions
     WHEN NEW.checkpoint_bytes IS NOT NULL
     BEGIN UPDATE memory_revisions SET checkpoint_bytes=NULL WHERE space=NEW.space AND revision_id=NEW.revision_id; END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_insert AFTER INSERT ON memory_outbox BEGIN ${countDiscarded} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_update AFTER UPDATE OF space,kind,status,completed_receipt_json,failure_code ON memory_outbox BEGIN ${uncountDiscarded} ${countDiscarded} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_delete AFTER DELETE ON memory_outbox BEGIN ${uncountDiscarded} END`,
   `CREATE INDEX IF NOT EXISTS memory_outbox_summary_thread_idx ON memory_outbox(
     json_extract(metadata_json,'$.sourceThread.threadId'),
     coalesce(json_extract(metadata_json,'$.observedThroughSequence'),json_extract(metadata_json,'$.sourceWatermark.throughSequence'))
@@ -1597,6 +1606,12 @@ const MEMORY_SEEDS: ReadonlyArray<string> = [
   `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_usage_environment','usage_receipts','',0)`,
   `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_usage_environment','usage_receipt_bytes','',0)`,
   `INSERT OR IGNORE INTO memory_search_backfill (singleton,after_rowid,ready) VALUES (1,0,0)`,
+  // Once, on the first start with the discard triggers: count the discards already stored.
+  `INSERT INTO memory_quota_counters(space,dimension,scope_key,value)
+    SELECT o.space,'processing_discarded_sync','',sum(${discardedSync("o")}) FROM memory_outbox o
+    WHERE o.status='failed' AND NOT EXISTS (SELECT 1 FROM memory_quota_counters WHERE space='_migrations' AND dimension='discarded_sync_counted' AND scope_key='')
+    GROUP BY o.space ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=excluded.value`,
+  `INSERT OR IGNORE INTO memory_quota_counters (space,dimension,scope_key,value) VALUES ('_migrations','discarded_sync_counted','',1)`,
 ];
 
 export const ensureMemorySchema = Effect.fn("MemorySchema.ensure")(function* () {

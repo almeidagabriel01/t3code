@@ -43,6 +43,33 @@ describe("Memory schema", () => {
       assert.strictEqual(seeds[0]!.count, 17);
     }).pipe(Effect.provide(database)),
   );
+  it.effect("counts sync work discarded before the counter existed, once", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* ensureForkSchema();
+      // A database from before the counter: no triggers, no marker, and discards already there.
+      for (const t of ["insert", "update", "delete"])
+        yield* sql.unsafe(`DROP TRIGGER memory_outbox_discarded_sync_${t}`);
+      yield* sql`DELETE FROM memory_quota_counters WHERE space='_migrations'`;
+      const insert = (id: string, kind: string, code: string) =>
+        sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES (${id},'space',${kind},'failed','{}',0,${code})`;
+      yield* insert("a", "sync", "invalid_output");
+      yield* insert("b", "revert_intent", "not_found");
+      yield* insert("c", "sync", "source_invalidated");
+      yield* insert("d", "summary", "invalid_output");
+      const counted = sql<{
+        value: number;
+      }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_discarded_sync'`;
+      yield* ensureForkSchema();
+      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
+      // Restarts keep the live count instead of recounting.
+      yield* insert("e", "sync", "unsupported_protocol");
+      yield* ensureForkSchema();
+      assert.deepStrictEqual(yield* counted, [{ value: 3 }]);
+      yield* sql`DELETE FROM memory_outbox WHERE id='a'`;
+      assert.deepStrictEqual(yield* counted, [{ value: 2 }]);
+    }).pipe(Effect.provide(database)),
+  );
   it.effect("keeps rows across restarts and enforces constraints", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
