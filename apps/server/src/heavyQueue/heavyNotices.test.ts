@@ -198,12 +198,30 @@ describe("environment faults of a Linux call", () => {
       "missing-program:vp",
       "command-not-found:vp",
     ],
+    // 127 and 126 alone are any program's own exit codes: only the shell's line names what's missing.
+    ["127 with no line", 127, "", null, null],
+    ["a wrapper exiting 127 on purpose", 127, "running wrapper\nwrapper: giving up\n", null, null],
+    ["126 with no line", 126, "make: *** [all] Error 126\n", null, null],
     [
-      "127 with no line names the program",
+      "127 from exec of a missing path",
       127,
-      "",
-      "missing-program:pnpm",
-      "command-not-found:pnpm",
+      "bash: line 1: ./scripts/gen.sh: No such file or directory\n",
+      "missing-program:./scripts/gen.sh",
+      "command-not-found:./scripts/gen.sh",
+    ],
+    [
+      "127 from env",
+      127,
+      "env: 'tsx': No such file or directory\n",
+      "missing-program:tsx",
+      "command-not-found:tsx",
+    ],
+    [
+      "127 quoting a missing file, not a program",
+      127,
+      "cat: a.txt: No such file or directory\n",
+      null,
+      null,
     ],
     [
       "127 reads past output after the line",
@@ -283,6 +301,13 @@ describe("environment faults of a Linux call", () => {
       null,
       null,
     ],
+    [
+      "a refused port nothing on this Mac listens on: the test's own server",
+      1,
+      " FAIL  src/ws.test.ts > reconnects\nError: connect ECONNREFUSED 127.0.0.1:54321\n",
+      null,
+      null,
+    ],
     ["a refused remote host", 1, "Error: connect ECONNREFUSED 10.0.0.5:5432\n", null, null],
     [
       "a refused localhost in a passing run",
@@ -331,6 +356,7 @@ describe("environment faults of a Linux call", () => {
       program: "pnpm",
       folders: [`${ROOT}/apps/py`, ROOT],
       exists: (path) => local.has(path),
+      listens: (port) => port === 5432 || port === 3000,
     });
     expect(found === null ? null : `${found.kind}:${found.subject}`).toBe(expected);
     const fault =

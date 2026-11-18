@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
 /**
- * Route memory: a call Linux failed to run for its environment `learnAfter` times goes to this Mac
- * until the entry expires or is forgotten. `routes.json` in the queue dir, written under the
+ * Route memory: a call Linux failed to run for its environment, and that then passed on this Mac,
+ * `learnAfter` times goes to this Mac until the entry expires or is forgotten. `routes.json` in the queue dir, written under the
  * queue file's lock; readers take no lock, so a write replaces the file whole.
  */
 import * as NodeFS from "node:fs";
@@ -24,11 +24,48 @@ export interface Route {
 
 const routesPath = (dir: string) => NodePath.join(dir, "routes.json");
 
-/** `vp@/code/app/apps/server#missing-program`: program, `routeFolder`, fault kind. */
-export const routeKey = (program: string, folder: string, kind: EnvironmentFaultKind) =>
-  `${routePrefix(program, folder)}${kind}`;
+/** Runner words whose next word is the program they run: `pnpm exec playwright`. */
+const RUNS_NEXT = new Set(["exec", "dlx", "x", "run"]);
+/** Flags of package runners that take the next word as their value. */
+const VALUE_FLAGS = new Set([
+  "-C",
+  "--dir",
+  "--filter",
+  "-F",
+  "--prefix",
+  "--cwd",
+  "-w",
+  "--workspace",
+]);
 
-const routePrefix = (program: string, folder: string) => `${NodePath.basename(program)}@${folder}#`;
+/**
+ * The program and the subcommand it was asked for: its basename, its first word that is no flag,
+ * and after `exec`/`dlx`/`x`/`run` the one after that. `pnpm exec playwright test` →
+ * `pnpm exec playwright`, `pnpm test` → `pnpm test`, `vp test run` → `vp test`.
+ */
+const routeCommand = ([program = "", ...args]: ReadonlyArray<string>) => {
+  const words = [NodePath.basename(program)];
+  for (let at = 0; at < args.length && words.length < 3; at++) {
+    const arg = args[at]!;
+    if (arg === "--") break;
+    if (VALUE_FLAGS.has(arg)) at++;
+    else if (!arg.startsWith("-")) {
+      words.push(arg);
+      if (!RUNS_NEXT.has(arg)) break;
+    }
+  }
+  return words.join(" ");
+};
+
+/** `vp test@/code/app/apps/server#missing-program`: `routeCommand`, `routeFolder`, fault kind. */
+export const routeKey = (
+  command: ReadonlyArray<string>,
+  folder: string,
+  kind: EnvironmentFaultKind,
+) => `${routePrefix(command, folder)}${kind}`;
+
+const routePrefix = (command: ReadonlyArray<string>, folder: string) =>
+  `${routeCommand(command)}@${folder}#`;
 
 /** The folder of the nearest `package.json` from `cwd` up to `root`, relative to `root`; `.` for none. */
 export const packageFolder = (cwd: string, root: string) => {
@@ -105,41 +142,41 @@ const writeAll = (dir: string, routes: Record<string, Route>) => {
 export const listRoutes = (dir: string, now: number, days: number) =>
   Object.entries(readAll(dir)).filter(([, route]) => live(route, now, days));
 
-/** A learned route for this program and package folder, if one is in force. */
+/** A learned route for this command and package folder, if one is in force. */
 export const learnedRoute = (
   dir: string,
-  program: string,
+  command: ReadonlyArray<string>,
   folder: string,
   now: number,
   days: number,
   learnAfter: number,
 ) => {
   const found = listRoutes(dir, now, days).find(
-    ([key, route]) => isFor(key, program, folder) && route.faults >= learnAfter,
+    ([key, route]) => isFor(key, command, folder) && route.faults >= learnAfter,
   );
   return found === undefined ? null : { key: found[0], route: found[1] };
 };
 
-/** Whether `key` is this program and folder's, whole: a folder `/a` never takes `/a#b`'s. */
-const isFor = (key: string, program: string, folder: string) => {
-  const prefix = routePrefix(program, folder);
+/** Whether `key` is this command and folder's, whole: a folder `/a` never takes `/a#b`'s. */
+const isFor = (key: string, command: ReadonlyArray<string>, folder: string) => {
+  const prefix = routePrefix(command, folder);
   return key.startsWith(prefix) && !key.slice(prefix.length).includes("#");
 };
 
-/** Linux ran this program in this folder: its faults so far were passing ones, so they go. */
+/** Linux ran this command in this folder: its faults so far were passing ones, so they go. */
 export const resetRoutes = (
   dir: string,
-  program: string,
+  command: ReadonlyArray<string>,
   folder: string,
   now: number,
   days: number,
 ) => {
-  if (!listRoutes(dir, now, days).some(([key]) => isFor(key, program, folder))) return;
+  if (!listRoutes(dir, now, days).some(([key]) => isFor(key, command, folder))) return;
   withLock(dir, () => {
     const routes = readAll(dir);
     writeAll(
       dir,
-      Object.fromEntries(Object.entries(routes).filter(([key]) => !isFor(key, program, folder))),
+      Object.fromEntries(Object.entries(routes).filter(([key]) => !isFor(key, command, folder))),
     );
   });
 };

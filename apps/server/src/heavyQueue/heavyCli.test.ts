@@ -24,6 +24,7 @@ import {
   type QueuedEntry,
 } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
+import { listRoutes } from "./routeMemory.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 const children: NodeChildProcess.ChildProcess[] = [];
@@ -719,7 +720,9 @@ describe("t3 heavy", () => {
       };
       NodeFS.writeFileSync(
         NodePath.join(dir, "routes.json"),
-        JSON.stringify({ [`vp@${NodeFS.realpathSync(dir)}#missing-program`]: route }),
+        JSON.stringify({
+          [`vp run knip:check@${NodeFS.realpathSync(dir)}#missing-program`]: route,
+        }),
       );
       const line = "xcodebuild -version; vp run knip:check";
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
@@ -732,7 +735,7 @@ describe("t3 heavy", () => {
       const route = { kind: "missing-program", faults: 2, at: Date.parse("2100-01-01"), line: "x" };
       NodeFS.writeFileSync(
         NodePath.join(dir, "routes.json"),
-        JSON.stringify({ [`vp@${NodeFS.realpathSync(dir)}#missing-program`]: route }),
+        JSON.stringify({ [`vp test@${NodeFS.realpathSync(dir)}#missing-program`]: route }),
       );
       const run = heavyHere(
         dir,
@@ -791,11 +794,10 @@ describe("t3 heavy", () => {
     // A tool or file Linux lacks (126, 127) is its environment's, whatever "If a Linux run fails"
     // says: that call alone runs again here, and the line goes on.
     it.each([
-      [127, "agent"],
-      [126, "agent"],
-      [127, "mac"],
-    ] as const)("exit %i (%s) reruns that call here once", async (code, policy) => {
-      const error = "sh: 1: tsgo: not found";
+      [127, "agent", "sh: 1: tsgo: not found"],
+      [126, "agent", "sh: 1: ./tsgo: Permission denied"],
+      [127, "mac", "sh: 1: tsgo: not found"],
+    ] as const)("exit %i (%s) reruns that call here once", async (code, policy, error) => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=${code}\\n' >&2; exit ${code}`,
         { runnerDropped: policy },
@@ -832,7 +834,7 @@ describe("t3 heavy", () => {
         return run.stderr();
       };
       // Keyed by the repository's own folder: another repository's root package is another key.
-      const key = `vp@${NodeFS.realpathSync(dir)}#missing-program`;
+      const key = `vp test@${NodeFS.realpathSync(dir)}#missing-program`;
       await call();
       expect(linuxRuns()).toBe(1);
       expect(await call()).toContain(`Learned: ${key} `);
@@ -901,8 +903,27 @@ describe("t3 heavy", () => {
       expect(listed).toContain("on this Mac until");
     });
 
+    // A fault counts only once the same call passed here: failing here too, it was the call's own.
+    it.each([
+      [0, 1],
+      [3, 0],
+    ])(
+      "a call Linux lacked something for that ends %i here counts %i fault",
+      async (code, counted) => {
+        const { dir, env } = setup(
+          `printf '${M} phase=running pgid=4\\n' >&2; echo 'sh: 1: vp: not found' >&2; printf '${M} exit=127\\n' >&2; exit 127`,
+        );
+        script(NodePath.join(dir, "bin"), "vp", `echo "vp on mac: $*"; exit ${code}`);
+        const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe("vp on mac: test run\n");
+        const routes = listRoutes(dir, Date.parse("2026-11-18"), 36_500);
+        expect(routes.map(([, route]) => route.faults)).toEqual(counted === 0 ? [] : [counted]);
+      },
+    );
+
     // A pipe already holds what Linux printed: a rerun here would append the Mac's output to it.
-    it("does not rerun a call that already wrote output, and still learns from it", async () => {
+    it("does not rerun a call that already wrote output, so it learns nothing", async () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; echo partial; echo 'sh: 1: vp: not found' >&2; printf '${M} exit=127\\n' >&2; exit 127`,
         { runnerRouteLearnAfter: 1 },
@@ -917,7 +938,8 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("partial\ncode 127\n");
       expect(run.stderr()).toContain("it already wrote output, so it does not run again here");
-      expect(run.stderr()).toContain("[t3 heavy] Learned: ");
+      expect(run.stderr()).not.toContain("Learned");
+      expect(NodeFS.existsSync(NodePath.join(dir, "routes.json"))).toBe(false);
     });
 
     // Only a call that asks for stdin gets it: any other would drain a loop's input over ssh.

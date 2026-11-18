@@ -272,7 +272,8 @@ work queue, and each section says what the two do together.
   Mac, back to Linux, or to you instead. A command Linux lacks a tool or folder
   for runs again on this Mac by itself, whatever this setting says, unless its
   job asked for Linux (see **Asking for Linux**). Two such
-  failures (by default) teach the route for a while; `t3 heavy routes` lists what it
+  failures (by default) whose rerun here passed teach the route for that command
+  and package (`pnpm exec playwright`, not every `pnpm`) for a while; `t3 heavy routes` lists what it
   learned and `t3 heavy routes --forget <key|all>` clears it. When Linux runs
   very short of memory with several jobs, it stops the newest one and queues it
   again; that is not a failure. A command that fails on Linux for its own

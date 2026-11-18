@@ -628,19 +628,21 @@ const runHook = async (dir: string) => {
   }
 };
 
-const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) => {
-  const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
-  child.on("error", (error) => {
-    process.stderr.write(
-      `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
-    );
-    process.exit(127);
+/** Runs a program with this process's stdio; its exit code, 127 when it can't start. */
+const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
+  new Promise<number>((resolve) => {
+    const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
+    child.on("error", (error) => {
+      process.stderr.write(
+        `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
+      );
+      resolve(127);
+    });
+    child.on("exit", (code, signal) => resolve(exitCodeOf(code, signal)));
   });
-  child.on("exit", (code, signal) => {
-    process.exit(code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0));
-  });
-  return child;
-};
+
+const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
+  void spawnCode(program, args, env).then((code) => process.exit(code));
 
 const exitCodeOf = (code: number | null, signal: NodeJS.Signals | null) =>
   code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0);
@@ -1315,14 +1317,14 @@ const runLinuxAttempt = async (
 /** The route memory's reason to keep this program's calls in this package here, if learned. */
 const learnedOf = (
   dir: string,
-  program: string,
+  command: ReadonlyArray<string>,
   cwd: string,
   root: string,
   config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
 ): MacReason | null => {
   const found = learnedRoute(
     dir,
-    program,
+    command,
     routeFolder(cwd, root),
     Date.now(),
     config.runnerRouteMemoryDays,
@@ -1349,7 +1351,7 @@ const callMacReason = (
     cwd,
     { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
     scriptReader(cwd),
-  ) ?? learnedOf(dir, values[0]!, cwd, root, config);
+  ) ?? learnedOf(dir, values, cwd, root, config);
 
 /** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
 const runRoutes = (args: ReadonlyArray<string>) => {
@@ -1398,8 +1400,11 @@ const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) =
   );
 };
 
-/** One call as a job of its own on `where`, from this folder; the job it is in keeps its slot. */
-const queueCall = (
+/**
+ * One call as a job of its own on `where`, from this folder; the job it is in keeps its slot.
+ * Resolves with its exit code; the caller exits with it.
+ */
+const spawnCall = (
   dir: string,
   where: "mac" | "linux",
   values: ReadonlyArray<string>,
@@ -1418,12 +1423,15 @@ const queueCall = (
     process.stderr.write(`[t3 heavy] ${reason}; running this call on this Mac.\n`);
   }
   const options = `--runner ${where}${reason === undefined ? "" : ` --route-reason ${shellQuote(reason)}`}`;
-  runDirect(
+  return spawnCode(
     "/bin/sh",
     ["-c", `${selfPrefix(dir, env)} ${options} -- ${values.map(shellQuote).join(" ")}`],
     env,
   );
 };
+
+const queueCall = (...args: Parameters<typeof spawnCall>) =>
+  void spawnCall(...args).then((code) => process.exit(code));
 
 /**
  * `t3 heavy call -- <program> [args...]`: a heavy program called inside a queue job, through its
@@ -1559,25 +1567,17 @@ const runLinuxPart = async (
   /** Whether Linux wrote any of the call's stdout: a pipe after it already holds that. */
   let wroteOutput = false;
   /**
-   * What Linux lacked: this call alone runs again here, once, and counts toward its learned route.
-   * Input it handed Linux is spent, and output it wrote is already downstream, so then the call
-   * ends with Linux's code.
+   * What Linux lacked: this call alone runs again here, once. Input it handed Linux is spent, and
+   * output it wrote is already downstream, so then the call ends with Linux's code. Only a rerun
+   * here that passes confirms the fault was Linux's, and counts toward its learned route.
    */
-  const fallBack = (lacked: EnvironmentFault, code: number) => {
+  const fallBack = async (lacked: EnvironmentFault, code: number) => {
     if (linuxOnly) {
       return endLine(dir, id, {
         kind: "refused",
         reason: `Linux couldn't run this: ${lacked.line}`,
         code,
       });
-    }
-    const key = routeKey(program, routeFolder(cwd, root), lacked.kind);
-    if (
-      recordRouteFault(dir, key, lacked, Date.now(), days, config.runnerRouteLearnAfter).learned
-    ) {
-      jobNote(
-        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
-      );
     }
     if (input !== undefined || wroteOutput) {
       const spent = input !== undefined ? "its input went to Linux" : "it already wrote output";
@@ -1586,9 +1586,19 @@ const runLinuxPart = async (
       );
       process.exit(code);
     }
-    queueCall(dir, "mac", [given, ...givenArgs], {
+    const here = await spawnCall(dir, "mac", [given, ...givenArgs], {
       reason: `Linux couldn't run this: ${lacked.line}`,
     });
+    const key = routeKey([program, ...args], routeFolder(cwd, root), lacked.kind);
+    if (
+      here === 0 &&
+      recordRouteFault(dir, key, lacked, Date.now(), days, config.runnerRouteLearnAfter).learned
+    ) {
+      jobNote(
+        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
+      );
+    }
+    process.exit(here);
   };
   const start = () => {
     since = Date.now();
@@ -1701,7 +1711,9 @@ const runLinuxPart = async (
       fault({ kind: "environment", fault: lacked });
       return fallBack(lacked, outcome.code);
     }
-    if (outcome.code === 0) resetRoutes(dir, program, routeFolder(cwd, root), Date.now(), days);
+    if (outcome.code === 0) {
+      resetRoutes(dir, [program, ...args], routeFolder(cwd, root), Date.now(), days);
+    }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
         `[t3 heavy] This ran on Linux. These failures match the Mac-only list and fail there by nature; run them on this Mac:\n${platform.map((line) => `  ${line}`).join("\n")}\n`,

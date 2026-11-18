@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { listensHere, localPortsIn } from "./localPorts.ts";
 import type {
   HeavyNotice,
   HeavyNoticesMode,
@@ -177,8 +178,24 @@ const WORKTREE_PROBLEMS: ReadonlyArray<readonly [RegExp, string]> = [
 export const worktreeProblemOf = (line: string) =>
   WORKTREE_PROBLEMS.find(([pattern]) => pattern.test(line))?.[1] ?? null;
 
-/** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
-const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
+/** A shell's own prefix on an error: `sh: 1: `, `bash: line 1: `, `/bin/sh: `, `sh: 1: exec: `. */
+const SHELL = String.raw`(?:\S*/)?(?:ba|da|z|k)?sh(?:: line \d+|: \d+)?: (?:exec: )?`;
+/**
+ * The shell or `env` saying it found no program to run: `vp: command not found`, `sh: 1: vp: not
+ * found`, `zsh: command not found: vp`, `bash: ./x.sh: No such file or directory`, `env: 'tsx': …`.
+ */
+const MISSING_TOOL = new RegExp(
+  [
+    String.raw`^(?:${SHELL})?([^\s:]+): command not found$`,
+    String.raw`^${SHELL}([^\s:]+): (?:not found|No such file or directory)$`,
+    String.raw`^zsh: command not found: (\S+)$`,
+    String.raw`^(?:\S*/)?env: ['‘]?([^\s:'’]+)['’]?: No such file or directory$`,
+  ].join("|"),
+);
+/** The shell saying it found a program it can't run: `bash: ./run.sh: Permission denied`. */
+const NOT_EXECUTABLE = new RegExp(
+  String.raw`^(?:${SHELL}|(?:\S*/)?env: )['‘]?([^\s:'’]+)['’]?: (?:Permission denied|cannot execute.*)$`,
+);
 
 /** What Linux lacked for a call that ran there; `install` is the copy's unfinished install. */
 export type EnvironmentFaultKind =
@@ -210,20 +227,19 @@ export const appendTail = (tail: string, text: string) => {
 const RECENT_LINES = 20;
 
 /**
- * Exit code and output line that mean Linux lacked something the Mac has. A row without a code
- * takes any failure; one marked `optional` needs only its code, its line names the subject. A
- * `recent` row's line counts only among the last `RECENT_LINES`.
+ * Exit code and output line that mean Linux lacked something the Mac has. Every row needs its
+ * line: an exit code alone is any program's own (a wrapper may exit 127 on purpose). A row without
+ * a code takes any failure. A `recent` row's line counts only among the last `RECENT_LINES`.
  */
 const ENVIRONMENT_FAULTS: ReadonlyArray<{
   readonly kind: Exclude<EnvironmentFaultKind, "install">;
   readonly code?: number;
   readonly pattern: RegExp;
-  readonly optional?: true;
   readonly recent?: true;
 }> = [
-  { kind: "missing-program", code: 127, pattern: MISSING_TOOL, optional: true },
-  { kind: "not-executable", code: 126, pattern: MISSING_TOOL, optional: true },
-  { kind: "no-git", code: 128, pattern: /not a git repository/ },
+  { kind: "missing-program", code: 127, pattern: MISSING_TOOL },
+  { kind: "not-executable", code: 126, pattern: NOT_EXECUTABLE },
+  { kind: "no-git", code: 128, pattern: /^fatal: not a git repository/ },
   {
     kind: "package-command",
     pattern: /(?:ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL\s+|^)Command "([^"]+)" not found/,
@@ -241,7 +257,8 @@ const ENVIRONMENT_FAULTS: ReadonlyArray<{
 /**
  * The environment fault a call that ran on Linux shows, from its exit code and output tail, or
  * null when it failed in its own code. A Python module that is a file or folder in `folders` is
- * the project's own, missing anywhere.
+ * the project's own, missing anywhere. A refused local port is Linux's only while something on
+ * this Mac listens on it (`listens`): else it is a server the run itself was to start.
  */
 export const environmentFaultOf = (
   code: number,
@@ -250,17 +267,19 @@ export const environmentFaultOf = (
     readonly program: string;
     readonly folders: ReadonlyArray<string>;
     readonly exists?: (path: string) => boolean;
+    readonly listens?: (port: number) => boolean;
   },
 ): EnvironmentFault | null => {
   if (code === 0) return null;
   const exists = context.exists ?? NodeFS.existsSync;
+  const listens = context.listens ?? listensHere;
   const lines = meaningfulLines(tail.slice(-TAIL_CHARS))
     .filter((line) => !line.startsWith("[t3 heavy]"))
     .toReversed();
   for (const row of ENVIRONMENT_FAULTS) {
     if (row.code !== undefined && row.code !== code) continue;
     let match: RegExpExecArray | null = null;
-    let line: string | undefined;
+    let line = "";
     for (const each of row.recent ? lines.slice(0, RECENT_LINES) : lines) {
       match = row.pattern.exec(each);
       if (match !== null) {
@@ -268,8 +287,9 @@ export const environmentFaultOf = (
         break;
       }
     }
-    if (match === null && row.optional === undefined) continue;
-    const subject = match?.[1] ?? context.program;
+    if (match === null) continue;
+    const subject = match.slice(1).find((group) => group !== undefined) ?? context.program;
+    if (row.kind === "local-service" && !localPortsIn(subject).some(listens)) continue;
     if (row.kind === "python-module") {
       const top = subject.split(".")[0]!;
       const own = context.folders.some(
@@ -281,7 +301,7 @@ export const environmentFaultOf = (
     return {
       kind: row.kind,
       subject: row.kind === "python-module" ? subject.split(".")[0]! : subject,
-      line: line ?? lines[0] ?? `${subject}: command not found`,
+      line,
     };
   }
   return null;
