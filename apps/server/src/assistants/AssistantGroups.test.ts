@@ -5936,6 +5936,52 @@ it.effect(
   },
 );
 
+it.effect.each([
+  { name: "its wake turn ends", via: "wake", requestDone: true, settles: true },
+  { name: "the awaited work ends with no turn", via: "roster", requestDone: true, settles: true },
+  { name: "the work ends in an open request", via: "roster", requestDone: false, settles: false },
+] as const)(
+  "a conversation refused settling over awaited work settles when $name: $settles",
+  ({ via, requestDone, settles }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto plan it" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      const roster = (awaited: boolean) =>
+        groups.handleRunEvent({
+          type: "provider-thread.updated",
+          threadId: ada,
+          payload: {
+            id: "provider-thread:ada",
+            pendingBackgroundTasks: awaited
+              ? [{ taskId: "tests", kind: "command", awaited: true }]
+              : [],
+          },
+        } as never as OrchestrationV2DomainEvent);
+      const settled = () =>
+        h.dispatched.filter((command) => command.type === "thread.settle").map((c) => c.threadId);
+      yield* roster(true);
+      h.fakeThreads.get(ada)!.awaitedWork = true;
+      yield* h.finish(0, "completed", "Tests are running in the background");
+      if (requestDone) yield* h.finish(1, "completed", "Beto's part");
+      assert.notInclude(settled(), ada);
+
+      h.fakeThreads.get(ada)!.awaitedWork = false;
+      if (via === "roster") yield* roster(false);
+      else {
+        h.authors.set("wake", "agent");
+        h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+        yield* groups.handleRunEvent({
+          type: "run.updated",
+          payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status: "completed" },
+        } as never as OrchestrationV2DomainEvent);
+      }
+      assert.equal(settled().includes(ada), settles);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect(
   "a paused or failed request never settles; a cancelled one settles once its run ends",
   () => {

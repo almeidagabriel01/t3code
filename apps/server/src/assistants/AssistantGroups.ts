@@ -91,6 +91,7 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { routesAssistantGroups } from "@t3tools/provider-core/server/driver";
+import { hasAwaitedBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -2892,11 +2893,36 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  // ponytail: in memory, so a drain across a restart is missed; the restart continuation turn
+  // then retries instead. Only this transition retries, so a user's own active turn stays put.
+  const providerThreadsAwaitingWork = new Set<string>();
+  /** Awaited work ending is what a settle or a model move refused over it was waiting for. */
+  const awaitedWorkEnded = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationV2DomainEvent, { readonly type: "provider-thread.updated" }>,
+  ) {
+    if (!isAssistantGroupThreadId(event.threadId)) return;
+    if (hasAwaitedBackgroundWork(event.payload.pendingBackgroundTasks ?? [])) {
+      providerThreadsAwaitingWork.add(event.payload.id);
+      return;
+    }
+    if (!providerThreadsAwaitingWork.delete(event.payload.id)) return;
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const owner = yield* threadRowOf(event.threadId);
+        if (owner?.request_id == null) return;
+        yield* applyPendingModel(owner.thread_id);
+        yield* closeRequestIfDone(owner.request_id);
+        yield* pump(owner.team_id);
+      }),
+    );
+  });
+
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",
   )(
     function* (event) {
       if (event.type === "runtime-request.updated") return yield* syncWaitingThread(event.threadId);
+      if (event.type === "provider-thread.updated") return yield* awaitedWorkEnded(event);
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) return;
       if (
