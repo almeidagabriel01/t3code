@@ -88,9 +88,12 @@ export const makeOutbox = (
         THEN CASE WHEN json_extract(e.receipt_json,'$.forgetRetryOf') IS NOT NULL OR
           EXISTS (SELECT 1 FROM memory_events b WHERE b.memory_space_id=o.space AND json_extract(b.receipt_json,'$.forgetExpansion.operationId')=json_extract(o.metadata_json,'$.operationId'))
           THEN 1 ELSE 0 END ELSE 2 END, o.next_attempt_at,o.attempt,o.id
-      LIMIT ${pageLimit - candidates.length}`,
+      LIMIT ${pageLimit}`,
       );
       for (const row of rows) {
+        // A re-read returns the rows already collected first; take only new ones.
+        if (candidates.length >= pageLimit) break;
+        if (candidates.some((candidate) => candidate.work.id === row.id)) continue;
         const version = row.sync_version;
         const decoded = yield* Effect.result(workRows([row]));
         if (decoded._tag === "Failure") {

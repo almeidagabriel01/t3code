@@ -293,9 +293,11 @@ it.effect("unsendable work at the queue head is held with its reason and the res
   Effect.gen(function* () {
     const pushed: M.MemoryOperationId[] = [];
     const held: string[] = [];
+    const skipped: string[] = [];
     const logger = Logger.make(({ message, logLevel }) => {
       const text = JSON.stringify(message);
       if (logLevel === "Warn" && text.includes("unsendable sync work held")) held.push(text);
+      if (text.includes("sync work skipped")) skipped.push(text);
     });
     const client = peer({
       push: (_c, i) =>
@@ -316,18 +318,20 @@ it.effect("unsendable work at the queue head is held with its reason and the res
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* ready;
-        for (let n = 0; n < 103; n++) yield* enqueue(1000 + n, M.MemoryId.make(id(5000 + n)));
+        for (let n = 0; n < 104; n++) yield* enqueue(1000 + n, M.MemoryId.make(id(5000 + n)));
         const head = sql`SELECT id FROM memory_outbox WHERE kind='sync' ORDER BY id`;
-        const ids = (yield* head).map((row) => String(row.id));
+        // One sendable row ahead of the unsendable ones must not be collected twice on re-read.
+        const ids = (yield* head).map((row) => String(row.id)).slice(1);
         yield* sql`UPDATE memory_outbox SET metadata_json=json_remove(metadata_json,'$.protocolVersion') WHERE id IN ${sql.in(ids.slice(0, 50))}`;
         yield* sql`DELETE FROM memory_payloads WHERE payload_ref IN (SELECT json_extract(metadata_json,'$.revision.payloadRef') FROM memory_outbox WHERE id IN ${sql.in(ids.slice(50, 100))})`;
         const sync = yield* Sync.MemorySyncService;
         yield* sync.syncOnce;
         assert.deepStrictEqual(
           pushed,
-          [1100, 1101, 1102].map((n) => operation(n).operationId),
+          [1000, 1101, 1102, 1103].map((n) => operation(n).operationId),
         );
         assert.strictEqual(held.length, 100);
+        assert.deepStrictEqual(skipped, []);
         assert.deepStrictEqual(
           yield* sql`SELECT failure_code, hold_class, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
           [
