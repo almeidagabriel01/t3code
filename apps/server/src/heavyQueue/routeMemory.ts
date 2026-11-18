@@ -119,14 +119,47 @@ const isRoute = (value: unknown): value is Route =>
   typeof (value as Route).at === "number" &&
   typeof (value as Route).line === "string";
 
-const readAll = (dir: string): Record<string, Route> => {
+/** Where a route-memory warning goes; the CLI's default is stderr. */
+export type Warn = (message: string) => void;
+const toStderr: Warn = (message) => void process.stderr.write(`[t3 heavy] ${message}\n`);
+
+/** A missing file is empty; one that is not a JSON object is `corrupt`, never read as empty. */
+const parse = (dir: string): { routes: Record<string, Route> } | { corrupt: true } => {
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(NodeFS.readFileSync(routesPath(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => isRoute(value)));
+    text = NodeFS.readFileSync(routesPath(dir), "utf8");
   } catch {
-    return {};
+    return { routes: {} };
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { corrupt: true };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { corrupt: true };
+  }
+  // One bad entry never hides the others.
+  return {
+    routes: Object.fromEntries(Object.entries(parsed).filter(([, value]) => isRoute(value))),
+  };
+};
+
+/** Under the lock: an unreadable file moves aside before anything writes over it. */
+const readAll = (dir: string, warn: Warn): Record<string, Route> => {
+  const read = parse(dir);
+  if ("routes" in read) return read.routes;
+  const moved = `${routesPath(dir)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  NodeFS.renameSync(routesPath(dir), moved);
+  warn(`routes.json was unreadable: moved to ${moved}; route memory starts over.`);
+  return {};
+};
+
+/** Without the lock; a corrupt read is checked again under it, since a writer may have just replaced it. */
+const readUnlocked = (dir: string, warn: Warn) => {
+  const read = parse(dir);
+  return "routes" in read ? read.routes : withLock(dir, () => readAll(dir, warn));
 };
 
 const live = (route: Route, now: number, days: number) => now - route.at < days * DAY_MS;
@@ -138,9 +171,12 @@ const writeAll = (dir: string, routes: Record<string, Route>) => {
   NodeFS.renameSync(temp, path);
 };
 
+const liveOf = (routes: Record<string, Route>, now: number, days: number) =>
+  Object.entries(routes).filter(([, route]) => live(route, now, days));
+
 /** The entries still in force, learned or not. */
-export const listRoutes = (dir: string, now: number, days: number) =>
-  Object.entries(readAll(dir)).filter(([, route]) => live(route, now, days));
+export const listRoutes = (dir: string, now: number, days: number, warn: Warn = toStderr) =>
+  liveOf(readUnlocked(dir, warn), now, days);
 
 /** A learned route for this command and package folder, if one is in force. */
 export const learnedRoute = (
@@ -173,7 +209,7 @@ export const resetRoutes = (
 ) => {
   if (!listRoutes(dir, now, days).some(([key]) => isFor(key, command, folder))) return;
   withLock(dir, () => {
-    const routes = readAll(dir);
+    const routes = readAll(dir, toStderr);
     writeAll(
       dir,
       Object.fromEntries(Object.entries(routes).filter(([key]) => !isFor(key, command, folder))),
@@ -191,7 +227,7 @@ export const recordRouteFault = (
   learnAfter: number,
 ) =>
   withLock(dir, () => {
-    const routes = Object.fromEntries(listRoutes(dir, now, days));
+    const routes = Object.fromEntries(liveOf(readAll(dir, toStderr), now, days));
     const route: Route = {
       kind: fault.kind,
       faults: (routes[key]?.faults ?? 0) + 1,
@@ -203,9 +239,9 @@ export const recordRouteFault = (
   });
 
 /** Removes one entry, or every one with `all`; the count removed. */
-export const forgetRoutes = (dir: string, which: string) =>
+export const forgetRoutes = (dir: string, which: string, warn: Warn = toStderr) =>
   withLock(dir, () => {
-    const routes = readAll(dir);
+    const routes = readAll(dir, warn);
     const kept = Object.fromEntries(
       Object.entries(routes).filter(([key]) => which !== "all" && key !== which),
     );

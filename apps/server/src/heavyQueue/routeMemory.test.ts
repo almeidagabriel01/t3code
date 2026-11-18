@@ -151,15 +151,38 @@ describe("route memory", () => {
     expect(listRoutes(dir, NOW, 7)).toEqual([]);
   });
 
-  it("reads a damaged file as empty and keeps only well-formed entries", () => {
+  // Never overwritten in silence: a later write would erase what the user could still recover.
+  it.each(["{not json", "[]", "null", '"routes"', "7"])(
+    "moves an unreadable file (%s) aside, warns, and starts over",
+    (text) => {
+      const dir = tempDir();
+      NodeFS.writeFileSync(NodePath.join(dir, "routes.json"), text);
+      const warnings: string[] = [];
+      expect(listRoutes(dir, NOW, 7, (message) => warnings.push(message))).toEqual([]);
+      const moved = NodeFS.readdirSync(dir).filter((name) => name.startsWith("routes.json."));
+      expect(moved).toHaveLength(1);
+      expect(moved[0]).toMatch(/^routes\.json\.corrupt-\d/);
+      expect(NodeFS.readFileSync(NodePath.join(dir, moved[0]!), "utf8")).toBe(text);
+      expect(warnings).toEqual([expect.stringContaining(moved[0]!)]);
+      recordRouteFault(dir, routeKey("vp", ".", "missing-program"), MISSING, NOW, 7, 2);
+      expect(listRoutes(dir, NOW, 7).map(([key]) => key)).toEqual(["vp@.#missing-program"]);
+      expect(NodeFS.readFileSync(NodePath.join(dir, moved[0]!), "utf8")).toBe(text);
+    },
+  );
+
+  it("reads a missing file as empty, and keeps a readable file's well-formed entries", () => {
     const dir = tempDir();
-    NodeFS.writeFileSync(NodePath.join(dir, "routes.json"), "{not json");
-    expect(listRoutes(dir, NOW, 7)).toEqual([]);
+    const warnings: string[] = [];
+    expect(listRoutes(dir, NOW, 7, (message) => warnings.push(message))).toEqual([]);
     NodeFS.writeFileSync(
       NodePath.join(dir, "routes.json"),
       JSON.stringify({ bad: { faults: "2" }, "vp@.#no-git": { ...MISSING, faults: 2, at: NOW } }),
     );
-    expect(listRoutes(dir, NOW, 7).map(([key]) => key)).toEqual(["vp@.#no-git"]);
+    expect(
+      listRoutes(dir, NOW, 7, (message) => warnings.push(message)).map(([key]) => key),
+    ).toEqual(["vp@.#no-git"]);
+    expect(warnings).toEqual([]);
+    expect(NodeFS.readdirSync(dir)).toEqual(["routes.json"]);
   });
 
   it("two concurrent writers keep both entries and every count", async () => {
