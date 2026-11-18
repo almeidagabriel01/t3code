@@ -291,14 +291,15 @@ describe("scripts the line runs", () => {
     },
   );
 
-  it.each(["bash missing.sh", "./missing.sh"])(
-    "queues %j on this Mac when the script can't be read",
-    (line) => {
-      expect(command(line)).toContain(
-        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
-      );
-    },
-  );
+  // The Runner decides where it runs: a script it couldn't read is no reason to stay here.
+  it.each([
+    ["bash missing.sh", "bash missing.sh"],
+    ["./missing.sh", "missing.sh"],
+  ])("queues %j, whose script can't be read, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
+  });
 
   it("reads no script without a reader, as before", () => {
     expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();

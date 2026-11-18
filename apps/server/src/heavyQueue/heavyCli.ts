@@ -23,7 +23,6 @@ import {
   rewriteLine,
   scriptOf,
   shellQuote,
-  UNREADABLE_SCRIPT,
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
@@ -45,7 +44,6 @@ import {
   enqueue,
   finish,
   gitRootOf,
-  syncedInCopy,
   modeFor,
   readDoc,
   recordFault,
@@ -61,14 +59,10 @@ import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
   linkAttempts,
-  bodyVerdict,
   linkMachine,
+  macReasonOf,
+  macReasonText,
   movedPart,
-  NEEDS_GIT,
-  needsGit,
-  programTie,
-  outsideTie,
-  shellTextOf,
   startFolder,
 } from "./runner.ts";
 import {
@@ -1148,40 +1142,31 @@ const runLinuxPart = async (
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
   if (root === null || program === undefined) {
-    return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
+    return endLine(dir, id, {
+      kind: "mac",
+      reason: macReasonText({ code: "mac-env", subject: cwd }),
+    });
   }
   // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
   const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
-  if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
-  // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
-  const local = programTie([program, ...args], cwd, root, syncedInCopy, scriptReader(cwd));
-  if (local !== null) return endLine(dir, id, { kind: "mac", reason: local });
-  // A `sh -c` text goes whole: judged again expanded, so it never names a folder Linux lacks.
-  const text = shellTextOf([program, ...args]);
-  if (text !== undefined) {
-    const verdict = bodyVerdict(text, cwd, root, {
-      config: configFor(doc, cwd),
-      home,
-      rootOf: gitRootOf,
-      synced: syncedInCopy,
-    });
-    if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") {
-      return endLine(dir, id, { kind: "mac", reason: verdict.reason! });
-    }
-  }
-  const env = args.includes("check:changed") ? changedInputs(args, cwd, root) : [];
-  if (env === null) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
+  // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
+  const mac = macReasonOf(
+    [program, ...args],
+    cwd,
+    { config: configFor(doc, cwd), home, rootOf: gitRootOf },
+    scriptReader(cwd),
+  );
+  if (mac !== null) return endLine(dir, id, { kind: "mac", reason: macReasonText(mac) });
+  const env = (args.includes("check:changed") ? changedInputs(args, cwd, root) : null) ?? [];
   // A script outside the checkout goes as its text: its path does not exist in the Linux copy.
   const script = scriptOf([program, ...args], 0, scriptReader(cwd));
-  const tie = args
-    .filter((arg) => arg !== script?.word)
-    .map((arg) => outsideTie(arg, cwd, root))
-    .find((why) => why !== null);
-  if (tie !== undefined && tie !== null) return endLine(dir, id, { kind: "mac", reason: tie });
   let command = { program, args };
-  if (script !== null && outsideTie(NodePath.resolve(cwd, script.word), cwd, root) !== null) {
-    if (script.body === null) return endLine(dir, id, { kind: "mac", reason: UNREADABLE_SCRIPT });
+  if (
+    script !== null &&
+    script.body !== null &&
+    !NodePath.resolve(cwd, script.word).startsWith(`${root}/`)
+  ) {
     const rest = script.word === program ? args : args.slice(args.indexOf(script.word) + 1);
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }

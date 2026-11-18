@@ -390,11 +390,11 @@
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/fl.sh <<'EOF'\n#!/usr/bin/env bash\n# usage: fl.sh <repo-relative files...>; formats in place, then lints the .ts ones.\ncd /Users/dev/.t3/worktrees/t3code/t3-needs-you-global-e0b7610f9fb06ff5\nout=$(mktemp)\nfor f in \"$@\"; do\n  ./node_modules/.bin/vp fmt --stdin-filepath=\"$f\" < \"$f\" > \"$out\" 2>/dev/null\n  if [ ! -s \"$out\" ]; then echo \"FMT-EMPTY $f\"; exit 1; fi\n  cmp -s \"$f\" \"$out\" || { cp \"$out\" \"$f\"; echo \"reformatted $f\"; }\ndone\nts=()\nfor f in \"$@\"; do case \"$f\" in *.ts|*.tsx) ts+=(\"$f\");; esac; done\nif [ ${#ts[@]} -gt 0 ]; then\n  ./node_modules/.bin/vp lint --no-ignore \"${ts[@]}\" 2>&1 | grep -v \"^note:\"\n  echo \"lint exit ${PIPESTATUS[0]} (${#ts[@]} files)\"\nfi\nEOF\nchmod +x $S/fl.sh; $S/fl.sh apps/server/src/autonomy/AutonomyService.ts apps/server/src/autonomy/AutonomyService.test.ts",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-needs-you-global-e0b7610f9fb06ff5/apps/server",
       "scripts": {
-        "/private/tmp/claude-501/ID/ID/scratchpad/fl.sh": "#!/usr/bin/env bash\n# usage: fl.sh <repo-relative files...>; formats in place, then lints the .ts ones.\ncd /Users/dev/.t3/worktrees/t3code/t3-needs-you-global-e0b7610f9fb06ff5\nout=$(mktemp)\nfor f in \"$@\"; do\n  ./node_modules/.bin/vp fmt --stdin-filepath=\"$f\" < \"$f\" > \"$out\" 2>/dev/null\n  if [ ! -s \"$out\" ]; then echo \"FMT-EMPTY $f\"; exit 1; fi\n  cmp -s \"$f\" \"$out\" || { cp \"$out\" \"$f\"; echo \"reformatted $f\"; }\ndone\nts=()\nfor f in \"$@\"; do case \"$f\" in *.ts|*.tsx) ts+=(\"$f\");; esac; done\nif [ ${#ts[@]} -gt 0 ]; then\n  ./node_modules/.bin/vp lint --no-ignore \"${ts[@]}\" 2>&1 | grep -v \"^note:\"\n  echo \"lint exit ${PIPESTATUS[0]} (${#ts[@]} files)\"\nfi\n"
+        "$S/fl.sh": null
       },
       "observed": "unknown",
-      "expect": "linux",
-      "why": "readable script outside the checkout travels; its text only formats and lints"
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/fl.sh",
+      "why": "unreadable script outside the checkout: the queue reads $S/fl.sh as written"
     },
     {
       "line": "D=/Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents; cat $D/gate-remote.sh | head -3 | cut -c1-300; cd /Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8 && remoto sh -c \"$(cat $D/gate-remote.sh)\" > $D/gate.out 2>&1; grep -v \"^\\[t3 heavy\\]\" $D/gate.out | sed -n '/== LINT/,/LCOV-BEGIN/p' | head -80",
@@ -436,8 +436,8 @@
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad/lock; rm -rf $S; mkdir -p $S/a $S/b $S/c $S/d; cd $S/a && echo '{\"name\":\"a\",\"version\":\"1.0.0\"}' > package.json && pnpm install --lockfile-only >/dev/null 2>&1; echo '{\"name\":\"a\",\"version\":\"1.0.0\",\"dependencies\":{\"left-pad\":\"1.3.0\"}}' > package.json; CI=1 pnpm install --frozen-lockfile 2>&1 | tail -4; echo ===b; cd $S/b && printf '{\\n<<<<<<< HEAD\\n\"name\":\"b\",\\n=======\\n\"name\":\"c\",\\n>>>>>>> x\\n\"version\":\"1.0.0\"}\\n' > package.json && CI=1 pnpm install --frozen-lockfile 2>&1 | tail -3; echo ===c; cd $S/c && echo '{\"name\":\"c\",\"version\":\"1.0.0\"}' > package.json && printf \"lockfileVersion: '9.0'\\n<<<<<<< HEAD\\nfoo: 1\\n=======\\nfoo: 2\\n>>>>>>> x\\n\" > pnpm-lock.yaml && CI=1 pnpm install --frozen-lockfile 2>&1 | tail -3; echo ===d; cd $S/d && echo '{\"name\":\"d\",\"version\":\"1.0.0\",\"dependencies\":{\"left-pad\":\"1.3.0\"}}' > package.json && echo '{\"name\":\"d\",\"version\":\"1.0.0\",\"lockfileVersion\":3,\"requires\":true,\"packages\":{\"\":{\"name\":\"d\",\"version\":\"1.0.0\"}}}' > package-lock.json && npm ci --offline 2>&1 | tail -4",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081/apps/server/src/heavyQueue",
       "observed": "mac",
-      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/lock",
-      "why": "nothing heavy: every program is work, the first (rm) names a path outside"
+      "expect": "mac-state:npm ci",
+      "why": "npm ci runs a ci script, so it is the work; an install changes this Mac"
     },
     {
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/cov.sh <<'EOF'\n#!/bin/zsh\ncd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84\nremoto sh -c 'pnpm add -D -w @vitest/coverage-v8@5.0.5 >/dev/null 2>&1; cd apps/mobile && pnpm exec vp test run --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcovonly --coverage.include=\"src/**/*.{ts,tsx}\" --coverage.reportOnFailure=true --testTimeout=300000 src/state/use-composer-drafts.test.ts src/state/pending-new-tasks-model.test.ts src/features/threads/thread-menu.test.ts src/features/threads/thread-list-v2-items.test.tsx src/features/assistants/HomeAssistantsSection.test.tsx src/features/assistants/AssistantGroupChatRouteScreen.test.tsx src/features/layout/workspace/open-conversation-key.test.ts 2>&1 | grep -E \"Test Files|Tests |FAIL\" ; echo \"@@LCOV@@\"; cat coverage/lcov.info' > $HOME/DEV/Pessoal/t3code-captures/draft-mobile-cov.out 2>&1\necho exit $?\nEOF\nchmod +x $S/cov.sh; $S/cov.sh; grep -E \"Test Files|Tests |FAIL|@@LCOV\" ~/DEV/Pessoal/t3code-captures/draft-mobile-cov.out | head",
@@ -535,11 +535,11 @@
       "line": "C=~/DEV/Pessoal/t3code-captures/card119; sleep 80; $C/scripts/view.sh b3 | tail -8; grep -a \"t3 heavy\\|EXIT\\|Test Files\\|submit\" $C/logs/job-b3.log",
       "cwd": "/Users/dev/DEV/Pessoal/t3code",
       "scripts": {
-        "/Users/dev/DEV/Pessoal/t3code-captures/card119/scripts/view.sh": "#!/bin/bash\n# view.sh <marker>: compact poll timeline from marker, deduped\n. \"$(dirname \"$0\")/env.sh\"\nsed -n \"/=== $1/,\\$p\" $LOG/poll.log | awk -F' \\\\| ' '{split($1,a,\" \"); printf \"%s %s %s %s | %s\\n\", a[1],a[2],a[4],a[5],$3}' | uniq -f1\n"
+        "$C/scripts/view.sh": null
       },
       "observed": "Linux is unavailable: asking you",
-      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-captures/card119/logs/job-b3.log",
-      "why": "nothing heavy: grep reads a path outside"
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-captures/card119/scripts/view.sh",
+      "why": "unreadable script outside the checkout: the queue reads $C/scripts/view.sh as written"
     },
     {
       "line": "git add apps/mobile && git diff --name-only --diff-filter=U; cd apps/mobile && timeout 600 ./node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | tail -15; echo exit ${pipestatus[1]}",
@@ -590,11 +590,11 @@
       "line": "B=~/DEV/Pessoal/auditorias-t3/2026-11-17; W=/Users/dev/.t3/worktrees/t3code/t3-3ff5c062-09f2477943e805fa; bash $B/scripts/pair.sh $W 7916 && cd $B/scripts && PW_FROM=$W/node_modules/.pnpm/playwright@1.64.1/node_modules/playwright/ node cap-f2.mjs pair.url ../fork2-ca47bb2a79/web $W \"mcp:ID\" 2>&1 | cut -c1-1500",
       "cwd": "/Users/dev/DEV/Pessoal/t3code",
       "scripts": {
-        "/Users/dev/DEV/Pessoal/auditorias-t3/2026-11-17/scripts/pair.sh": "#!/bin/bash\n# pair.sh <worktree> <webPort>: fresh pairing URL into scripts/pair.url, drops stale browser state\nB=$(dirname \"$0\"); cd \"$1\" || exit 1\nnode apps/server/src/bin.ts pair --base-dir \"$1/.t3\" 2>&1 | grep -oE 'https?://[^ )]+#token=[^ )]+' | head -1 | sed -E \"s#^https?://[^/]+#http://localhost:$2#\" > \"$B/pair.url\"\nrm -f \"$B/pair.url.state.json\"; grep -c token \"$B/pair.url\"\n"
+        "$B/scripts/pair.sh": null
       },
       "observed": "Uses a file outside the project",
-      "expect": "mac-env:/Users/dev/.t3/worktrees/t3code/t3-3ff5c062-09f2477943e805fa",
-      "why": "nothing heavy: the script travels, its argument names another worktree"
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/auditorias-t3/2026-11-17/scripts/pair.sh",
+      "why": "unreadable script outside the checkout: the queue reads $B/scripts/pair.sh as written"
     },
     {
       "line": "cd ~/DEV/Pessoal/auditorias-t3/2026-11-17 && sed -i '' 's/(`rm-on-\\*`, `rm-off-400-dark`)/(`rm-on-*`)/; s/(`settings-on-\\*`)/(`settings-on-*`, `settings-on-400`)/' RELATORIO-web.md && grep -n \"off\" RELATORIO-web.md; tail -1 /private/tmp/claude-501/ID/ID/tasks/bn9tglnfc.output | cut -c1-200",
@@ -633,12 +633,12 @@
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/all.sh <<EOF\n#!/bin/bash\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5/packages/contracts\necho \"== share test\"; $S/share.sh\necho \"== bench\"; STRESS=10 ROUNDS=12 VARIANTS=\"normal normal2 background nice tier\" ../../scripts/heavy-priority-bench.sh -- ../../node_modules/.bin/effect-tsgo tsrs --noEmit\necho \"== share test again\"; $S/share.sh\nEOF\nchmod +x $S/all.sh; bash -n $S/all.sh && bash -n $S/share.sh && echo syntax-ok",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5",
       "scripts": {
-        "/private/tmp/claude-501/ID/ID/scratchpad/share.sh": "#!/bin/bash\n# Equal numbers of plain and treated spinners at once for SECONDS_EACH: both halves see the same\n# outside load, so treated/plain is the share of CPU the treatment gives up (~1.00 = no brake).\nset -euo pipefail\nn=${N:-10}\nsecs=${SECONDS_EACH:-10}\nout=/private/tmp/claude-501/ID/ID/scratchpad/share\nmkdir -p \"$out\"\ntag=$(date +%s)\npids=()\ntrap 'kill \"${pids[@]}\" 2>/dev/null || true' EXIT\nspin='my $e = time + $ARGV[0]; my $c = 0; while (time < $e) { $c++ for 1 .. 100000 } print $c'\nfor t in \"background:/usr/sbin/taskpolicy -b\" \"nice:nice -n 10\" \"tier:/usr/sbin/taskpolicy -t 5 -l 5\"; do\n  name=${t%%:*}\n  read -r -a pre <<<\"${t#*:}\"\n  pids=()\n  for ((i = 0; i < n; i++)); do\n    perl -e \"$spin\" \"$secs\" >\"$out/$tag-$name-plain$i\" &\n    pids+=($!)\n    \"${pre[@]}\" perl -e \"$spin\" \"$secs\" >\"$out/$tag-$name-treated$i\" &\n    pids+=($!)\n  done\n  wait \"${pids[@]}\"\n  plain=$(cat \"$out/$tag-$name\"-plain* | awk '{ s += $1 } END { print s }')\n  treated=$(cat \"$out/$tag-$name\"-treated* | awk '{ s += $1 } END { print s }')\n  awk -v n=\"$name\" -v p=\"$plain\" -v t=\"$treated\" -v l=\"$(sysctl -n vm.loadavg | awk '{ print $2 }')\" \\\n    'BEGIN { printf \"%-11s treated/plain work = %.2f  (load %s)\\n\", n, t / p, l }'\ndone\n",
-        "/private/tmp/claude-501/ID/ID/scratchpad/all.sh": "#!/bin/bash\nS=/private/tmp/claude-501/ID/ID/scratchpad\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5/packages/contracts\necho \"== share test\"; bash \"$S/share.sh\"\necho \"== bench\"; STRESS=10 ROUNDS=12 VARIANTS=\"normal normal2 background nice tier\" ../../scripts/heavy-priority-bench.sh -- ../../node_modules/.bin/effect-tsgo tsrs --noEmit\necho \"== share test again\"; bash \"$S/share.sh\"\n"
+        "$S/all.sh": null,
+        "$S/share.sh": null
       },
       "observed": "Couldn't read this script",
       "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/all.sh",
-      "why": "nothing heavy (bash -n checks syntax): chmod names a path outside"
+      "why": "unreadable script outside the checkout: the queue reads $S/all.sh as written"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server && sed -i '' 's|    expect(result.stdout).toBe(\"from-Linux --fast\\\\nhello\\\\n\");|    expect(result.stdout, result.stderr).toBe(\"from-Linux --fast\\\\nhello\\\\n\");|; s|    expect(result.stdout).toBe(\"from-Darwin\\\\n\");|    expect(result.stdout, result.stderr).toBe(\"from-Darwin\\\\n\");|' src/heavyQueue/runnerExec.linux.test.ts && grep -c \"result.stdout, result.stderr\" src/heavyQueue/runnerExec.linux.test.ts && source /private/tmp/claude-501/it.env && pnpm exec vp test run src/heavyQueue/runnerExec.linux.test.ts -t \"outside the checkout\" > /private/tmp/claude-501/it.log 2>&1; grep -E \"^AssertionError\" -A2 /private/tmp/claude-501/it.log | head -20",

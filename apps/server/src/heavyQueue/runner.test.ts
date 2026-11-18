@@ -24,8 +24,6 @@ import {
   matchesAny,
   mayPublish,
   nextHealth,
-  NEEDS_GIT,
-  PYTHON_HERE,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -155,8 +153,6 @@ describe("routing matrix", () => {
     eligible: "vp test run",
     exclusive: "xcrun simctl boot iPhone",
     "mac-only": "vp test run --project ios -- xcodebuild",
-    // A venv made on this Mac: Linux rebuilds no Python environment.
-    python: ".venv/bin/pytest -q",
     "not-listed": "vp run build",
   } as const;
   const linuxRunningIn = { full: 2, "same-worktree": 1, stale: 1 } as Record<string, number>;
@@ -1425,62 +1421,33 @@ describe("patterns and eligibility", () => {
     ["vp run build && vp test run", "not-listed", "Not on the Can run on Linux list: vp run build"],
     ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
-    ["echo hi", "mac-only", "Nothing in it runs on Linux"],
+    ["echo hi", "linux", null],
     ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
-    // The Linux copy has no `.git`: what diffs against it stays here, except check:changed,
-    // whose changed files this Mac computes and hands over.
     ["vp run check:changed", "linux", null],
     ["timeout 3500 vp run check:changed origin/main", "linux", null],
-    ["vp test run --changed", "mac-only", NEEDS_GIT],
-    ["npx jest --onlyChanged", "mac-only", NEEDS_GIT],
-    ["vp test run --changedSince=origin/main", "mac-only", NEEDS_GIT],
-    ["remoto vp staged", "mac-only", NEEDS_GIT],
-    ["remoto /usr/bin/git status", "mac-only", NEEDS_GIT],
+    ["vp test run --changed", "linux", null],
+    ["npx jest --onlyChanged", "linux", null],
+    ["remoto /usr/bin/git status", "linux", null],
     ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
-    ["vp test run unchanged", "linux", null],
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
-    ["vp test run -t staged", "linux", null],
-    ["vp test run --reporter=changed", "linux", null],
-    ["pnpm --filter web check:changed", "linux", null],
     // A folder flag with no folder after it moves nothing.
     ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
   ])("%s is %s by default", (label, eligibility, reason) => {
-    expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
+    expect(eligibilityOf({ label, cwd: "/w" }, at)).toMatchObject({ eligibility, reason });
   });
 
-  // The Linux copy rebuilds `node_modules` from a lockfile, and nothing else that git ignores.
-  const copy = {
-    ...at,
-    config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true },
-    synced: (path: string) => !/^\/w\/(\.venv|dist|nolock\/node_modules)\//.test(path),
-  };
+  // Not following a command, or what its shell set up, is no reason to keep it here.
+  const copy = { ...at, config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true } };
   it.each(
     (
       [
-        [".venv/bin/pytest -q", "mac-only", PYTHON_HERE],
-        ["pytest tests", "mac-only", PYTHON_HERE],
-        ["python3 -m pytest", "mac-only", PYTHON_HERE],
-        ["uv run pytest", "mac-only", PYTHON_HERE],
-        ["remoto pytest", "mac-only", PYTHON_HERE],
-        [
-          "source .venv/bin/activate && vp test run",
-          "mac-only",
-          "Sets up its shell here first: source .venv/bin/activate",
-        ],
-        [". ./env.sh; vp test run", "mac-only", "Sets up its shell here first: . ./env.sh"],
-        [
-          "node dist/cli.js test",
-          "mac-only",
-          "Uses a file the Linux copy doesn't have: dist/cli.js",
-        ],
-        ["./dist/run-tests", "mac-only", "Uses a file the Linux copy doesn't have: dist/run-tests"],
-        ["node_modules/.bin/vitest run", "linux", null],
-        [
-          "nolock/node_modules/.bin/vitest run",
-          "mac-only",
-          "Uses a file the Linux copy doesn't have: nolock/node_modules/.bin/vitest",
-        ],
-        ["node -e 'process.exit(0)' && vp test run", "linux", null],
+        [".venv/bin/pytest -q", "linux", null],
+        ["uv run pytest", "linux", null],
+        ["source .venv/bin/activate && vp test run", "linux", null],
+        ["nvm use 22 && vp test run", "linux", null],
+        ['eval "$(direnv export bash)" && vp test run', "linux", null],
+        ["node dist/cli.js test", "linux", null],
+        ["./tools/check", "linux", null, { "./tools/check": "#!/usr/bin/env python3\nprint(1)" }],
         ["vp test run /w/src/a.test.ts", "linux", null],
         [
           "vp test run /Users/me/other/a.test.ts",
@@ -1488,66 +1455,14 @@ describe("patterns and eligibility", () => {
           "Uses a file outside the project: /Users/me/other/a.test.ts",
         ],
         ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
-        // Python is the class: its tools, a program inside an environment, a script whose shebang is Python.
-        ["pdm run pytest", "mac-only", PYTHON_HERE],
-        ["hatch run test", "mac-only", PYTHON_HERE],
-        ["rye test", "mac-only", PYTHON_HERE],
-        ["conda run -n app pytest", "mac-only", PYTHON_HERE],
-        ["mamba run pytest", "mac-only", PYTHON_HERE],
-        ["micromamba run pytest", "mac-only", PYTHON_HERE],
-        ["pixi run test", "mac-only", PYTHON_HERE],
-        ["ipython -c 1", "mac-only", PYTHON_HERE],
-        ["jupyter nbconvert --execute a.ipynb", "mac-only", PYTHON_HERE],
-        ["pipx run tox", "mac-only", PYTHON_HERE],
-        ["envs/app/bin/test-runner", "mac-only", PYTHON_HERE],
-        ["/opt/miniconda3/bin/runtests", "mac-only", PYTHON_HERE],
-        ["lib/python3.12/site-packages/x/run", "mac-only", PYTHON_HERE],
-        [".tox/py312/bin/run-tests", "mac-only", PYTHON_HERE],
-        [
-          "./tools/check",
-          "mac-only",
-          PYTHON_HERE,
-          { "./tools/check": "#!/usr/bin/env python3\nprint(1)" },
-        ],
-        ["./tools/check.sh", "linux", null, { "./tools/check.sh": "#!/bin/sh\nvp test run" }],
-        // What sets up this Mac's shell holds the work after it, like `source`.
-        [
-          'eval "$(direnv export bash)" && vp test run',
-          "mac-only",
-          // `eval` already makes the whole line unreadable, so it stays here too.
-          "Couldn't read this command safely (eval)",
-        ],
-        ["nvm use 22 && vp test run", "mac-only", "Sets up its shell here first: nvm use 22"],
-        ["fnm use && vp test run", "mac-only", "Sets up its shell here first: fnm use"],
-        [
-          "pyenv shell 3.12 && vp test run",
-          "mac-only",
-          "Sets up its shell here first: pyenv shell 3.12",
-        ],
-        [
-          "conda activate app && vp test run",
-          "mac-only",
-          "Sets up its shell here first: conda activate app",
-        ],
-        [
-          "rbenv shell 3.3 && vp test run",
-          "mac-only",
-          "Sets up its shell here first: rbenv shell 3.3",
-        ],
-        [
-          "direnv exec . vp test run",
-          "mac-only",
-          "Sets up its shell here first: direnv exec . vp test run",
-        ],
-        ["nvm ls && vp test run", "linux", null],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >
     ).map(([label, eligibility, reason, scripts]) => ({ label, eligibility, reason, scripts })),
-  )("$label is $eligibility from the Linux copy", ({ label, eligibility, reason, scripts }) => {
+  )("$label is $eligibility", ({ label, eligibility, reason, scripts }) => {
     expect(
       eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
-    ).toEqual({ eligibility, reason });
+    ).toMatchObject({ eligibility, reason });
   });
 
   // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
@@ -1556,31 +1471,34 @@ describe("patterns and eligibility", () => {
     config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
   };
   it.each([
-    ["pnpm install", "pnpm install"],
-    ["vp i", "vp i"],
-    ["npm ci", "npm ci"],
-    ["yarn add react", "yarn add react"],
-    ["pnpm --filter web remove lodash", "pnpm web remove"],
-    ["xcodebuild -scheme App test", "xcodebuild App test"],
-    ["adb install app.apk", "adb install app.apk"],
-    ["pnpm exec next start", "pnpm exec next"],
-    ["vp run dev", "vp run dev"],
-    ["pnpm start", "pnpm start"],
-    ["npm run watch:css", "npm run watch:css"],
-    ["npx vite", "npx vite"],
-    ["npx next dev", "npx next dev"],
-  ])("%s stays on this Mac whatever the lists say", (label, name) => {
+    ["pnpm install", "mac-state", "pnpm install"],
+    ["vp i", "mac-state", "vp i"],
+    ["npm ci", "mac-state", "npm ci"],
+    ["yarn add react", "mac-state", "yarn add"],
+    ["pnpm --filter web remove lodash", "mac-state", "pnpm remove"],
+    ["xcodebuild -scheme App test", "mac-tool", "xcodebuild"],
+    ["adb install app.apk", "mac-tool", "adb"],
+    ["pnpm exec next start", "serves-port", "next start"],
+    ["vp run dev", "serves-port", "vp dev"],
+    ["pnpm start", "serves-port", "pnpm start"],
+    ["npx vite", "serves-port", "vite"],
+    ["npx next dev", "serves-port", "next dev"],
+  ])("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
-      reason: `Always on this Mac: ${name}`,
+      reason: `Always on this Mac: ${subject}`,
+      mac: { code, subject },
     });
   });
-  it.each(["vp test run", "npx vite build", "pnpm run build", "./scripts/ci.sh"])(
-    "%s may still leave",
-    (label) => {
-      expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
-    },
-  );
+  it.each([
+    "vp test run",
+    "npx vite build",
+    "pnpm run build",
+    "./scripts/ci.sh",
+    "npm run watch:css",
+  ])("%s may still leave", (label) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
+  });
 
   // The queue read each script when the job was queued; the Runner judges its text.
   it.each([
@@ -1593,11 +1511,14 @@ describe("patterns and eligibility", () => {
       "Commits run here: the pre-commit edits this Mac's repository",
     ],
     ["vp test run /etc/hosts", "mac-only", "Uses a file outside the project: /etc/hosts"],
-    [null, "mac-only", "Couldn't read this script"],
+    [null, "mac-only", "Uses a file outside the project: /tmp/s/v.sh"],
   ] as const)("a script outside the project running %j is %s", (body, eligibility, reason) => {
     for (const label of ["bash /tmp/s/v.sh", "/tmp/s/v.sh --fast"]) {
       const scripts = { "/tmp/s/v.sh": body };
-      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject({
+        eligibility,
+        reason,
+      });
     }
   });
 
@@ -1641,9 +1562,10 @@ describe("patterns and eligibility", () => {
       "not-listed",
       "Not on the Can run on Linux list: vp run build",
     ],
-    ["sh -c './gate.sh'", {}, "mac-only", "Couldn't read this script"],
+    // A script it can't read is no reason to keep it here.
+    ["sh -c './gate.sh'", {}, "not-listed", "Not on the Can run on Linux list: gate.sh"],
   ] as const)("%s is %s", (label, scripts, eligibility, reason) => {
-    expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+    expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject({ eligibility, reason });
   });
 
   it("a formatter check is listed only where the list allows checks", () => {
@@ -1669,7 +1591,7 @@ describe("patterns and eligibility", () => {
 
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
     const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
-    expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toEqual({
+    expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toMatchObject({
       eligibility: "mac-only",
       reason: "Uses a file outside the project: /etc/hosts",
     });

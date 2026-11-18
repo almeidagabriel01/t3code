@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import corpus from "./routingCorpus.fixture.json" with { type: "json" };
-import { DEFAULT_PROJECT_CONFIG, eligibilityOf } from "./runner.ts";
+import { DEFAULT_PROJECT_CONFIG, eligibilityOf, type Verdict } from "./runner.ts";
 
 // The checkouts the sanitized paths name; anything else is outside every checkout.
 const CHECKOUT =
@@ -11,17 +11,20 @@ const context = {
   home: "/Users/dev",
   rootOf: (cwd: string) => CHECKOUT.exec(cwd)?.[1] ?? null,
 };
-const machineOf = (expect: string) => (expect === "linux" ? "linux" : "mac");
+const routeOf = ({ eligibility, mac }: Verdict) =>
+  eligibility === "linux" || eligibility === "exclusive"
+    ? eligibility
+    : `${mac?.code}:${mac?.subject}`;
 
 describe("routing corpus", () => {
   it.each(corpus.rows.map((row, at) => ({ ...row, name: `${at} ${row.line.slice(0, 90)}` })))(
     "$name",
     ({ line, cwd, scripts, expect: verdict }) => {
-      const { eligibility } = eligibilityOf(
+      const got = eligibilityOf(
         { label: line.slice(0, 200), line, cwd, scripts: scripts ?? {} },
         context,
       );
-      expect(machineOf(eligibility)).toBe(machineOf(verdict));
+      expect(routeOf(got)).toBe(verdict);
     },
   );
 });

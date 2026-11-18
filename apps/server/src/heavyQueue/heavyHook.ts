@@ -334,7 +334,6 @@ export interface Part {
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
 export type ReadScript = (word: string) => string | null;
 export const SCRIPT_MAX_BYTES = 64 * 1024;
-export const UNREADABLE_SCRIPT = "Couldn't read this script";
 const SHEBANG = /^#!\s*(\S*\/)?(env\s+)?(sh|bash|zsh|dash)(\s|$)/;
 
 /** The path word of the script a command runs: `bash x.sh`, `./x.sh`, or any path (`./verify`). */
@@ -651,10 +650,6 @@ export const queueBashCall = (
     ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
     : heavySegment(command, options.readScript);
   if (segment === null) return null;
-  // A script it couldn't read may be heavy: it waits on this Mac, saying why.
-  const unreadable = readLine(segment, options.readScript).parts.some(
-    (part) => part.script !== null && part.script.body === null,
-  );
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   // A repeat of the same call attaches to its job instead of running it twice.
   const request =
@@ -667,7 +662,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${request}${unreadable ? ` --runner mac --route-reason ${shellQuote(UNREADABLE_SCRIPT)}` : ""} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

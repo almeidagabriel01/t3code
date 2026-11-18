@@ -17,12 +17,7 @@ import {
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
-import {
-  DEFAULT_MACHINE_CONFIG,
-  DEFAULT_PROJECT_CONFIG,
-  eligibilityOf,
-  NEEDS_GIT,
-} from "./runner.ts";
+import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, eligibilityOf } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -500,7 +495,7 @@ describe("t3 heavy", () => {
       [
         (_: string, x: string) => `D=${x}; sh -c "cd $D && vp test run"`,
         "vp on mac: test run",
-        "Runs outside a git checkout",
+        "Uses a file outside the project",
       ],
     ])("keeps %# on this Mac when Linux can't have all its folders", async (line, ran, why) => {
       const { dir, env } = setup(echoArgs);
@@ -557,18 +552,6 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(
         "Uses a file outside the project: /etc/hosts; running the line on this Mac",
       );
-    });
-
-    it.each([
-      ["F=--changed; vp test run $F", "test run --changed"],
-      // A check:changed that doesn't read the inputs this Mac would hand it.
-      ["vp run check:changed", "run check:changed"],
-    ])("runs %j here when its expanded command turns out to need git", async (line, ran) => {
-      const { dir, env } = setup(echoArgs);
-      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
-      expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe(`vp on mac: ${ran}\n`);
-      expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
     });
 
     /** The faults the job logged for the problem detector, without the per-run fields. */
@@ -1391,10 +1374,10 @@ describe("t3 heavy", () => {
       ],
       ["remoto sh -c 'cd ~/code && vp test run'", "linux", "X sh -c 'cd ~/code && vp test run'"],
       ["sh -c 'vp test run /w/other/a.test.ts'", `${OUTSIDE}/w/other/a.test.ts`],
-      ["sh -c 'echo a | vp test run'", "Reads its input from this Mac: vp test run"],
+      ["sh -c 'echo a | vp test run'", "linux", "X sh -c 'echo a | vp test run'"],
       ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
       ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
-      ["cd /nowhere && vp test run", "Runs outside a git checkout: /nowhere"],
+      ["cd /nowhere && vp test run", `${OUTSIDE}/nowhere`],
       // A part naming a folder in another checkout runs from that one; `linux-part` moves it.
       [
         "cd /w/other && git checkout --ours a && cd apps/server && pnpm exec vp test run a.test.ts",
@@ -1422,23 +1405,18 @@ describe("t3 heavy", () => {
       ["pnpm -C /w/other exec vp test run /abs/a.test.ts", `${OUTSIDE}/abs/a.test.ts`],
       ["sh -c 'cd /w/other && vp test run'", "linux", "X sh -c 'cd /w/other && vp test run'"],
       ["sh -c 'cd /w/other && vp test run /abs/a.test.ts'", `${OUTSIDE}/abs/a.test.ts`],
-      ["sh -c 'cd /nowhere && vp test run'", "Runs outside a git checkout: /nowhere"],
-      // Linux has no git: a git step inside a text it runs whole keeps the text here.
-      ["sh -c 'cd /w/other && git checkout --ours a && vp test run'", NEEDS_GIT],
-      ["sh -c 'git stash && vp test run'", NEEDS_GIT],
+      ["sh -c 'cd /nowhere && vp test run'", `${OUTSIDE}/nowhere`],
       // The rest of what keeps work here, each with its reason.
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
       ["vp run build", "Not on the Can run on Linux list: vp run build"],
       ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
-      ["vp test run <<EOF\nx\nEOF", "Reads its input from this Mac: vp test run"],
-      ["echo a | vp test run", "Reads its input from this Mac: vp test run"],
-      ["vp test run a & vp test run b & wait", "Runs in the background: vp test run"],
-      ["eval vp test run", "Couldn't read this command safely (eval)"],
-      ["vp test run 'unbalanced", "Couldn't read this command safely (unbalanced quotes)"],
-      ["vp test run <<EOF\nnever ends", "Couldn't read this command safely (unterminated heredoc)"],
-      ["nohup sh -c 'vp test run > /tmp/x.log 2>&1' &", "Runs in the background: sh vp test"],
+      // A line it can't follow is no reason to keep it here.
+      ["vp test run <<EOF\nx\nEOF", "linux", "X vp test run <<EOF\nx\nEOF"],
+      ["echo a | vp test run", "linux", "echo a | X vp test run"],
+      ["vp test run a & vp test run b & wait", "linux", "X vp test run a & X vp test run b & wait"],
+      ["eval vp test run", "linux", "X eval vp test run"],
       // Not heavy, or already queued: the hook leaves these alone.
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],

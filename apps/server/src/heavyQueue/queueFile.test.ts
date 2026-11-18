@@ -735,30 +735,6 @@ describe("heavy queue file", () => {
     expect(sizing()).toEqual([256, 1024, 1024, 1000, 60]);
   });
 
-  it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {
-    const repo = NodeFS.realpathSync(tempDir());
-    NodeChildProcess.spawnSync("git", ["init", "-q", repo]);
-    NodeFS.writeFileSync(NodePath.join(repo, ".gitignore"), "dist/\n.venv/\nnode_modules/\n");
-    NodeFS.mkdirSync(NodePath.join(repo, "web"));
-    NodeFS.writeFileSync(NodePath.join(repo, "web", "pnpm-lock.yaml"), "");
-    for (const [path, synced] of [
-      ["src/a.test.ts", true],
-      ["dist/cli.js", false],
-      [".venv/bin/pytest", false],
-      ["web/node_modules/.bin/vitest", true],
-      ["node_modules/.bin/vitest", false],
-      ["tools/node_modules/.bin/x", false],
-    ] as const) {
-      expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
-    }
-    // An answer is reused only briefly: a changed .gitignore shows within a minute.
-    const script = NodePath.join(repo, "scripts", "go.sh");
-    expect(Queue.syncedInCopy(script, 0)).toBe(true);
-    NodeFS.appendFileSync(NodePath.join(repo, ".gitignore"), "scripts/\n");
-    expect(Queue.syncedInCopy(script, 1_000)).toBe(true);
-    expect(Queue.syncedInCopy(script, 61_000)).toBe(false);
-  });
-
   it("sets several settings in one write, each clamped, ignoring unknown keys", () => {
     const dir = tempDir();
     Queue.setLimit(dir, "macCpuCeilingPercent", 80);
@@ -1488,10 +1464,10 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "linux", startsNow: true },
     },
     {
-      name: "git-driven work stays on this Mac",
-      line: "vp test run --changed",
+      name: "a file outside the project keeps it on this Mac",
+      line: "vp test run /etc/hosts",
       over: { runnerWhere: "linux" as const },
-      expected: { runsOn: "mac", reason: "Needs git, which the Linux copy doesn't have" },
+      expected: { runsOn: "mac", reason: "Uses a file outside the project: /etc/hosts" },
     },
     {
       name: "Always on this Mac keeps a Linux-bound command here",
