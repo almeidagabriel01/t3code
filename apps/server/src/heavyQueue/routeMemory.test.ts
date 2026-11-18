@@ -14,6 +14,7 @@ import {
   listRoutes,
   packageFolder,
   recordRouteFault,
+  resetRoutes,
   routeFolder,
   routeKey,
 } from "./routeMemory.ts";
@@ -82,6 +83,25 @@ describe("route memory", () => {
     expect(learnedRoute(dir, "/x/vp", ".", NOW + 2, 7, 2)?.key).toBe(key);
     expect(learnedRoute(dir, "vp", "apps/web", NOW + 2, 7, 2)).toBeNull();
     expect(learnedRoute(dir, "pnpm", ".", NOW + 2, 7, 2)).toBeNull();
+  });
+
+  it("matches a folder whole, never one that only starts with it", () => {
+    const dir = tempDir();
+    const key = routeKey("vp", "/a#b", "missing-program");
+    recordRouteFault(dir, key, MISSING, NOW, 7, 1);
+    expect(learnedRoute(dir, "vp", "/a#b", NOW, 7, 1)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", "/a", NOW, 7, 1)).toBeNull();
+  });
+
+  it("a run Linux finished resets that program and folder's counts, and only theirs", () => {
+    const dir = tempDir();
+    const key = routeKey("vp", ".", "missing-program");
+    const other = routeKey("vp", "apps/web", "missing-program");
+    recordRouteFault(dir, key, MISSING, NOW, 7, 2);
+    recordRouteFault(dir, other, MISSING, NOW, 7, 2);
+    resetRoutes(dir, "/x/vp", ".", NOW, 7);
+    expect(listRoutes(dir, NOW, 7).map(([each]) => each)).toEqual([other]);
+    expect(recordRouteFault(dir, key, MISSING, NOW, 7, 2).learned).toBe(false);
   });
 
   it("expiry and forget bring Linux back", () => {

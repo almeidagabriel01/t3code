@@ -114,11 +114,34 @@ export const learnedRoute = (
   days: number,
   learnAfter: number,
 ) => {
-  const prefix = routePrefix(program, folder);
   const found = listRoutes(dir, now, days).find(
-    ([key, route]) => key.startsWith(prefix) && route.faults >= learnAfter,
+    ([key, route]) => isFor(key, program, folder) && route.faults >= learnAfter,
   );
   return found === undefined ? null : { key: found[0], route: found[1] };
+};
+
+/** Whether `key` is this program and folder's, whole: a folder `/a` never takes `/a#b`'s. */
+const isFor = (key: string, program: string, folder: string) => {
+  const prefix = routePrefix(program, folder);
+  return key.startsWith(prefix) && !key.slice(prefix.length).includes("#");
+};
+
+/** Linux ran this program in this folder: its faults so far were passing ones, so they go. */
+export const resetRoutes = (
+  dir: string,
+  program: string,
+  folder: string,
+  now: number,
+  days: number,
+) => {
+  if (!listRoutes(dir, now, days).some(([key]) => isFor(key, program, folder))) return;
+  withLock(dir, () => {
+    const routes = readAll(dir);
+    writeAll(
+      dir,
+      Object.fromEntries(Object.entries(routes).filter(([key]) => !isFor(key, program, folder))),
+    );
+  });
 };
 
 /** Counts one environment fault; returns the entry, learned once it reaches `learnAfter`. */

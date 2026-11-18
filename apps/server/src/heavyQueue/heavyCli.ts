@@ -90,6 +90,7 @@ import {
   learnedRoute,
   listRoutes,
   recordRouteFault,
+  resetRoutes,
   routeFolder,
   routeKey,
 } from "./routeMemory.ts";
@@ -1677,6 +1678,7 @@ const runLinuxPart = async (
       fault({ kind: "environment", fault: lacked });
       return fallBack(lacked, outcome.code);
     }
+    if (outcome.code === 0) resetRoutes(dir, program, routeFolder(cwd, root), Date.now(), days);
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
         `[t3 heavy] This ran on Linux. These failures match the Mac-only list and fail there by nature; run them on this Mac:\n${platform.map((line) => `  ${line}`).join("\n")}\n`,

@@ -206,15 +206,20 @@ export const appendTail = (tail: string, text: string) => {
   return joined.length > TAIL_CHARS ? joined.slice(-TAIL_CHARS) : joined;
 };
 
+/** How far from the end a `recent` row's line may be: earlier, a test that passed may have logged it. */
+const RECENT_LINES = 20;
+
 /**
  * Exit code and output line that mean Linux lacked something the Mac has. A row without a code
- * takes any failure; one marked `optional` needs only its code, its line names the subject.
+ * takes any failure; one marked `optional` needs only its code, its line names the subject. A
+ * `recent` row's line counts only among the last `RECENT_LINES`.
  */
 const ENVIRONMENT_FAULTS: ReadonlyArray<{
   readonly kind: Exclude<EnvironmentFaultKind, "install">;
   readonly code?: number;
   readonly pattern: RegExp;
   readonly optional?: true;
+  readonly recent?: true;
 }> = [
   { kind: "missing-program", code: 127, pattern: MISSING_TOOL, optional: true },
   { kind: "not-executable", code: 126, pattern: MISSING_TOOL, optional: true },
@@ -222,13 +227,15 @@ const ENVIRONMENT_FAULTS: ReadonlyArray<{
   {
     kind: "package-command",
     pattern: /(?:ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL\s+|^)Command "([^"]+)" not found/,
+    recent: true,
   },
   { kind: "no-browser", pattern: /Executable doesn't exist at \S*ms-playwright\/([^/\s]+)/ },
   {
     kind: "local-service",
     pattern: /ECONNREFUSED ((?:localhost|127\.0\.0\.1|::1|\[::1\]):\d+)/,
+    recent: true,
   },
-  { kind: "python-module", pattern: /No module named '?([\w.]+)'?/ },
+  { kind: "python-module", pattern: /No module named '?([\w.]+)'?/, recent: true },
 ];
 
 /**
@@ -254,7 +261,7 @@ export const environmentFaultOf = (
     if (row.code !== undefined && row.code !== code) continue;
     let match: RegExpExecArray | null = null;
     let line: string | undefined;
-    for (const each of lines) {
+    for (const each of row.recent ? lines.slice(0, RECENT_LINES) : lines) {
       match = row.pattern.exec(each);
       if (match !== null) {
         line = each;

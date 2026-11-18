@@ -307,6 +307,25 @@ describe("environment faults of a Linux call", () => {
     ],
     ["a project-local file module", 1, "No module named helpers\n", null, null],
     ["a test failing is the code's", 1, "FAIL src/a.test.ts\n", null, null],
+    // An earlier passing test's output: what ended the run is near its end.
+    ...[
+      "connect ECONNREFUSED 127.0.0.1:5432",
+      'Command "vitest" not found',
+      "No module named 'numpy'",
+    ].map((early) => [
+      `${early}, 20 lines before the end`,
+      1,
+      `${early}\n${"ok\n".repeat(19)}\nFAIL src/a.test.ts\n`,
+      null,
+      null,
+    ]),
+    [
+      "a refused local service 19 lines before the end",
+      1,
+      `connect ECONNREFUSED 127.0.0.1:5432\n${"ok\n".repeat(18)}FAIL src/a.test.ts\n`,
+      "local-service:127.0.0.1:5432",
+      "network:localhost",
+    ],
   ])("%s", (_, code, tail, expected, cause) => {
     const found = environmentFaultOf(code, tail, {
       program: "pnpm",
