@@ -383,23 +383,62 @@ describe("Linux's status tells offline from not answering from over its limits",
   });
 });
 
+// `flock(1)` is util-linux, absent on macOS: this stand-in keeps both forms the scripts use, `-n`
+// on an inherited fd and `flock <file> <command>`, with flock(2) so a lock lives with its fd.
+const FLOCK_SHIM = `#!/usr/bin/perl
+use strict;
+use Fcntl qw(:flock);
+$^F = 255;
+my $nb = 0;
+if (@ARGV && $ARGV[0] eq "-n") { $nb = 1; shift @ARGV; }
+my $target = shift @ARGV;
+my $fh;
+if ($target =~ /^\\d+$/) { open($fh, ">>&=", $target) or exit 1; }
+else { open($fh, ">>", $target) or exit 1; }
+flock($fh, LOCK_EX | ($nb ? LOCK_NB : 0)) or exit 1;
+if (@ARGV) { exec { $ARGV[0] } @ARGV; exit 127; }
+exit 0;
+`;
+
 describe("~/runs copies", () => {
-  const hasFlock = NodeChildProcess.spawnSync("sh", ["-c", "command -v flock"]).status === 0;
-  const sh = (home: string, script: string) =>
-    NodeChildProcess.spawnSync("sh", ["-c", script], {
-      env: { ...process.env, HOME: home },
-      encoding: "utf8",
-    }).stdout.trim();
-  const withRuns = (body: (home: string, runs: string) => void) => {
+  const withRuns = (body: (run: Runs) => void) => {
     const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runs-"));
     try {
+      const bin = NodePath.join(home, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.writeFileSync(NodePath.join(bin, "flock"), FLOCK_SHIM, { mode: 0o755 });
       const runs = NodePath.join(home, "runs");
       NodeFS.mkdirSync(runs);
-      body(home, runs);
+      const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}` };
+      body({
+        runs,
+        sh: (script) =>
+          NodeChildProcess.spawnSync("sh", ["-c", script], { env, encoding: "utf8" }).stdout.trim(),
+        hold: (id) => {
+          const lock = NodePath.join(runs, `${id}.lock`);
+          const holder = NodeChildProcess.spawn("flock", [lock, "sleep", "60"], {
+            env,
+            stdio: "ignore",
+          });
+          for (let i = 0; i < 50; i++) {
+            const free = NodeChildProcess.spawnSync("flock", ["-n", lock, "true"], { env });
+            if (free.status !== 0) return holder;
+            NodeChildProcess.spawnSync("sleep", ["0.1"]);
+          }
+          holder.kill();
+          throw new Error("flock never took the lock");
+        },
+      });
     } finally {
       NodeFS.rmSync(home, { recursive: true, force: true });
     }
   };
+  interface Runs {
+    readonly runs: string;
+    readonly sh: (script: string) => string;
+    /** `remoto-rodar` holds `runs/<id>.lock` with flock for its whole run, installs included. */
+    readonly hold: (id: string) => NodeChildProcess.ChildProcess;
+  }
   const copy = (runs: string, id: string, daysIdle: number) => {
     NodeFS.mkdirSync(NodePath.join(runs, id, "src"), { recursive: true });
     const lock = NodePath.join(runs, `${id}.lock`);
@@ -407,60 +446,59 @@ describe("~/runs copies", () => {
     const at = (NOW - daysIdle * 86_400_000) / 1000;
     NodeFS.utimesSync(lock, at, at);
   };
-  /** `remoto-rodar` holds `runs/<id>.lock` with flock for its whole run, installs included. */
-  const holding = (runs: string, id: string) =>
-    NodeChildProcess.spawn("flock", [NodePath.join(runs, `${id}.lock`), "sleep", "60"], {
-      stdio: "ignore",
-    });
-  const waitHeld = (runs: string, id: string) => {
-    for (let i = 0; i < 50; i++) {
-      const free = NodeChildProcess.spawnSync("flock", [
-        "-n",
-        NodePath.join(runs, `${id}.lock`),
-        "true",
-      ]);
-      if (free.status !== 0) return;
-      NodeChildProcess.spawnSync("sleep", ["0.1"]);
-    }
-    throw new Error("flock never took the lock");
-  };
 
-  it.runIf(hasFlock)("a removed worktree's copy stays while a run holds its lock", () =>
-    withRuns((home, runs) => {
+  it("a removed worktree's copy stays while a run holds its lock", () =>
+    withRuns(({ runs, sh, hold }) => {
       copy(runs, "gone-0123abcd", 0);
-      const holder = holding(runs, "gone-0123abcd");
+      const holder = hold("gone-0123abcd");
       try {
-        waitHeld(runs, "gone-0123abcd");
-        expect(sh(home, removeCopyScript("gone-0123abcd"))).toBe("busy");
-        expect(NodeFS.existsSync(NodePath.join(runs, "gone-0123abcd"))).toBe(true);
+        expect(sh(removeCopyScript("gone-0123abcd"))).toBe("busy");
+        expect(NodeFS.existsSync(NodePath.join(runs, "gone-0123abcd", "src"))).toBe(true);
       } finally {
         holder.kill();
       }
-    }),
-  );
+    }));
+
+  it("a removal leaves no trash and no copy-shaped name, and clears trash a dropped one left", () =>
+    withRuns(({ runs, sh }) => {
+      copy(runs, "gone-0123abcd", 0);
+      NodeFS.writeFileSync(NodePath.join(runs, "gone-0123abcd.pgid"), "999999\n");
+      NodeFS.mkdirSync(NodePath.join(runs, ".trash-old-0123abcd-77", "copy"), { recursive: true });
+      expect(sh(removeCopyScript("gone-0123abcd"))).toBe("removed");
+      expect(NodeFS.readdirSync(runs)).toEqual(["gone-0123abcd.lock"]);
+    }));
+
+  it("never takes trash for a copy", () =>
+    withRuns(({ runs, sh }) => {
+      for (const trash of [".trash-idle-0123abcd-77", ".trash-idle-0123abcd-12345678"]) {
+        expect(() => removeCopyScript(trash)).toThrow(/Unsafe run id/);
+        copy(runs, trash, 30);
+      }
+      copy(runs, "idle-0123abcd", 30);
+      expect(sh(idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("idle idle-0123abcd");
+    }));
 
   it("lists only copies idle past the retention, with a lock", () =>
-    withRuns((home, runs) => {
+    withRuns(({ runs, sh }) => {
       copy(runs, "idle-0123abcd", 30);
       copy(runs, "recent-0123abcd", 2);
       NodeFS.mkdirSync(NodePath.join(runs, "nolock-0123abcd"));
       NodeFS.writeFileSync(NodePath.join(runs, "gone-0123abcd.lock"), "");
-      expect(sh(home, idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("idle idle-0123abcd");
+      expect(sh(idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("idle idle-0123abcd");
     }));
 
-  it.runIf(hasFlock)("never lists a copy a run holds, however old its lock", () =>
-    withRuns((home, runs) => {
+  it("never lists a copy a run holds, however old its lock", () =>
+    withRuns(({ runs, sh, hold }) => {
       copy(runs, "busy-0123abcd", 30);
-      const holder = holding(runs, "busy-0123abcd");
+      copy(runs, "idle-0123abcd", 30);
+      const holder = hold("busy-0123abcd");
       try {
-        waitHeld(runs, "busy-0123abcd");
         // Taking the lock does not move its time: the copy still reads 30 days idle.
         const at = (NOW - 30 * 86_400_000) / 1000;
         NodeFS.utimesSync(NodePath.join(runs, "busy-0123abcd.lock"), at, at);
-        expect(sh(home, idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("");
+        expect(sh(idleCopiesScript(14, Math.floor(NOW / 1000)))).toBe("idle idle-0123abcd");
       } finally {
         holder.kill();
       }
-    }),
-  );
+    }));
 });

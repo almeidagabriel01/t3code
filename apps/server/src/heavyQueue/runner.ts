@@ -1578,25 +1578,31 @@ export const sshArgs = (
 export const runnerCopyId = (realPath: string, sha1: (text: string) => string) =>
   `${realPath.slice(realPath.lastIndexOf("/") + 1).replace(/[^A-Za-z0-9._-]/gu, "_")}-${sha1(realPath).slice(0, 8)}`;
 
-const RUNNER_COPY_ID = /^[A-Za-z0-9._-]+-[0-9a-f]{8}$/;
+// No leading dot: hidden names, `.trash-*` included, are never a copy.
+const RUNNER_COPY_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]*-[0-9a-f]{8}$/;
 
 /**
- * Deletes `runs/<id>` and its pgid file. Prints `busy` when a run still holds the lock
- * `remoto-rodar` takes for its whole run (installs included) or its process group lives, `removed`
- * otherwise. The lock is held while deleting and the lock file stays, so every later run locks the
- * same file and none can start in the folder meanwhile.
+ * Deletes `runs/<id>` and its pgid file, or prints `busy` while `remoto-rodar` holds its lock or its
+ * group lives. Under the lock both are renamed to `.trash-*`, so a sync that never locks
+ * (`rsync --delete`) meets no half-deleted copy; the delete runs after. The lock file stays.
  */
 export const removeCopyScript = (id: string) => {
-  if (!RUNNER_COPY_ID.test(id) || id.startsWith(".")) throw new Error(`Unsafe run id: ${id}`);
+  if (!RUNNER_COPY_ID.test(id)) throw new Error(`Unsafe run id: ${id}`);
   const folder = `"$HOME/runs/${id}"`;
+  // A leading dot and a decimal tail: never a copy name, a `*.lock`, or a `*.pgid`.
+  const trash = `"$HOME/runs/.trash-${id}-$$"`;
   return [
     "(",
     `if [ -e ${folder}.lock ] && command -v flock >/dev/null; then exec 9>>${folder}.lock; flock -n 9 || exit 3; fi`,
     `p=$(cat ${folder}.pgid 2>/dev/null)`,
     `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then exit 3; fi`,
-    `rm -rf -- ${folder} ${folder}.pgid && echo removed`,
+    `mkdir ${trash} || exit 4`,
+    `if [ -e ${folder} ]; then mv -- ${folder} ${trash}/copy || exit 4; fi`,
+    `if [ -e ${folder}.pgid ]; then mv -- ${folder}.pgid ${trash}/pgid || exit 4; fi`,
     ")",
-    `[ $? -eq 3 ] && echo busy`,
+    `case $? in 3) echo busy ;; 0) rm -rf -- ${trash} && echo removed ;; *) rm -rf -- ${trash} ;; esac`,
+    // Trash an earlier removal left when its connection dropped mid-delete.
+    `rm -rf -- "$HOME/runs"/.trash-* 2>/dev/null`,
     "exit 0",
   ].join("\n");
 };
