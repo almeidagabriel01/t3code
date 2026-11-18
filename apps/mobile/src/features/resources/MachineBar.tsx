@@ -6,6 +6,7 @@ import {
 import {
   machineBar,
   type MachineBarRow,
+  type MachineStatusChip,
   type MachineGauge,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
@@ -26,12 +27,12 @@ import { Glyph, MACHINE } from "./HeavyWork";
 const MAX_PIPS = 6;
 const clampShare = (share: number) => Math.min(1, Math.max(0, share));
 
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-foreground-muted" }
-    : online
-      ? { text: "online", dot: "bg-adaptive-emerald-600-400" }
-      : { text: "offline", dot: "bg-danger" };
+const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
+  muted: "bg-foreground-muted",
+  ok: "bg-adaptive-emerald-600-400",
+  warn: "bg-warning-foreground",
+  danger: "bg-danger",
+};
 
 /** A thin bar for a share of a whole, with its value; warning-coloured when a hold is about it. */
 function Gauge(props: {
@@ -105,7 +106,7 @@ function MachineRow(props: {
   const { row } = props;
   const [open, setOpen] = useState(false);
   const { name, icon } = MACHINE[row.runner];
-  const status = row.runner === "linux" ? LINUX_STATUS(row.online) : null;
+  const status = row.chip === null ? null : { text: row.chip.text, dot: CHIP_DOT[row.chip.tone] };
   const hints = [
     row.statusHint,
     row.cpu?.hint,

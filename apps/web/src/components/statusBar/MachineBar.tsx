@@ -1,6 +1,7 @@
 import {
   machineBar,
   type MachineBarRow,
+  type MachineStatusChip,
   type MachineGauge as MachineGaugeModel,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
@@ -226,12 +227,12 @@ function MachineSlots({ row }: { readonly row: MachineBarRow }) {
   );
 }
 
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-muted-foreground/60" }
-    : online
-      ? { text: "online", dot: "bg-success" }
-      : { text: "offline", dot: "bg-destructive" };
+const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
+  muted: "bg-muted-foreground/60",
+  ok: "bg-success",
+  warn: "bg-warning",
+  danger: "bg-destructive",
+};
 
 /** T3's own history, refreshed while the bar shows it. */
 function useT3History(environmentId: EnvironmentId) {
@@ -312,7 +313,15 @@ export function MachineBar({
           <MachineName
             Icon={ServerIcon}
             name="Linux"
-            status={{ ...LINUX_STATUS(linux.online), hint: linux.statusHint ?? "" }}
+            {...(linux.chip === null
+              ? {}
+              : {
+                  status: {
+                    text: linux.chip.text,
+                    dot: CHIP_DOT[linux.chip.tone],
+                    hint: linux.statusHint ?? "",
+                  },
+                })}
           />
           {linux.offline === null ? (
             <>

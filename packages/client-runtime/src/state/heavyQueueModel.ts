@@ -6,6 +6,7 @@ import {
   type HeavyQueueRule,
   type HeavyQueueState,
   type HeavyRunner,
+  type HeavyRunnerLinux,
   type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 
@@ -411,11 +412,39 @@ export interface MachineGauge {
   readonly hint: string;
 }
 
+/** A machine's state chip: `ok` only while it takes work, `warn` past its limits, `danger` gone. */
+export interface MachineStatusChip {
+  readonly text: string;
+  readonly tone: "muted" | "ok" | "warn" | "danger";
+}
+
+/** Linux's chip, from its `status`; an older server without one reports only `online`. */
+export const linuxChip = (
+  linux: Pick<HeavyRunnerLinux, "online" | "status">,
+): MachineStatusChip => {
+  const status =
+    linux.status ?? (linux.online === null ? undefined : linux.online ? "online" : "offline");
+  switch (status) {
+    case "online":
+      return { text: "online", tone: "ok" };
+    case "over-limit":
+      return { text: "over limits", tone: "warn" };
+    case "unresponsive":
+      return { text: "not responding", tone: "warn" };
+    case "offline":
+      return { text: "offline", tone: "danger" };
+    default:
+      return { text: "checking", tone: "muted" };
+  }
+};
+
 /** One machine of the machine bar. */
 export interface MachineBarRow {
   readonly runner: HeavyRunner;
   /** Linux's connection, null while it is being checked; always true for the Mac. */
   readonly online: boolean | null;
+  /** Null for the Mac, which has no connection to show. */
+  readonly chip: MachineStatusChip | null;
   readonly statusHint: string | null;
   /** Both null while Linux is not online; `offline` then says so. */
   readonly cpu: MachineGauge | null;
@@ -492,6 +521,7 @@ export function machineBar(
   const mac: MachineBarRow = {
     runner: "mac",
     online: true,
+    chip: null,
     statusHint: null,
     cpu:
       cpu === null
@@ -539,6 +569,7 @@ export function machineBar(
     linux: {
       runner: "linux",
       online: linux.online,
+      chip: linuxChip(linux),
       statusHint: !live
         ? linuxLine(linux)
         : linux.status === "over-limit" && linux.overLimitBy !== undefined

@@ -13,6 +13,7 @@ import {
   heavyCommandKey,
   heavyWork,
   jobPriority,
+  linuxChip,
   macNoteGauge,
   machineBar,
   macReading,
@@ -763,6 +764,27 @@ describe("machineBar", () => {
     if (statusHint !== null) expect(linux!.statusHint).toBe(statusHint);
     expect(linux!.cpu === null).toBe(status === "unresponsive");
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
+  it.each([
+    // Green only while it takes work; a slow or saturated Linux is amber, never a green dot.
+    [true, "online", { text: "online", tone: "ok" }],
+    [true, "over-limit", { text: "over limits", tone: "warn" }],
+    [true, "unresponsive", { text: "not responding", tone: "warn" }],
+    [false, "unresponsive", { text: "not responding", tone: "warn" }],
+    [false, "offline", { text: "offline", tone: "danger" }],
+    [null, undefined, { text: "checking", tone: "muted" }],
+    // An older server sends no status: its connection alone.
+    [true, undefined, { text: "online", tone: "ok" }],
+    [false, undefined, { text: "offline", tone: "danger" }],
+  ] as const)("Linux online=%s status=%s shows the %o chip", (online, status, chip) => {
+    const linux = { ...LINUX, online, ...(status === undefined ? {} : { status }) };
+    expect(linuxChip(linux)).toEqual(chip);
+    expect(machineBar(state({ linux }), null).linux!.chip).toEqual(chip);
+  });
+
+  it("gives the Mac no chip", () => {
+    expect(machineBar(state(), null).mac.chip).toBeNull();
   });
 
   it("reads Linux's CPU in use like the Mac's, its load only a hint", () => {
