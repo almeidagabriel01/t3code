@@ -185,7 +185,7 @@ work queue, and each section says what the two do together.
   - **This Mac** keeps everything here.
   - **Mac first** fills this Mac, then sends the rest to Linux: a job goes to
     Linux once this Mac has **Send to Linux after** jobs running or waiting
-    (default 4).
+    (default 4), or sooner when this Mac is full and Linux can start it now.
   - **Hybrid** splits jobs between both: each goes to the machine with the
     shorter queue per slot (this Mac on a tie), and neither starts a job past
     its own limits. While Linux is offline everything stays here.
@@ -231,7 +231,10 @@ work queue, and each section says what the two do together.
   this Mac**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
   `node_modules/.bin` between the command's folder and the checkout.
 - **When Linux is offline.** A job headed for Linux that is still waiting
-  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A question
+  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A job that
+  asked for Linux itself (`t3 heavy --runner linux`, or an agent's own
+  `remoto`) never moves to this Mac: where the setting would run it here, it
+  ends with "Linux is offline and this job asked for Linux". A question
   shows on the job in the Resource Manager with a countdown; unanswered, it
   follows the deadline setting. An agent's foreground command gives up after 10
   minutes, so longer waits only help background commands.
