@@ -5601,24 +5601,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
 
         // Codex interrupts the handler of a request it settled without T3 (auto review, turn
-        // end, session exit). An answered request is already resolved in the projection.
+        // end, session exit). An answered request is already resolved in the projection. Only
+        // the wait is interruptible, so an emitted pending request always gets its cancel.
         const awaitRuntimeRequest = <A>(
           artifacts: RuntimeRequestArtifacts,
           pending: PendingCodexRuntimeRequest,
           answer: Deferred.Deferred<A, never>,
         ) =>
-          openRuntimeRequest(artifacts, pending).pipe(
-            Effect.andThen(
-              Deferred.await(answer).pipe(
-                Effect.onInterrupt(() =>
-                  Deferred.isDone(answer).pipe(
-                    Effect.flatMap((answered) =>
-                      answered ? Effect.void : cancelSettledRequest(artifacts),
+          Effect.uninterruptibleMask((restore) =>
+            openRuntimeRequest(artifacts, pending).pipe(
+              Effect.andThen(
+                restore(Deferred.await(answer)).pipe(
+                  Effect.onInterrupt(() =>
+                    Deferred.isDone(answer).pipe(
+                      Effect.flatMap((answered) =>
+                        answered ? Effect.void : cancelSettledRequest(artifacts),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+          ).pipe(
             Effect.ensuring(
               Ref.update(pendingRuntimeRequests, (current) => {
                 const updated = new Map(current);
