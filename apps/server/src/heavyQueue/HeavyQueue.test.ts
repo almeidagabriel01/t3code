@@ -672,6 +672,22 @@ describe("Linux as clients see it", () => {
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
   });
 
+  it("words free memory as its gauge does: 819 MB, never 0.8 GB", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const short = ["0.40 0.30 0.20 1/900 4321", "6", "MemTotal:       12582912 kB"];
+    const reading = parseHeartbeat([...short, "MemAvailable:     838656 kB"].join("\n"));
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      availableMemoryBytes: 819 * 1024 ** 2,
+      overLimitBy: "819 MB free, keeping 20%",
+    });
+  });
+
   it("names the limit Linux is over, and tells not answering from offline", () => {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
     Queue.publishRunner(dir, block(true));
@@ -690,9 +706,7 @@ describe("Linux as clients see it", () => {
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
       status: "over-limit",
       overLimitBy: "memory stalled 57% of the time (limit 10%)",
-      overLimits: [
-        { limit: "memory-pressure", reason: "memory stalled 57% of the time (limit 10%)" },
-      ],
+      overLimits: [{ limit: "memory-pressure", value: 57, threshold: 10 }],
     });
     const timedOut = { ok: false as const, error: "Connection timed out during banner exchange" };
     Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 60_000);

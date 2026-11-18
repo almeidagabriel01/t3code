@@ -10,6 +10,8 @@ import {
   type HeavyRunner,
   type HeavyRunnerAskReason,
   type HeavyRunnerLinuxOver,
+  formatBytes,
+  linuxOverText,
   type RunnerMachineConfig,
   type RunnerProjectConfig,
   type RunnerWhere,
@@ -784,8 +786,6 @@ export type HealthCheck =
 export const unresponsiveFailure = (timedOut: boolean, stderr: string) =>
   timedOut || /banner exchange/i.test(stderr);
 
-const GIB = 1024 ** 3;
-
 /** PSI ceilings over the last 10 s. Memory and disk stalls are thrashing whatever the CPU says. */
 const LINUX_MEMORY_STALL_LIMIT = 10;
 const LINUX_IO_STALL_LIMIT = 30;
@@ -796,8 +796,6 @@ const LINUX_IO_STALL_LIMIT = 30;
 const LINUX_CPU_STALL_LIMIT = 90;
 /** Less swap free than this share is the last step before the OOM killer. */
 const LINUX_SWAP_FREE_SHARE = 0.1;
-
-const gbOf = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 
 /**
  * Every limit of Linux's a reading is past, each with its metric and value, the most urgent first;
@@ -821,16 +819,13 @@ export const linuxOverBy = (
   const over: Array<HeavyRunnerLinuxOver> = [];
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
-    over.push({ limit: "memory", reason: `${gbOf(free)} free, keeping ${floor}%` });
+    over.push({ limit: "memory", value: free, threshold: floor });
   }
   const stall = (share: number | null | undefined, limit: number) =>
     share !== null && share !== undefined && share >= limit ? Math.round(share) : null;
   const memory = stall(pressure?.memoryFull, LINUX_MEMORY_STALL_LIMIT);
   if (memory !== null) {
-    over.push({
-      limit: "memory-pressure",
-      reason: `memory stalled ${memory}% of the time (limit ${LINUX_MEMORY_STALL_LIMIT}%)`,
-    });
+    over.push({ limit: "memory-pressure", value: memory, threshold: LINUX_MEMORY_STALL_LIMIT });
   }
   const { swapTotalBytes: swap, swapFreeBytes: swapFree } = reading;
   if (
@@ -843,27 +838,24 @@ export const linuxOverBy = (
   ) {
     over.push({
       limit: "swap",
-      reason: `swap nearly full: ${gbOf(swapFree)} of ${gbOf(swap)} free`,
+      value: swapFree,
+      threshold: LINUX_SWAP_FREE_SHARE * 100,
+      total: swap,
     });
   }
   const io = stall(pressure?.ioFull, LINUX_IO_STALL_LIMIT);
   if (io !== null) {
-    over.push({
-      limit: "io-pressure",
-      reason: `disk stalled ${io}% of the time (limit ${LINUX_IO_STALL_LIMIT}%)`,
-    });
+    over.push({ limit: "io-pressure", value: io, threshold: LINUX_IO_STALL_LIMIT });
   }
   const waited = stall(pressure?.cpu, LINUX_CPU_STALL_LIMIT);
   if (waited !== null) {
-    over.push({
-      limit: "cpu-pressure",
-      reason: `CPU saturated: work waited ${waited}% of the time`,
-    });
+    over.push({ limit: "cpu-pressure", value: waited, threshold: LINUX_CPU_STALL_LIMIT });
   }
   if (cpu !== null && cpu > machine.runnerLinuxCpuCeilingPercent) {
     over.push({
       limit: "cpu",
-      reason: `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`,
+      value: Math.round(cpu),
+      threshold: machine.runnerLinuxCpuCeilingPercent,
     });
   }
   return over;
@@ -1175,7 +1167,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
-  const linuxOverNow = linuxOverBy(health, machine)[0]?.reason ?? null;
+  const linuxOverFirst = linuxOverBy(health, machine)[0];
+  const linuxOverNow = linuxOverFirst === undefined ? null : linuxOverText(linuxOverFirst);
   const okAt = health.okAt ?? -Infinity;
   const stale = now - okAt > readingGapMs(machine);
   const linuxHistory = input.linuxHistory ?? {};
@@ -1284,7 +1277,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       if (free - linuxReserved - need < memoryFloor) {
         return {
           kind: "limits",
-          why: `needs ~${gbOf(need)}; ${gbOf(free)} free, ${gbOf(linuxReserved)} held for running jobs, ${gbOf(memoryFloor)} kept spare`,
+          why: `needs ~${formatBytes(need)}; ${formatBytes(free)} free, ${formatBytes(linuxReserved)} held for running jobs, ${formatBytes(memoryFloor)} kept spare`,
         };
       }
     }

@@ -1220,22 +1220,22 @@ describe("ResourceManagerRouteScreen", () => {
         cpuPercent: 20,
         status: "over-limit",
         overLimits: [
-          { limit: "memory", reason: "0.8 GB free, keeping 10%" },
-          { limit: "swap", reason: "swap 60% used (limit 50%)" },
+          { limit: "memory", value: 8 * 1024 ** 3, threshold: 10 },
+          { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
         ],
       },
     });
     const over = await screen();
     const busy = over.host.querySelector<HTMLElement>('[aria-label^="Linux"]')!;
     expect(busy.getAttribute("aria-label")).toBe(
-      "Linux, remoto · over limits · 0.8 GB free, keeping 10%; swap 60% used (limit 50%), CPU 20%, 8.0 GB free, 0 of 2 running, warning",
+      "Linux, remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free, CPU 20%, 8.0 GB free, 0 of 2 running, warning",
     );
     expect(
       [...busy.querySelectorAll(".text-warning-foreground")].map((el) => el.textContent),
     ).toEqual(["8.0 GB free"]);
     await act(async () => busy.click());
     expect(busy.textContent).toContain(
-      "remoto · over limits · 0.8 GB free, keeping 10%; swap 60% used (limit 50%)",
+      "remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
     );
     await over.unmount();
   });

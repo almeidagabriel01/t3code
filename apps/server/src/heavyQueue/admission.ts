@@ -2,7 +2,12 @@
  * Who may start now. Pure: the queue file feeds it the document, a clock reading and the latest
  * machine sample, so every waiter (CLI or server) reaches the same answer under the file lock.
  */
-import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
+import {
+  formatBytes,
+  heavyHoldText,
+  type HeavyQueueEntry,
+  type HeavyQueueHold,
+} from "@t3tools/contracts";
 
 import { heavyRoute, heavySegment } from "./heavyHook.ts";
 
@@ -124,7 +129,6 @@ const MEMORY_REOPEN_POINTS = 5;
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
 const MIB = 1024 ** 2;
-const GIB = 1024 ** 3;
 
 /** How admission sizes jobs, kept in the queue file beside the Mac's limits. */
 export interface SizingLimits {
@@ -287,7 +291,6 @@ export interface Plan {
   readonly hold: HeavyQueueHold | null;
 }
 
-const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 /** Rounded as the summary shows it, so a row and the summary never disagree. */
 const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sample.cpuCount)) * 100);
 
@@ -307,7 +310,7 @@ export const jobVerdict = (
     return {
       cost,
       hold: "job-memory" as const,
-      why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
+      why: `needs ~${formatBytes(cost.memoryBytes)}; ${formatBytes(sample.availableMemoryBytes)} free, ${formatBytes(floor)} kept spare`,
     };
   }
   if (cost.cpu > sample.cpuCount * (input.macCpuCeilingPercent / 100) - sample.busyCores) {

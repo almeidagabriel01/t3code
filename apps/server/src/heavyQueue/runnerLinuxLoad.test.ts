@@ -7,7 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, linuxOverText, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -180,16 +180,16 @@ describe("Linux's ceiling reads pressure and free memory, never the load", () =>
       /^memory stalled 57% of the time/,
     ],
     [
-      "12 GB with 0.5 GB free",
+      "12 GB with 512 MB free",
       { availableMemoryBytes: 0.5 * GIB },
       ["memory"],
-      /^0\.5 GB free, keeping 20%$/,
+      /^512 MB free, keeping 20%$/,
     ],
     [
       "swap nearly used up",
       { swapFreeBytes: 0.2 * GIB },
       ["swap"],
-      /^swap nearly full: 0\.2 GB of 4\.0 GB free$/,
+      /^swap nearly full: 205 MB of 4\.0 GB free$/,
     ],
     [
       "disk stalled 40%",
@@ -222,7 +222,7 @@ describe("Linux's ceiling reads pressure and free memory, never the load", () =>
       "short of memory, swapping and a busy CPU at once",
       { availableMemoryBytes: 0.5 * GIB, swapFreeBytes: 0.2 * GIB, cpuPercent: 90 },
       ["memory", "swap", "cpu"],
-      /^0\.5 GB free, keeping 20%$/,
+      /^512 MB free, keeping 20%$/,
     ],
     // The order is the urgency: free memory first, CPU in use last.
     [
@@ -234,13 +234,13 @@ describe("Linux's ceiling reads pressure and free memory, never the load", () =>
         pressure: { cpu: 95, memorySome: 60, memoryFull: 57, ioFull: 40 },
       },
       ["memory", "memory-pressure", "swap", "io-pressure", "cpu-pressure", "cpu"],
-      /^0\.5 GB free, keeping 20%$/,
+      /^512 MB free, keeping 20%$/,
     ],
   ])("%s", (_name, reading, limits, reason) => {
     const over = linuxOverBy({ ...QUIET, ...reading }, machine);
     expect(over.map((item) => item.limit)).toEqual(limits);
     if (reason === null) expect(over).toEqual([]);
-    else expect(over[0]!.reason).toMatch(reason);
+    else expect(linuxOverText(over[0]!)).toMatch(reason);
   });
 });
 

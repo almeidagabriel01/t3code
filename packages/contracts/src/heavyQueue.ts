@@ -168,9 +168,16 @@ export const HeavyRunnerLinuxLimit = Schema.Literals([
 ]);
 export type HeavyRunnerLinuxLimit = typeof HeavyRunnerLinuxLimit.Type;
 
+/**
+ * A limit Linux is past, as numbers so every surface words it with one helper: `value` is the
+ * reading (bytes free for memory and swap, a rounded percent otherwise), `threshold` the limit in
+ * percent, `total` the swap size.
+ */
 export const HeavyRunnerLinuxOver = Schema.Struct({
   limit: HeavyRunnerLinuxLimit,
-  reason: Schema.String,
+  value: Schema.Number,
+  threshold: Schema.Number,
+  total: Schema.optionalKey(Schema.Number),
 });
 export type HeavyRunnerLinuxOver = typeof HeavyRunnerLinuxOver.Type;
 
@@ -242,6 +249,40 @@ export const HeavyQueueHold = Schema.Literals([
 export type HeavyQueueHold = typeof HeavyQueueHold.Type;
 
 const MB = 1024 ** 2;
+const GIB = 1024 ** 3;
+
+/** Every byte count the queue words or draws: "819 MB" below a gigabyte, never "0.8 GB" or "0.0 GB". */
+export const formatBytes = (bytes: number): string =>
+  bytes <= 0
+    ? "0 MB"
+    : bytes < GIB
+      ? `${Math.max(1, Math.round(bytes / MB))} MB`
+      : `${(bytes / GIB).toFixed(1)} GB`;
+
+/**
+ * Words for a limit Linux is past. `beside` drops the reading when a gauge next to the words
+ * already shows it (free memory, CPU in use), so a number is never said twice.
+ */
+export const linuxOverText = (over: HeavyRunnerLinuxOver, beside = false): string => {
+  switch (over.limit) {
+    case "memory":
+      return beside
+        ? `keeping ${over.threshold}% of memory free`
+        : `${formatBytes(over.value)} free, keeping ${over.threshold}%`;
+    case "memory-pressure":
+      return `memory stalled ${over.value}% of the time (limit ${over.threshold}%)`;
+    case "swap":
+      return `swap nearly full: ${formatBytes(over.value)} of ${formatBytes(over.total ?? 0)} free`;
+    case "io-pressure":
+      return `disk stalled ${over.value}% of the time (limit ${over.threshold}%)`;
+    case "cpu-pressure":
+      return `CPU saturated: work waited ${over.value}% of the time`;
+    case "cpu":
+      return beside
+        ? `CPU over its ${over.threshold}% limit`
+        : `CPU ${over.value}%, limit ${over.threshold}%`;
+  }
+};
 
 /**
  * Words for a hold, from the same reading the numbers beside it come from. The two per-job holds

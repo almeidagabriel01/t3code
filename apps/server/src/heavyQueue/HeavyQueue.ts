@@ -10,6 +10,7 @@ import {
   type HeavyQueueState,
   type HeavyRunner,
   type HeavyRunnerLinux,
+  linuxOverText,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -187,7 +188,11 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
   const status = linuxStatus(linux);
   const overLimits = status === "over-limit" ? linuxOverBy(linux, block.machine) : [];
   const overLimitBy =
-    status !== "over-limit" ? null : (overLimits[0]?.reason ?? "easing back under its limits");
+    status !== "over-limit"
+      ? null
+      : overLimits[0] === undefined
+        ? "easing back under its limits"
+        : linuxOverText(overLimits[0]);
   return {
     host: block.machine.runnerHost,
     online: linux.online,

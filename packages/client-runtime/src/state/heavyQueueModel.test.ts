@@ -756,50 +756,46 @@ describe("machineBar", () => {
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
   });
 
-  const FLOOR = { limit: "memory", reason: "0.8 GB free, keeping 10%" } as const;
-  const CPU = { limit: "cpu", reason: "CPU 92%, limit 70%" } as const;
-  const SATURATED = {
-    limit: "cpu-pressure",
-    reason: "CPU saturated: work waited 95% of the time",
-  } as const;
-  const STALLED = {
-    limit: "memory-pressure",
-    reason: "memory stalled 57% of the time (limit 10%)",
-  } as const;
-  const SWAP = { limit: "swap", reason: "swap nearly full: 0.2 GB of 4.0 GB free" } as const;
-  const DISK = {
-    limit: "io-pressure",
-    reason: "disk stalled 40% of the time (limit 30%)",
-  } as const;
+  const MIB = 1024 ** 2;
+  const FLOOR = { limit: "memory", value: 819 * MIB, threshold: 10 } as const;
+  const CPU = { limit: "cpu", value: 92, threshold: 70 } as const;
+  const SATURATED = { limit: "cpu-pressure", value: 95, threshold: 90 } as const;
+  const STALLED = { limit: "memory-pressure", value: 57, threshold: 10 } as const;
+  const SWAP = { limit: "swap", value: 0.2 * GiB, threshold: 10, total: 4 * GiB } as const;
+  const DISK = { limit: "io-pressure", value: 40, threshold: 30 } as const;
+  // The gauges carry the readings, unchanged by any limit; the status hint explains the limits.
+  const SHORT = { ...LINUX, cpuPercent: 92, availableMemoryBytes: 819 * MIB };
   it.each([
-    ["free memory", [FLOOR], false, true],
-    ["CPU in use", [CPU], true, false],
-    ["CPU saturation", [SATURATED], true, false],
-    // No gauge of their own: only the status hint names them.
-    ["memory stalls", [STALLED], false, false],
-    ["swap", [SWAP], false, false],
-    ["disk stalls", [DISK], false, false],
-    ["free memory and CPU at once", [FLOOR, CPU], true, true],
+    ["free memory", [FLOOR], false, true, "keeping 10% of memory free"],
+    ["CPU in use", [CPU], true, false, "CPU over its 70% limit"],
+    ["CPU saturation", [SATURATED], true, false, "CPU saturated: work waited 95% of the time"],
+    // No gauge of their own: the status hint names them with their reading.
+    ["memory stalls", [STALLED], false, false, "memory stalled 57% of the time (limit 10%)"],
+    ["swap", [SWAP], false, false, "swap nearly full: 205 MB of 4.0 GB free"],
+    ["disk stalls", [DISK], false, false, "disk stalled 40% of the time (limit 30%)"],
+    [
+      "free memory and CPU at once",
+      [FLOOR, CPU],
+      true,
+      true,
+      "keeping 10% of memory free; CPU over its 70% limit",
+    ],
   ] as const)(
-    "Linux over its %s limit warns on that gauge only",
-    (_name, overLimits, cpu, memory) => {
+    "Linux over its %s limit warns on that gauge, worded once",
+    (_name, overLimits, cpu, memory, reason) => {
       const { linux } = machineBar(
         state({
-          linux: { ...LINUX, status: "over-limit", overLimitBy: overLimits[0].reason, overLimits },
+          linux: { ...SHORT, status: "over-limit", overLimitBy: "set by the server", overLimits },
         }),
         null,
       );
       expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([cpu, memory]);
-      const reasons = overLimits.map((over) => over.reason);
-      expect(linux!.statusHint).toBe(`remoto · over limits · ${reasons.join("; ")}`);
-      // A warning gauge names its own limit and no other.
-      for (const [gauge, warns] of [
-        [linux!.cpu!, cpu],
-        [linux!.memory!, memory],
-      ] as const) {
-        const named = overLimits.filter((over) => gauge.hint.includes(over.reason));
-        expect(named).toHaveLength(warns ? 1 : 0);
-      }
+      expect(linux!.statusHint).toBe(`remoto · over limits · ${reason}`);
+      expect(linux!.memory).toMatchObject({ value: "819 MB", hint: "819 MB free of 16.0 GB" });
+      expect(linux!.cpu).toMatchObject({
+        value: "92%",
+        hint: "92% CPU in use · load 3.0 on 6 cores",
+      });
     },
   );
 

@@ -1,4 +1,5 @@
 import {
+  formatBytes,
   heavyHoldText,
   type HeavyCommand,
   type HeavyQueueEntry,
@@ -11,7 +12,7 @@ import {
   type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 
-import { linuxLine, runnerBadge } from "./runnerModel.ts";
+import { linuxLine, linuxOverReasons, runnerBadge } from "./runnerModel.ts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -109,12 +110,8 @@ export function formatDuration(fromIso: string, now: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const GB = 1024 ** 3;
 const cores = (n: number) => `${n.toFixed(1)} cores`;
-const MB = 1024 ** 2;
-// Below a gigabyte "0.0 GB" hides real usage, so small amounts read in megabytes.
-const gb = (bytes: number) =>
-  bytes < GB ? `${Math.max(1, Math.round(bytes / MB))} MB` : `${(bytes / GB).toFixed(1)} GB`;
+const gb = formatBytes;
 const usualTime = (ms: number) => {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -408,7 +405,7 @@ export const formatFreeMemory = gb;
 export interface MachineGauge {
   readonly share: number | null;
   readonly value: string;
-  /** A condition holding the queue is about this gauge; `hint` then names it. */
+  /** A limit or hold is about this gauge; the Mac's `hint` names it, Linux's status hint does. */
   readonly warn: boolean;
   readonly hint: string;
 }
@@ -449,12 +446,12 @@ const LIMIT_GAUGE: Record<HeavyRunnerLinuxLimit, "cpu" | "memory" | null> = {
   cpu: "cpu",
 };
 
-/** "remoto · over limits · 0.8 GB free, keeping 10%": host, the chip's words, then why. */
+/** "remoto · over limits · keeping 10% of memory free": host, the chip's words, then why. */
 const linuxStatusHint = (linux: HeavyRunnerLinux) => {
   const { text } = linuxChip(linux);
   const reason =
     linux.status === "over-limit"
-      ? linux.overLimits?.map((over) => over.reason).join("; ") || linux.overLimitBy
+      ? linuxOverReasons(linux)
       : linux.status === "unresponsive"
         ? (linux.error ?? "too loaded to answer")
         : linux.online === false
@@ -590,14 +587,9 @@ export function machineBar(
   const live = linux.online === true && linux.status !== "unresponsive";
   const cores = linux.cpuCount;
   const statusHint = linuxStatusHint(linux);
-  const past = (on: "cpu" | "memory") => {
-    const reasons = (linux.status === "over-limit" ? (linux.overLimits ?? []) : [])
-      .filter((over) => LIMIT_GAUGE[over.limit] === on)
-      .map((over) => over.reason);
-    return reasons.length === 0 ? null : reasons.join("; ");
-  };
-  const cpuPast = past("cpu");
-  const memoryPast = past("memory");
+  const past = (on: "cpu" | "memory") =>
+    linux.status === "over-limit" &&
+    (linux.overLimits ?? []).some((over) => LIMIT_GAUGE[over.limit] === on);
   return {
     mac,
     linux: {
@@ -612,11 +604,8 @@ export function machineBar(
           : {
               share: linux.cpuPercent / 100,
               value: `${Math.round(linux.cpuPercent)}%`,
-              warn: cpuPast !== null,
-              hint: withWarning(
-                `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
-                cpuPast,
-              ),
+              warn: past("cpu"),
+              hint: `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
             },
       memory: !live
         ? null
@@ -628,11 +617,8 @@ export function machineBar(
                   ? null
                   : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
               value: gb(linux.availableMemoryBytes),
-              warn: memoryPast !== null,
-              hint: withWarning(
-                `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
-                memoryPast,
-              ),
+              warn: past("memory"),
+              hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
             },
       offline: live
         ? null

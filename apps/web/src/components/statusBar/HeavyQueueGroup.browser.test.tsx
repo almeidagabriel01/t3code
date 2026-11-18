@@ -1,5 +1,6 @@
 import {
   HEAVY_QUEUE_DEFAULTS,
+  linuxOverText,
   type EnvironmentId,
   type HeavyCommand,
   type HeavyCommandsState,
@@ -674,24 +675,24 @@ describe("MachineBar", () => {
   const over = (...overLimits: ReadonlyArray<HeavyRunnerLinuxOver>): HeavyRunnerLinux => ({
     ...LINUX,
     status: "over-limit",
-    overLimitBy: overLimits[0]!.reason,
+    overLimitBy: linuxOverText(overLimits[0]!),
     overLimits,
   });
   it.each<[string, HeavyRunnerLinux, string | null, string]>([
     [
       "over limits",
       over(
-        { limit: "memory", reason: "0.8 GB free, keeping 10%" },
-        { limit: "swap", reason: "swap 60% used (limit 50%)" },
+        { limit: "memory", value: 8 * 1024 ** 3, threshold: 10 },
+        { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
       ),
       "8.0 GB",
-      "remoto · over limits · 0.8 GB free, keeping 10%; swap 60% used (limit 50%)",
+      "remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
     ],
     [
       "over limits",
-      over({ limit: "cpu-pressure", reason: "CPU stalled 40% of the time (limit 20%)" }),
+      over({ limit: "cpu-pressure", value: 95, threshold: 90 }),
       "20%",
-      "remoto · over limits · CPU stalled 40% of the time (limit 20%)",
+      "remoto · over limits · CPU saturated: work waited 95% of the time",
     ],
     [
       "not responding",

@@ -144,6 +144,20 @@ describe("Linux status", () => {
       { ...linux, status: "over-limit", overLimitBy: "memory stalled 57% of the time (limit 10%)" },
       "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free · over its limits: memory stalled 57% of the time (limit 10%)",
     ],
+    // The line shows free memory itself: the limit names its threshold, one formatter for both.
+    [
+      {
+        ...linux,
+        availableMemoryBytes: 819 * 1024 ** 2,
+        status: "over-limit",
+        overLimitBy: "819 MB free, keeping 10%",
+        overLimits: [
+          { limit: "memory", value: 819 * 1024 ** 2, threshold: 10 },
+          { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
+        ],
+      },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 819 MB free · over its limits: keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
+    ],
     [{ ...linux, online: null }, "Checking Linux (pc)…"],
   ] as const)("%j reads %s", (state, text) => {
     expect(linuxLine(state)).toBe(text);
