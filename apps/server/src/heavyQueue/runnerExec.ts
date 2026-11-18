@@ -504,31 +504,35 @@ export const bringBack = async (options: {
   const deleted = missing.filter((path) => !ignored.has(path)).sort();
   if (bytes > options.maxBytes) return { copied: [], skipped, deleted, overCap: bytes };
   if (copied.length > 0) {
-    const list = NodePath.join(NodeOS.tmpdir(), `t3-bring-back-${process.pid}-${copyId}`);
-    NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
-    const shell = [
-      sshProgram(environment),
-      // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
-      "-o",
-      "ServerAliveInterval=30",
-      ...sshArgs(machine, environment, "").slice(0, -2),
-    ];
-    const sent = await run(
-      // The one `remoto` uses (openrsync on macOS).
-      environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
-      [
-        // Keeps modes: a script made executable there stays executable here.
-        "-p",
-        "-e",
-        shell.join(" "),
-        `--files-from=${list}`,
-        `${machine.runnerHost}:runs/${copyId}/`,
-        `${root}/`,
-      ],
-      environment,
-    );
-    NodeFS.rmSync(list, { force: true });
-    if (sent.code !== 0) return null;
+    const listDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bring-back-"));
+    try {
+      const list = NodePath.join(listDir, "files");
+      NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
+      const shell = [
+        sshProgram(environment),
+        // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
+        "-o",
+        "ServerAliveInterval=30",
+        ...sshArgs(machine, environment, "").slice(0, -2),
+      ];
+      const sent = await run(
+        // The one `remoto` uses (openrsync on macOS).
+        environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
+        [
+          // Keeps modes: a script made executable there stays executable here.
+          "-p",
+          "-e",
+          shell.join(" "),
+          `--files-from=${list}`,
+          `${machine.runnerHost}:runs/${copyId}/`,
+          `${root}/`,
+        ],
+        environment,
+      );
+      if (sent.code !== 0) return null;
+    } finally {
+      NodeFS.rmSync(listDir, { recursive: true, force: true });
+    }
   }
   return { copied, skipped, deleted, overCap: null };
 };

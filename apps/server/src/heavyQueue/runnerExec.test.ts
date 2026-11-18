@@ -750,9 +750,19 @@ describe("bringing results back", () => {
     };
     const down = { ...environment, T3CODE_RUNNER_SSH: fake("exit 255") };
     expect(await bringBack({ ...args, environment: down })).toBeNull();
-    const failing = { ...environment, T3CODE_RUNNER_RSYNC: fake("exit 12") };
+    const given = NodePath.join(root, "files-from");
+    const failing = {
+      ...environment,
+      T3CODE_RUNNER_RSYNC: fake(
+        `for a; do case "$a" in --files-from=*) echo "\${a#--files-from=}" > ${given};; esac; done; exit 12`,
+      ),
+    };
     expect(await bringBack({ ...args, environment: failing })).toBeNull();
     expect(NodeFS.existsSync(NodePath.join(root, "new.txt"))).toBe(false);
+    // The file list is private to this call and gone even when the copy failed.
+    const list = NodeFS.readFileSync(given, "utf8").trim();
+    expect(NodeFS.existsSync(list)).toBe(false);
+    expect(NodeFS.existsSync(NodePath.dirname(list))).toBe(false);
     // The listing took the marker: with none left, there is nothing to list.
     expect(NodeFS.existsSync(marker)).toBe(false);
     expect(await bringBack({ ...args, environment })).toBeNull();
