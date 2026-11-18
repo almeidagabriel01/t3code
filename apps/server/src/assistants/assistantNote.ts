@@ -167,6 +167,11 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
  * The waits this conversation was woken for that settled since its previous turn began, derived
  * from its own runs: the note rides with the one turn after a wait ends, and no turn is spent on it.
  */
+// Every turn start delivers the note for waits settled before it, so only a wait told in a
+// recent run can still need one. An older wait that settles goes unmentioned; the notice's
+// live check covers it.
+export const SETTLED_WAIT_RUN_WINDOW = 50;
+
 export const settledWaitsForTurn = Effect.fn("AssistantNote.settledWaits")(function* (
   directory: Option.Option<AssistantDirectoryShape>,
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "startedAt" | "userMessageId">>,
@@ -175,11 +180,11 @@ export const settledWaitsForTurn = Effect.fn("AssistantNote.settledWaits")(funct
 ) {
   if (Option.isNone(directory) || directory.value.settledWaits === undefined) return "";
   if (userText.trimStart().startsWith("/")) return "";
-  const read = runs.filter((run) => run.ordinal < current.ordinal && run.startedAt !== null);
-  const previous = read.reduce<(typeof read)[number] | undefined>(
-    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-    undefined,
-  );
+  const read = runs
+    .filter((run) => run.ordinal < current.ordinal && run.startedAt !== null)
+    .toSorted((a, b) => b.ordinal - a.ordinal)
+    .slice(0, SETTLED_WAIT_RUN_WINDOW);
+  const previous = read[0];
   if (previous?.startedAt == null) return "";
   const keys = [...new Set(read.flatMap((run) => waitKeyOfWake(run.userMessageId) ?? []))];
   if (keys.length === 0) return "";

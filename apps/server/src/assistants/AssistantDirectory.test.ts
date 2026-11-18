@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { waitWakeId } from "../autonomy/needsYou.ts";
-import { assistantNote, settledWaitsForTurn } from "./assistantNote.ts";
+import { assistantNote, SETTLED_WAIT_RUN_WINDOW, settledWaitsForTurn } from "./assistantNote.ts";
 import * as Directory from "./AssistantDirectory.ts";
 import { effectiveProjectIdsOf, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
 
@@ -99,6 +99,21 @@ it.effect(
       assert.include(earlier, "- the question in [Queue limits](");
       assert.strictEqual(
         yield* settledWaitsForTurn(directory, runs, { ordinal: 7 }, "/compact"),
+        "",
+      );
+      // r-after settled after these turns began, but its wake is older than the window.
+      const later = Array.from({ length: SETTLED_WAIT_RUN_WINDOW }, (_, index) => ({
+        ordinal: index + 2,
+        userMessageId: `m-${index}`,
+        startedAt: DateTime.makeUnsafe(at(5)),
+      }));
+      assert.strictEqual(
+        yield* settledWaitsForTurn(
+          directory,
+          [runs[0], ...later] as never,
+          { ordinal: SETTLED_WAIT_RUN_WINDOW + 2 },
+          "status?",
+        ),
         "",
       );
     }).pipe(Effect.provide(directoryLayer)),
