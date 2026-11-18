@@ -279,6 +279,9 @@ const outsidePath = (arg: string, cwd: string, root: string): string | null => {
 };
 
 const BOTH_AT_LIMITS = "Both machines are at their limits";
+const LINUX_FULL_MAC = "Linux is full: running on this Mac";
+export const LINUX_FULL_SHORTER = "Linux is full: shorter queue on this Mac";
+export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
 /** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
 const COMMIT_HOOK = "Commit hook runs checks";
@@ -961,6 +964,8 @@ export interface RoutePlanInput extends PlanInput {
 interface LinuxBusy {
   readonly kind: "slots" | "worktree" | "limits" | "reading";
   readonly why: string;
+  /** Held for a job that runs there alone: never "full" for "When Linux is full". */
+  readonly alone?: true;
 }
 
 export interface Admit {
@@ -1154,7 +1159,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     // Linux drains for a job that runs there alone: admitting others would starve it.
     if (!isCall(entry) && [...alone].some((id) => id !== entry.id)) {
-      return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
+      return {
+        kind: "slots",
+        why: "Linux is kept free for a job that runs there alone",
+        alone: true,
+      };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
     if (health.overLimit) {
@@ -1167,12 +1176,36 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return {
         kind: "limits",
         why: "Linux ran short of memory beside other jobs: waiting to run there alone",
+        alone: true,
       };
     }
     if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
       return { kind: "reading", why: "a reading a minute after the last job started there" };
     }
     return null;
+  };
+  /** Hybrid's balance: this Mac's backlog per slot is no longer than Linux's (the Mac on a tie). */
+  const macShorter = () =>
+    macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
+  /**
+   * "When Linux is full", in Linux mode: a waiter that only Linux's slots or limits hold back may
+   * take this Mac. A job that asked for Linux, a job's own call or a chosen wait never moves.
+   */
+  const linuxFullRoute = (entry: HeavyQueueEntry, config: RunnerProjectConfig, busy: LinuxBusy) => {
+    const full =
+      config.runnerWhere === "linux" &&
+      (busy.kind === "slots" || busy.kind === "limits") &&
+      busy.alone !== true &&
+      !askedLinux(entry) &&
+      !isCall(entry) &&
+      entry.route !== "linux";
+    const policy = full ? config.runnerLinuxFull : "wait";
+    if (policy === "mac" && macRoom(entry)) return toMac(entry, LINUX_FULL_MAC);
+    if (policy === "balance" && macRoom(entry) && macShorter()) {
+      return toMac(entry, LINUX_FULL_SHORTER);
+    }
+    toLinux(entry, busy);
+    if (policy === "balance") reasons[entry.id] = LINUX_FULL_WAITING;
   };
   /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
   const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
@@ -1304,7 +1337,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       const past = macCount >= config.runnerMacFirstAfter;
       let onMac: boolean;
       if (hybrid) {
-        onMac = macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
+        onMac = macShorter();
         if (onMac && macOver) onMac = false;
         else if (!onMac && health.overLimit) onMac = true;
         // A machine that can start it now takes it from the other one, which can't.
@@ -1344,7 +1377,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     if (up) {
       const busy = linuxBusy(entry, worktree);
-      if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
+      if (busy !== null && !startsOnLinux(entry, busy)) linuxFullRoute(entry, config, busy);
       else toLinuxNow(entry, worktree);
       continue;
     }

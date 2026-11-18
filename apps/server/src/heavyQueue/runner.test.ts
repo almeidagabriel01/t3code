@@ -9,6 +9,7 @@ import {
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
   type HeavyQueueEntry,
+  type RunnerLinuxFullPolicy,
   type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
@@ -20,6 +21,8 @@ import {
   installFailure,
   linkMachine,
   LINUX_EVICT_SHARE,
+  LINUX_FULL_SHORTER,
+  LINUX_FULL_WAITING,
   linuxStops,
   macReasonText,
   matchesAny,
@@ -800,6 +803,120 @@ describe("Mac first, Hybrid and Everything", () => {
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
     expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 12 });
+  });
+});
+
+describe("When Linux is full", () => {
+  const MAC_OVER = { ...CALM, busyCores: 9, headroomSince: null, overLimit: true };
+  const STALE: LinuxHealth = { ...READ, okAt: NOW - 3_600_000 };
+  const linuxJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`l${at}`, "linux"));
+  const macJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`m${at}`, "mac"));
+  const a = (extra: Partial<HeavyQueueEntry> = {}) => job("a", "vp test run", extra);
+  /** Why Linux holds `a` back: each row's entries, health and Mac sample. */
+  const HOLDS = {
+    slots: { entries: [...linuxJobs(2), a()], health: READ },
+    limits: { entries: [a()], health: OVERLOADED },
+    worktree: { entries: [runningOn("l0", "linux", "/work/a"), a()], health: READ },
+    reading: { entries: [a()], health: STALE },
+    alone: { entries: [a(), job("z", "vp test run", { evictions: 2 } as never)], health: READ },
+    aloneMemory: {
+      entries: [...linuxJobs(1), a({ evictions: 2 } as never)],
+      health: READ,
+    },
+  } as const;
+  const MAC_STATES = {
+    room: {},
+    noRoom: { entries: macJobs(1), over: { maxRunning: 1 } },
+    over: { over: { sample: MAC_OVER } },
+  } as const;
+  type Expect = "mac" | "shorter" | "wait" | "busier";
+  const REASON: Record<Expect, RegExp> = {
+    mac: /^Linux is full: running on this Mac$/,
+    shorter: /^Linux is full: shorter queue on this Mac$/,
+    busier: /^Linux is full: waiting \(this Mac is busier\)$/,
+    wait: /^waiting for Linux: /,
+  };
+  type Hold = keyof typeof HOLDS;
+  type MacState = keyof typeof MAC_STATES;
+  const expectOf = (hold: Hold, policy: RunnerLinuxFullPolicy, mac: MacState): Expect => {
+    if ((hold !== "slots" && hold !== "limits") || policy === "wait") return "wait";
+    if (mac !== "room") return policy === "balance" ? "busier" : "wait";
+    return policy === "mac" ? "mac" : "shorter";
+  };
+  const rows = (Object.keys(HOLDS) as Hold[]).flatMap((hold) =>
+    (Object.keys(MAC_STATES) as MacState[]).flatMap((mac) =>
+      (["wait", "mac", "balance"] as const).map(
+        (policy) => [hold, policy, mac, expectOf(hold, policy, mac)] as const,
+      ),
+    ),
+  );
+
+  it.each(rows)("held by %s, policy %s, Mac %s: %s", (hold, policy, macState, expected) => {
+    const { entries, health } = HOLDS[hold];
+    const state: { entries?: ReadonlyArray<HeavyQueueEntry>; over?: Partial<RoutePlanInput> } =
+      MAC_STATES[macState];
+    const plan = planRoutes(
+      input(
+        [...(state.entries ?? []), ...entries],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health, runnerOn: true, ...state.over },
+      ),
+    );
+    expect(plan.routes.a).toBe(expected === "mac" || expected === "shorter" ? "mac" : "linux");
+    expect(plan.admits.a?.runner).not.toBe("linux");
+    expect(plan.reasons.a).toMatch(REASON[expected]);
+  });
+
+  it.each([
+    // [name, maxRunning, Mac jobs, Linux jobs, health, route]
+    ["0/0 is a tie: the Mac", 3, 0, 0, OVERLOADED, "mac"],
+    ["2/4 against 1/2 is a tie: the Mac", 4, 2, 1, OVERLOADED, "mac"],
+    ["3/4 against 1/2: Linux", 4, 3, 1, OVERLOADED, "linux"],
+  ] as const)("balance: %s", (_, maxRunning, mac, linux, health, route) => {
+    const plan = planRoutes(
+      input(
+        [...macJobs(mac), ...linuxJobs(linux), a()],
+        { runnerWhere: "linux", runnerLinuxFull: "balance" },
+        { health, maxRunning, runnerOn: true },
+      ),
+    );
+    expect(plan.routes.a).toBe(route);
+    expect(plan.reasons.a).toBe(route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING);
+  });
+
+  it.each([
+    ["asked for Linux", a({ where: "linux", linuxOnly: true } as never), {}, READ, "linux-wait"],
+    ["Start now", a({ forced: true }), {}, READ, "linux-start"],
+    // Slots never hold a call: only limits do.
+    ["a job's own call", a({ where: "linux", call: true } as never), {}, OVERLOADED, "linux-wait"],
+    ["the user chose to wait for Linux", a({ route: "linux" }), {}, READ, "linux-wait"],
+    ["the queue paused", a(), { paused: true }, READ, "linux-wait"],
+    ["a Runner set to this Mac", a({ where: "linux" }), { mode: "mac" }, READ, "linux-wait"],
+    ["Linux offline", a(), {}, OFFLINE, "ask"],
+    [
+      "an unconfirmed run",
+      a({ unconfirmed: true, dropped: true } as never),
+      {},
+      READ,
+      "linux-wait",
+    ],
+  ] as const)("%s: never moves, whatever the policy", (_, entry, over, health, outcome) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...linuxJobs(2), entry],
+          {
+            runnerWhere: "mode" in over ? over.mode : "linux",
+            runnerLinuxFull: policy,
+          },
+          { health, runnerOn: true, ...("paused" in over ? { paused: true } : {}) },
+        ),
+      );
+      expect(outcomeOf(plan, "a")).toBe(outcome);
+      expect(plan.reasons.a ?? "").not.toMatch(/^Linux is full/);
+    }
   });
 });
 

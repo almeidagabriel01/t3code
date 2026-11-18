@@ -1680,16 +1680,21 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir).find((e) => e.id === "lost")).not.toHaveProperty("unconfirmed");
   });
 
-  it("probe: Linux with every slot busy is full and the command would wait", () => {
-    const dir = queueWith(block(config({ runnerWhere: "linux" })));
-    startOnLinux(dir, ["a", "b"]);
-    expect(Queue.probe(dir, "vp test run", checkout("c"), NOW + 3)).toMatchObject({
-      runsOn: "linux",
-      startsNow: false,
-      linuxFull: true,
-      reason: "waiting for Linux: all 2 Linux slots are busy",
-    });
-  });
+  it.each([
+    ["wait", "linux", "waiting for Linux: all 2 Linux slots are busy"],
+    ["mac", "mac", "Linux is full: running on this Mac"],
+  ] as const)(
+    "probe: Linux with every slot busy is full; When Linux is full %s runs it on %s",
+    (runnerLinuxFull, runsOn, reason) => {
+      const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull })));
+      startOnLinux(dir, ["a", "b"]);
+      expect(Queue.probe(dir, "vp test run", checkout("c"), NOW + 3)).toMatchObject({
+        runsOn,
+        linuxFull: true,
+        reason,
+      });
+    },
+  );
 
   it("probe: a Linux waiter ahead counts toward Linux being full", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })));
