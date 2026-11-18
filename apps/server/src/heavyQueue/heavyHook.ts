@@ -102,6 +102,7 @@ const PREFIXES = new Set([
   "timeout",
   "nohup",
   "eval",
+  "sudo",
 ]);
 
 const base = (word: string) => word.split("/").pop() ?? word;
@@ -120,6 +121,28 @@ const PREFIX_VALUE_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   time: new Set(["-f", "--format", "-o", "--output"]),
   exec: new Set(["-a"]),
   caffeinate: new Set(["-t", "-w"]),
+  sudo: new Set([
+    "-u",
+    "--user",
+    "-g",
+    "--group",
+    "-C",
+    "--close-from",
+    "-D",
+    "--chdir",
+    "-h",
+    "--host",
+    "-p",
+    "--prompt",
+    "-r",
+    "--role",
+    "-t",
+    "--type",
+    "-T",
+    "--command-timeout",
+    "-U",
+    "--other-user",
+  ]),
 };
 
 /** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */

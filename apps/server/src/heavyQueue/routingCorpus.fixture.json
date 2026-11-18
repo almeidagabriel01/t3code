@@ -1463,6 +1463,27 @@
       "observed": "QA 2026-11-18",
       "expect": "mac-state:pnpm add",
       "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "sudo make install",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "sudo -u root make install",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "sudo -E env CI=1 make",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
     }
   ]
 }
