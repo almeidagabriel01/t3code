@@ -224,6 +224,18 @@ describe("Linux's ceiling reads pressure and free memory, never the load", () =>
       ["memory", "swap", "cpu"],
       /^0\.5 GB free, keeping 20%$/,
     ],
+    // The order is the urgency: free memory first, CPU in use last.
+    [
+      "every limit past at once",
+      {
+        availableMemoryBytes: 0.5 * GIB,
+        swapFreeBytes: 0.2 * GIB,
+        cpuPercent: 90,
+        pressure: { cpu: 95, memorySome: 60, memoryFull: 57, ioFull: 40 },
+      },
+      ["memory", "memory-pressure", "swap", "io-pressure", "cpu-pressure", "cpu"],
+      /^0\.5 GB free, keeping 20%$/,
+    ],
   ])("%s", (_name, reading, limits, reason) => {
     const over = linuxOverBy({ ...QUIET, ...reading }, machine);
     expect(over.map((item) => item.limit)).toEqual(limits);
