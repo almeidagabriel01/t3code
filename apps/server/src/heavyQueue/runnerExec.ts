@@ -195,7 +195,7 @@ export const withProjectBins = (
   return [
     "bash",
     "-c",
-    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} eval "$t3v"; exec "$@"`,
+    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} printf '\\036remoto phase=command\\n' >&2; eval "$t3v"; exec "$@"`,
     "t3",
     ...command,
   ];
@@ -820,7 +820,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
     // Only the steps before the command: its own output may quote the same errors (a test name).
-    if (progress.running) return;
+    if (progress.running || progress.commandStarted) return;
     install ??= installFailure(line);
     worktree ??= worktreeProblemOf(line);
   };
@@ -828,9 +828,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const err = lineSplitter((line, newline) => {
     // A command whose last line has no newline puts the exit marker right after its text.
     const at = line.indexOf(MARKER);
-    if (at >= 0) {
+    const next = at >= 0 ? foldMarker(progress, line.slice(at)) : progress;
+    if (at >= 0 && next !== progress) {
       if (at > 0) options.stderr(line.slice(0, at));
-      progress = foldMarker(progress, line.slice(at));
+      progress = next;
       options.onProgress(progress);
       return;
     }

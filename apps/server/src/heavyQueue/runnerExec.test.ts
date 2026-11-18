@@ -474,6 +474,28 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
       ["echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2"],
       "sharp",
     ],
+    [
+      "the Electron settle failing before the command",
+      "installing",
+      [`printf '${M} install=electron\\n' >&2`],
+      "electron",
+    ],
+    [
+      "a marker the command prints",
+      "running",
+      [
+        `printf '${M} phase=command\\n' >&2`,
+        `printf '${M} install=electron\\n' >&2`,
+        `printf '${M} missing=vp\\n' >&2`,
+      ],
+      null,
+    ],
+    [
+      "the command's last line without a newline",
+      "running",
+      [`printf '${M} phase=command\\n' >&2`, "printf 'no newline' >&2"],
+      null,
+    ],
   ] as const)("%s while %s is an install failure of %j", async (_case, phase, lines, install) => {
     const { run } = runWith(
       fake(

@@ -1444,6 +1444,8 @@ export interface RemoteProgress {
   readonly missing: string | null;
   /** A package whose install the wrapper could not finish there before the command. */
   readonly install: string | null;
+  /** The command itself started: its output may print markers, so only `exit=` still counts. */
+  readonly commandStarted: boolean;
 }
 
 export const NO_PROGRESS: RemoteProgress = {
@@ -1455,9 +1457,14 @@ export const NO_PROGRESS: RemoteProgress = {
   exit: null,
   missing: null,
   install: null,
+  commandStarted: false,
 };
 
-/** Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. */
+/**
+ * Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. After
+ * `phase=command` only `remoto`'s own `exit=` folds; any other marker is the command's output and
+ * returns `progress` itself.
+ */
 export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgress => {
   const fields = Object.fromEntries(
     line
@@ -1469,6 +1476,10 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
   const phase = fields.phase;
   const int = (value: string | undefined) =>
     value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  if (progress.commandStarted) {
+    const exit = int(fields.exit);
+    return exit === null ? progress : { ...progress, exit };
+  }
   // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
   const group = int(fields.pgid);
   return {
@@ -1490,6 +1501,7 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
       typeof fields.install === "string" && fields.install !== ""
         ? fields.install
         : progress.install,
+    commandStarted: phase === "command",
   };
 };
 
