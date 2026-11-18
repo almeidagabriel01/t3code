@@ -2320,6 +2320,11 @@ describe("an install unfinished in a fresh Linux copy", () => {
       null,
     ],
     ["  ✓ Electron failed to install correctly reruns once", null],
+    // An installer's own error, miette style.
+    [
+      "  × failed to create directory '/home/dev/runs/a/node_modules/.pnpm/electron@44.10.1/node_modules/electron/dist': File exists (os error 17)",
+      "electron",
+    ],
     ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);

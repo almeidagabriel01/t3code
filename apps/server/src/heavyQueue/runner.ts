@@ -1727,6 +1727,8 @@ const PLAYWRIGHT_MISSING = /Executable doesn't exist at \S*ms-playwright/;
 const withoutAnsi = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 /** A test runner's row (`✓ name`): it only quotes a failure. */
 const TEST_ROW = /^\s*[✓↓×✗○❯→√]/;
+/** A row of a test that passed, was skipped or runs: never a failure, of the run or an install. */
+const GOOD_ROW = /^\s*[✓↓○❯→√]/;
 /** `pattern` is in `line` outside a double-quoted string, which only quotes it. */
 const saysUnquoted = (line: string, pattern: RegExp) => {
   const at = line.search(pattern);
@@ -1753,7 +1755,8 @@ const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
 /** The package an output line says is not installed yet there, else null. */
 export const installFailure = (output: string): string | null => {
   const line = withoutAnsi(output);
-  if (TEST_ROW.test(line)) return null;
+  // Read before the command only: a `×` there is an installer's error (miette), not a test's.
+  if (GOOD_ROW.test(line)) return null;
   const hit = INSTALL_FAILURES.find(([pattern]) => saysUnquoted(line, pattern));
   if (hit === undefined) return null;
   return (
