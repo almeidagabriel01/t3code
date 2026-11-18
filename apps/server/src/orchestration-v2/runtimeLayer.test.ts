@@ -4876,6 +4876,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     ["thread.settle", true, false],
     ["thread.settle", false, true],
     ["thread.metadata.update", true, false],
+    ["thread.model-selection.set", true, false],
     ["thread.archive", true, true],
   ] as const)(
     "%s with an awaited command: %s keeps the session: %s",
@@ -4970,7 +4971,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   threadId,
                   worktreePath: `${process.cwd()}/other-worktree`,
                 }
-              : { type: commandType, commandId, threadId },
+              : commandType === "thread.model-selection.set"
+                ? {
+                    type: commandType,
+                    commandId,
+                    threadId,
+                    modelSelection: { ...modelSelection, instanceId: alternateInstanceId },
+                  }
+                : { type: commandType, commandId, threadId },
           )
           .pipe(Effect.result);
         const detached = [
@@ -4981,7 +4989,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             : [],
         );
         assert.deepEqual(detached, detaches ? [providerSessionId] : []);
-        assert.equal(result._tag, detaches ? "Success" : "Failure");
+        assert.equal(
+          result._tag === "Success" ? "Success" : result.failure._tag,
+          detaches ? "Success" : "OrchestratorThreadAwaitingBackgroundWorkError",
+        );
       }),
   );
 

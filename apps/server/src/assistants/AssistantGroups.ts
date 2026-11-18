@@ -1145,7 +1145,10 @@ const make = Effect.gen(function* () {
   const requestThreads = (requestId: string) =>
     sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
 
-  /** Switches a thread's model now; "busy" while a turn on another provider is still ending. */
+  /**
+   * Switches a thread's model now; "busy" while a turn on another provider is still ending or
+   * the process runs work its agent waits on. `applyPendingModel` retries when that ends.
+   */
   const switchModel = Effect.fn("AssistantGroups.switchModel")(function* (
     threadId: string,
     target: ModelSelection,
@@ -1159,7 +1162,12 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (switched._tag === "Success") return "switched" as const;
-    if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") return "busy" as const;
+    if (
+      switched.failure._tag === "OrchestratorProviderSelectionBusyError" ||
+      switched.failure._tag === "OrchestratorThreadAwaitingBackgroundWorkError"
+    ) {
+      return "busy" as const;
+    }
     yield* Effect.logWarning("assistant groups: request thread kept its model", {
       threadId,
       cause: switched.failure,

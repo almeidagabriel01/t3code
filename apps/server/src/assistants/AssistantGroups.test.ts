@@ -253,9 +253,20 @@ const harness = (options: Options = {}) => {
           const busy = (runs.get(command.threadId) ?? []).some((run) =>
             ["running", "waiting"].includes(run.status),
           );
-          if (busy && thread.modelSelection.instanceId !== command.modelSelection!.instanceId) {
+          const otherProvider =
+            thread.modelSelection.instanceId !== command.modelSelection!.instanceId;
+          if (busy && otherProvider) {
             return Effect.fail(
               new Orchestrator.OrchestratorProviderSelectionBusyError({
+                commandId: command.commandId as never,
+                threadId: command.threadId as never,
+              }),
+            );
+          }
+          // Another provider ends the process, and with it work the agent waits on.
+          if (thread.awaitedWork === true && otherProvider) {
+            return Effect.fail(
+              new Orchestrator.OrchestratorThreadAwaitingBackgroundWorkError({
                 commandId: command.commandId as never,
                 threadId: command.threadId as never,
               }),
@@ -1764,6 +1775,37 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a model change refused over awaited work lands when the member's wake turn ends", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "Tests are running in the background");
+    h.fakeThreads.get(ada)!.awaitedWork = true;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+
+    // The work finishes and wakes Ada; the move waited for that turn to end.
+    h.fakeThreads.get(ada)!.awaitedWork = false;
+    h.authors.set("wake", "agent");
+    h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+    yield* groups.handleRunEvent({
+      type: "run.updated",
+      payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status: "completed" },
+    } as never as OrchestrationV2DomainEvent);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
   const h = harness({

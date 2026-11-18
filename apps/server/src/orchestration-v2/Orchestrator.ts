@@ -305,6 +305,16 @@ export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<O
   }
 }
 
+/** Detaching would end the process running work the agent waits to be woken by. */
+export class OrchestratorThreadAwaitingBackgroundWorkError extends Schema.TaggedError<OrchestratorThreadAwaitingBackgroundWorkError>()(
+  "OrchestratorThreadAwaitingBackgroundWorkError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} is waiting on background work. Let it finish or stop it first.`;
+  }
+}
+
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
@@ -370,6 +380,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorProviderSelectionBusyError,
+  OrchestratorThreadAwaitingBackgroundWorkError,
   OrchestratorRuntimeModeAboveCeilingError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -4771,10 +4782,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             backgroundWorkHoldsCompletion(providerThread.pendingBackgroundTasks ?? []),
         )
       ) {
-        return yield* new OrchestratorDispatchError({
+        return yield* new OrchestratorThreadAwaitingBackgroundWorkError({
           commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} is waiting on background work. Let it finish or stop it first.`,
+          threadId: command.threadId,
         });
       }
       yield* Effect.forEach(
