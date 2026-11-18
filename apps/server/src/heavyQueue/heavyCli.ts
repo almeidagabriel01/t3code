@@ -1187,15 +1187,24 @@ const runLinuxAttempt = async (
   });
   /** Stops every part's run still going there; true once Linux confirms each one ended. */
   const confirmGone = async () => {
+    const stop = async (remote: { readonly id: string; readonly pgid: number | null }) =>
+      confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+    const files = partRemoteFiles(dir, id);
+    // No call's own record is left: the entry still names the last run there.
+    if (files.length === 0) {
+      const remote = remoteOf(dir, id);
+      return remote === null || (await stop(remote));
+    }
     const stops = await Promise.all(
-      partRemoteFiles(dir, id).map(async (file) => {
+      files.map(async (file) => {
         let remote: { readonly id: string; readonly pgid: number | null };
         try {
           remote = JSON.parse(NodeFS.readFileSync(file, "utf8")) as typeof remote;
-        } catch {
-          return true;
+        } catch (error) {
+          // Removed since it was listed, its run ended; unreadable, nothing confirms it did.
+          return (error as NodeJS.ErrnoException).code === "ENOENT";
         }
-        const gone = confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+        const gone = await stop(remote);
         if (gone) NodeFS.rmSync(file, { force: true });
         return gone;
       }),
@@ -1636,7 +1645,6 @@ const runLinuxPart = async (
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;
         recorded = progress.phase;
-        jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
         if (progress.id !== null) {
           NodeFS.writeFileSync(
             partRemotePath(dir, id),
@@ -1654,6 +1662,8 @@ const runLinuxPart = async (
                 },
               }),
         });
+        // Last: whoever reads the note finds the run recorded.
+        jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
       },
     });
   };
@@ -1688,6 +1698,57 @@ const runLinuxPart = async (
     }
   }
   if (stopped) process.exit(143);
+  // Linux never ran it or dropped it: this call alone goes again, so its line never repeats. On
+  // Linux while it answers, then here; a job asked for Linux ends instead.
+  for (
+    let attempt = 1;
+    (outcome.kind === "unavailable" || outcome.kind === "dropped") && worktree === null;
+    attempt++
+  ) {
+    const lost = outcome;
+    const why = lost.kind === "dropped" ? "Linux dropped it mid-run" : "Linux is unavailable";
+    const lostFault: FaultSeen =
+      lost.kind === "dropped"
+        ? { kind: "lost" }
+        : lost.touched
+          ? { kind: "sync" }
+          : { kind: "unreachable" };
+    process.stderr.write(`[t3 heavy] ${why}.\n`);
+    // Unconfirmed, it may still run there: the job holds it until Linux confirms, as before.
+    if (
+      (lost.kind === "dropped" || lost.touched) &&
+      (progress.id === null ||
+        !confirmed(await stopRemote(machine, process.env, progress.id, progress.pgid)))
+    ) {
+      if (linkFailuresOf(dir, id) >= linkAttempts(machine)) fault(lostFault);
+      return endLine(dir, id, lost);
+    }
+    NodeFS.rmSync(partRemotePath(dir, id), { force: true });
+    if (spentInput || wroteOutput) {
+      const spent = spentInput ? "its input went to Linux" : "it already wrote output";
+      process.stderr.write(`[t3 heavy] ${why}; ${spent}, so it does not run again.\n`);
+      process.exit(LINUX_UNAVAILABLE_EXIT);
+    }
+    const health = await checkLinux(linkMachine(machine, doc.sample), process.env);
+    recordHealth(dir, health);
+    if (!health.ok || attempt >= linkAttempts(machine)) {
+      fault(lostFault);
+      if (linuxOnly) {
+        return endLine(dir, id, {
+          kind: "refused",
+          reason: `Asked for Linux, but ${why}`,
+          code: LINUX_UNAVAILABLE_EXIT,
+        });
+      }
+      process.exit(await spawnCall(dir, "mac", [given, ...givenArgs], { reason: why }));
+    }
+    recorded = null;
+    failure = null;
+    run = start();
+    ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+    spentInput ||= spent;
+    if (stopped) process.exit(143);
+  }
   // Its command ended there: nothing of it is left to stop.
   if (outcome.kind === "finished") NodeFS.rmSync(partRemotePath(dir, id), { force: true });
   // Rerunning anywhere fails the same way until the worktree is fixed.
@@ -1739,16 +1800,6 @@ const runLinuxPart = async (
         line: `Not installed on Linux: ${outcome.tool}`,
       },
       127,
-    );
-  }
-  // A lost link is retried: it's a fault only once this job has used up its attempts.
-  if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {
-    fault(
-      outcome.kind === "dropped"
-        ? { kind: "lost" }
-        : outcome.touched
-          ? { kind: "sync" }
-          : { kind: "unreachable" },
     );
   }
   endLine(dir, id, outcome);

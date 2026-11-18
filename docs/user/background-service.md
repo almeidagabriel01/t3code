@@ -262,11 +262,14 @@ work queue, and each section says what the two do together.
   shows on the job in the Resource Manager with a countdown; unanswered, it
   follows the deadline setting. An agent's foreground command gives up after 10
   minutes, so longer waits only help background commands.
-- **If a Linux run fails.** A run the PC drops (the connection, or the PC
-  restarting) goes back to Linux by itself, up to 3 attempts by default; while
-  Linux is offline it follows **When Linux is offline**. Jobs going back start
-  there one at a time, as **Linux limits** describes. After the last attempt,
-  this setting decides. **Tell the agent** (the default) ends the job with
+- **If a Linux run fails.** A command the PC drops mid-run, or never starts,
+  runs again by itself, alone: the rest of its job never runs twice. It goes
+  back to Linux while Linux answers, up to 3 attempts by default, then runs on
+  this Mac; a job that asked for Linux ends with "Asked for Linux, but …"
+  instead. A command that already printed output or read piped input does not
+  run again: it fails with exit code 75 and says why. When Linux restarts, or
+  can't confirm a dropped run stopped, the job goes back to the queue and this
+  setting decides. **Tell the agent** (the default) ends the job with
   Linux's error and "Linux couldn't run this: <reason>", and nothing reruns it.
   **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job to this
   Mac, back to Linux, or to you instead. A command Linux lacks a tool or folder

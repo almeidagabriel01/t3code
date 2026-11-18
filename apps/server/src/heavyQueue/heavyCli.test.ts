@@ -1276,6 +1276,67 @@ describe("t3 heavy", () => {
       expect(runs(dir)).toBe("2");
     });
 
+    // A call Linux never started or dropped goes again alone, the rest of its line never twice: on
+    // Linux while it answers, else here. Output it already wrote, or a job asked for Linux, keeps it.
+    it.each([
+      ["dropped, Linux back", "drop", "", "up", 0, "on-linux\nafter\n", "2", null],
+      ["unavailable, Linux back", "never", "", "up", 0, "on-linux\nafter\n", "2", null],
+      ["dropped, asked for Linux", "drop", "", "up", 0, "on-linux\nafter\n", "2", null],
+      ["dropped, Linux gone", "drop", "", "down", 0, "vp on mac: test run\nafter\n", "1", null],
+      [
+        "dropped, Linux gone, asked for Linux",
+        "drop",
+        "",
+        "down",
+        75,
+        "",
+        "1",
+        "Asked for Linux, but Linux dropped it mid-run",
+      ],
+      [
+        "dropped after writing output",
+        "drop",
+        "echo partial;",
+        "up",
+        0,
+        "partial\nafter\n",
+        "1",
+        "Linux dropped it mid-run; it already wrote output, so it does not run again",
+      ],
+    ] as const)(
+      "a call %s runs alone again, never its line",
+      async (name, lost, before, linux, code, output, linuxRuns, said) => {
+        const linuxOnly = name.endsWith("asked for Linux");
+        const { dir, env } = setup(
+          failingOnce(
+            lost === "never"
+              ? "exit 75"
+              : `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; ${before} exit 255`,
+          ),
+        );
+        // Heartbeats fail from the first Linux run on; a stop always confirms.
+        const ssh = script(
+          dir,
+          "ssh-after",
+          `case "$*" in *loadavg*) ${linux === "down" ? `[ -e ${env.T3CODE_REMOTO}.count ] && exit 255;` : ""} printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+        );
+        const marker = NodePath.join(dir, "marker");
+        const line = `echo x >> ${marker} && vp test run; echo after`;
+        const run = heavyHere(
+          dir,
+          ["/bin/sh", "-c", line],
+          { ...env, T3CODE_RUNNER_SSH: ssh },
+          linuxOnly ? ["--runner", "linux", "--"] : ["--"],
+          dir,
+        );
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe(output);
+        expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
+        expect(runs(dir)).toBe(linuxRuns);
+        if (said !== null) expect(run.stderr()).toContain(said);
+      },
+    );
+
     // `vp fmt` passing, a test run failing: either way what it wrote comes back, with its code.
     it.each([
       [true, 0],
@@ -1437,18 +1498,26 @@ describe("t3 heavy", () => {
       });
     });
 
-    // On a run's last attempt, a PC that went away answers neither check: the agent hears
-    // before Linux can confirm.
+    // A call Linux dropped and confirmed stopped runs again here alone, whatever "If a Linux run
+    // fails" says. A PC that went away answers no stop check: the job hands it back unconfirmed.
     it.each([
-      ["answers the stop check", "echo gone", ""],
+      [
+        "answers the stop check",
+        "echo gone",
+        0,
+        "vp on mac: test run\nafter\n",
+        "[t3 heavy] Linux dropped it mid-run; running this call on this Mac.\n",
+      ],
       [
         "is gone",
         '[ -e "$DOWN" ] && exit 255; echo gone',
-        ", and hasn't confirmed it stopped there",
+        75,
+        "",
+        "[t3 heavy] Linux couldn't run this: Linux dropped it mid-run, and hasn't confirmed it stopped there.\n",
       ],
     ] as const)(
-      "Tell the agent hands back a run Linux dropped on its last attempt once Linux is offline and the PC %s, never running it here",
-      async (_, stop, unconfirmed) => {
+      "Tell the agent: a call Linux dropped once Linux is offline and the PC %s",
+      async (_, stop, code, stdout, said) => {
         const { dir, env } = setup(
           [
             `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2`,
@@ -1485,11 +1554,9 @@ describe("t3 heavy", () => {
         Queue.recordHealth(dir, fail, 1_000_000);
         expect(Queue.readDoc(dir).linux.online).toBe(false);
         NodeFS.writeFileSync(`${env.T3CODE_REMOTO}.drop`, "");
-        expect(await run.exited).toBe(75);
-        expect(run.stdout()).toBe("");
-        expect(run.stderr()).toContain(
-          `[t3 heavy] Linux couldn't run this: Linux dropped it mid-run${unconfirmed}.\n`,
-        );
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe(stdout);
+        expect(run.stderr()).toContain(said);
         expect(Queue.read(dir)).toEqual([]);
       },
     );
@@ -1548,6 +1615,30 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stderr()).toContain("moved by the user");
       expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    // Each call's own record of its run there may be gone: the job's entry still names the run.
+    it("a moved Linux job stops its run there even when the call's own record of it is gone", async () => {
+      const { dir, env } = setup(longRun);
+      const log = NodePath.join(dir, "stops.log");
+      const ssh = script(
+        dir,
+        "ssh-log",
+        `case "$*" in *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo "$*" >> ${log}; echo gone;; esac`,
+      );
+      const run = heavyHere(dir, onMac, { ...env, T3CODE_RUNNER_SSH: ssh }, [
+        "--runner",
+        "linux",
+        "--",
+      ]);
+      await run.until("err", "Linux: running");
+      for (const name of NodeFS.readdirSync(dir).filter((each) => each.startsWith("remote-"))) {
+        NodeFS.rmSync(NodePath.join(dir, name));
+      }
+      expect(Queue.route(dir, Queue.read(dir)[0]!.id, "mac")).toBe("ok");
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("ran on mac\n");
+      expect(NodeFS.readFileSync(log, "utf8")).toContain("runs/app-1");
     });
 
     // Linux short of memory stops its newest run (the queue marks it): not a failure, it waits again.
