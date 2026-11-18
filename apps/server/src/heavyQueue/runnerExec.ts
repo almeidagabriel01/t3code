@@ -167,7 +167,6 @@ export const withProjectBins = (
   command: ReadonlyArray<string>,
   cwd: string,
   root: string,
-  env: ReadonlyArray<string> = [],
   startMarker: string | null = null,
 ) => {
   // `remoto` starts in `pwd -P` there: a link inside the checkout changes how deep that is.
@@ -194,11 +193,29 @@ export const withProjectBins = (
   return [
     "bash",
     "-c",
-    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} exec "$@"`,
+    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} eval "$t3v"; exec "$@"`,
     "t3",
-    ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,
   ];
+};
+
+/** Reads `envHeader` off stdin into `$t3v` (applied right before the command), byte by byte so the input after it stays unread. */
+export const READ_ENV = 'IFS= read -r t3n && t3v=$(dd bs=1 count="$t3n" 2>/dev/null)';
+
+/**
+ * What a run there starts with on its stdin: the byte length, then `export NAME='value'` for each
+ * pair, and without `input` a redirect from /dev/null. Values never go in argv, which `ps` shows.
+ */
+const envHeader = (env: ReadonlyArray<string>, input: boolean) => {
+  const lines = env.flatMap((pair) => {
+    const at = pair.indexOf("=");
+    const name = pair.slice(0, at);
+    return /^[A-Za-z_]\w*$/.test(name)
+      ? [`export ${name}=${shellQuote(pair.slice(at + 1))}\n`]
+      : [];
+  });
+  const body = `${lines.join("")}${input ? "" : "exec </dev/null\n"}`;
+  return `${Buffer.byteLength(body)}\n${body}`;
 };
 
 const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -667,7 +684,7 @@ export interface LinuxRunOptions {
   readonly environment: Env;
   readonly machine: RunnerMachineConfig;
   readonly macOnly: ReadonlyArray<string>;
-  /** `NAME=value` pairs the command runs with there. */
+  /** `NAME=value` pairs the command runs with there, sent on its stdin ahead of `input`. */
   readonly env?: ReadonlyArray<string>;
   /** The job whose start the wrapper marks there, so `bringBack` finds what it wrote. */
   readonly startMarker?: string;
@@ -734,16 +751,15 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       remoteCommand(options.program, options.args, options.cwd, options.root),
       options.cwd,
       options.root,
-      options.env,
       options.startMarker ?? null,
     ),
     {
       cwd: options.cwd,
-      stdio: [options.input ?? "ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...options.environment,
-        // Without it `remoto` runs `ssh -n`, which hands the command no input.
-        REMOTO_STDIN: options.input === undefined ? "" : "1",
+        // Without it `remoto` runs `ssh -n`, which hands the command no stdin, so no `envHeader`.
+        REMOTO_STDIN: "1",
         REMOTO_FALLBACK: "nao",
         REMOTO_HOST: machine.runnerHost,
         REMOTO_MARKERS: "1",
@@ -751,6 +767,15 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       },
     },
   );
+  // `remoto` may end without reading it (Linux unreachable): a write after that is no error.
+  child.stdin?.on("error", () => {});
+  child.stdin?.write(envHeader(options.env ?? [], options.input !== undefined));
+  if (options.input === undefined) child.stdin?.end();
+  else if (child.stdin !== null) {
+    NodeFS.createReadStream("", { fd: options.input, autoClose: false })
+      .on("error", () => child.stdin?.end())
+      .pipe(child.stdin);
+  }
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
   let install: string | null = null;

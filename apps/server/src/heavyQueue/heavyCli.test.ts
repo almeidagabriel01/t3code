@@ -25,6 +25,7 @@ import {
 } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 import { listRoutes } from "./routeMemory.ts";
+import { READ_ENV } from "./runnerExec.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 const children: NodeChildProcess.ChildProcess[] = [];
@@ -364,8 +365,13 @@ describe("t3 heavy", () => {
       });
       const env = {
         PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
-        // Past the PATH wrapper (runnerExec's tests cover it), to the command it runs.
-        T3CODE_REMOTO: script(dir, "remoto", `[ "$4" = t3 ] && shift 4\n${remotoBody}`),
+        // Past the PATH wrapper (runnerExec's tests cover it), to the command it runs, with the
+        // variables it reads off stdin there; Linux starts without the ones the line set here.
+        T3CODE_REMOTO: script(
+          dir,
+          "remoto",
+          `unset A K NPM_TOKEN; [ "$4" = t3 ] && shift 4 && ${READ_ENV} && eval "$t3v"\n${remotoBody}`,
+        ),
         T3CODE_RUNNER_SSH: script(
           dir,
           "ssh",
@@ -453,7 +459,7 @@ describe("t3 heavy", () => {
 
     const echoArgs = [
       `printf '${M} phase=running pgid=4\\n' >&2`,
-      `printf '%s|' "$@"; echo " in $(pwd -P)"`,
+      `printf '%s|' "$@"; echo " in $(pwd -P)\${A+ A=$A}\${K+ K=$K}\${NPM_TOKEN+ NPM_TOKEN=$NPM_TOKEN}"`,
       `printf '${M} exit=0\\n' >&2`,
     ].join("\n");
 
@@ -634,10 +640,8 @@ describe("t3 heavy", () => {
         dir,
       );
       expect(await cased.exited).toBe(0);
-      // What the line set for the call reaches Linux too, except secrets: argv shows in `ps` there.
-      expect(cased.stdout()).toBe(`env|A=1|vp|test|run|a.test.ts| in ${real}\n`);
-      expect(cased.stderr()).toContain("NPM_TOKEN");
-      expect(cased.stderr()).not.toContain("s3cret");
+      // What the line set for the call reaches Linux too, on stdin: argv shows in `ps` there.
+      expect(cased.stdout()).toBe(`vp|test|run|a.test.ts| in ${real} A=1 NPM_TOKEN=s3cret\n`);
       // A script's own steps run here; only its heavy call crosses.
       NodeFS.writeFileSync(
         NodePath.join(dir, "check.sh"),
@@ -674,7 +678,7 @@ describe("t3 heavy", () => {
     // Linux offline, one that "When Linux is offline" sends here runs under its job's own slot.
     it.each([
       [true, "vp on mac: run knip:check"],
-      [false, "env|K=1|vp|run|knip:check| in REAL"],
+      [false, "vp|run|knip:check| in REAL K=1"],
     ] as const)(
       "inside a Mac job (Linux offline: %s), xcodebuild runs here and knip goes out",
       async (offline, knip) => {

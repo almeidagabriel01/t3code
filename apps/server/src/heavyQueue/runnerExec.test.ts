@@ -15,6 +15,7 @@ import {
   checkLinux,
   confirmed,
   forwardedInput,
+  READ_ENV,
   remoteCommand,
   removeRunnerCopy,
   resolveRemoto,
@@ -34,7 +35,13 @@ const fake = (body: string) => {
 };
 const M = "\\036remoto";
 
-const runWith = (remoto: string, script = "vp test run", cwd = dir, input?: number) => {
+const runWith = (
+  remoto: string,
+  script = "vp test run",
+  cwd = dir,
+  input?: number,
+  env?: ReadonlyArray<string>,
+) => {
   const stdout: Buffer[] = [];
   let stderr = "";
   const phases: string[] = [];
@@ -50,6 +57,7 @@ const runWith = (remoto: string, script = "vp test run", cwd = dir, input?: numb
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
     ...(input === undefined ? {} : { input }),
+    ...(env === undefined ? {} : { env }),
     onProgress: (progress) => {
       phases.push(progress.phase ?? "");
       if (progress.running) started();
@@ -97,29 +105,46 @@ describe("running on Linux through remoto", () => {
     }
   });
 
+  // `ps` there shows argv: what the line set (`DATABASE_URL=… vp test`) goes on stdin instead,
+  // ahead of the job's own input.
   it.each([
-    ["with input", "x", "1|x"],
-    ["without input", undefined, "|"],
-  ])("hands remoto the job's stdin %s and keeps the code", async (_, text, sent) => {
-    const file = NodePath.join(dir, "stdin.txt");
-    NodeFS.writeFileSync(file, text ?? "");
-    const fd = text === undefined ? undefined : NodeFS.openSync(file, "r");
-    try {
-      const remoto = fake(
-        [
-          `printf '${M} phase=running pgid=4\n' >&2`,
-          'printf "%s|" "$REMOTO_STDIN"; cat',
-          `printf '${M} exit=3\n' >&2`,
-          "exit 3",
-        ].join("\n"),
-      );
-      const { run, out } = runWith(remoto, "vp fmt --stdin-filepath=a.ts", dir, fd);
-      expect((await run.done).outcome).toEqual({ kind: "finished", code: 3 });
-      expect(out()).toBe(sent);
-    } finally {
-      if (fd !== undefined) NodeFS.closeSync(fd);
-    }
-  });
+    ["with input", "x\ny", "postgres://u:pw@h/db|it's|x\ny"],
+    ["without input", undefined, "postgres://u:pw@h/db|it's|"],
+  ])(
+    "hands the command its variables and the job's stdin %s, never in argv",
+    async (_, text, sent) => {
+      const file = NodePath.join(dir, "stdin.txt");
+      NodeFS.writeFileSync(file, text ?? "");
+      const fd = text === undefined ? undefined : NodeFS.openSync(file, "r");
+      const argv = NodePath.join(dir, "argv.txt");
+      try {
+        // Stands in for `remoto` and `remoto-rodar`: records its argv, then runs the wrapper.
+        const remoto = fake(
+          [
+            `printf '%s\\n' "$@" > ${argv}`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            '"$@"; c=$?',
+            `printf '${M} exit=%s\\n' "$c" >&2`,
+            'exit "$c"',
+          ].join("\n"),
+        );
+        const { run, out } = runWith(
+          remoto,
+          'printf "%s|%s|" "$DATABASE_URL" "$STRIPE_KEY"; cat',
+          dir,
+          fd,
+          ["DATABASE_URL=postgres://u:pw@h/db", "STRIPE_KEY=it's", "not a name=x"],
+        );
+        expect((await run.done).outcome).toEqual({ kind: "finished", code: 0 });
+        expect(out()).toBe(sent);
+        const args = NodeFS.readFileSync(argv, "utf8");
+        expect(args).not.toContain("pw@h");
+        expect(args).not.toContain("it's");
+      } finally {
+        if (fd !== undefined) NodeFS.closeSync(fd);
+      }
+    },
+  );
 
   it.each([
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
@@ -185,10 +210,10 @@ describe("running on Linux through remoto", () => {
     ]);
     expect(
       wrapped[2]!.startsWith(
-        `export T3_COPY=${copy} PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
+        `${READ_ENV}; export T3_COPY=${copy} PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
       ),
     ).toBe(true);
-    expect(wrapped[2]!.endsWith('; exec "$@"')).toBe(true);
+    expect(wrapped[2]!.endsWith('; eval "$t3v"; exec "$@"')).toBe(true);
   });
 
   // Linux has no Mac home: the text's paths into the checkout point at its copy (`$T3_COPY`).
@@ -462,18 +487,6 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     const result = await run.done;
     expect(result.outcome).toEqual({ kind: "finished", code: 1 });
     expect(result.install).toBe(install);
-  });
-
-  it("runs with the env it is handed, ahead of the command", () => {
-    expect(withProjectBins(["vp", "run", "x"], "/w", "/w", ["A=1", "B=x y"]).slice(3)).toEqual([
-      "t3",
-      "env",
-      "A=1",
-      "B=x y",
-      "vp",
-      "run",
-      "x",
-    ]);
   });
 
   it("runs the nearest project tool from the job's folder, then the checkout's", async () => {
@@ -843,7 +856,7 @@ describe("bringing results back", () => {
   );
 
   it("refuses ids that could escape the runs folder", async () => {
-    expect(() => withProjectBins(["vp"], "/w", "/w", [], "../x")).toThrow(/Unsafe/);
+    expect(() => withProjectBins(["vp"], "/w", "/w", "../x")).toThrow(/Unsafe/);
     const { environment } = setup();
     const args = {
       machine: DEFAULT_MACHINE_CONFIG,
