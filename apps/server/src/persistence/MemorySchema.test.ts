@@ -49,7 +49,7 @@ describe("Memory schema", () => {
       yield* ensureForkSchema();
       // A database from before the counter: no triggers, no marker, and discards already there.
       for (const t of ["insert", "update", "delete"])
-        yield* sql.unsafe(`DROP TRIGGER memory_outbox_discarded_sync_${t}`);
+        yield* sql.unsafe(`DROP TRIGGER memory_outbox_discard_count_${t}`);
       yield* sql`DELETE FROM memory_quota_counters WHERE space='_migrations'`;
       const insert = (id: string, kind: string, code: string) =>
         sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES (${id},'space',${kind},'failed','{}',0,${code})`;
@@ -77,6 +77,17 @@ describe("Memory schema", () => {
       const counted = sql<{
         value: number;
       }>`SELECT value FROM memory_quota_counters WHERE space='space' AND dimension='processing_discarded_sync'`;
+      // Rows that never were discards leave the counter alone.
+      yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at) VALUES ('p','space','sync','pending','{}',0)`;
+      yield* sql`UPDATE memory_outbox SET status='running' WHERE id='p'`;
+      assert.deepStrictEqual(yield* counted, []);
+      // A database that ran the unguarded triggers keeps only the guarded ones after a restart.
+      yield* sql`CREATE TRIGGER memory_outbox_discarded_sync_insert AFTER INSERT ON memory_outbox BEGIN SELECT 1; END`;
+      yield* ensureForkSchema();
+      assert.deepStrictEqual(
+        yield* sql`SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memory_outbox_discard%' ORDER BY name`,
+        ["delete", "insert", "update"].map((t) => ({ name: `memory_outbox_discard_count_${t}` })),
+      );
       yield* sql`INSERT INTO memory_outbox (id,space,kind,status,metadata_json,next_attempt_at,failure_code) VALUES ('a','space','sync','failed','{}',0,'invalid_output')`;
       assert.deepStrictEqual(yield* counted, [{ value: 1 }]);
       // A rejection the hub answered carries its receipt and is counted elsewhere.

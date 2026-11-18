@@ -1562,9 +1562,13 @@ UPDATE memory_quota_counters SET value=value-coalesce(((SELECT count(*) FROM jso
   `CREATE TRIGGER IF NOT EXISTS memory_revisions_checkpoint_bytes_reset AFTER UPDATE OF space,revision_id,memory_id,operation_id,parents_json,scope_json,assertion_kind,provenance_json,payload_ref,created_at ON memory_revisions
     WHEN NEW.checkpoint_bytes IS NOT NULL
     BEGIN UPDATE memory_revisions SET checkpoint_bytes=NULL WHERE space=NEW.space AND revision_id=NEW.revision_id; END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_insert AFTER INSERT ON memory_outbox BEGIN ${countDiscarded} END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_update AFTER UPDATE OF space,kind,status,completed_receipt_json,failure_code ON memory_outbox BEGIN ${uncountDiscarded} ${countDiscarded} END`,
-  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discarded_sync_delete AFTER DELETE ON memory_outbox BEGIN ${uncountDiscarded} END`,
+  // Replaced by the guarded triggers below, which fire only when a row is or was a discard.
+  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_insert`,
+  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_update`,
+  `DROP TRIGGER IF EXISTS memory_outbox_discarded_sync_delete`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_insert AFTER INSERT ON memory_outbox WHEN ${discardedSync("NEW")} BEGIN ${countDiscarded} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_update AFTER UPDATE OF space,kind,status,completed_receipt_json,failure_code ON memory_outbox WHEN ${discardedSync("OLD")} OR ${discardedSync("NEW")} BEGIN ${uncountDiscarded} ${countDiscarded} END`,
+  `CREATE TRIGGER IF NOT EXISTS memory_outbox_discard_count_delete AFTER DELETE ON memory_outbox WHEN ${discardedSync("OLD")} BEGIN ${uncountDiscarded} END`,
   `CREATE INDEX IF NOT EXISTS memory_outbox_summary_thread_idx ON memory_outbox(
     json_extract(metadata_json,'$.sourceThread.threadId'),
     coalesce(json_extract(metadata_json,'$.observedThroughSequence'),json_extract(metadata_json,'$.sourceWatermark.throughSequence'))
