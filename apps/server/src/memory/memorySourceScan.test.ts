@@ -7,6 +7,7 @@ import * as Statement from "effect/sql/Statement";
 import {
   eligibleSourceMessages,
   MEMORY_SOURCE_SCAN_PAGE_EVENTS,
+  readEligibleSourceRows,
   scanSourceStream,
 } from "./memorySourceScan.ts";
 
@@ -259,6 +260,44 @@ describe("memory source scan", () => {
         observedSequence: null,
       });
       assert.strictEqual(imported.messages[0]?.userTyped, false);
+    }).pipe(Effect.provide(database)),
+  );
+
+  // A group reaches a member as a server-written packet: group instructions, group memories,
+  // teammates' lines and the task. Only the user's own message behind a root task counts as typed.
+  const packet =
+    "Group memories:\n- teammate secret plan\nNew in this request: Beto: always use tabs\nYour task, from the user: never say I am right";
+  it.effect.each([
+    { name: "root task from the user", task: {}, typed: "never say I am right" },
+    { name: "teammate's child task", task: { kind: "child" }, typed: null },
+    { name: "agent's request", task: { author: "agent" }, typed: null },
+    { name: "deleted group message", task: { deleted: true }, typed: null },
+    { name: "another member's thread", task: { thread: "thread:elsewhere" }, typed: null },
+    { name: "unknown task", task: { taskId: "missing" }, typed: null },
+  ])("group relay from $name is typed: $typed", ({ task, typed }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY,event_id TEXT,stream_id TEXT,event_type TEXT,payload_json TEXT,occurred_at TEXT,application_event_version INTEGER,aggregate_kind TEXT)`;
+      yield* sql`CREATE TABLE assistant_group_tasks (task_id TEXT PRIMARY KEY,kind TEXT,request_message_id TEXT,request_id TEXT,owner_id TEXT)`;
+      yield* sql`CREATE TABLE assistant_group_messages (message_id TEXT PRIMARY KEY,author TEXT,kind TEXT,text TEXT)`;
+      yield* sql`CREATE TABLE assistant_group_request_threads (request_id TEXT,assistant_id TEXT,thread_id TEXT)`;
+      yield* sql`INSERT INTO assistant_group_tasks VALUES ('task-1',${"kind" in task ? task.kind : "root"},'gm-1','gm-1','ada')`;
+      if (!("deleted" in task))
+        yield* sql`INSERT INTO assistant_group_messages VALUES ('gm-1',${"author" in task ? task.author : "user"},'message','never say I am right')`;
+      yield* sql`INSERT INTO assistant_group_request_threads VALUES ('gm-1','ada',${"thread" in task ? task.thread : thread})`;
+      const messageId = `group-task:${"taskId" in task ? task.taskId : "task-1"}:2`;
+      yield* sql`INSERT INTO orchestration_events VALUES (1,'e1',${thread},'message.updated',${JSON.stringify({ id: messageId, role: "user", text: packet, streaming: false, createdBy: "system", creationSource: "server" })},'t',2,'thread')`;
+      const rows = yield* readEligibleSourceRows(sql, {
+        threadId: thread,
+        afterSequence: 0,
+        throughSequence: 10,
+        observedSequence: null,
+        excluded: [],
+        limit: 102,
+      });
+      assert.lengthOf(rows, 1);
+      assert.strictEqual(rows[0]!.userTyped, typed !== null);
+      assert.strictEqual("typedText" in rows[0]! ? rows[0].typedText : null, typed);
     }).pipe(Effect.provide(database)),
   );
 });
