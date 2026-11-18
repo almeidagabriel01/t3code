@@ -17,11 +17,12 @@ import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
 import {
   HEAVY_JOB_ENV,
   heavyRoute,
+  heavySegment,
   isQueued,
   lineParts,
   readLine,
-  rewriteLine,
   scriptOf,
+  SHIMMED,
   shellQuote,
   type ReadScript,
 } from "./heavyHook.ts";
@@ -76,6 +77,7 @@ import {
   stopRemote,
 } from "./runnerExec.ts";
 import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
+import { ensureShims, realProgram, withoutShims } from "./shims.ts";
 
 /**
  * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
@@ -272,14 +274,21 @@ const isShellLine = (program: string, args: ReadonlyArray<string>) =>
 const jobLine = (program: string, args: ReadonlyArray<string>) =>
   isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
 
+const BIN_PATH = /(^|\/)node_modules\/\.bin\/([^/]+)$/;
+
 /**
- * The shell and line a Linux job runs here: each work part goes through `executor`, the rest
- * stays in this shell.
+ * A project bin a line names by path (`./node_modules/.bin/vitest`) goes through `call` as is,
+ * by `env`: after `nice` or `timeout`, a leading `ELECTRON_RUN_AS_NODE=1` would be the program.
  */
-export const linuxLine = (program: string, args: ReadonlyArray<string>, executor: string) =>
-  isShellLine(program, args)
-    ? { shell: program, args: ["-c", rewriteLine(args[1]!, executor), ...args.slice(2)] }
-    : { shell: "/bin/sh", args: ["-c", rewriteLine(jobLine(program, args), executor)] };
+export const callingBins = (line: string, call: string) =>
+  readLine(line)
+    .parts.flatMap((part) => {
+      const word = part.command.words[part.programAt];
+      const name = word === undefined ? undefined : BIN_PATH.exec(word.value)?.[2];
+      return name !== undefined && SHIMMED.has(name) ? [word!.start] : [];
+    })
+    .toSorted((a, b) => b - a)
+    .reduce((text, at) => `${text.slice(0, at)}/usr/bin/env ${call} -- ${text.slice(at)}`, line);
 
 /**
  * Tools that size themselves by cores and the flag that caps them, placed right after the program
@@ -565,7 +574,7 @@ const makeHostReader = () => {
 export const selfPrefix = (
   dir: string,
   environment: NodeJS.ProcessEnv = process.env,
-  subcommand?: "linux-part",
+  subcommand?: "linux-part" | "call",
 ) =>
   [
     ...(environment.ELECTRON_RUN_AS_NODE === "1" ? ["ELECTRON_RUN_AS_NODE=1"] : []),
@@ -628,9 +637,9 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
     return;
   }
-  if (argv[0] === "linux-part") {
+  if (argv[0] === "linux-part" || argv[0] === "call") {
     const part = parseHeavyArgs(argv.slice(1));
-    await runLinuxPart(part.dir, part.program, part.args);
+    runCall(part.dir, part.program, part.args, argv[0] === "call");
     return;
   }
   const { dir, name, priority, where, now, requestId, routeReason, program, args } =
@@ -691,7 +700,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
   }
   // The code a failure notice reports; every exit path ends here.
-  process.on("exit", (code) =>
+  process.on("exit", (code) => {
+    NodeFS.rmSync(envFile(dir, id), { force: true });
     finish(
       dir,
       id,
@@ -699,8 +709,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       Date.now(),
       startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
       commandFailure,
-    ),
-  );
+    );
+  });
 
   /** What a signal does right now: exit while waiting, or stop the running attempt. */
   let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
@@ -902,6 +912,64 @@ const PHASE_LABEL = { syncing: "syncing", installing: "installing deps", running
 const runnerName = (runner: "mac" | "linux") => (runner === "linux" ? "Linux" : "this Mac");
 
 const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
+const GROUP_ENV = "T3CODE_HEAVY_GROUP";
+
+/** The environment a job gave its line, as hashes: a call sends only what the line set. */
+const envFile = (dir: string, id: string) => NodePath.join(dir, `env-${id}.json`);
+const hashOf = (value: string) => NodeCrypto.createHash("sha1").update(value).digest("hex");
+/** Set by shells, git hooks, package runners and T3: never something the line asked a call for. */
+const OWN_ENV =
+  /^(PATH|PWD|OLDPWD|SHLVL|_|ELECTRON_RUN_AS_NODE|INIT_CWD|GIT_\w+|npm_\w+|PNPM_\w+|T3CODE_HEAVY_\w+)$/;
+
+/**
+ * The line as written with the shims first on PATH, and the project bins it names by path sent
+ * through `call`; `idEnv` tells each call which job it is in.
+ */
+const withShims = (
+  dir: string,
+  id: string,
+  idEnv: string,
+  program: string,
+  args: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+) => {
+  const call = selfPrefix(dir, environment, "call");
+  const env = {
+    ...environment,
+    PATH: `${ensureShims(dir, call)}:${environment.PATH ?? ""}`,
+    [idEnv]: id,
+  };
+  NodeFS.writeFileSync(
+    envFile(dir, id),
+    JSON.stringify(
+      Object.fromEntries(Object.entries(env).map(([key, value]) => [key, hashOf(value ?? "")])),
+    ),
+    { mode: 0o600 },
+  );
+  return {
+    args: isShellLine(program, args)
+      ? [args[0]!, callingBins(args[1]!, call), ...args.slice(2)]
+      : args,
+    env,
+  };
+};
+
+/** The variables the line set for this call since its job began (`A=1 vp test`). */
+const lineKeys = (dir: string, id: string) => {
+  let base: Record<string, string>;
+  try {
+    base = JSON.parse(NodeFS.readFileSync(envFile(dir, id), "utf8")) as Record<string, string>;
+  } catch {
+    return [];
+  }
+  return Object.entries(process.env).flatMap(([key, value]) =>
+    value === undefined || OWN_ENV.test(key) || base[key] === hashOf(value) ? [] : [key],
+  );
+};
+
+/** `NAME=value` words for what the line set for this call. */
+const lineEnv = (dir: string, id: string) =>
+  lineKeys(dir, id).map((key) => `${key}=${process.env[key] ?? ""}`);
 
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
@@ -934,9 +1002,9 @@ const remoteOf = (dir: string, id: string) => {
 };
 
 /**
- * A Linux job runs its line in a shell here, in a process group of its own: each work part goes
- * to Linux through `t3 heavy linux-part` while redirects, pipes and the rest stay here. A part
- * Linux never ran or dropped ends the group, so the line never carries on past it.
+ * A Linux job runs its line in a shell here, in a process group of its own: each heavy call goes
+ * to Linux through its shim while redirects, pipes and the rest stay here. A call Linux never ran
+ * or dropped ends the group, so the line never carries on past it.
  */
 const runLinuxAttempt = async (
   job: {
@@ -959,17 +1027,33 @@ const runLinuxAttempt = async (
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
-  const { shell, args } = linuxLine(
-    job.program,
-    job.args,
-    selfPrefix(dir, environment, "linux-part"),
+  // A shell line runs here as written, its heavy calls through the shims; a program alone is the work.
+  const line = isShellLine(job.program, job.args);
+  const shell = line ? job.program : "/bin/sh";
+  const run = withShims(
+    dir,
+    id,
+    LINUX_JOB_ENV,
+    shell,
+    line
+      ? job.args
+      : [
+          "-c",
+          `${selfPrefix(dir, environment, "linux-part")} -- ${jobLine(job.program, job.args)}`,
+        ],
+    { ...environment, [HEAVY_JOB_ENV]: "1", T3CODE_REMOTO: remoto },
   );
-  const child = NodeChildProcess.spawn(shell, args, {
-    // fd 3 is the job's own stderr, which the line's redirects never touch.
-    stdio: ["inherit", "inherit", "inherit", 2],
-    detached: true,
-    env: { ...environment, [HEAVY_JOB_ENV]: "1", [LINUX_JOB_ENV]: id, T3CODE_REMOTO: remoto },
-  });
+  // Its own group, named for calls inside `timeout`, which starts a group of its own.
+  const child = NodeChildProcess.spawn(
+    "/bin/sh",
+    ["-c", `export ${GROUP_ENV}=$$; exec "$@"`, "sh", shell, ...run.args],
+    {
+      // fd 3 is the job's own stderr, which the line's redirects never touch.
+      stdio: ["inherit", "inherit", "inherit", 2],
+      detached: true,
+      env: run.env,
+    },
+  );
   const signalGroup = (signal: NodeJS.Signals) => {
     try {
       if (child.pid !== undefined) process.kill(-child.pid, signal);
@@ -1106,10 +1190,65 @@ const runLinuxAttempt = async (
   return { kind: "requeued" };
 };
 
+/** Runs a call here as the program it names, past the shims; `strip` keeps its own calls here. */
+const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) =>
+  runDirect(
+    realProgram(program, process.env.PATH),
+    args,
+    strip ? { ...process.env, PATH: withoutShims(process.env.PATH) } : process.env,
+  );
+
+/** One call as a job of its own on `where`, from this folder; the job it is in keeps its slot. */
+const queueCall = (
+  dir: string,
+  where: "mac" | "linux",
+  values: ReadonlyArray<string>,
+  { reason }: { readonly reason?: string },
+) => {
+  const env = {
+    ...process.env,
+    PATH: withoutShims(process.env.PATH),
+    [HEAVY_JOB_ENV]: undefined,
+    [LINUX_JOB_ENV]: undefined,
+  };
+  if (reason !== undefined) {
+    process.stderr.write(`[t3 heavy] ${reason}; running this call on this Mac.\n`);
+  }
+  const options = `--runner ${where}${reason === undefined ? "" : ` --route-reason ${shellQuote(reason)}`}`;
+  runDirect(
+    "/bin/sh",
+    ["-c", `${selfPrefix(dir, env)} ${options} -- ${values.map(shellQuote).join(" ")}`],
+    env,
+  );
+};
+
 /**
- * `t3 heavy linux-part -- <program> [args...]`: one work part of a Linux job, run there through
- * `remoto` from this folder, with its output passed through and its progress on the job's entry.
+ * `t3 heavy call -- <program> [args...]`: a heavy program called inside a Linux job, through its
+ * shim, judged expanded. A light call runs here; a heavy one runs on Linux unless it needs this
+ * Mac, then as a Mac job of its own. `linux-part` is a Linux job's own program: no light check.
  */
+const runCall = (
+  dir: string,
+  given: string | undefined,
+  args: ReadonlyArray<string>,
+  light: boolean,
+) => {
+  const environment = process.env;
+  const linuxJob = environment[LINUX_JOB_ENV];
+  if (given === undefined) {
+    process.stderr.write("[t3 heavy] call needs a program.\n");
+    process.exit(2);
+  }
+  if (
+    environment[HEAVY_JOB_ENV] !== "1" ||
+    linuxJob === undefined ||
+    (light && heavySegment(jobLine(given, args)) === null)
+  ) {
+    return runHere(given, args, false);
+  }
+  void runLinuxPart(dir, given, args, linuxJob);
+};
+
 /** Progress for the job's own stderr, outside any redirect the line put on this part. */
 const jobNote = (text: string) => {
   try {
@@ -1119,14 +1258,18 @@ const jobNote = (text: string) => {
   }
 };
 
+/**
+ * One heavy call of a Linux job, run there through `remoto` from this folder, with its output
+ * passed through and its progress on the job's entry.
+ */
 const runLinuxPart = async (
   dir: string,
-  given: string | undefined,
+  given: string,
   givenArgs: ReadonlyArray<string>,
+  id: string,
 ) => {
-  const id = process.env[LINUX_JOB_ENV];
   const remoto = process.env.T3CODE_REMOTO;
-  if (given === undefined || id === undefined || remoto === undefined) {
+  if (remoto === undefined) {
     process.stderr.write("[t3 heavy] linux-part runs only inside a Linux job.\n");
     process.exit(2);
   }
@@ -1142,8 +1285,7 @@ const runLinuxPart = async (
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
   if (root === null || program === undefined) {
-    return endLine(dir, id, {
-      kind: "mac",
+    return queueCall(dir, "mac", [given, ...givenArgs], {
       reason: macReasonText({ code: "mac-env", subject: cwd }),
     });
   }
@@ -1157,8 +1299,13 @@ const runLinuxPart = async (
     { config: configFor(doc, cwd), home, rootOf: gitRootOf },
     scriptReader(cwd),
   );
-  if (mac !== null) return endLine(dir, id, { kind: "mac", reason: macReasonText(mac) });
-  const env = (args.includes("check:changed") ? changedInputs(args, cwd, root) : null) ?? [];
+  if (mac !== null) {
+    return queueCall(dir, "mac", [given, ...givenArgs], { reason: macReasonText(mac) });
+  }
+  const env = [
+    ...lineEnv(dir, id),
+    ...((args.includes("check:changed") ? changedInputs(args, cwd, root) : null) ?? []),
+  ];
   // A script outside the checkout goes as its text: its path does not exist in the Linux copy.
   const script = scriptOf([program, ...args], 0, scriptReader(cwd));
   let command = { program, args };
@@ -1198,7 +1345,7 @@ const runLinuxPart = async (
       args: command.args,
       cwd,
       root,
-      environment: process.env,
+      environment: { ...process.env, PATH: withoutShims(process.env.PATH) },
       // `remoto` reads its ssh timeout from `REMOTO_TIMEOUT`, which this sets.
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
@@ -1311,6 +1458,6 @@ const runLinuxPart = async (
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {
   NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome));
-  process.kill(0, "SIGTERM");
+  process.kill(-Number(process.env[GROUP_ENV] ?? 0), "SIGTERM");
   process.exit(LINUX_UNAVAILABLE_EXIT);
 };

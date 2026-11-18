@@ -7,11 +7,11 @@ import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
+  callingBins,
   heavyLaunch,
   jobOf,
   labelOf,
   launchOf,
-  linuxLine,
   parseHeavyArgs,
   selfPrefix,
   withWorkers,
@@ -54,7 +54,14 @@ const heavy = (
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       // Undefined drops a variable: a run of these tests inside a queue job must still queue.
-      env: { ...process.env, T3CODE_HEAVY_JOB: undefined, ...env },
+      env: {
+        ...process.env,
+        T3CODE_HEAVY_JOB: undefined,
+        T3CODE_HEAVY_LINUX_JOB: undefined,
+        T3CODE_HEAVY_MAC_JOB: undefined,
+        T3CODE_HEAVY_CALL: undefined,
+        ...env,
+      },
     },
   );
   children.push(child);
@@ -450,12 +457,12 @@ describe("t3 heavy", () => {
       [
         (o: string, t: string) =>
           `${t} && O=${o}; sh -c "cd $O/apps/server && vp test run x.test.ts"`,
-        "bash|-c|vp test run x.test.ts|",
+        "vp|test|run|x.test.ts|",
         "apps/server",
       ],
       [
         (_: string, t: string) => `${t} && sh -c 'cd ~/other/apps/server && vp test run x.test.ts'`,
-        "bash|-c|vp test run x.test.ts|",
+        "vp|test|run|x.test.ts|",
         "apps/server",
       ],
     ])(
@@ -528,9 +535,8 @@ describe("t3 heavy", () => {
       const line = `O=${other}; sh -c "cd $O/link && vp test run $O/x.test.ts"`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], { ...env, T3CODE_REMOTO: remoto });
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe(
-        `linux: vp on mac: test run ${NodeFS.realpathSync(other)}/x.test.ts\n`,
-      );
+      // The call goes alone, its path into the checkout relative to the folder it runs in.
+      expect(run.stdout()).toBe("linux: vp on mac: test run ../../x.test.ts\n");
     });
 
     it("sends only the work to Linux: its log stays here, free of markers", async () => {
@@ -543,15 +549,64 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain("Linux: running");
     });
 
-    it("runs the line here when its expanded command turns out to need this Mac", async () => {
+    it("runs a call that turns out to need this Mac as its own Mac job, never rerunning the line", async () => {
       const { dir, env } = setup(echoArgs);
-      const line = "F=$(echo /etc/hosts); vp test run $F";
+      const marker = NodePath.join(dir, "marker");
+      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp lint a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run /etc/hosts\n");
-      expect(run.stderr()).toContain(
-        "Uses a file outside the project: /etc/hosts; running the line on this Mac",
+      expect(run.stdout()).toBe(
+        `vp on mac: test run /etc/hosts\nvp|lint|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
       );
+      expect(run.stderr()).toContain(
+        "Uses a file outside the project: /etc/hosts; running this call on this Mac",
+      );
+      expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
+    });
+
+    it("runs the line here as written and sends each heavy call to Linux expanded", async () => {
+      const { dir, env } = setup(echoArgs);
+      NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir });
+      NodeFS.mkdirSync(NodePath.join(dir, "src"));
+      for (const file of ["a.ts", "b.ts"])
+        NodeFS.writeFileSync(NodePath.join(dir, "src", file), "");
+      const real = NodeFS.realpathSync(dir);
+      const lint =
+        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp lint "${files[@]}"';
+      const linted = heavyHere(dir, ["/bin/bash", "-c", lint], env, ["--"], dir);
+      expect(await linted.exited).toBe(0);
+      expect(linted.stdout()).toBe(`vp|lint|src/a.ts|src/b.ts| in ${real}\n`);
+      const cased = heavyHere(
+        dir,
+        ["/bin/sh", "-c", "case x in x) A=1 vp test run a.test.ts;; *) echo no;; esac"],
+        env,
+        ["--"],
+        dir,
+      );
+      expect(await cased.exited).toBe(0);
+      // What the line set for the call reaches Linux too.
+      expect(cased.stdout()).toBe(`env|A=1|vp|test|run|a.test.ts| in ${real}\n`);
+      // A script's own steps run here; only its heavy call crosses.
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "check.sh"),
+        "echo before; vp test run x.test.ts; pnpm --version; echo after\n",
+      );
+      script(NodePath.join(dir, "bin"), "pnpm", 'echo "pnpm on mac: $*"');
+      const scripted = heavyHere(dir, ["/bin/sh", "-c", "bash check.sh"], env, ["--"], dir);
+      expect(await scripted.exited).toBe(0);
+      expect(scripted.stdout()).toBe(
+        `before\nvp|test|run|x.test.ts| in ${real}\npnpm on mac: --version\nafter\n`,
+      );
+    });
+
+    it("ends with the line's own exit code, whatever its calls ended with", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} exit=3\\n' >&2; exit 3`,
+      );
+      const line = 'vp lint a.ts; echo "status $?"; exit 5';
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(5);
+      expect(run.stdout()).toBe("status 3\n");
     });
 
     /** The faults the job logged for the problem detector, without the per-run fields. */
@@ -732,25 +787,17 @@ describe("t3 heavy", () => {
       expect(Queue.readDoc(dir).events.map((event) => event.kind)).toEqual(["ended"]);
     });
 
-    // Linux has no Mac home: `~`, `$HOME` and absolute paths into the checkout point at its copy.
+    // A `sh -c` text runs here: its `cd` and redirect are this Mac's, and its call goes out
+    // from that folder, with paths into the checkout pointing at the copy.
     it.each([
-      ["cd ~/W/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
-      ["cd D/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
-      ["remoto sh -c 'cd ~/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
-      ["remoto sh -c 'cd $HOME/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
-      ["remoto sh -c 'cd \"D/sub\" && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
-      [
-        "remoto sh -c 'cd D && vp test run --root=D/sub'",
-        `cd "$T3_COPY" && vp test run '--root='"$T3_COPY"'/sub'`,
-        "",
-      ],
-      [
-        "sh -c 'cd ~/W/sub && vp test run > ~/W/out.txt'",
-        `cd "$T3_COPY"'/sub' && vp test run > "$T3_COPY"'/out.txt'`,
-        "",
-      ],
+      ["cd ~/W/sub && remoto sh -c 'vp test run'", "vp|test|run|", "sub"],
+      ["cd D/sub && remoto sh -c 'vp test run'", "vp|test|run|", "sub"],
+      ["remoto sh -c 'cd ~/W/sub && vp test run'", "vp|test|run|", "sub"],
+      ["remoto sh -c 'cd $HOME/W/sub && vp test run'", "vp|test|run|", "sub"],
+      ["remoto sh -c 'cd \"D/sub\" && vp test run'", "vp|test|run|", "sub"],
+      ["remoto sh -c 'cd D && vp test run --root=D/sub'", "vp|test|run|--root=sub|", ""],
       // Quoted, `~` is no home.
-      ["remoto sh -c 'vp test run \"~/W\"'", `vp test run "~/W"`, ""],
+      ["remoto sh -c 'vp test run \"~/W\"'", `vp|test|run|~/W|`, ""],
     ])("%s runs on Linux in its copy", async (line, body, folder) => {
       const { dir: made, env } = setup(echoArgs);
       // ponytail: paths compare as written; one through a symlink into the checkout stays here.
@@ -759,7 +806,7 @@ describe("t3 heavy", () => {
       const real = (text: string) =>
         text
           .replaceAll(
-            /(~|\$HOME)\/W(?=\/|"|'| |$)/g,
+            /(~|\$HOME)\/W(?=\/|"|'| |\||$)/g,
             (_, start: string) => `${start}/${NodePath.basename(dir)}`,
           )
           .replaceAll(/(?<=[ ="]|^)D(?=\/| |"|$)/g, dir);
@@ -771,19 +818,30 @@ describe("t3 heavy", () => {
         dir,
       );
       expect(await run.exited, run.stderr()).toBe(0);
-      expect(run.stdout()).toBe(`bash|-c|${real(body)}| in ${NodePath.join(dir, folder)}\n`);
+      expect(run.stdout()).toBe(`${real(body)} in ${NodePath.join(dir, folder)}\n`);
     });
 
-    it("sends a script outside the checkout to Linux as its text", async () => {
+    it("writes a redirect inside a `sh -c` text on this Mac", async () => {
+      const { dir: made, env } = setup(echoArgs);
+      const dir = NodeFS.realpathSync(made);
+      NodeFS.mkdirSync(NodePath.join(dir, "sub"));
+      const line = `sh -c 'cd ${dir}/sub && vp test run > ${dir}/out.txt'`;
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe("");
+      expect(NodeFS.readFileSync(NodePath.join(dir, "out.txt"), "utf8")).toBe(
+        `vp|test|run| in ${NodePath.join(dir, "sub")}\n`,
+      );
+    });
+
+    it("runs a script outside the checkout here, its heavy call on Linux", async () => {
       const { dir, env } = setup(echoArgs);
       const scratch = tempDir();
       const path = NodePath.join(scratch, "verify.sh");
-      NodeFS.writeFileSync(path, "vp test run");
+      NodeFS.writeFileSync(path, 'vp test run "$1"');
       const run = heavyHere(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe(
-        `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
-      );
+      expect(run.stdout()).toBe(`vp|test|run|--fast| in ${NodeFS.realpathSync(dir)}\n`);
     });
 
     it("judges the whole line, not the label cut short for the row", async () => {
@@ -1039,7 +1097,14 @@ describe("t3 heavy", () => {
         {
           input: stdin,
           encoding: "utf8",
-          env: { ...process.env, T3CODE_HEAVY_JOB: undefined, ...env },
+          env: {
+            ...process.env,
+            T3CODE_HEAVY_JOB: undefined,
+            T3CODE_HEAVY_LINUX_JOB: undefined,
+            T3CODE_HEAVY_MAC_JOB: undefined,
+            T3CODE_HEAVY_CALL: undefined,
+            ...env,
+          },
         },
       );
       return { code: result.status, out: result.stdout };
@@ -1238,7 +1303,8 @@ describe("t3 heavy", () => {
         { config, home: "/home/me", rootOf },
       );
       if (reason !== null) return [reason];
-      const run = linuxLine(job.program, job.args, "X").args[1];
+      // The job runs the line as written; only its leading `cd`s and `remoto` words are gone.
+      const run = job.args[1];
       return job.cwd === "/w/repo" ? ["linux", run] : ["linux", run, job.cwd];
     };
     const PINNED =
@@ -1248,112 +1314,108 @@ describe("t3 heavy", () => {
 
     it.each([
       // Folders: a leading `cd` is where the job starts; any other is followed to its part.
-      ["vp test run", "linux", "X vp test run"],
-      ["cd /abs/app && vp test run", "linux", "X vp test run", "/abs/app"],
-      ["cd apps/web && vp test run", "linux", "X vp test run", "/w/repo/apps/web"],
-      ["cd ../other && vp test run", "linux", "X vp test run", "/w/other"],
-      ['cd "/a b/c" && vp test run', "linux", "X vp test run", "/a b/c"],
-      ["cd ~/code&&vp test run", "linux", "X vp test run", "/home/me/code"],
-      ["cd /abs && cd apps/web && vp test run", "linux", "X vp test run", "/abs/apps/web"],
-      ["  cd . && vp test run -t 'a b'", "linux", "X vp test run -t 'a b'"],
-      ["cd /abs; vp test run", "linux", "cd /abs; X vp test run"],
-      [
-        "(cd apps/web && vp test run) | tail -5",
-        "linux",
-        "(cd apps/web && X vp test run) | tail -5",
-      ],
+      ["vp test run", "linux", "vp test run"],
+      ["cd /abs/app && vp test run", "linux", "vp test run", "/abs/app"],
+      ["cd apps/web && vp test run", "linux", "vp test run", "/w/repo/apps/web"],
+      ["cd ../other && vp test run", "linux", "vp test run", "/w/other"],
+      ['cd "/a b/c" && vp test run', "linux", "vp test run", "/a b/c"],
+      ["cd ~/code&&vp test run", "linux", "vp test run", "/home/me/code"],
+      ["cd /abs && cd apps/web && vp test run", "linux", "vp test run", "/abs/apps/web"],
+      ["  cd . && vp test run -t 'a b'", "linux", "vp test run -t 'a b'"],
+      ["cd /abs; vp test run", "linux", "cd /abs; vp test run"],
+      ["(cd apps/web && vp test run) | tail -5", "linux", "(cd apps/web && vp test run) | tail -5"],
       // What only the shell knows passes here; `linux-part` checks it expanded.
-      ["cd $DIR && vp test run", "linux", "cd $DIR && X vp test run"],
+      ["cd $DIR && vp test run", "linux", "cd $DIR && vp test run"],
       [
         "FILES=$(git diff --name-only); vp test run $FILES",
         "linux",
-        "FILES=$(git diff --name-only); X vp test run $FILES",
+        "FILES=$(git diff --name-only); vp test run $FILES",
       ],
-      ["for f in a b; do vp test run $f; done", "linux", "for f in a b; do X vp test run $f; done"],
+      ["for f in a b; do vp test run $f; done", "linux", "for f in a b; do vp test run $f; done"],
       // Plumbing stays here: redirects, pipes, `;`, assignments, light commands.
       [
         "L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
         "linux",
-        "L=/private/tmp/x.log; X effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+        "L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
       ],
       [
         "cd /w/repo/apps/server && L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
         "linux",
-        "L=/private/tmp/x.log; X effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+        "L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
         "/w/repo/apps/server",
       ],
       [
         "vp test run a.test.ts > /private/tmp/out.log",
         "linux",
-        "X vp test run a.test.ts > /private/tmp/out.log",
+        "vp test run a.test.ts > /private/tmp/out.log",
       ],
-      ["vp test run 2>&1 | tail -20", "linux", "X vp test run 2>&1 | tail -20"],
-      ["vp run lint; vp test run", "linux", "X vp run lint; X vp test run"],
-      ["vp test run && git push", "linux", "X vp test run && git push"],
+      ["vp test run 2>&1 | tail -20", "linux", "vp test run 2>&1 | tail -20"],
+      ["vp run lint; vp test run", "linux", "vp run lint; vp test run"],
+      ["vp test run && git push", "linux", "vp test run && git push"],
       [
         'grep -v "t3 heavy" log.txt && vp test run',
         "linux",
-        'grep -v "t3 heavy" log.txt && X vp test run',
+        'grep -v "t3 heavy" log.txt && vp test run',
       ],
       [
         "python3 - <<'EOF'\nprint('vp test run')\nEOF\nvp test run",
         "linux",
-        "python3 - <<'EOF'\nprint('vp test run')\nEOF\nX vp test run",
+        "python3 - <<'EOF'\nprint('vp test run')\nEOF\nvp test run",
       ],
-      ["t3 heavy -- vp lint && vp test run", "linux", "t3 heavy -- vp lint && X vp test run"],
+      ["t3 heavy -- vp lint && vp test run", "linux", "t3 heavy -- vp lint && vp test run"],
       // Assignments travel as `env`; local prefixes wrap the executor.
-      ["VITEST_MAX_WORKERS=2 vp test run", "linux", "X env VITEST_MAX_WORKERS=2 vp test run"],
+      ["VITEST_MAX_WORKERS=2 vp test run", "linux", "VITEST_MAX_WORKERS=2 vp test run"],
       [
         'NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
         "linux",
-        'X env NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
+        'NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
       ],
-      ["time vp test run", "linux", "time X vp test run"],
-      ["vp test run < /dev/null", "linux", "X vp test run < /dev/null"],
-      ["timeout 110 vp test run", "linux", "X timeout 110 vp test run"],
+      ["time vp test run", "linux", "time vp test run"],
+      ["vp test run < /dev/null", "linux", "vp test run < /dev/null"],
+      ["timeout 110 vp test run", "linux", "timeout 110 vp test run"],
       // Wrappers run there as written.
-      ["npx vitest run", "linux", "X npx vitest run"],
-      ["pnpm exec playwright test", "linux", "X pnpm exec playwright test"],
-      ["pnpm dlx vitest run", "linux", "X pnpm dlx vitest run"],
-      ["npm exec vitest", "linux", "X npm exec vitest"],
-      ["yarn test", "linux", "X yarn test"],
-      ["bunx tsc --noEmit", "linux", "X bunx tsc --noEmit"],
-      ["vp run typecheck", "linux", "X vp run typecheck"],
-      ["pnpm exec effect-tsgo tsrs --noEmit", "linux", "X pnpm exec effect-tsgo tsrs --noEmit"],
+      ["npx vitest run", "linux", "npx vitest run"],
+      ["pnpm exec playwright test", "linux", "pnpm exec playwright test"],
+      ["pnpm dlx vitest run", "linux", "pnpm dlx vitest run"],
+      ["npm exec vitest", "linux", "npm exec vitest"],
+      ["yarn test", "linux", "yarn test"],
+      ["bunx tsc --noEmit", "linux", "bunx tsc --noEmit"],
+      ["vp run typecheck", "linux", "vp run typecheck"],
+      ["pnpm exec effect-tsgo tsrs --noEmit", "linux", "pnpm exec effect-tsgo tsrs --noEmit"],
       [
         "cd apps/server && pnpm exec effect-tsgo tsrs --noEmit",
         "linux",
-        "X pnpm exec effect-tsgo tsrs --noEmit",
+        "pnpm exec effect-tsgo tsrs --noEmit",
         "/w/repo/apps/server",
       ],
-      ["npx vue-tsc --noEmit", "linux", "X npx vue-tsc --noEmit"],
+      ["npx vue-tsc --noEmit", "linux", "npx vue-tsc --noEmit"],
       // An agent's own `remoto` asks for Linux; T3 takes its word out and decides.
-      ["remoto vp test run", "linux", "X vp test run"],
-      ["cd apps/server && remoto vp test run", "linux", "X vp test run", "/w/repo/apps/server"],
+      ["remoto vp test run", "linux", "vp test run"],
+      ["cd apps/server && remoto vp test run", "linux", "vp test run", "/w/repo/apps/server"],
       // Only the work goes there: the cd, pipe and redirect stay on this Mac.
       [
         "cd /w/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
         "linux",
-        "X pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
+        "pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
         "/w/repo/apps/web",
       ],
-      ["cd apps/server && remoto vp run build", "linux", "X vp run build", "/w/repo/apps/server"],
-      ["ls && remoto vp test run", "linux", "ls && X vp test run"],
+      ["cd apps/server && remoto vp run build", "linux", "vp run build", "/w/repo/apps/server"],
+      ["ls && remoto vp test run", "linux", "ls && vp test run"],
       // Paths inside a checkout translate there; outside it, the part stays.
-      ["vp test run /w/repo/src/a.test.ts", "linux", "X vp test run /w/repo/src/a.test.ts"],
+      ["vp test run /w/repo/src/a.test.ts", "linux", "vp test run /w/repo/src/a.test.ts"],
       ["vp test run /Users/me/x/a.test.ts", `${OUTSIDE}/Users/me/x/a.test.ts`],
       ["vp test run --config ~/vitest.config.ts", `${OUTSIDE}/home/me/vitest.config.ts`],
       ["vp test run --outputFile=/private/tmp/r.json", `${OUTSIDE}/private/tmp/r.json`],
       // A `sh -c` text runs there whole, in the copy of the checkout it starts in.
-      ["sh -c 'vp test run'", "linux", "X sh -c 'vp test run'"],
+      ["sh -c 'vp test run'", "linux", "sh -c 'vp test run'"],
       [
         "remoto sh -c 'cd /w/repo/apps/server && vp test run'",
         "linux",
-        "X sh -c 'cd /w/repo/apps/server && vp test run'",
+        "sh -c 'cd /w/repo/apps/server && vp test run'",
       ],
-      ["remoto sh -c 'cd ~/code && vp test run'", "linux", "X sh -c 'cd ~/code && vp test run'"],
+      ["remoto sh -c 'cd ~/code && vp test run'", "linux", "sh -c 'cd ~/code && vp test run'"],
       ["sh -c 'vp test run /w/other/a.test.ts'", `${OUTSIDE}/w/other/a.test.ts`],
-      ["sh -c 'echo a | vp test run'", "linux", "X sh -c 'echo a | vp test run'"],
+      ["sh -c 'echo a | vp test run'", "linux", "sh -c 'echo a | vp test run'"],
       ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
       ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
       ["cd /nowhere && vp test run", `${OUTSIDE}/nowhere`],
@@ -1361,42 +1423,42 @@ describe("t3 heavy", () => {
       [
         "cd /w/other && git checkout --ours a && cd apps/server && pnpm exec vp test run a.test.ts",
         "linux",
-        "git checkout --ours a && cd apps/server && X pnpm exec vp test run a.test.ts",
+        "git checkout --ours a && cd apps/server && pnpm exec vp test run a.test.ts",
         "/w/other",
       ],
       [
         "git -C /w/other checkout --ours a && cd /w/other/apps/server && vp test run",
         "linux",
-        "git -C /w/other checkout --ours a && cd /w/other/apps/server && X vp test run",
+        "git -C /w/other checkout --ours a && cd /w/other/apps/server && vp test run",
       ],
       [
         "pnpm -C /w/other/apps/server exec vp test run",
         "linux",
-        "X pnpm -C /w/other/apps/server exec vp test run",
+        "pnpm -C /w/other/apps/server exec vp test run",
       ],
-      ["pnpm --dir=/w/other exec vp test run", "linux", "X pnpm --dir=/w/other exec vp test run"],
-      ["pnpm -C ~/code exec vp test run", "linux", "X pnpm -C ~/code exec vp test run"],
+      ["pnpm --dir=/w/other exec vp test run", "linux", "pnpm --dir=/w/other exec vp test run"],
+      ["pnpm -C ~/code exec vp test run", "linux", "pnpm -C ~/code exec vp test run"],
       [
         "pnpm -C /w/repo/apps/web exec vp test run",
         "linux",
-        "X pnpm -C /w/repo/apps/web exec vp test run",
+        "pnpm -C /w/repo/apps/web exec vp test run",
       ],
       ["pnpm -C /w/other exec vp test run /abs/a.test.ts", `${OUTSIDE}/abs/a.test.ts`],
-      ["sh -c 'cd /w/other && vp test run'", "linux", "X sh -c 'cd /w/other && vp test run'"],
+      ["sh -c 'cd /w/other && vp test run'", "linux", "sh -c 'cd /w/other && vp test run'"],
       ["sh -c 'cd /w/other && vp test run /abs/a.test.ts'", `${OUTSIDE}/abs/a.test.ts`],
       ["sh -c 'cd /nowhere && vp test run'", `${OUTSIDE}/nowhere`],
       // A build goes there too: its output comes back.
-      ["vp run build", "linux", "X vp run build"],
+      ["vp run build", "linux", "vp run build"],
       // The rest of what keeps work here, each with its reason.
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
       ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
       // A line it can't follow is no reason to keep it here.
-      ["vp test run <<EOF\nx\nEOF", "linux", "X vp test run <<EOF\nx\nEOF"],
-      ["echo a | vp test run", "linux", "echo a | X vp test run"],
-      ["vp test run a & vp test run b & wait", "linux", "X vp test run a & X vp test run b & wait"],
-      ["eval vp test run", "linux", "X eval vp test run"],
+      ["vp test run <<EOF\nx\nEOF", "linux", "vp test run <<EOF\nx\nEOF"],
+      ["echo a | vp test run", "linux", "echo a | vp test run"],
+      ["vp test run a & vp test run b & wait", "linux", "vp test run a & vp test run b & wait"],
+      ["eval vp test run", "linux", "eval vp test run"],
       // Not heavy, or already queued: the hook leaves these alone.
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],
@@ -1409,26 +1471,17 @@ describe("t3 heavy", () => {
       expect(placed(line)).toEqual(expected);
     });
 
-    it("runs the plumbing here and only the work through the executor", () => {
-      const dir = tempDir();
-      NodeFS.writeFileSync(
-        NodePath.join(dir, "t3-remote"),
-        '#!/bin/sh\necho "remote: $*"\necho remote-err >&2\n',
-        { mode: 0o755 },
+    it("sends a project bin at the top of the line through the call, by its own path", () => {
+      expect(
+        callingBins("cd a && ./node_modules/.bin/vitest run | tail; node_modules/.bin/nope x", "C"),
+      ).toBe(
+        "cd a && /usr/bin/env C -- ./node_modules/.bin/vitest run | tail; node_modules/.bin/nope x",
       );
-      const log = NodePath.join(dir, "x.log");
-      const line = `L=${log}; effect-tsgo tsrs --noEmit > $L 2>&1; echo "lines: $(wc -l < $L | tr -d ' ')"; tail -5 $L`;
-      const { shell, args } = linuxLine("/bin/sh", ["-c", line], "t3-remote");
-      const out = NodeChildProcess.execFileSync(shell, args, {
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
-        encoding: "utf8",
-      });
-      expect(out).toBe("lines: 2\nremote: effect-tsgo tsrs --noEmit\nremote-err\n");
-      // A program run without a shell becomes a line of its quoted words.
-      expect(linuxLine("vp", ["test", "it's"], "X")).toEqual({
-        shell: "/bin/sh",
-        args: ["-c", `X 'vp' 'test' 'it'\\''s'`],
-      });
+      // The call starts with an assignment in the desktop app; it must still run after `nice`.
+      const line = callingBins("A=1 nice ./node_modules/.bin/tsc -b", "X=1 printf '%s|'");
+      expect(NodeChildProcess.execFileSync("/bin/sh", ["-c", line], { encoding: "utf8" })).toBe(
+        "--|./node_modules/.bin/tsc|-b|",
+      );
     });
 
     it("leaves a program that is not a shell line as it is", () => {
