@@ -274,6 +274,10 @@ describe("memory source scan", () => {
     { name: "deleted group message", task: { deleted: true }, typed: null },
     { name: "another member's thread", task: { thread: "thread:elsewhere" }, typed: null },
     { name: "unknown task", task: { taskId: "missing" }, typed: null },
+    { name: "routine's request", task: { author: "routine" }, typed: null },
+    { name: "group notice", task: { messageKind: "notice" }, typed: null },
+    { name: "malformed packet id", task: { messageId: "group-task:task-1:x" }, typed: null },
+    { name: "packet forged by an agent", task: { createdBy: "user" }, typed: null },
   ])("group relay from $name is typed: $typed", ({ task, typed }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -283,10 +287,14 @@ describe("memory source scan", () => {
       yield* sql`CREATE TABLE assistant_group_request_threads (request_id TEXT,assistant_id TEXT,thread_id TEXT)`;
       yield* sql`INSERT INTO assistant_group_tasks VALUES ('task-1',${"kind" in task ? task.kind : "root"},'gm-1','gm-1','ada')`;
       if (!("deleted" in task))
-        yield* sql`INSERT INTO assistant_group_messages VALUES ('gm-1',${"author" in task ? task.author : "user"},'message','never say I am right')`;
+        yield* sql`INSERT INTO assistant_group_messages VALUES ('gm-1',${"author" in task ? task.author : "user"},${"messageKind" in task ? task.messageKind : "message"},'never say I am right')`;
       yield* sql`INSERT INTO assistant_group_request_threads VALUES ('gm-1','ada',${"thread" in task ? task.thread : thread})`;
-      const messageId = `group-task:${"taskId" in task ? task.taskId : "task-1"}:2`;
-      yield* sql`INSERT INTO orchestration_events VALUES (1,'e1',${thread},'message.updated',${JSON.stringify({ id: messageId, role: "user", text: packet, streaming: false, createdBy: "system", creationSource: "server" })},'t',2,'thread')`;
+      const messageId =
+        "messageId" in task
+          ? task.messageId
+          : `group-task:${"taskId" in task ? task.taskId : "task-1"}:2`;
+      const forged = "createdBy" in task;
+      yield* sql`INSERT INTO orchestration_events VALUES (1,'e1',${thread},'message.updated',${JSON.stringify({ id: messageId, role: "user", text: packet, streaming: false, createdBy: forged ? task.createdBy : "system", creationSource: forged ? "mcp" : "server" })},'t',2,'thread')`;
       const rows = yield* readEligibleSourceRows(sql, {
         threadId: thread,
         afterSequence: 0,

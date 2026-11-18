@@ -34,6 +34,8 @@ export interface SourceMessageRow {
   readonly usable: boolean;
   /** Typed by the person in a client: the only messages a standing rule may be drawn from. */
   readonly userTyped: boolean;
+  /** Written by the server itself; group task packets are, so an agent cannot forge one. */
+  readonly serverWritten: boolean;
 }
 
 export interface SourceScan {
@@ -120,6 +122,7 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
             row.created_by === "user" &&
             (row.creation_source === "web" || row.creation_source === "mobile") &&
             row.automated !== 1,
+          serverWritten: row.created_by === "system",
         });
     }
     if (!bound.length) break;
@@ -175,7 +178,8 @@ export const readEligibleSourceRows = Effect.fn("MemoryWorker.readEligibleSource
   // A group reaches its members as server-written task packets; only the user's own words in one
   // count as typed, and the packet's other text stays out of the rule source.
   const relayed = page.filter(
-    (row) => !row.userTyped && row.role === "user" && row.id !== null && parseTaskMessageId(row.id),
+    (row) =>
+      row.serverWritten && row.role === "user" && row.id !== null && parseTaskMessageId(row.id),
   );
   const relays = relayed.length
     ? yield* resolveGroupRelaySources(
