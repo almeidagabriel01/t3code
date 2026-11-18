@@ -249,6 +249,28 @@ describe("t3 heavy", () => {
     expect(Queue.read(dir)).toEqual([]);
   });
 
+  // Resolved through the shims, it would run its own shim: shim, call, shim, without end.
+  it("a call whose program this Mac lacks ends with 127, never running its shim", () => {
+    const dir = tempDir();
+    const shims = NodePath.join(dir, "shims");
+    NodeFS.mkdirSync(shims);
+    NodeFS.writeFileSync(NodePath.join(shims, ".t3-heavy-shims"), "");
+    const ran = NodePath.join(dir, "ran");
+    const shim = `#!/bin/sh\necho x >> ${ran}\nexit 99\n`;
+    NodeFS.writeFileSync(NodePath.join(shims, "t3-absent"), shim, { mode: 0o755 });
+    const run = NodeChildProcess.spawnSync(
+      process.execPath,
+      [BIN, "heavy", "call", "--queue-dir", dir, "--", "t3-absent", "test"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${shims}:/usr/bin:/bin`, T3CODE_HEAVY_JOB: undefined },
+      },
+    );
+    expect(run.status).toBe(127);
+    expect(run.stderr).toContain("t3-absent: not found on this Mac");
+    expect(NodeFS.existsSync(ran)).toBe(false);
+  });
+
   it("tells the started program its worker count and that it holds a slot", async () => {
     const dir = tempDir();
     const show = `console.log([process.env.T3_HEAVY_WORKERS,process.env.VITEST_MAX_WORKERS,process.env.T3CODE_HEAVY_JOB].join(","))`;

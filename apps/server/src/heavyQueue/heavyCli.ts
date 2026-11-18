@@ -1354,12 +1354,19 @@ const runRoutes = (args: ReadonlyArray<string>) => {
 };
 
 /** Runs a call here as the program it names, past the shims; `strip` keeps its own calls here. */
-const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) =>
+const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) => {
+  const real = realProgram(program, process.env.PATH);
+  // A bare name left unresolved would find its own shim on PATH: shim, call, shim, without end.
+  if (!real.includes("/")) {
+    process.stderr.write(`[t3 heavy] ${program}: not found on this Mac\n`);
+    process.exit(127);
+  }
   runDirect(
-    realProgram(program, process.env.PATH),
+    real,
     args,
     strip ? { ...process.env, PATH: withoutShims(process.env.PATH) } : process.env,
   );
+};
 
 /** One call as a job of its own on `where`, from this folder; the job it is in keeps its slot. */
 const queueCall = (
