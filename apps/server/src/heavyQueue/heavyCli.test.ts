@@ -682,6 +682,29 @@ describe("t3 heavy", () => {
       expect(run.stdout().split("\n").slice(1)).toEqual(["vp on mac: run knip:check", ""]);
     });
 
+    it("a learned route ends a job asked for Linux with why, never running it here", async () => {
+      const { dir, env } = setup('echo x > "$0.count"');
+      const route = { kind: "missing-program", faults: 2, at: Date.parse("2100-01-01"), line: "x" };
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "routes.json"),
+        JSON.stringify({ [`vp@${NodeFS.realpathSync(dir)}#missing-program`]: route }),
+      );
+      const run = heavyHere(
+        dir,
+        ["/bin/sh", "-c", "vp test run"],
+        env,
+        ["--runner", "linux", "--"],
+        dir,
+      );
+      expect(await run.exited).toBe(75);
+      expect(run.stdout()).toBe("");
+      const why =
+        "Asked for Linux, but it needs this Mac: Linux couldn't run this before: x, 2100-01-01";
+      expect(run.stderr()).toContain(`[t3 heavy] ${why}`);
+      expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
+      expect(NodeFS.existsSync(NodePath.join(dir, "remoto.count"))).toBe(false);
+    });
+
     /** The faults the job logged for the problem detector, without the per-run fields. */
     const faults = (dir: string) =>
       Queue.readDoc(dir).events.flatMap((event) =>
