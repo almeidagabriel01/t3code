@@ -1452,6 +1452,16 @@ describe("Runner in the queue file", () => {
     }
   });
 
+  it.each([null, 0, 1.5, "2"])("a stored machine eviction count of %j reads as 2", (stored) => {
+    const dir = tempDir();
+    const machine = { ...DEFAULT_MACHINE_CONFIG, runnerLinuxEvictionsBeforeAlone: stored };
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "queue.json"),
+      JSON.stringify({ runner: { ...block(), machine } }),
+    );
+    expect(Queue.readDoc(dir).runner?.machine.runnerLinuxEvictionsBeforeAlone).toBe(2);
+  });
+
   it("resolves a worktree's folder through its main checkout, without git", () => {
     const root = tempDir();
     const main = NodePath.join(root, "main");

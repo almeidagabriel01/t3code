@@ -121,6 +121,8 @@ export const RUNNER_DEFAULTS = {
   // A Linux job starts only while the PC keeps this much memory free and stays under this CPU use.
   runnerLinuxMemoryFloorPercent: 20,
   runnerLinuxCpuCeilingPercent: 70,
+  /** A job Linux stopped this often for memory beside others waits to run there alone. */
+  runnerLinuxEvictionsBeforeAlone: 2,
 } as const;
 
 /** Settings a project can override; the rest belong to the machine. */
@@ -151,6 +153,7 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerStopWaitSeconds",
   "runnerLinuxMemoryFloorPercent",
   "runnerLinuxCpuCeilingPercent",
+  "runnerLinuxEvictionsBeforeAlone",
   "heavySlowAgentJobs",
 ] as const;
 /** Agents' running jobs drop to background CPU priority while this Mac stays over its CPU ceiling. */
@@ -208,6 +211,9 @@ export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
 export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
 export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
+export const RunnerLinuxEvictionsBeforeAlone = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10) || "Use 1 to 10 stops."),
+);
 /** Days a call with a learned route keeps going to this Mac. */
 export const RunnerRouteMemoryDays = Schema.Int.check(
   Schema.makeFilter((value: number) => (value >= 1 && value <= 90) || "Use 1 to 90 days."),
@@ -264,6 +270,9 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerStopWaitSeconds: Schema.Int,
   runnerLinuxMemoryFloorPercent: Schema.Int,
   runnerLinuxCpuCeilingPercent: Schema.Int,
+  runnerLinuxEvictionsBeforeAlone: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone)),
+  ),
   heavySlowAgentJobs: Schema.Boolean,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

@@ -68,6 +68,7 @@ export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {
   runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
   runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
   runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+  runnerLinuxEvictionsBeforeAlone: RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone,
   heavySlowAgentJobs: HEAVY_SLOW_AGENT_JOBS_DEFAULT,
 };
 
@@ -942,12 +943,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
   const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
-  /** Jobs stopped twice for memory, waiting for Linux to empty: it admits nobody else meanwhile. */
-  const alone = new Set(
-    waiting
-      .filter((entry) => ((entry as QueuedEntry).evictions ?? 0) >= 2)
-      .map((entry) => entry.id),
-  );
+  /** Stopped for memory often enough to run on Linux alone (`runnerLinuxEvictionsBeforeAlone`). */
+  const runsAlone = (entry: HeavyQueueEntry) =>
+    ((entry as QueuedEntry).evictions ?? 0) >= machine.runnerLinuxEvictionsBeforeAlone;
+  /** Jobs waiting for Linux to empty: it admits nobody else meanwhile. */
+  const alone = new Set(waiting.filter(runsAlone).map((entry) => entry.id));
   let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
   let lastLinuxStart = Math.max(
@@ -1031,7 +1031,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     // Only the sustained limits move work elsewhere, but no new start goes past the instant ones.
     if (linuxOverNow !== null) return { kind: "limits", why: linuxOverNow };
     // Bounds stop and start on a job that only fits there alone.
-    if (((entry as QueuedEntry).evictions ?? 0) >= 2 && linuxFree < machine.runnerLinuxSlots) {
+    if (runsAlone(entry) && linuxFree < machine.runnerLinuxSlots) {
       return {
         kind: "limits",
         why: "Linux ran short of memory beside other jobs: waiting to run there alone",

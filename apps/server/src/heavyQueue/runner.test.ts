@@ -445,14 +445,19 @@ describe("routing matrix", () => {
 
   // Stopped twice for memory beside others: only alone, so stop and start never loop.
   it.each([
-    ["another Linux job running", [runningOn("l1", "linux")], "linux-wait"],
-    ["Linux idle", [], "linux-start"],
-  ] as const)("a job evicted twice, with %s: %s", (_, beside, outcome) => {
+    ["twice, beside another Linux job", [runningOn("l1", "linux")], 2, 2, "linux-wait"],
+    ["twice, Linux idle", [], 2, 2, "linux-start"],
+    ["once, set to 1, beside another Linux job", [runningOn("l1", "linux")], 1, 1, "linux-wait"],
+    ["once, by default, beside another Linux job", [runningOn("l1", "linux")], 1, 2, "linux-start"],
+  ] as const)("a job evicted %s", (_, beside, evictions, setting, outcome) => {
     const plan = planRoutes(
       input(
-        [...beside, job("a", "vp test run", { evictions: 2 } as never)],
+        [...beside, job("a", "vp test run", { evictions } as never)],
         { runnerWhere: "linux" },
-        { health: READ },
+        {
+          health: READ,
+          machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxEvictionsBeforeAlone: setting },
+        },
       ),
     );
     expect(outcomeOf(plan, "a")).toBe(outcome);

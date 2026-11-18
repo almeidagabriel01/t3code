@@ -83,6 +83,7 @@ describe("the Runner block a server publishes", () => {
       runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
       runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
       runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+      runnerLinuxEvictionsBeforeAlone: RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone,
       heavySlowAgentJobs: false,
     });
     expect(block.projects[0]).toEqual({

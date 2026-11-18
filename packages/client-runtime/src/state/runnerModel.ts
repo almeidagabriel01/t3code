@@ -130,6 +130,11 @@ export const RUNNER_SETTING_COPY: Record<
     title: "CPU limit",
     description: "A new job waits while the PC's CPU is busier than this.",
   },
+  runnerLinuxEvictionsBeforeAlone: {
+    title: "Run alone on Linux after",
+    description:
+      "A job Linux stopped this many times for lack of memory waits to run there with no other job.",
+  },
 };
 
 /** In the order the choice shows them: from all-local to all-remote. */

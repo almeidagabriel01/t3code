@@ -60,6 +60,7 @@ import {
   RunnerStopWaitSeconds,
   RunnerLinuxMemoryFloorPercent,
   RunnerLinuxCpuCeilingPercent,
+  RunnerLinuxEvictionsBeforeAlone,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
@@ -1833,6 +1834,9 @@ export const ServerSettings = Schema.Struct({
   runnerLinuxCpuCeilingPercent: RunnerLinuxCpuCeilingPercent.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent)),
   ),
+  runnerLinuxEvictionsBeforeAlone: RunnerLinuxEvictionsBeforeAlone.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone)),
+  ),
   /** Which heavy job notices clients get: problems, machine changes, or none. */
   heavyNotices: HeavyNoticesMode.pipe(Schema.withDecodingDefault(Effect.succeed("unexpected"))),
   heavySlowAgentJobs: Schema.Boolean.pipe(
@@ -2368,6 +2372,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
   runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
   runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
+  runnerLinuxEvictionsBeforeAlone: Schema.optionalKey(RunnerLinuxEvictionsBeforeAlone),
   heavyNotices: Schema.optionalKey(HeavyNoticesMode),
   heavySlowAgentJobs: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),

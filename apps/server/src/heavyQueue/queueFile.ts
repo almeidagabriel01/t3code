@@ -17,6 +17,7 @@ import {
   type HeavyQueueRule,
   type HeavyRunner,
   RunnerBringBackMaxMB,
+  RunnerLinuxEvictionsBeforeAlone,
   RunnerPatterns,
   type RunnerProjectConfig,
   RunnerRouteLearnAfter,
@@ -317,7 +318,9 @@ const parseRunner = (value: unknown): RunnerBlock | null =>
     ? ({
         ...value,
         global: projectConfigOf(value.global),
-        machine: { ...DEFAULT_MACHINE_CONFIG, ...value.machine },
+        machine: checked({ ...DEFAULT_MACHINE_CONFIG, ...value.machine }, DEFAULT_MACHINE_CONFIG, {
+          runnerLinuxEvictionsBeforeAlone: Schema.is(RunnerLinuxEvictionsBeforeAlone),
+        }),
         projects: (value.projects as unknown[]).map((project) =>
           isObject(project) ? { ...project, config: projectConfigOf(project.config) } : project,
         ),
