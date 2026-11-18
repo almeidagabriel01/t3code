@@ -126,13 +126,24 @@ const failureShape = (error: unknown) => {
   };
 };
 
+const serverSide = new Set<string>([
+  "invalid_output",
+  "storage_failed",
+  "source_invalidated",
+  "forgotten",
+  "generation_failed",
+  "unavailable",
+]);
 /** Every failure is logged with its code, and the opaque ones by shape, so none is silent. */
 const memoryFailure =
   (tool: string) =>
   (error: unknown): Effect.Effect<never, M.MemoryRpcError | M.OrchestratorMcpFailure> => {
     if (isRefusal(error)) return Effect.fail(error);
     const mapped = memoryError(error);
-    return Effect.logWarning("memory tool failed", {
+    // Caller-actionable codes (not_found, a bad argument) are info, so a retrying agent cannot
+    // bury the server-side failures.
+    const log = serverSide.has(mapped.code) ? Effect.logWarning : Effect.logInfo;
+    return log("memory tool failed", {
       tool,
       code: mapped.code,
       ...(mapped.code === "invalid_output" || mapped.code === "storage_failed"
