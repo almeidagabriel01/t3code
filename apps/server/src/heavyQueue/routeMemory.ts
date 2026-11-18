@@ -25,7 +25,7 @@ export interface Route {
 
 const routesPath = (dir: string) => NodePath.join(dir, "routes.json");
 
-/** `vp@apps/server#missing-program`: program, package folder from the repo root, fault kind. */
+/** `vp@/code/app/apps/server#missing-program`: program, `routeFolder`, fault kind. */
 export const routeKey = (program: string, folder: string, kind: EnvironmentFaultKind) =>
   `${routePrefix(program, folder)}${kind}`;
 
@@ -41,6 +41,39 @@ export const packageFolder = (cwd: string, root: string) => {
   }
   return ".";
 };
+
+/**
+ * The repository `root` belongs to, the same from each of its worktrees: the main checkout of its
+ * git common dir (`.git` file → `gitdir` → `commondir`), resolved; `root` when there is none.
+ */
+const repoOf = (root: string) => {
+  const git = NodePath.join(root, ".git");
+  try {
+    let common = git;
+    if (!NodeFS.statSync(git).isDirectory()) {
+      const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(NodeFS.readFileSync(git, "utf8"))?.[1];
+      if (pointer === undefined) return root;
+      const gitDir = NodePath.resolve(root, pointer);
+      common = gitDir;
+      try {
+        common = NodePath.resolve(
+          gitDir,
+          NodeFS.readFileSync(NodePath.join(gitDir, "commondir"), "utf8").trim(),
+        );
+      } catch {
+        // A linked gitdir without `commondir` is its own.
+      }
+    }
+    const real = NodeFS.realpathSync(common);
+    return NodePath.basename(real) === ".git" ? NodePath.dirname(real) : real;
+  } catch {
+    return root;
+  }
+};
+
+/** What route memory keys a package by: its folder inside its repository, absolute. */
+export const routeFolder = (cwd: string, root: string) =>
+  NodePath.join(repoOf(root), packageFolder(cwd, root));
 
 const isRoute = (value: unknown): value is Route =>
   typeof value === "object" &&

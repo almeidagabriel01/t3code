@@ -664,7 +664,7 @@ describe("t3 heavy", () => {
       };
       NodeFS.writeFileSync(
         NodePath.join(dir, "routes.json"),
-        JSON.stringify({ "vp@.#missing-program": route }),
+        JSON.stringify({ [`vp@${NodeFS.realpathSync(dir)}#missing-program`]: route }),
       );
       const line = "xcodebuild -version; vp run knip:check";
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
@@ -753,9 +753,11 @@ describe("t3 heavy", () => {
         expect(run.stdout()).toBe("vp on mac: test run\n");
         return run.stderr();
       };
+      // Keyed by the repository's own folder: another repository's root package is another key.
+      const key = `vp@${NodeFS.realpathSync(dir)}#missing-program`;
       await call();
       expect(linuxRuns()).toBe(1);
-      expect(await call()).toContain("Learned: vp@.#missing-program");
+      expect(await call()).toContain(`Learned: ${key} `);
       expect(linuxRuns()).toBe(2);
       expect(await call()).toMatch(
         /Linux failed this before: sh: 1: vp: not found \(\d{4}-\d{2}-\d{2}\); running this call on this Mac/,
@@ -771,10 +773,10 @@ describe("t3 heavy", () => {
         [BIN, "heavy", "routes", "--queue-dir", dir],
         { cwd: dir, encoding: "utf8" },
       );
-      expect(listed).toContain("vp@.#missing-program");
+      expect(listed).toContain(key);
       NodeChildProcess.execFileSync(
         process.execPath,
-        [BIN, "heavy", "routes", "--queue-dir", dir, "--forget", "vp@.#missing-program"],
+        [BIN, "heavy", "routes", "--queue-dir", dir, "--forget", key],
         { cwd: dir },
       );
       await call();

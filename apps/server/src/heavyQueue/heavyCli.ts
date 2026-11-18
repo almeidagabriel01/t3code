@@ -88,8 +88,8 @@ import {
   forgetRoutes,
   learnedRoute,
   listRoutes,
-  packageFolder,
   recordRouteFault,
+  routeFolder,
   routeKey,
 } from "./routeMemory.ts";
 import { ensureShims, realProgram, withoutShims } from "./shims.ts";
@@ -1246,7 +1246,7 @@ const learnedOf = (
   root: string,
   days: number,
 ): MacReason | null => {
-  const found = learnedRoute(dir, program, packageFolder(cwd, root), Date.now(), days);
+  const found = learnedRoute(dir, program, routeFolder(cwd, root), Date.now(), days);
   return found === null
     ? null
     : {
@@ -1454,10 +1454,10 @@ const runLinuxPart = async (
    * Input it handed Linux is spent, so then the call ends with Linux's code.
    */
   const fallBack = (lacked: EnvironmentFault, code: number) => {
-    const key = routeKey(program, packageFolder(cwd, root), lacked.kind);
+    const key = routeKey(program, routeFolder(cwd, root), lacked.kind);
     if (recordRouteFault(dir, key, lacked, Date.now(), days).learned) {
       jobNote(
-        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${key}\` undoes it).\n`,
+        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
       );
     }
     if (input !== undefined) {

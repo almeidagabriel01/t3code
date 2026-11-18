@@ -14,6 +14,7 @@ import {
   listRoutes,
   packageFolder,
   recordRouteFault,
+  routeFolder,
   routeKey,
 } from "./routeMemory.ts";
 
@@ -41,6 +42,35 @@ describe("route memory", () => {
     expect(routeKey("./node_modules/.bin/vp", "apps/server", "no-git")).toBe(
       "vp@apps/server#no-git",
     );
+  });
+
+  it("keeps each repository's package folders apart, and shares them across its worktrees", () => {
+    const dir = tempDir();
+    const base = NodeFS.realpathSync(tempDir());
+    const repo = (name: string) => {
+      const root = NodePath.join(base, name);
+      NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(root, "apps", "server"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(root, "apps", "server", "package.json"), "{}");
+      return root;
+    };
+    const one = repo("one");
+    const other = repo("other");
+    // A worktree of `one`, as git writes it: a `.git` file, and `commondir` back to the main one.
+    const worktree = NodePath.join(base, "one-wt");
+    const gitDir = NodePath.join(one, ".git", "worktrees", "one-wt");
+    NodeFS.mkdirSync(gitDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(gitDir, "commondir"), "../..\n");
+    NodeFS.mkdirSync(NodePath.join(worktree, "apps", "server"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(worktree, ".git"), `gitdir: ${gitDir}\n`);
+    NodeFS.writeFileSync(NodePath.join(worktree, "apps", "server", "package.json"), "{}");
+    const folder = (root: string) => routeFolder(NodePath.join(root, "apps", "server"), root);
+    const key = routeKey("vp", folder(one), "no-git");
+    recordRouteFault(dir, key, MISSING, NOW, 7);
+    recordRouteFault(dir, key, MISSING, NOW, 7);
+    expect(learnedRoute(dir, "vp", folder(one), NOW, 7)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", folder(worktree), NOW, 7)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", folder(other), NOW, 7)).toBeNull();
   });
 
   it("learns on the second fault, for that program and folder only", () => {
