@@ -1804,7 +1804,6 @@ describe("patterns and eligibility", () => {
     "npx vite build",
     "pnpm run build",
     "./scripts/ci.sh",
-    "npm run watch:css",
     "cargo fmt --check",
     "go mod tidy",
     "pnpm exec playwright test --base-url http://localhost:4173",

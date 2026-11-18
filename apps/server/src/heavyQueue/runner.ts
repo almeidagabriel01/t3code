@@ -290,13 +290,18 @@ const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
-const DEV_WORD = /^(dev|start|serve|preview)$/;
+const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
 /** A finite step a script's name may also name: `serve-static-build` builds and ends. */
 const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
-/** A script or task that starts a server: a server word leads its name and no finite step follows. */
-const servesScript = (name: string) => {
+/**
+ * A script or task that never ends: a watch segment anywhere in its name watches; a server word
+ * leading it with no finite step after serves.
+ */
+const scriptCode = (name: string): "watches" | "serves-port" | null => {
   const [head = "", ...rest] = name.split(/[:._-]/);
-  return DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
+  if (head === "watch" || rest.includes("watch")) return "watches";
+  const serves = DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
+  return serves ? "serves-port" : null;
 };
 const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
@@ -416,10 +421,12 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
   if (DEV_PROGRAMS[program]?.test(first) === true) return { code: "serves-port", subject: named };
   if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
-  const task = TASK_RUNNERS.has(program)
-    ? words.find((word) => word.split(":").some(servesScript))
-    : undefined;
-  if (task !== undefined) return { code: "serves-port", subject: `${program} ${task}` };
+  if (TASK_RUNNERS.has(program)) {
+    for (const task of words) {
+      const code = task.split(":").map(scriptCode).find(Boolean);
+      if (code) return { code, subject: `${program} ${task}` };
+    }
+  }
   const watch = after.find(
     (word) => WATCH.test(word) || (word === "-w" && SHORT_WATCH.has(program)),
   );
@@ -436,7 +443,8 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   const install = [first, second].find((word) => INSTALLS.test(word));
   if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
   const script = first === "run" || first === "run-script" ? second : first;
-  return servesScript(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
+  const code = scriptCode(script);
+  return code === null ? null : { code, subject: `${program} ${script}` };
 };
 
 /** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
