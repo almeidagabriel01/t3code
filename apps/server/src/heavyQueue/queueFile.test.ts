@@ -1550,14 +1550,24 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Linux is unavailable: running here" },
     },
     {
+      name: "a package.json script is judged by its body",
+      line: "pnpm run ci",
+      files: { "package.json": JSON.stringify({ scripts: { ci: "xcodebuild -scheme App" } }) },
+      over: { runnerWhere: "linux" as const },
+      expected: { runsOn: "mac", reason: "Mac-only tool: xcodebuild" },
+    },
+    {
       name: "its heavy work already goes to remoto inside: runs as written",
       line: "sh -c 'remoto vp test run'",
       over: { runnerWhere: "linux" as const },
       expected: { runsOn: "direct", reason: Queue.HANDED_OFF_RUNS_DIRECT, startsNow: true },
     },
-  ])("probe: $name, queuing nothing", ({ line, from, online, over, expected }) => {
+  ])("probe: $name, queuing nothing", ({ line, from, online, over, files, expected }) => {
     const dir = queueWith(block(config(over)), online ?? true);
     const root = checkout("probe");
+    for (const [name, text] of Object.entries(files ?? {})) {
+      NodeFS.writeFileSync(NodePath.join(root, name), text);
+    }
     const probe = Queue.probe(dir, line.replace("{root}", root), from ?? root, NOW);
     expect(probe).toMatchObject(expected);
     expect(Queue.read(dir)).toEqual([]);

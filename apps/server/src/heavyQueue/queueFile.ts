@@ -46,6 +46,8 @@ import {
   interceptBashCall,
   isQueued,
   lineParts,
+  PACKAGE_SCRIPT,
+  readLine,
   SCRIPT_MAX_BYTES,
   type ReadScript,
 } from "./heavyHook.ts";
@@ -955,11 +957,13 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     };
   }
   const id = `probe-${now}`;
+  const scripts = scriptsOf(parts.command, at);
   const withProbe = insertNew(doc, {
     id,
     pid: process.pid,
     threadId: null,
     label: parts.command,
+    ...(Object.keys(scripts).length === 0 ? {} : { scripts }),
     cwd: at,
     createdAt: new Date(now).toISOString(),
     startedAt: null,
@@ -1617,19 +1621,41 @@ export const settleLostRun = (
     };
   });
 
-/** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
+/**
+ * Reads the script a word names from `cwd`, or a `package.json#X` script's body from `cwd`'s own
+ * `package.json`; null when missing, unreadable or too big to read.
+ */
 export const scriptReader =
   (cwd: string, home = NodeOS.homedir()): ReadScript =>
   (word) => {
-    const path = NodePath.resolve(cwd, word.replace(/^~(?=\/|$)/, home));
+    const packaged = word.startsWith(PACKAGE_SCRIPT);
+    const path = NodePath.resolve(
+      cwd,
+      packaged ? "package.json" : word.replace(/^~(?=\/|$)/, home),
+    );
     try {
       const stat = NodeFS.statSync(path);
       if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) return null;
-      return NodeFS.readFileSync(path, "utf8");
+      const text = NodeFS.readFileSync(path, "utf8");
+      if (!packaged) return text;
+      const scripts: unknown = (JSON.parse(text) as { scripts?: unknown } | null)?.scripts;
+      const body =
+        typeof scripts === "object" && scripts !== null && !Array.isArray(scripts)
+          ? Object.getOwnPropertyDescriptor(scripts, word.slice(PACKAGE_SCRIPT.length))?.value
+          : undefined;
+      return typeof body === "string" ? body : null;
     } catch {
       return null;
     }
   };
+
+/** The scripts a line runs, read from `cwd` by their word: they travel with its job. */
+export const scriptsOf = (line: string, cwd: string) => {
+  const scripts: Record<string, string | null> = {};
+  const read = scriptReader(cwd);
+  readLine(line, (word) => (scripts[word] = read(word)));
+  return scripts;
+};
 
 /**
  * The one gate every Bash hook goes through (the `t3 heavy hook` CLI and the in-process Claude

@@ -32,6 +32,7 @@ import {
   FOLDER_FLAGS,
   lineParts,
   nameOf,
+  PACKAGE_SCRIPT,
   readLine,
   shellQuote,
   TYPE_CHECKERS,
@@ -424,10 +425,11 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   }
   if (DOCKERS.has(program) && first !== "") return dockerReason(program, first, after);
   if (!PACKAGE_MANAGERS.has(program)) return null;
+  const runs = first === "run" || first === "run-script";
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
-  const install = [first, second].find((word) => INSTALLS.test(word));
+  const install = runs ? undefined : [first, second].find((word) => INSTALLS.test(word));
   if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
-  const script = first === "run" || first === "run-script" ? second : first;
+  const script = runs ? second : first;
   return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
 };
 
@@ -627,8 +629,11 @@ const lineReason = (
       const built = part.command.words.some(
         (word) => word.value === given && word.vars.includes(""),
       );
+      // A package.json script was read from the line's own folder: elsewhere it is another's.
+      const elsewhere =
+        part.script?.word.startsWith(PACKAGE_SCRIPT) === true && (moved !== null || cwd !== start);
       const body =
-        part.script?.body ??
+        (elsewhere ? undefined : part.script?.body) ??
         (built ? undefined : shellTextOf(moved?.values ?? part.values.slice(part.programAt)));
       if (body !== undefined) {
         const root = at === null ? null : rootOf(at);

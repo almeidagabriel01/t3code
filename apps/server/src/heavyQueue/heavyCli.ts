@@ -20,6 +20,7 @@ import {
   heavySegment,
   isQueued,
   lineParts,
+  PACKAGE_SCRIPT,
   readLine,
   scriptOf,
   SHIMMED,
@@ -57,6 +58,7 @@ import {
   remove,
   requeue,
   scriptReader,
+  scriptsOf,
   setProgress,
   setQos,
   tryStart,
@@ -704,9 +706,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   const label = labelOf(launch.program, launch.args);
   const line = jobLine(launch.program, launch.args);
   // The scripts it runs travel with the job: the Runner judges them by their text.
-  const scripts: Record<string, string | null> = {};
-  const readScript = scriptReader(launch.cwd);
-  readLine(line, (word) => (scripts[word] = readScript(word)));
+  const scripts = scriptsOf(line, launch.cwd);
   const entry: QueuedEntry = {
     id,
     pid: process.pid,
@@ -744,7 +744,12 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       id,
       code,
       Date.now(),
-      startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
+      startFailureOf(
+        launch.program,
+        Object.keys(scripts).filter((word) => !word.startsWith(PACKAGE_SCRIPT)),
+        entry.cwd,
+        code,
+      ),
       commandFailure,
     );
   });

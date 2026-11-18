@@ -402,6 +402,42 @@ export const scriptOf = (
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
+/** The `ReadScript` word of a `package.json` script's body: `package.json#ci`. */
+export const PACKAGE_SCRIPT = "package.json#";
+const RUNS_SCRIPTS = new Set(["npm", "pnpm", "yarn", "bun", "vp"]);
+const MOVES_PACKAGE =
+  /^(-C|--dir|--prefix|--cwd|-w|-ws|--workspaces?|-F|--filter|-r|--recursive)(=|$)/;
+
+/**
+ * The `package.json` script a command names explicitly (`npm run X`, `npm test`), read from the
+ * folder it runs in; null when a flag may run another package's (`--filter`, `-C`, `-w`).
+ * `pnpm X` alone is left out: it collides with pnpm's own subcommands.
+ */
+const packageScriptOf = (
+  values: ReadonlyArray<string>,
+  at: number,
+  read: ReadScript | undefined,
+) => {
+  const program = base(values[at] ?? "");
+  const sub = values[at + 1];
+  const nameAt =
+    (sub === "run" && RUNS_SCRIPTS.has(program)) || (sub === "run-script" && program === "npm")
+      ? at + 2
+      : program === "npm" && (sub === "test" || sub === "start")
+        ? at + 1
+        : -1;
+  const name = values[nameAt];
+  if (read === undefined || name === undefined || name.startsWith("-")) return null;
+  const rest = values.slice(nameAt + 1);
+  const end = rest.indexOf("--");
+  if ((end < 0 ? rest : rest.slice(0, end)).some((value) => MOVES_PACKAGE.test(value))) {
+    return null;
+  }
+  const word = `${PACKAGE_SCRIPT}${name}`;
+  const body = read(word);
+  return body === null ? null : { word, body };
+};
+
 /** `bash -c '<line>'`: the line's parts, its scripts read like the line's own. */
 const nestedParts = (
   program: string,
@@ -438,10 +474,12 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
   const { at, program, words, flags } = wordsAt(values, remoteAt);
   const inner = nestedParts(program, values, at, read);
   const nested = inner.find((part) => part.heavy) ?? null;
-  const script = scriptOf(values, at, read);
+  const shellScript = scriptOf(values, at, read);
+  const script = shellScript ?? packageScriptOf(values, at, read);
   // A script's own scripts are not followed: one level is what an agent's scratch script needs.
-  const unreadable = script !== null && script.body === null;
-  const scriptParts = script?.body == null ? [] : readLine(script.body).parts;
+  const unreadable = shellScript !== null && shellScript.body === null;
+  // Only the Runner reads a package script's body: what the hook queues stays as before.
+  const scriptParts = shellScript?.body == null ? [] : readLine(shellScript.body).parts;
   const scriptHeavy = scriptParts.some((part) => part.heavy);
   const insideParts = [...inner, ...scriptParts];
   const handsOffInside = insideParts.some(handsOff);
