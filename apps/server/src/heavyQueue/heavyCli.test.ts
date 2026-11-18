@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, onTestFinished } from "@effect/vitest";
 
 import {
   callingBins,
@@ -17,7 +17,12 @@ import {
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
-import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, eligibilityOf } from "./runner.ts";
+import {
+  DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
+  eligibilityOf,
+  type QueuedEntry,
+} from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -1442,6 +1447,40 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(143);
       expect(run.stderr()).not.toContain("may still be running");
       expect(Queue.read(dir)).toEqual([]);
+    });
+
+    it("Stop of a Mac job ends its calls too: none stays queued to run later", async () => {
+      const { dir, env } = setup(longRun);
+      script(NodePath.join(dir, "bin"), "xcodebuild", 'echo "xcodebuild on mac: $*"');
+      // This worktree already runs on Linux, so the job's Linux call waits in the queue.
+      const path = NodePath.join(dir, "queue.json");
+      const doc = JSON.parse(NodeFS.readFileSync(path, "utf8")) as Record<string, unknown>;
+      const since = "2026-01-01T00:00:00.000Z";
+      const busy = { ...Queue.read(dir)[0], id: "busy", pid: process.pid, threadId: null };
+      Object.assign(busy, {
+        label: "vp test run",
+        cwd: NodeFS.realpathSync(dir),
+        createdAt: since,
+        startedAt: since,
+        runner: "linux",
+      });
+      NodeFS.writeFileSync(path, JSON.stringify({ ...doc, entries: [busy] }));
+      const run = heavyHere(dir, ["/bin/sh", "-c", "xcodebuild -version; vp test run"], env);
+      await run.until("err", "this worktree is already running on Linux");
+      const call = Queue.read(dir).find((entry) => (entry as QueuedEntry).call === true)!;
+      // Before the fix it outlives the job: end it whatever the test's outcome.
+      onTestFinished(() => {
+        try {
+          process.kill(call.pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      });
+      // `close` waits for every process still holding the job's output: its calls included.
+      const closed = new Promise((resolve) => run.child.on("close", resolve));
+      run.child.kill("SIGTERM");
+      await closed;
+      expect(Queue.read(dir).map((entry) => entry.id)).toEqual(["busy"]);
     });
 
     it("a running Linux job the user moves stops there and runs again on the Mac", async () => {

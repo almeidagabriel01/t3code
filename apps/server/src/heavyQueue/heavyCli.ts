@@ -945,17 +945,26 @@ const runMacAttempt = async (
   );
   // Queue off leaves CPU priority alone, so there is nothing for a row to show or change.
   if (job.workers !== null && launch.qos !== null) setQos(job.dir, job.id, launch.qos);
+  // Its own group, so Stop and a move end its calls too, and their queued jobs with them.
   const child = NodeChildProcess.spawn(launch.program, launch.args, {
     stdio: "inherit",
+    detached: true,
     env: run.env,
   });
-  setSignal((signal) => child.kill(signal));
+  const signalGroup = (signal: NodeJS.Signals) => {
+    try {
+      if (child.pid !== undefined) process.kill(-child.pid, signal);
+    } catch {
+      // Already gone.
+    }
+  };
+  setSignal(signalGroup);
   let moved: "mac" | "linux" | undefined;
   const watch = setInterval(() => {
     const requeue = requeueOf(job.dir, job.id);
     if (requeue === undefined || moved !== undefined) return;
     moved = requeue;
-    child.kill("SIGTERM");
+    signalGroup("SIGTERM");
   }, POLL_MS);
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
