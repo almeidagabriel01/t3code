@@ -329,10 +329,10 @@ it.effect("unsendable work at the queue head is held with its reason and the res
         );
         assert.strictEqual(held.length, 100);
         assert.deepStrictEqual(
-          yield* sql`SELECT failure_code, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
+          yield* sql`SELECT failure_code, hold_class, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
           [
-            { failure_code: "invalid_output", n: 50 },
-            { failure_code: "not_found", n: 50 },
+            { failure_code: "invalid_output", hold_class: "protocol", n: 50 },
+            { failure_code: "not_found", hold_class: "protocol", n: 50 },
           ],
         );
       }).pipe(

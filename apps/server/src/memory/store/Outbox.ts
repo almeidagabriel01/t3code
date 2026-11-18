@@ -40,7 +40,8 @@ export const makeOutbox = (
   const { enqueueWork, putItem } = itemWrites;
   const { persistImportLineageTx, settleImportOperationTx } = importLineage;
   const { finishWork } = workQueue;
-  // A row that can never be encoded is held with its reason instead of blocking the queue head.
+  // A row that can never be encoded is held (recoverable, shown in status) instead of blocking
+  // the queue head; work that depends on it waits like it does for any other hold.
   const parkUnsendable = Effect.fnUntraced(function* (
     id: string,
     version: number,
@@ -48,7 +49,7 @@ export const makeOutbox = (
   ) {
     const parked = yield* stored(
       "sync-outbox-park",
-      sql`UPDATE memory_outbox SET status='retry',claimed_by=NULL,claimed_until=NULL,next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code=${code} WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
+      sql`UPDATE memory_outbox SET status='retry',claimed_by=NULL,claimed_until=NULL,next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code=${code},hold_class='protocol' WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
     );
     if (parked.length)
       yield* Effect.logWarning("memory: unsendable sync work held", {
