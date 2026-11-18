@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { decodeFtsState, sampleCodec, stored } from "./StoreCodecs.ts";
 import type { StoreKernel } from "./StoreKernel.ts";
-import { strict } from "./StoreModel.ts";
+import { expiredTerminalWorkSql, strict } from "./StoreModel.ts";
 import type { MemoryFtsState } from "./StoreModel.ts";
 
 export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transact">) => {
@@ -166,14 +166,14 @@ export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transa
     );
     return rows[0]?.bytes ?? null;
   });
-  // Completion already keeps one completed row per thread and kind. What remains are rows
-  // for threads that are gone and cancelled or failed rows behind a newer run. The recovery
-  // scan reads only each live thread's newest row, so neither can matter again. A page holds
-  // a fixed number of outbox rows, so one call costs the same on any backlog.
-  const pruneSettledSummaryWork = Effect.fn("MemoryStore.pruneSettledSummaryWork")(function* (
+  // Summary rows for gone threads or behind a newer run can never be read again, and settled
+  // sync work past the log window goes on every device, not only the hub that compacts. A page
+  // holds a fixed number of outbox rows, so one call costs the same on any backlog.
+  const pruneSettledWork = Effect.fn("MemoryStore.pruneSettledWork")(function* (
     environment: M.EnvironmentId,
     afterRowId: number,
     pageRows: number,
+    now: number,
   ) {
     const page = yield* stored(
       "summary-work-page",
@@ -188,7 +188,7 @@ export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transa
       "summary-work-prune",
       sql<{ id: string }>`DELETE FROM memory_outbox WHERE rowid IN (
         SELECT o.rowid FROM memory_outbox o NOT INDEXED
-        WHERE o.rowid>${afterRowId} AND o.rowid<=${last} AND o.kind IN ('summary','consolidate')
+        WHERE o.rowid>${afterRowId} AND o.rowid<=${last} AND (${sql.unsafe(expiredTerminalWorkSql("o", now))} OR (o.kind IN ('summary','consolidate')
         AND o.status IN ('completed','cancelled','failed') AND json_extract(o.metadata_json,'$.kind')='summary'
         AND json_extract(o.metadata_json,'$.sourceThread.environmentId')=${environment}
         AND (
@@ -198,7 +198,7 @@ export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transa
             AND json_extract(n.metadata_json,'$.sourceThread.threadId')=json_extract(o.metadata_json,'$.sourceThread.threadId')
             AND coalesce(json_extract(n.metadata_json,'$.observedThroughSequence'),json_extract(n.metadata_json,'$.sourceWatermark.throughSequence'))
               >coalesce(json_extract(o.metadata_json,'$.observedThroughSequence'),json_extract(o.metadata_json,'$.sourceWatermark.throughSequence'))))
-        )
+        )))
       ) RETURNING id`,
     );
     return {
@@ -260,7 +260,7 @@ export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transa
     measureAllocation,
     mergeFts,
     measuredMemoryBytes,
-    pruneSettledSummaryWork,
+    pruneSettledWork,
     recordSample,
     samples,
   };

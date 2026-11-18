@@ -203,7 +203,7 @@ const make = Effect.gen(function* () {
     measureAllocation,
     mergeFts,
     measuredMemoryBytes,
-    pruneSettledSummaryWork,
+    pruneSettledWork,
     recordSample,
     samples,
   } = storageMaintenance;
@@ -502,7 +502,7 @@ const make = Effect.gen(function* () {
     index,
     measureAllocation,
     measuredMemoryBytes,
-    pruneSettledSummaryWork,
+    pruneSettledWork,
     mergeFts,
     cleanupDerived,
     recordSample,

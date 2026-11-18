@@ -1102,7 +1102,7 @@ const make = Effect.gen(function* () {
         while (after !== null) {
           const page: { readonly nextRowId: number | null } = yield* sweepStage(
             "maintenance",
-            store.pruneSettledSummaryWork(environmentId, after, MEMORY_RETENTION_PAGE_ROWS),
+            store.pruneSettledWork(environmentId, after, MEMORY_RETENTION_PAGE_ROWS, now),
           );
           after = page.nextRowId;
           yield* Effect.yieldNow;

@@ -354,6 +354,16 @@ it.effect("unsendable work at the queue head is discarded with its reason and th
           yield* store.readPersistedHoldClasses({ memorySpaceId: space, hubEnvironmentId: remote }),
           [],
         );
+        // This member never compacts a hub, yet its retention pass expires them after the log
+        // window and the warning clears.
+        const expired = (yield* Clock.currentTimeMillis) + M.MEMORY_LOG_RETENTION_MS;
+        for (let after: number | null = 0; after !== null;)
+          after = (yield* store.pruneSettledWork(local, after, 64, expired)).nextRowId;
+        assert.deepStrictEqual(
+          yield* sql`SELECT count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))}`,
+          [{ n: 0 }],
+        );
+        assert.strictEqual(yield* failures, 0);
       }).pipe(
         Effect.provide(
           Layer.merge(fixture(client), Logger.layer([logger], { mergeWithExisting: false })),

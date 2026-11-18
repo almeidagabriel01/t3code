@@ -371,13 +371,14 @@ export interface LocalStoreShape {
     environment: M.EnvironmentId,
   ) => Effect.Effect<number | null, MemoryStorageError>;
   /**
-   * Deletes summary work rows that no scan or summary can read again, among the pageRows
-   * outbox rows after afterRowId. nextRowId is null once the page reached the end.
+   * Deletes summary work no scan or summary can read again and settled sync work past the log
+   * window, among the pageRows outbox rows after afterRowId. nextRowId is null at the end.
    */
-  readonly pruneSettledSummaryWork: (
+  readonly pruneSettledWork: (
     environment: M.EnvironmentId,
     afterRowId: number,
     pageRows: number,
+    now: number,
   ) => Effect.Effect<
     { readonly removed: number; readonly nextRowId: number | null },
     MemoryStorageError
