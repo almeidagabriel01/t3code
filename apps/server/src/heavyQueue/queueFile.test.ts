@@ -1514,14 +1514,14 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Pinned to this Mac: integration" },
     },
     {
-      name: "an agent's remoto that needs this Mac is canceled, never run",
+      name: "an agent's remoto that needs this Mac runs here",
       line: "remoto vp test run /etc/hosts",
       over: { runnerWhere: "linux" as const },
       expected: {
-        runsOn: "linux",
-        canceled: true,
-        startsNow: false,
-        reason: "Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts",
+        runsOn: "mac",
+        canceled: false,
+        startsNow: true,
+        reason: "Uses a file only this Mac has: /etc/hosts",
       },
     },
     {
