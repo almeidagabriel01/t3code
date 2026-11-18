@@ -72,7 +72,16 @@ export const RUNNER_SETTING_COPY: Record<
   runnerBringBack: {
     title: "Bring results back",
     description:
-      "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone.",
+      "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone, and a file deleted there stays here.",
+  },
+  runnerBringBackExclude: {
+    title: "Never bring back",
+    description: "File or folder names, `*` allowed, that a Linux job never copies back.",
+  },
+  runnerBringBackMaxMB: {
+    title: "Bring back up to",
+    description:
+      "A Linux run whose results come to more than this many MB copies nothing back, and its card says so.",
   },
   runnerRouteMemoryDays: {
     title: "Remember Linux failures for",

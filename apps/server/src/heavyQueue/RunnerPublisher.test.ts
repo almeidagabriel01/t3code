@@ -49,7 +49,9 @@ describe("the Runner block a server publishes", () => {
           runnerMacOnly: ["CaptureDevices.test.ts"],
           runnerWhere: "macFirst" as const,
           runnerDropped: "ask" as const,
-          runnerBringBack: true,
+          runnerBringBack: false,
+          runnerBringBackExclude: ["dist"],
+          runnerBringBackMaxMB: 50,
         },
       },
     };
@@ -66,7 +68,9 @@ describe("the Runner block a server publishes", () => {
       runnerAskMinutes: 4,
       runnerDropped: "agent",
       runnerMacFirstAfter: 6,
-      runnerBringBack: false,
+      runnerBringBack: true,
+      runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
+      runnerBringBackMaxMB: 200,
     });
     expect(block.machine).toEqual({
       runnerHost: "pc",
@@ -88,7 +92,9 @@ describe("the Runner block a server publishes", () => {
         runnerWhere: "macFirst",
         runnerDropped: "ask",
         runnerMacFirstAfter: 6,
-        runnerBringBack: true,
+        runnerBringBack: false,
+        runnerBringBackExclude: ["dist"],
+        runnerBringBackMaxMB: 50,
       }),
     });
     expect(block.projects[1]!.config).toEqual(block.global);

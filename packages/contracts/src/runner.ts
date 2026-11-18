@@ -47,8 +47,17 @@ export const RUNNER_DEFAULTS = {
   runnerDropped: "agent" as RunnerFailedPolicy,
   runnerMacFirstAfter: 4,
   runnerLinuxEverything: false,
-  runnerBringBack: false,
+  runnerBringBack: true,
   runnerRouteMemoryDays: 7,
+  /** File or folder names (`*` globs) never copied back from Linux. */
+  runnerBringBackExclude: [
+    "node_modules",
+    ".git",
+    ".turbo",
+    "*.tsbuildinfo",
+  ] as ReadonlyArray<string>,
+  /** A run whose results come to more than this many MB copies nothing back. */
+  runnerBringBackMaxMB: 200,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -107,6 +116,8 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerLinuxEverything",
   "runnerBringBack",
   "runnerRouteMemoryDays",
+  "runnerBringBackExclude",
+  "runnerBringBackMaxMB",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -178,6 +189,9 @@ export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercen
 export const RunnerRouteMemoryDays = Schema.Int.check(
   Schema.makeFilter((value: number) => (value >= 1 && value <= 90) || "Use 1 to 90 days."),
 );
+export const RunnerBringBackMaxMB = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10_240) || "Use 1 to 10240 MB."),
+);
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -199,6 +213,12 @@ export const RunnerProjectConfig = Schema.Struct({
   // Older publishers' blocks lack it.
   runnerRouteMemoryDays: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerBringBackExclude: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),
+  ),
+  runnerBringBackMaxMB: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
   ),
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;

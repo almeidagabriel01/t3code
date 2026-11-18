@@ -52,6 +52,7 @@ import {
   RunnerLinuxSlots,
   RunnerMacFirstAfter,
   RunnerRouteMemoryDays,
+  RunnerBringBackMaxMB,
   RunnerOfflineAfterFailures,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
@@ -1401,6 +1402,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerLinuxEverything",
   "runnerBringBack",
   "runnerRouteMemoryDays",
+  "runnerBringBackExclude",
+  "runnerBringBackMaxMB",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1474,6 +1477,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1786,6 +1791,12 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerRouteMemoryDays: RunnerRouteMemoryDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerBringBackExclude: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),
+  ),
+  runnerBringBackMaxMB: RunnerBringBackMaxMB.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
   ),
   runnerHost: RunnerHost.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
@@ -2334,6 +2345,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
   runnerHost: Schema.optionalKey(RunnerHost),
   runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
   runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),

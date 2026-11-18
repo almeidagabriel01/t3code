@@ -755,13 +755,16 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerLinuxEverything",
     "runnerBringBack",
     "runnerRouteMemoryDays",
+    "runnerBringBackExclude",
+    "runnerBringBackMaxMB",
   ] as const;
+  const EXCLUDE = ["node_modules", ".git", ".turbo", "*.tsbuildinfo"];
   it.each([
-    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false, 7]],
+    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, true, 7, EXCLUDE, 200]],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, false, 7],
+      ["automatic", "ask", 4, false, true, 7, EXCLUDE, 200],
     ],
     [
       "the new values",
@@ -770,10 +773,12 @@ describe("ServerSettings project overrides across versions", () => {
         runnerDropped: "agent",
         runnerMacFirstAfter: 32,
         runnerLinuxEverything: true,
-        runnerBringBack: true,
+        runnerBringBack: false,
         runnerRouteMemoryDays: 30,
+        runnerBringBackExclude: ["dist"],
+        runnerBringBackMaxMB: 50,
       },
-      ["macFirst", "agent", 32, true, true, 30],
+      ["macFirst", "agent", 32, true, false, 30, ["dist"], 50],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");
@@ -789,6 +794,10 @@ describe("ServerSettings project overrides across versions", () => {
 
   it.each([0, 33, 2.5])("Send to Linux after refuses %s", (value) => {
     expect(() => decodeServerSettingsPatch({ runnerMacFirstAfter: value })).toThrow();
+  });
+
+  it.each([0, 10_241, 2.5])("Bring-back size cap refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerBringBackMaxMB: value })).toThrow();
   });
 });
 

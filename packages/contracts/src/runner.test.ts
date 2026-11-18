@@ -32,7 +32,12 @@ describe("Runner settings", () => {
       runnerBringBack: false,
     };
     const saved = { ...current, runnerLinuxCommands: ["test"], runnerLinuxEverything: false };
-    // Saved before route memory existed, it reads that default too.
-    expect(decodeProjectConfig(saved)).toEqual({ ...current, runnerRouteMemoryDays: 7 });
+    // Saved before route memory and the bring-back limits existed, it reads their defaults too.
+    expect(decodeProjectConfig(saved)).toEqual({
+      ...current,
+      runnerRouteMemoryDays: 7,
+      runnerBringBackExclude: ["node_modules", ".git", ".turbo", "*.tsbuildinfo"],
+      runnerBringBackMaxMB: 200,
+    });
   });
 });

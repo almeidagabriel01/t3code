@@ -1400,7 +1400,8 @@ describe("Runner in the queue file", () => {
     for (const cwd of ["/w/a", "/elsewhere"]) {
       expect(Queue.configFor(doc, cwd)).toMatchObject({
         runnerMacFirstAfter: 4,
-        runnerBringBack: false,
+        runnerBringBack: true,
+        runnerBringBackMaxMB: 200,
       });
     }
     Queue.enqueue(dir, test("a"));
