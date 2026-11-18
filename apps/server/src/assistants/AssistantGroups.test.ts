@@ -58,12 +58,8 @@ import * as Gate from "./AssistantGroupGate.ts";
 import * as Directory from "./AssistantDirectory.ts";
 import * as Groups from "./AssistantGroups.ts";
 import * as Tasks from "./AssistantTasks.ts";
-import {
-  groupThreadId,
-  HANDOFF_PAUSES,
-  requestThreadId,
-  taskMessageId,
-} from "./AssistantGroups.ts";
+import { groupThreadId, requestThreadId } from "@t3tools/shared/assistantGroupThreads";
+import { HANDOFF_PAUSES, taskMessageId } from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
 import { countsAsUnreadSql } from "./groupChatSql.ts";
 import { toAssistantTeam, type AssistantTeamRow } from "./AssistantTeams.ts";

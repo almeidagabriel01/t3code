@@ -41,7 +41,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
+import { groupThreadId, requestThreadId } from "@t3tools/shared/assistantGroupThreads";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { pausedTaskNeedsUserSql } from "../assistants/groupChatSql.ts";
 import { assistantRunReply } from "../assistants/assistantRunReply.ts";

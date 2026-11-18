@@ -304,6 +304,11 @@ export interface SyncStoreShape {
     frozenHeads: readonly M.MemoryRevisionId[];
     nextAttemptAt: number;
   }) => InTx<boolean>;
+  readonly recordSyncSuccess: (input: {
+    memorySpaceId: M.MemorySpaceId;
+    hubEnvironmentId: M.EnvironmentId;
+    at: number;
+  }) => Effect.Effect<void, MemoryStorageError>;
   readonly advanceBootstrapTx: (input: {
     memorySpaceId: M.MemorySpaceId;
     hubEnvironmentId: M.EnvironmentId;
