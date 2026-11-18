@@ -29,9 +29,9 @@ import {
 import type { SyncWorkCandidate } from "./StoreModel.ts";
 import type { WorkQueue } from "./WorkQueue.ts";
 
+const isStorageError = Schema.is(MemoryStorageError);
 const isDecodeFailure = (error: unknown): boolean =>
-  Schema.isSchemaError(error) ||
-  (error instanceof MemoryStorageError && isDecodeFailure(error.cause));
+  Schema.isSchemaError(error) || (isStorageError(error) && isDecodeFailure(error.cause));
 
 export const makeOutbox = (
   kernel: Pick<StoreKernel, "emit" | "nextWatermark" | "sql" | "transact">,
