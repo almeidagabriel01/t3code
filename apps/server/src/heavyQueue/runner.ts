@@ -934,17 +934,13 @@ const dropHolds = (
 /** A running job's own call, queued by it: the slot it would wait for is its job's. */
 const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
 
-/** Pending owner decision: whether an agent's `remoto` asks for Linux as `--runner linux` does. */
-const REMOTO_ASKS_LINUX = true;
-
 /**
- * The job itself asked for Linux: it never changes machine, in the plan or in its calls. A job's
- * own call queued for Linux did not ask; it may still run under its job.
+ * The job was started with `--runner linux`: it never changes machine, in the plan or in its
+ * calls. An agent's `remoto` and a job's own call queued for Linux did not ask; they follow the
+ * settings, so with Linux offline they may run here.
  */
 export const askedLinux = (entry: HeavyQueueEntry) =>
-  entry.where === "linux" &&
-  !isCall(entry) &&
-  ((entry as QueuedEntry).linuxOnly === true || REMOTO_ASKS_LINUX);
+  entry.where === "linux" && !isCall(entry) && (entry as QueuedEntry).linuxOnly === true;
 
 const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
 

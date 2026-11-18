@@ -1159,11 +1159,11 @@ describe("t3 heavy", () => {
         "Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}.\n`);
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
-      // An agent's own `remoto` asks for Linux too (`askedLinux`): the plan and its calls agree.
+      // An agent's own `remoto` did not ask for Linux: the call runs here.
       const remoto = heavyHere(dir, ["/bin/sh", "-c", `remoto ${line}`], env, ["--"], dir);
-      expect(await remoto.exited).toBe(75);
-      expect(remoto.stdout()).toBe("");
-      expect(remoto.stderr()).toContain(`[t3 heavy] ${why}.\n`);
+      expect(await remoto.exited).toBe(0);
+      expect(remoto.stdout()).toContain("after\n");
+      expect(remoto.stderr()).not.toContain("Asked for Linux");
     });
 
     it("a job asked for Linux ends with what Linux lacked, never rerunning here or learning it", async () => {
@@ -1536,6 +1536,18 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe("");
       expect(run.stderr()).toContain(
         "[t3 heavy] Linux couldn't run this: remoto is not installed, and this job asked for Linux.\n",
+      );
+      // An agent's own `remoto` runs here instead, and says so.
+      const agent = heavyHere(dir, ["/bin/sh", "-c", "remoto /bin/echo ran on mac"], {
+        ...env,
+        T3CODE_REMOTO: undefined,
+        HOME: dir,
+        PATH: "/usr/bin:/bin",
+      });
+      expect(await agent.exited).toBe(0);
+      expect(agent.stdout()).toBe("ran on mac\n");
+      expect(agent.stderr()).toContain(
+        "[t3 heavy] Linux couldn't run this: remoto is not installed: running here.\n",
       );
     });
   });

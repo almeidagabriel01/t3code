@@ -243,14 +243,13 @@ work queue, and each section says what the two do together.
   ends with exit code 75 and "Asked for Linux, but it needs this Mac: <reason>".
   If Linux lacks a tool or file it needs, the job ends with Linux's exit code
   and "Linux couldn't run this: <error>", without running it here or learning
-  a route. An agent's own `remoto` call is sent to Linux too: one that needs
-  this Mac ends with the same 75 before it starts, but a command whose reason
-  only shows once the line runs still runs here.
+  a route. An agent's own `remoto` call is sent to Linux too, but it did not
+  ask for Linux: one that needs this Mac runs here, with a note saying why.
 - **When Linux is offline.** A job headed for Linux that is still waiting
-  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A job that
-  asked for Linux itself (`t3 heavy --runner linux`, or an agent's own
-  `remoto`) never moves to this Mac: where the setting would run it here, it
-  ends with "Linux is offline and this job asked for Linux". A question
+  follows **Run on this Mac**, **Wait for Linux** or **Ask me**, an agent's own
+  `remoto` included. A job started with `t3 heavy --runner linux` never moves
+  to this Mac: where the setting would run it here, it ends with exit code 75
+  and "Linux is offline and this job asked for Linux". A question
   shows on the job in the Resource Manager with a countdown; unanswered, it
   follows the deadline setting. An agent's foreground command gives up after 10
   minutes, so longer waits only help background commands.

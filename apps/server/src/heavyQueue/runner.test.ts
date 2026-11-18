@@ -1025,8 +1025,8 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     );
   });
 
-  // A job that asked for Linux itself (`--runner linux`, an agent's `remoto`) never changes
-  // machine; a Mac job's own nested call (`call`) still runs under that job's slot.
+  // A job that asked for Linux itself (`--runner linux`) never changes machine; an agent's
+  // `remoto` and a Mac job's own nested call (`call`) follow the settings.
   const OFFLINE_ASKED = "Linux is offline and this job asked for Linux";
   it.each([
     [
@@ -1055,7 +1055,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
       "remoto vp test run",
       { where: "linux" },
       { runnerUnavailable: "mac" },
-      OFFLINE_ASKED,
+      "mac-start",
     ],
     [
       "--now, mac",
