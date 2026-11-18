@@ -49,9 +49,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerDeadlineAction: RUNNER_DEFAULTS.runnerDeadlineAction,
   runnerDropped: RUNNER_DEFAULTS.runnerDropped,
   runnerMacOnly: RUNNER_DEFAULTS.runnerMacOnly,
-  runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands,
   runnerMacFirstAfter: RUNNER_DEFAULTS.runnerMacFirstAfter,
-  runnerLinuxEverything: RUNNER_DEFAULTS.runnerLinuxEverything,
   runnerBringBack: RUNNER_DEFAULTS.runnerBringBack,
 };
 
@@ -147,7 +145,7 @@ export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
     .flatMap((pattern) => [pattern, ...(KIND_TOOLS[pattern.trim().toLowerCase()] ?? [])])
     .some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
 
-export type Eligibility = "linux" | "exclusive" | "mac-only" | "not-listed";
+export type Eligibility = "linux" | "exclusive" | "mac-only";
 
 /**
  * Why work stays on this Mac, from a closed list: not understanding a command is never one.
@@ -426,8 +424,6 @@ const DECLARES = new Set(["export", "declare", "local", "readonly"]);
 
 const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 
-type Judged = Pick<WorkContext, "config" | "home" | "rootOf"> & { readonly where?: RunnerWhere };
-
 /**
  * The first reason a line's work must stay on this Mac. Only the work parts leave (heavy commands
  * and `remoto` calls; with none, every program the job runs), so only they are judged, each from
@@ -437,9 +433,9 @@ type Judged = Pick<WorkContext, "config" | "home" | "rootOf"> & { readonly where
 const lineReason = (
   line: string,
   start: string | null,
-  context: Judged,
+  context: Pick<WorkContext, "config" | "home" | "rootOf">,
   read: ReadScript | undefined,
-): { readonly mac: MacReason | null; readonly notListed: string | null } => {
+): MacReason | null => {
   const { config, home, rootOf } = context;
   const parsed = readLine(line, read);
   // The parser keeps a `case` arm's pattern as the command's first word: `a) xcodebuild` runs it.
@@ -453,7 +449,6 @@ const lineReason = (
     if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
     return cwds.get(key)!;
   };
-  let notListed: string | null = null;
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
@@ -472,8 +467,7 @@ const lineReason = (
             );
       const at = moved?.cwd ?? cwd;
       const mac = tieOf(part, at, vars, rootOf, config);
-      if (mac !== null) return { mac, notListed };
-      const text = part.values.slice(part.remoteAt).join(" ");
+      if (mac !== null) return mac;
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
@@ -491,16 +485,7 @@ const lineReason = (
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
         );
-        if (inner.mac !== null) return inner;
-        notListed ??= inner.notListed;
-      } else if (
-        notListed === null &&
-        !config.runnerLinuxEverything &&
-        context.where === undefined &&
-        part.remoto === null &&
-        !matchesAny(text, config.runnerLinuxCommands)
-      ) {
-        notListed = `Not on the Can run on Linux list: ${nameOf(text)}`;
+        if (inner !== null) return inner;
       }
     }
     // A substitution runs in its own subshell: its folder and variables end with it.
@@ -540,7 +525,7 @@ const lineReason = (
       vars.set(name, command.conditional ? null : value);
     }
   }
-  return { mac: null, notListed };
+  return null;
 };
 
 /**
@@ -548,24 +533,21 @@ const lineReason = (
  * closed list (`MacReason`). A command it can't follow is no reason.
  */
 export const eligibilityOf = (
-  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where" | "scripts">,
+  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "scripts">,
   context: Pick<WorkContext, "config" | "home" | "rootOf">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
     return { eligibility: "exclusive", reason: `Always on this Mac: ${nameOf(line)}` };
   }
-  const { scripts, where } = entry;
-  const { mac, notListed } = lineReason(
+  const { scripts } = entry;
+  const mac = lineReason(
     line,
     entry.cwd,
-    { ...context, ...(where === undefined ? {} : { where }) },
+    context,
     scripts === undefined ? undefined : (word) => scripts[word] ?? null,
   );
-  if (mac !== null) return macOnly(mac);
-  return notListed === null
-    ? { eligibility: "linux", reason: null }
-    : { eligibility: "not-listed", reason: notListed };
+  return mac === null ? { eligibility: "linux", reason: null } : macOnly(mac);
 };
 
 /** Why one expanded command (program first) must run on this Mac, as `linux-part` sees it. */
@@ -574,7 +556,7 @@ export const macReasonOf = (
   cwd: string,
   context: Pick<WorkContext, "config" | "home" | "rootOf">,
   read: ReadScript,
-) => lineReason(values.map(shellQuote).join(" "), cwd, context, read).mac;
+) => lineReason(values.map(shellQuote).join(" "), cwd, context, read);
 
 export interface LinuxHealth extends Sustained {
   /** Null until a check settles it. */

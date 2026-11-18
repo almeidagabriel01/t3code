@@ -7,7 +7,7 @@ import { DEFAULT_PROJECT_CONFIG, eligibilityOf, type Verdict } from "./runner.ts
 const CHECKOUT =
   /^(\/Users\/dev\/\.t3\/worktrees\/[^/]+\/[^/]+|\/Users\/dev\/DEV\/Pessoal\/t3code\/\.claude\/worktrees\/[^/]+|\/Users\/dev\/DEV\/Pessoal\/(?:t3code|game|game-e2e|Remotion))(?:\/|$)/;
 const context = {
-  config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true },
+  config: DEFAULT_PROJECT_CONFIG,
   home: "/Users/dev",
   rootOf: (cwd: string) => CHECKOUT.exec(cwd)?.[1] ?? null,
 };

@@ -1184,25 +1184,15 @@ describe("Runner in the queue file", () => {
       test("u", { unconfirmed: true }),
       // Asked for this Mac with `--runner mac`.
       test("m", { where: "mac" }),
-      // Not on the Can run on Linux list: a hand route sends it all the same.
-      test("n", { label: "vp run build" }),
     ];
     for (const waiter of waiters) Queue.enqueue(dir, waiter);
     const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null, n: null });
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null });
     expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
-    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b", "n"]);
-    expect(routes()).toEqual({
-      r: null,
-      a: "linux",
-      b: "linux",
-      x: null,
-      u: null,
-      m: null,
-      n: "linux",
-    });
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
+    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null, m: null });
     expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
     // With the Runner off for the project, nothing can go to Linux, so nothing claims to.
     const off = queueWith(block(config({ runnerEnabled: false })));
@@ -1381,7 +1371,6 @@ describe("Runner in the queue file", () => {
     } = DEFAULT_MACHINE_CONFIG;
     const {
       runnerMacFirstAfter: _m,
-      runnerLinuxEverything: _e,
       runnerBringBack: _b,
       ...older
     } = config({ runnerWhere: "automatic", runnerOverflow: 0 } as never);
@@ -1411,7 +1400,6 @@ describe("Runner in the queue file", () => {
     for (const cwd of ["/w/a", "/elsewhere"]) {
       expect(Queue.configFor(doc, cwd)).toMatchObject({
         runnerMacFirstAfter: 4,
-        runnerLinuxEverything: false,
         runnerBringBack: false,
       });
     }
@@ -1525,11 +1513,12 @@ describe("Runner in the queue file", () => {
 
   it("counts a waiter's place and running job on the machine it waits for", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })));
-    Queue.enqueue(dir, { ...test("m"), label: "vp run build" });
+    const macOnly = "vp test run --project ios -- xcodebuild";
+    Queue.enqueue(dir, { ...test("m"), label: macOnly });
     expect(Queue.tryStart(dir, "m", NOW)).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "m", NOW)).not.toHaveProperty("runner");
     startOnLinux(dir, ["l1", "l2"]);
-    Queue.enqueue(dir, { ...test("macWaiter"), label: "vp run build" });
+    Queue.enqueue(dir, { ...test("macWaiter"), label: macOnly });
     Queue.enqueue(dir, test("linuxWaiter"));
     expect(Queue.tryStart(dir, "linuxWaiter", NOW + 3)).toMatchObject({
       status: "waiting",

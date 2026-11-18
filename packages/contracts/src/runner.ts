@@ -187,10 +187,7 @@ export const RunnerProjectConfig = Schema.Struct({
   runnerDeadlineAction: RunnerDeadlineAction,
   runnerDropped: RunnerFailedPolicy,
   runnerMacOnly: Schema.Array(Schema.String),
-  runnerLinuxCommands: Schema.Array(Schema.String),
   runnerMacFirstAfter: Schema.Int,
-  /** Can run on Linux is Everything: every work job may leave, except what must stay here. */
-  runnerLinuxEverything: Schema.Boolean,
   runnerBringBack: Schema.Boolean,
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;

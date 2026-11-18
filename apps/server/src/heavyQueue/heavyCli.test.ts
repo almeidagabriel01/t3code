@@ -1213,26 +1213,7 @@ describe("t3 heavy", () => {
       });
     });
 
-    const config = {
-      ...DEFAULT_PROJECT_CONFIG,
-      runnerEnabled: true,
-      // The list as 0.1.9-fork.1 saved it: no tsgo or effect-tsgo, only `typecheck` and `tsc`.
-      runnerLinuxCommands: [
-        "test",
-        "vitest",
-        "jest",
-        "e2e",
-        "playwright",
-        "coverage",
-        "lint",
-        "oxlint",
-        "eslint",
-        "check",
-        "typecheck",
-        "tsc",
-        "knip",
-      ],
-    };
+    const config = { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true };
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
       CHECKOUTS.find((root) => cwd === root || cwd.startsWith(`${root}/`)) ?? null;
@@ -1253,7 +1234,6 @@ describe("t3 heavy", () => {
           label: labelOf(job.program, job.args),
           line: job.args[1]!,
           cwd: job.cwd,
-          ...(job.remoto ? { where: "linux" as const } : {}),
         },
         { config, home: "/home/me", rootOf },
       );
@@ -1339,7 +1319,6 @@ describe("t3 heavy", () => {
       ["yarn test", "linux", "X yarn test"],
       ["bunx tsc --noEmit", "linux", "X bunx tsc --noEmit"],
       ["vp run typecheck", "linux", "X vp run typecheck"],
-      // A list naming `typecheck` or `tsc` covers every type checker.
       ["pnpm exec effect-tsgo tsrs --noEmit", "linux", "X pnpm exec effect-tsgo tsrs --noEmit"],
       [
         "cd apps/server && pnpm exec effect-tsgo tsrs --noEmit",
@@ -1406,10 +1385,11 @@ describe("t3 heavy", () => {
       ["sh -c 'cd /w/other && vp test run'", "linux", "X sh -c 'cd /w/other && vp test run'"],
       ["sh -c 'cd /w/other && vp test run /abs/a.test.ts'", `${OUTSIDE}/abs/a.test.ts`],
       ["sh -c 'cd /nowhere && vp test run'", `${OUTSIDE}/nowhere`],
+      // A build goes there too: its output comes back.
+      ["vp run build", "linux", "X vp run build"],
       // The rest of what keeps work here, each with its reason.
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
-      ["vp run build", "Not on the Can run on Linux list: vp run build"],
       ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
       // A line it can't follow is no reason to keep it here.

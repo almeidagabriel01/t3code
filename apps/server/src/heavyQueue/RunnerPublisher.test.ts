@@ -49,7 +49,6 @@ describe("the Runner block a server publishes", () => {
           runnerMacOnly: ["CaptureDevices.test.ts"],
           runnerWhere: "macFirst" as const,
           runnerDropped: "ask" as const,
-          runnerLinuxEverything: true,
           runnerBringBack: true,
         },
       },
@@ -67,7 +66,6 @@ describe("the Runner block a server publishes", () => {
       runnerAskMinutes: 4,
       runnerDropped: "agent",
       runnerMacFirstAfter: 6,
-      runnerLinuxEverything: false,
       runnerBringBack: false,
     });
     expect(block.machine).toEqual({
@@ -90,7 +88,6 @@ describe("the Runner block a server publishes", () => {
         runnerWhere: "macFirst",
         runnerDropped: "ask",
         runnerMacFirstAfter: 6,
-        runnerLinuxEverything: true,
         runnerBringBack: true,
       }),
     });

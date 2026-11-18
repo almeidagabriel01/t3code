@@ -153,7 +153,6 @@ describe("routing matrix", () => {
     eligible: "vp test run",
     exclusive: "xcrun simctl boot iPhone",
     "mac-only": "vp test run --project ios -- xcodebuild",
-    "not-listed": "vp run build",
   } as const;
   const linuxRunningIn = { full: 2, "same-worktree": 1, stale: 1 } as Record<string, number>;
 
@@ -695,33 +694,24 @@ describe("Mac first, Hybrid and Everything", () => {
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: !enabled });
   });
 
-  // RUN-01: Everything sends unlisted work too, never what has to stay on this Mac.
+  // RUN-01: Linux takes builds too, never what has to stay on this Mac.
   it.each(
     QUEUE.flatMap((enabled) =>
-      [false, true].flatMap((everything) =>
-        (
-          [
-            ["vp run build", everything ? "linux" : "mac"],
-            ["vp test run", "linux"],
-            ["pnpm install", "mac"],
-            ["xcodebuild test", "mac"],
-            ["vp run dev", "mac"],
-            ["vp run mobile:install ios", "mac"],
-          ] as const
-        ).map(([line, route]) => [line, everything, enabled, route] as const),
-      ),
+      (
+        [
+          ["vp run build", "linux"],
+          ["vp test run", "linux"],
+          ["pnpm install", "mac"],
+          ["xcodebuild test", "mac"],
+          ["vp run dev", "mac"],
+          ["vp run mobile:install ios", "mac"],
+        ] as const
+      ).map(([line, route]) => [line, enabled, route] as const),
     ),
-  )(
-    "Linux, %s with Everything %s (queue on: %s) runs on %s",
-    (line, everything, enabled, route) => {
-      const plan = planned(
-        [job("a", line)],
-        { runnerWhere: "linux", runnerLinuxEverything: everything },
-        { enabled },
-      );
-      expect(plan.routes.a).toBe(route);
-    },
-  );
+  )("Linux, %s (queue on: %s) runs on %s", (line, enabled, route) => {
+    const plan = planned([job("a", line)], { runnerWhere: "linux" }, { enabled });
+    expect(plan.routes.a).toBe(route);
+  });
 
   /** 10 jobs, two of them Mac-only, with their minutes; each in its own worktree. */
   const MIXED = [
@@ -1358,7 +1348,7 @@ describe("runtime toggles", () => {
     const entries = [
       job("run", "git commit -m x", { startedAt: ago(1000) }),
       job("commit", "git commit -m 'fix: t3 heavy'"),
-      job("build", "vp run build"),
+      job("install", "pnpm install"),
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
         route: "mac",
@@ -1373,20 +1363,20 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
       commit: `${commits} · the one slot is busy`,
-      build: "Not on the Can run on Linux list: vp run build · waiting its turn",
+      install: "Always on this Mac: pnpm install · waiting its turn",
       moved: "Moved to this Mac · waiting its turn",
       back: "Uses a file outside the project: /x · waiting its turn",
     });
-    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
+    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(/^Always on this Mac/);
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
-      build: "Runner off for this project",
+      install: "Runner off for this project",
     });
     // With every Runner off, rows read as they always did, but a commit still says why it waits.
     const hook = "Commit hook runs checks";
     expect(at({}, { runnerEnabled: false })).toEqual({
       run: hook,
       commit: `${hook} · next in line`,
-      build: "waiting its turn",
+      install: "waiting its turn",
       moved: "waiting its turn",
       back: "waiting its turn",
     });
@@ -1418,11 +1408,12 @@ describe("patterns and eligibility", () => {
   it.each([
     ["vp test run", "linux", null],
     ["vp run typecheck && vp run lint", "linux", null],
-    ["vp run build && vp test run", "not-listed", "Not on the Can run on Linux list: vp run build"],
+    ["vp run build && vp test run", "linux", null],
+    ["pnpm run build", "linux", null],
     ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
     ["echo hi", "linux", null],
-    ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
+    ["./scripts/ci.sh", "linux", null],
     ["vp run check:changed", "linux", null],
     ["timeout 3500 vp run check:changed origin/main", "linux", null],
     ["vp test run --changed", "linux", null],
@@ -1431,13 +1422,12 @@ describe("patterns and eligibility", () => {
     ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
     // A folder flag with no folder after it moves nothing.
-    ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
+    ["make -C", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toMatchObject({ eligibility, reason });
   });
 
   // Not following a command, or what its shell set up, is no reason to keep it here.
-  const copy = { ...at, config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true } };
   it.each(
     (
       [
@@ -1461,15 +1451,12 @@ describe("patterns and eligibility", () => {
     ).map(([label, eligibility, reason, scripts]) => ({ label, eligibility, reason, scripts })),
   )("$label is $eligibility", ({ label, eligibility, reason, scripts }) => {
     expect(
-      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
+      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, at),
     ).toMatchObject({ eligibility, reason });
   });
 
-  // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
-  const open = {
-    ...at,
-    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
-  };
+  // Every mode, even with nothing on Always on this Mac.
+  const open = { ...at, config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [] } };
   it.each([
     ["pnpm install", "mac-state", "pnpm install"],
     ["vp i", "mac-state", "vp i"],
@@ -1504,7 +1491,7 @@ describe("patterns and eligibility", () => {
   it.each([
     ["vp test run", "linux", null],
     ["cd sub && vp run lint", "linux", null],
-    ["vp run build", "not-listed", "Not on the Can run on Linux list: vp run build"],
+    ["vp run build", "linux", null],
     [
       "git add . && git commit -m x",
       "mac-only",
@@ -1554,29 +1541,13 @@ describe("patterns and eligibility", () => {
     ],
     // A script inside a `sh -c` text is judged by the text the job carries, not its name.
     ["sh -c 'cd apps/web && ./gate.sh'", { "./gate.sh": GATE }, "linux", null],
-    // A formatter writing the whole tree stays here, as before.
-    ["vp fmt && vp lint", {}, "not-listed", "Not on the Can run on Linux list: vp fmt"],
-    [
-      "sh -c './gate.sh'",
-      { "./gate.sh": "vp lint\nvp run build\n" },
-      "not-listed",
-      "Not on the Can run on Linux list: vp run build",
-    ],
+    // A formatter writing the whole tree, and a build, go there too.
+    ["vp fmt && vp lint", {}, "linux", null],
+    ["sh -c './gate.sh'", { "./gate.sh": "vp lint\nvp run build\n" }, "linux", null],
     // A script it can't read is no reason to keep it here.
-    ["sh -c './gate.sh'", {}, "not-listed", "Not on the Can run on Linux list: gate.sh"],
+    ["sh -c './gate.sh'", {}, "linux", null],
   ] as const)("%s is %s", (label, scripts, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject({ eligibility, reason });
-  });
-
-  it("a formatter check is listed only where the list allows checks", () => {
-    const testsOnly = {
-      ...at,
-      config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxCommands: ["test"] },
-    };
-    expect(eligibilityOf({ label: "vp fmt --check", cwd: "/w" }, testsOnly)).toEqual({
-      eligibility: "not-listed",
-      reason: "Not on the Can run on Linux list: vp fmt",
-    });
   });
 
   it("a job the hook queued on this Mac shows why", () => {
