@@ -703,6 +703,92 @@ it.effect("member checkpoint completes before pushing and supplies local replica
   }),
 );
 
+it.effect("a ready cursor below the hub floor re-snapshots and pushes its local work", () =>
+  Effect.gen(function* () {
+    const floor = 489;
+    const pushed: M.MemoryOperationId[] = [];
+    const client = checkpointPeer({
+      join: () =>
+        Effect.succeed({
+          protocolVersion: 1,
+          memorySpaceId: space,
+          hubEnvironmentId: remote,
+          checkpointSequence: floor,
+          retentionFloor: floor,
+          snapshotToken: "floor-token",
+          causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+        }),
+      pull: (_c, input) =>
+        input.snapshotToken
+          ? Effect.succeed({
+              highWatermark: floor,
+              throughSequence: floor,
+              hasMore: false,
+              entries: [],
+              checkpoint: {
+                memorySpaceId: space,
+                checkpointSequence: floor,
+                retentionFloor: floor,
+                causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+                pageOrdinal: 0,
+                items: [],
+                revisions: [],
+                tombstones: [],
+                conflicts: [],
+                resolutions: [],
+                compactReceipts: [],
+                identities: [],
+                fences: [],
+                suppressions: [],
+                importLineage: [],
+                nextCursor: null,
+                bootstrapComplete: true,
+              },
+            })
+          : input.afterSequence < floor
+            ? Effect.fail(new M.MemoryHubError({ code: "cursor_expired" }))
+            : Effect.succeed({
+                highWatermark: floor,
+                throughSequence: floor,
+                hasMore: false,
+                entries: [],
+              }),
+      push: (_c, i) =>
+        Effect.sync(() => {
+          pushed.push(...i.operations.map((op) => op.operationId));
+          return {
+            receipts: i.operations.map((op) => ({
+              operationId: op.operationId,
+              memoryId: op.memoryId,
+              operationDigest: memoryOperationDigest(op),
+              hubSequence: floor + 1,
+              outcome: "accepted" as const,
+            })),
+          };
+        }),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* Store.MemoryStore;
+        const sync = yield* Sync.MemorySyncService;
+        yield* ready;
+        yield* sql`UPDATE memory_sync_cursors SET after_sequence=${floor - 1}`;
+        yield* enqueue(20);
+        yield* sync.syncOnce;
+        const progress = yield* store.readBootstrap({
+          memorySpaceId: space,
+          hubEnvironmentId: remote,
+        });
+        assert.strictEqual(progress.state, "ready");
+        assert.isAtLeast(yield* store.readCursor(space, remote), floor);
+        assert.deepStrictEqual(pushed, [operation(20).operationId]);
+        assert.strictEqual((yield* sync.syncStatus({}, Effect.void)).state, "online");
+      }).pipe(Effect.provide(fixture(client))),
+    );
+  }),
+);
+
 it.effect("partial member checkpoint preserves token and keeps push blocked across restart", () =>
   Effect.gen(function* () {
     const requests: M.MemoryHubPullInput[] = [];
@@ -1859,6 +1945,19 @@ it.effect("status selects disabled and bootstrapping without requiring a bound r
           yield* sync.syncOnce;
           assert.strictEqual((yield* status()).state, "online");
           assert.strictEqual((yield* status()).lastSuccessfulSyncAtUtc, timestamp);
+          const rebooted = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const fresh = yield* Sync.MemorySyncService;
+              return yield* fresh.syncStatus({}, Effect.void);
+            }).pipe(
+              Effect.provide(
+                Layer.fresh(Sync.layer).pipe(
+                  Layer.provide(Layer.succeed(Sync.MemorySyncRuntime, adapter)),
+                ),
+              ),
+            ),
+          );
+          assert.strictEqual(rebooted.lastSuccessfulSyncAtUtc, timestamp);
           const latestSpace = M.MemorySpaceId.make(id(999));
           const sql = yield* SqlClient.SqlClient;
           yield* sql`INSERT INTO memory_sync_cursors(space,hub_environment_id,after_sequence,bootstrap_state) VALUES (${latestSpace},${remote},0,'ready')`;

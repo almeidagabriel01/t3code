@@ -1421,8 +1421,28 @@ const make = Effect.gen(function* () {
     const result = yield* Effect.result(
       Effect.gen(function* () {
         const complete = yield* bootstrap(r, budget);
-        if (complete && budget.pages < 10) yield* pullTail(r, budget);
-        return complete;
+        if (!complete || budget.pages >= 10) return complete;
+        const tail = yield* Effect.result(pullTail(r, budget));
+        if (tail._tag === "Success") return complete;
+        if (tail.failure._tag !== "MemoryHubError" || tail.failure.code !== "cursor_expired")
+          return yield* tail.failure;
+        // The hub compacted past this replica's cursor; only a fresh snapshot can resume it.
+        const after = yield* store.readCursor(r.space!, r.hubId);
+        yield* Effect.logWarning("memory: hub cursor expired, re-snapshotting", {
+          memorySpaceId: r.space,
+          hubEnvironmentId: r.hubId,
+          afterSequence: after,
+        });
+        yield* store.transact(
+          store.rebindBootstrapTx({
+            memorySpaceId: r.space!,
+            hubEnvironmentId: r.hubId,
+            expectedAfterSequence: after,
+          }),
+        );
+        if (!(yield* bootstrap(r, budget)) || budget.pages >= 10) return false;
+        yield* pullTail(r, budget);
+        return true;
       }),
     );
     yield* ensureEpoch(r.settings.memoryHubVersion);
@@ -1886,7 +1906,10 @@ const make = Effect.gen(function* () {
       yield* synchronizePull(r, budget);
       yield* sweep;
       yield* ensureEpoch(r.settings.memoryHubVersion);
-      lastSuccess = { epoch: r.settings.memoryHubVersion, at: iso(yield* Clock.currentTimeMillis) };
+      const at = yield* Clock.currentTimeMillis;
+      lastSuccess = { epoch: r.settings.memoryHubVersion, at: iso(at) };
+      if (r.space)
+        yield* store.recordSyncSuccess({ memorySpaceId: r.space, hubEnvironmentId: r.hubId, at });
     }),
   );
   // A single tracked cycle includes manual sync and registry sweeps. Waiters coalesce;
@@ -2256,7 +2279,10 @@ const make = Effect.gen(function* () {
         resetStatus(epoch);
         const space = s.memoryHub.mode === "disabled" ? null : s.memoryHub.memorySpaceId;
         const hubId = s.memoryHub.mode === "member" ? s.memoryHub.hubEnvironmentId : local;
-        const bootstrap = space ? (yield* runtime.readBootstrap(space, hubId)).state : "unbound";
+        const progress = space
+          ? yield* store.readBootstrap({ memorySpaceId: space, hubEnvironmentId: hubId })
+          : undefined;
+        const bootstrap = progress?.state ?? "unbound";
         const holds = space
           ? yield* store.readPersistedHoldClasses({ memorySpaceId: space, hubEnvironmentId: hubId })
           : [];
@@ -2265,7 +2291,13 @@ const make = Effect.gen(function* () {
         if (current.memoryHubVersion !== epoch)
           return yield* new M.MemoryHubError({ code: "fenced" });
         const failure = lastFailure?.epoch === epoch ? lastFailure.code : undefined;
-        const success = lastSuccess?.epoch === epoch ? lastSuccess.at : null;
+        const persistedSuccess = progress?.lastSuccessAt;
+        const success =
+          lastSuccess?.epoch === epoch
+            ? lastSuccess.at
+            : persistedSuccess == null
+              ? null
+              : iso(persistedSuccess);
         const publication = yield* readPublication;
         const recoverableHolds = holds.filter(
           (c): c is "protocol" | "availability" => c === "protocol" || c === "availability",
@@ -2310,7 +2342,10 @@ const make = Effect.gen(function* () {
           "includeRetainedLocalSpaceId" in input && input.includeRetainedLocalSpaceId;
         const retainedLocalSpaceId = includeRetained ? yield* readRetainedSpace : null;
         const hubId = s.memoryHub.mode === "member" ? s.memoryHub.hubEnvironmentId : local;
-        const bootstrap = space ? (yield* runtime.readBootstrap(space, hubId)).state : "unbound";
+        const progress = space
+          ? yield* store.readBootstrap({ memorySpaceId: space, hubEnvironmentId: hubId })
+          : undefined;
+        const bootstrap = progress?.state ?? "unbound";
         if (bootstrap === "ready") yield* rememberReadySpace({ space, settings: s });
         const persisted = yield* runtime.readProcessing(space, space ? hubId : null);
         const storage = space
@@ -2321,7 +2356,13 @@ const make = Effect.gen(function* () {
         if (current.memoryHubVersion !== epoch)
           return yield* new M.MemoryHubError({ code: "fenced" });
         const failure = lastFailure?.epoch === epoch ? lastFailure.code : undefined;
-        const success = lastSuccess?.epoch === epoch ? lastSuccess.at : null;
+        const persistedSuccess = progress?.lastSuccessAt;
+        const success =
+          lastSuccess?.epoch === epoch
+            ? lastSuccess.at
+            : persistedSuccess == null
+              ? null
+              : iso(persistedSuccess);
         const selected = memorySelection(current);
         const memoryModel =
           selected === null

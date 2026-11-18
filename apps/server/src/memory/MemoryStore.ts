@@ -294,6 +294,8 @@ const make = Effect.gen(function* () {
     readLocalProcessingStatus,
     readBootstrap,
     discardBootstrapTx,
+    rebindBootstrapTx,
+    recordSyncSuccess,
     retireFrozenClaimTx,
     advanceBootstrapTx,
   } = hubAdmin;
@@ -362,6 +364,8 @@ const make = Effect.gen(function* () {
     readLocalProcessingStatus,
     readBootstrap,
     discardBootstrapTx,
+    rebindBootstrapTx,
+    recordSyncSuccess,
     retireFrozenClaimTx,
     advanceBootstrapTx,
     readHubMembers,
