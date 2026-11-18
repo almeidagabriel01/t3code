@@ -37,7 +37,7 @@ describe("Runner settings", () => {
       ...current,
       runnerRouteMemoryDays: 7,
       runnerRouteLearnAfter: 2,
-      runnerBringBackExclude: ["node_modules", ".git", ".turbo", "*.tsbuildinfo"],
+      runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
       runnerBringBackMaxMB: 200,
       runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,
     });

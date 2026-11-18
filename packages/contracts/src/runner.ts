@@ -57,6 +57,12 @@ export const RUNNER_DEFAULTS = {
     ".git",
     ".turbo",
     "*.tsbuildinfo",
+    // Native build output: a Linux build's binaries would replace this Mac's.
+    "target",
+    ".build",
+    "DerivedData",
+    "CMakeFiles",
+    "*.o",
   ] as ReadonlyArray<string>,
   /** A run whose results come to more than this many MB copies nothing back. */
   runnerBringBackMaxMB: 200,

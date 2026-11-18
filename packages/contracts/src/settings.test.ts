@@ -761,7 +761,7 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerBringBackMaxMB",
     "runnerMacTools",
   ] as const;
-  const EXCLUDE = ["node_modules", ".git", ".turbo", "*.tsbuildinfo"];
+  const EXCLUDE = RUNNER_DEFAULTS.runnerBringBackExclude;
   const TOOLS = RUNNER_DEFAULTS.runnerMacTools;
   it.each([
     [

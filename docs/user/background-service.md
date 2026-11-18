@@ -220,6 +220,10 @@ work queue, and each section says what the two do together.
   - **Mac-only tool**: Xcode and simulator tools, `adb`, `open`, `pbcopy`,
     `hyperfine` and the rest of the Runner's Mac-only tools list, plus
     `expo run`, `expo prebuild` and `playwright install`.
+  - **Builds native code for this Mac**: native toolchains such as
+    `cargo build` or `cargo test`, `go build` or `go test`, `swift`, `make`,
+    `cmake`, `clang`, `gcc` and `codesign`. Linux would build binaries this Mac
+    can't run, and skip its macOS-only code.
   - **Uses a file only this Mac has**: an argument names a path outside the
     project, such as `~/.t3`, `~/Library` or another checkout.
   - **Changes this Mac's checkout**: git commands that write (commits run here,
@@ -229,7 +233,7 @@ work queue, and each section says what the two do together.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
     `expo start`, or a `dev`, `start` or `serve` script.
 
-  A sixth reason is learned: **Linux couldn't run this before** (see **If a
+  A seventh reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.
@@ -269,7 +273,8 @@ work queue, and each section says what the two do together.
 - **Bring results back.** On by default. The files a Linux command created or
   changed come back to this Mac when it ends, whether it passed or failed, with
   their file modes, except names in **Never bring back** (`node_modules`,
-  `.git`, `.turbo` and `*.tsbuildinfo` by default). A file you changed here
+  `.git`, `.turbo`, `*.tsbuildinfo` and native build output such as `target`,
+  `.build` and `DerivedData` by default). A file you changed here
   during the job is left alone, a file the command deleted on Linux stays here,
   and a run whose results come to more than **Bring back up to** (200 MB)
   copies nothing back. The job's card says what stayed on Linux.

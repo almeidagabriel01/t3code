@@ -502,7 +502,7 @@ describe("routing matrix", () => {
   });
 
   it("the job's own --runner wins over the project and takes unlisted work", () => {
-    const plan = planRoutes(input([job("a", "make deploy", { where: "linux" })]));
+    const plan = planRoutes(input([job("a", "just deploy", { where: "linux" })]));
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
   });
 
@@ -1574,7 +1574,7 @@ describe("patterns and eligibility", () => {
     ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
     // A folder flag with no folder after it moves nothing.
-    ["make -C", "linux", null],
+    ["pnpm -C", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toMatchObject({ eligibility, reason });
   });
@@ -1622,6 +1622,14 @@ describe("patterns and eligibility", () => {
     ["pnpm start", "serves-port", "pnpm start"],
     ["npx vite", "serves-port", "vite"],
     ["npx next dev", "serves-port", "next dev"],
+    ["cargo build --release", "native-build", "cargo build"],
+    ["cargo +nightly clippy", "native-build", "cargo clippy"],
+    ["swift build -c release", "native-build", "swift build"],
+    ["go test ./...", "native-build", "go test"],
+    ["codesign --verify dist/T3.app", "native-build", "codesign"],
+    ["make -C native/x", "native-build", "make"],
+    ["pnpm exec cmake --build build", "native-build", "cmake"],
+    ["sh -c 'cd native && clang++ -O2 a.cc'", "native-build", "clang++"],
   ] as const)("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
@@ -1634,7 +1642,7 @@ describe("patterns and eligibility", () => {
     expect(eligibilityOf({ label: "fastlane beta", cwd: "/w" }, tools)).toMatchObject({
       reason: "Mac-only tool: fastlane",
     });
-    expect(eligibilityOf({ label: "xcodebuild test", cwd: "/w" }, tools).eligibility).toBe("linux");
+    expect(eligibilityOf({ label: "adb devices", cwd: "/w" }, tools).eligibility).toBe("linux");
   });
 
   it.each([
@@ -1643,6 +1651,8 @@ describe("patterns and eligibility", () => {
     "pnpm run build",
     "./scripts/ci.sh",
     "npm run watch:css",
+    "cargo fmt --check",
+    "go mod tidy",
   ])("%s may still leave", (label) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
   });

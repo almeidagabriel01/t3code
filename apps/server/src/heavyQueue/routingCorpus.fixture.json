@@ -3,7 +3,7 @@
     "Verdicts are decided by hand from context.md and design.md; never regenerate them by running the code.",
     "exclusive: the queue kind (admission's EXCLUSIVE words anywhere in the line) stays on this Mac as before.",
     "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs is judged the same way, one level down. A -c text made by $(...) is judged only when it runs.",
-    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), mac-state (a git write, a package install), serves-port (a dev server or a dev/start/serve/preview script), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument or --flag= value naming an absolute, .. or ~ path outside its checkout, /dev excepted).",
+    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server or a dev/start/serve/preview script), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument or --flag= value naming an absolute, .. or ~ path outside its checkout, /dev excepted).",
     "The first part in source order with a reason decides; otherwise linux. Never a reason: redirects, cd targets, glue, read-only git, Python, sourced files, pipes, stdin, &, syntax the parser cannot follow, an unreadable script inside the checkout, the retired Can-run-on-Linux list.",
     "Subjects: the program (plus the subcommand that decides), the pattern, or the resolved path.",
     "Sanitized: home is /Users/dev, session and scratch ids are ID (a literal <id> would parse as a redirect), commit messages are msg, Python heredoc bodies are pass, company projects are left out."
@@ -206,8 +206,8 @@
       "line": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml 2>&1 | grep -v \"t3 heavy\" | tail -3; ls native/resource-monitor/target/release/ | head",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229",
       "observed": "Not on the Can run on Linux list",
-      "expect": "linux",
-      "why": "builds go to Linux (D2)"
+      "expect": "native-build:cargo build",
+      "why": "a native build stays here: Linux would build an ELF the Mac can't run (D2 holds for JS builds only)"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8 && files=$(git status --short | awk '{print $2}' | grep -E '\\.(ts|tsx)$' | tr '\\n' ' '); T=\"src/features/settings/components/SettingsDependents.test.tsx src/features/settings/components/RunnerSection.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx src/features/settings/ThreadOrderSettings.test.tsx src/features/settings/SettingsMemoryRouteScreen.test.tsx src/features/settings/SettingsServerControlsRouteScreen.test.tsx src/features/resources/HeavyWork.test.tsx src/features/assistants/AutonomySettingsSection.test.tsx\"; cat > /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate-remote.sh <<EOF\necho \"== LINT\"; pnpm exec vp lint --no-ignore $files 2>&1 | tail -30\ncd apps/mobile\necho \"== TESTS\"; pnpm exec vp test run $T 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -E \"FAIL|AssertionError|Error|expected|Test Files|Tests  \" | head -60\necho \"== TYPECHECK\"; pnpm exec vp run typecheck > /tmp/tc.log 2>&1; echo \"exit \\$?\"; sed 's/\\x1b\\[[0-9;]*m//g' /tmp/tc.log | grep -vE \"suggestion TS\" | grep -E \"error|Error|✓|✗|Found\" | tail -20\necho \"== COVERAGE\"; cd ../.. && pnpm add -D -w @vitest/coverage-v8@5.0.5 >/dev/null 2>&1; cd apps/mobile && pnpm exec vp test run $T --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcovonly \"--coverage.include=src/**/*.{ts,tsx}\" --coverage.reportOnFailure=true --testTimeout=300000 >/dev/null 2>&1\necho \"LCOV-BEGIN\"; cat coverage/lcov.info; echo \"LCOV-END\"\nEOF\nremoto sh -c \"$(cat /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate-remote.sh)\" > /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate.out 2>&1; grep -v \"^\\[t3 heavy\\]\" /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate.out | sed -n '/== LINT/,/LCOV-BEGIN/p' | head -80",
@@ -282,7 +282,8 @@
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork-next/native/resource-monitor && python3 - <<'EOF'\npass\nEOF\nexport PATH=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH; cargo fmt && cargo test 2>&1 | grep -E \"^error|warning:|test result|FAILED|panicked\" | head -20",
       "cwd": "/Users/dev/DEV/Pessoal/t3code",
       "observed": "unknown",
-      "expect": "linux"
+      "expect": "native-build:cargo test",
+      "why": "cargo test on Linux skips the macOS-only code paths"
     },
     {
       "line": "python3 - <<'EOF'\npass\nEOF\n(cd packages/contracts && pnpm exec vp test run src/assistantGroups.test.ts 2>&1 | grep -E 'Tests '; pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c 'error TS'); f=(packages/contracts/src/assistantGroups.ts packages/contracts/src/assistantGroups.test.ts apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts apps/server/src/persistence/ForkSchema.ts apps/server/src/persistence/ForkSchema.test.ts); git commit -q \"${f[@]}\" -m msg 2>&1 | grep -E '✖|error'; git log --oneline -1",
@@ -1257,6 +1258,45 @@
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
       "expect": "mac-env:/Users/dev/.t3/worktrees/t3code/other/a.test.ts"
+    },
+    {
+      "line": "swift build -c release",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/native/device-capture",
+      "observed": "synthetic",
+      "expect": "native-build:swift build"
+    },
+    {
+      "line": "codesign --verify dist/T3.app",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:codesign"
+    },
+    {
+      "line": "pnpm exec cmake --build build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:cmake",
+      "why": "judged on the program pnpm exec runs"
+    },
+    {
+      "line": "go test ./...",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:go test"
+    },
+    {
+      "line": "make -C native/resource-monitor",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:make",
+      "why": "make runs arbitrary native recipes"
+    },
+    {
+      "line": "cargo fmt --check && go mod tidy",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "formatting and module upkeep build nothing"
     }
   ]
 }

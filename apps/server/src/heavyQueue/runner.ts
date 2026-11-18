@@ -159,7 +159,14 @@ export type Eligibility = "linux" | "exclusive" | "mac-only";
  * `learned` is filled by route memory.
  */
 export interface MacReason {
-  readonly code: "mac-tool" | "mac-env" | "mac-state" | "pinned" | "serves-port" | "learned";
+  readonly code:
+    | "mac-tool"
+    | "native-build"
+    | "mac-env"
+    | "mac-state"
+    | "pinned"
+    | "serves-port"
+    | "learned";
   /** The program, pattern or path that keeps it here. */
   readonly subject: string;
 }
@@ -173,6 +180,7 @@ export interface Verdict {
 
 const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   "mac-tool": "Mac-only tool",
+  "native-build": "Builds native code for this Mac",
   "mac-env": "Uses a file only this Mac has",
   "mac-state": "Changes this Mac's checkout",
   pinned: "Pinned to this Mac",
@@ -282,11 +290,44 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
 };
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
+// What they build or run is native to the machine they run on: Linux would bring back an ELF.
+const NATIVE_TOOLS = new Set([
+  "rustc",
+  "swiftc",
+  "make",
+  "gmake",
+  "cmake",
+  "ninja",
+  "meson",
+  "clang",
+  "clang++",
+  "gcc",
+  "g++",
+  "cc",
+  "c++",
+  "ld",
+  "xcodebuild",
+  "codesign",
+  "lipo",
+]);
+const NATIVE_SUBCOMMANDS: Readonly<Record<string, RegExp>> = {
+  cargo: /^(build|b|test|t|run|r|bench|check|c|clippy|nextest|rustc|install|doc|d)$/,
+  go: /^(build|test|run|install|vet|generate)$/,
+  swift: /./,
+};
+
+/** The native toolchain call a program and its words make, by name, or null. */
+const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
+  if (NATIVE_TOOLS.has(program)) return program;
+  // `cargo +nightly build`: a toolchain pick comes before the subcommand.
+  const sub = words.find((word) => !word.startsWith("+")) ?? "";
+  return NATIVE_SUBCOMMANDS[program]?.test(sub) === true ? `${program} ${sub}` : null;
+};
 
 /**
- * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a change to
- * this checkout (a git write; an install, whose `node_modules` never comes back), or a server
- * used from here. Judged on the program `npx` or `pnpm exec` runs.
+ * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a native
+ * build, a change to this checkout (a git write; an install, whose `node_modules` never comes
+ * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs.
  */
 const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
   let { program, words } = part;
@@ -298,6 +339,8 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   const [first = "", second = ""] = words;
   const named = `${program} ${first}`.trim();
   if (macTools.includes(program)) return { code: "mac-tool", subject: program };
+  const native = nativeBuild(program, words);
+  if (native !== null) return { code: "native-build", subject: native };
   if ((program === "expo" && /^(run|prebuild)/.test(first)) || named === "playwright install") {
     return { code: "mac-tool", subject: named };
   }
