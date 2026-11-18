@@ -214,7 +214,7 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly syncBack?: SyncBack;
   /** A Mac job's own call queued for Linux: when Linux can't take it, it runs under that job. */
   readonly call?: boolean;
-  /** Asked with `--runner linux` (not an agent's `remoto`): none of its calls runs on this Mac. */
+  /** Asked with `--runner linux`, not by an agent's `remoto`: see `askedLinux`. */
   readonly linuxOnly?: boolean;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
@@ -888,9 +888,17 @@ const dropHolds = (
     (config.runnerDropped === "ask" &&
       !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
 
-/** The job itself asked for Linux (`--runner linux`, an agent's `remoto`): it never changes machine. */
-const askedLinux = (entry: HeavyQueueEntry) =>
-  entry.where === "linux" && (entry as QueuedEntry).call !== true;
+/** Pending owner decision: whether an agent's `remoto` asks for Linux as `--runner linux` does. */
+const REMOTO_ASKS_LINUX = true;
+
+/**
+ * The job itself asked for Linux: it never changes machine, in the plan or in its calls. A job's
+ * own call queued for Linux did not ask; it may still run under its job.
+ */
+export const askedLinux = (entry: HeavyQueueEntry) =>
+  entry.where === "linux" &&
+  (entry as QueuedEntry).call !== true &&
+  ((entry as QueuedEntry).linuxOnly === true || REMOTO_ASKS_LINUX);
 
 /**
  * Where the entry's own settings send it before Linux health is considered. `cancel`: it asked for

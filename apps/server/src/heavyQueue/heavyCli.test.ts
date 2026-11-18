@@ -1103,10 +1103,11 @@ describe("t3 heavy", () => {
         "Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}.\n`);
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
-      // An agent's own `remoto` still runs that call here.
+      // An agent's own `remoto` asks for Linux too (`askedLinux`): the plan and its calls agree.
       const remoto = heavyHere(dir, ["/bin/sh", "-c", `remoto ${line}`], env, ["--"], dir);
-      expect(await remoto.exited).toBe(0);
-      expect(remoto.stdout()).toBe("vp on mac: test run /etc/hosts\nafter\n");
+      expect(await remoto.exited).toBe(75);
+      expect(remoto.stdout()).toBe("");
+      expect(remoto.stderr()).toContain(`[t3 heavy] ${why}.\n`);
     });
 
     it("a job asked for Linux ends with what Linux lacked, never rerunning here or learning it", async () => {

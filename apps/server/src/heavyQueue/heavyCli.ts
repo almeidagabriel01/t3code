@@ -63,6 +63,7 @@ import {
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
+  askedLinux,
   eligibilityOf,
   INSTALL_FAILED,
   linkAttempts,
@@ -1459,10 +1460,8 @@ const runLinuxPart = async (
   const cwd = moved?.cwd ?? process.cwd();
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
-  // Asked with `--runner linux`: none of its calls runs here, so the job ends with why instead.
-  const linuxOnly = doc.entries.some(
-    (entry: QueuedEntry) => entry.id === id && entry.linuxOnly === true,
-  );
+  // Asked for Linux: none of its calls runs here, so the job ends with why instead.
+  const linuxOnly = doc.entries.some((entry) => entry.id === id && askedLinux(entry));
   const toMac = (reason: string) =>
     linuxOnly
       ? endLine(dir, id, {

@@ -1032,7 +1032,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     [
       "--runner linux, mac",
       "vp test run",
-      { where: "linux" },
+      { where: "linux", linuxOnly: true },
       { runnerUnavailable: "mac" },
       OFFLINE_ASKED,
     ],
