@@ -466,6 +466,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       ".github/workflows/ci.yml",
       ".specs/plan.md",
       "secrets/key.json",
+      "secrets/keeper.json",
       "node_modules/pkg/index.js",
       "packages/ui/node_modules/dep/index.js",
       "dist/out.js",
@@ -516,6 +517,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           }
 
           expect(yield* searchPaths(cwd, ".env", { limit: 1 })).toEqual([".env"]);
+          expect(yield* searchPaths(cwd, "keep", { limit: 1 })).toEqual(["src/keep.ts"]);
           expect(yield* searchPaths(cwd, "env.local")).toContain("apps/web/.env.local");
           expect(yield* searchPaths(cwd, ".github/workflows")).toContain(
             ".github/workflows/ci.yml",

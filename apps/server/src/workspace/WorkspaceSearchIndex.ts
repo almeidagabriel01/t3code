@@ -375,16 +375,16 @@ function undotted(value: string): string {
   return value.toLowerCase().replace(/(^|\/)\.+/g, "$1");
 }
 
-const STRONG_HIDDEN_MATCH = 1000;
+const WEAK_HIDDEN_MATCH = 1000;
 
-/** Ranks hidden entries; `strong` ones (name or path prefix) go above fff's fuzzy results. */
+/** Ranks hidden entries; only an exact name or path goes above fff's results (`exact`). */
 function rankHiddenEntries(
   entries: ReadonlyArray<ProjectEntry>,
   query: string,
   limit: number,
   kind: ProjectEntryKind | undefined,
   imageOnly: boolean | undefined,
-): { readonly strong: ProjectEntry[]; readonly weak: ProjectEntry[] } {
+): { readonly exact: ProjectEntry[]; readonly rest: ProjectEntry[] } {
   const wantedKind = imageOnly ? "file" : kind;
   const normalizedQuery = undotted(query);
   const ranked: RankedSearchResult<ProjectEntry>[] = [];
@@ -393,7 +393,7 @@ function rankHiddenEntries(
     if (imageOnly && !isProjectFaviconPath(entry.path)) continue;
     const name = undotted(entry.path.slice(entry.path.lastIndexOf("/") + 1));
     const score = !normalizedQuery
-      ? STRONG_HIDDEN_MATCH
+      ? WEAK_HIDDEN_MATCH
       : name === normalizedQuery
         ? 0
         : name.startsWith(normalizedQuery)
@@ -403,26 +403,26 @@ function rankHiddenEntries(
               query: normalizedQuery,
               exactBase: 0,
               prefixBase: 100,
-              boundaryBase: STRONG_HIDDEN_MATCH,
-              includesBase: 2 * STRONG_HIDDEN_MATCH,
-              fuzzyBase: 3 * STRONG_HIDDEN_MATCH,
+              boundaryBase: WEAK_HIDDEN_MATCH,
+              includesBase: 2 * WEAK_HIDDEN_MATCH,
+              fuzzyBase: 3 * WEAK_HIDDEN_MATCH,
             });
     if (score === null) continue;
     insertRankedSearchResult(ranked, { item: entry, score, tieBreaker: entry.path }, limit);
   }
   return {
-    strong: ranked.filter((result) => result.score < STRONG_HIDDEN_MATCH).map((r) => r.item),
-    weak: ranked.filter((result) => result.score >= STRONG_HIDDEN_MATCH).map((r) => r.item),
+    exact: ranked.filter((result) => result.score === 0).map((result) => result.item),
+    rest: ranked.filter((result) => result.score !== 0).map((result) => result.item),
   };
 }
 
 function mergeHiddenEntries(
   indexed: ProjectSearchEntriesResult,
-  hidden: { readonly strong: ProjectEntry[]; readonly weak: ProjectEntry[] },
+  hidden: { readonly exact: ProjectEntry[]; readonly rest: ProjectEntry[] },
   limit: number,
 ): ProjectSearchEntriesResult {
   const byPath = new Map<string, ProjectEntry>();
-  for (const entry of [...hidden.strong, ...indexed.entries, ...hidden.weak]) {
+  for (const entry of [...hidden.exact, ...indexed.entries, ...hidden.rest]) {
     if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
   }
   const entries = [...byPath.values()];
