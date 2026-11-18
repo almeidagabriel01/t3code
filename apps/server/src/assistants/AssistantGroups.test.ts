@@ -269,6 +269,8 @@ const harness = (options: Options = {}) => {
               new Orchestrator.OrchestratorThreadAwaitingBackgroundWorkError({
                 commandId: command.commandId as never,
                 threadId: command.threadId as never,
+                threadTitle: thread.title,
+                refused: "model",
               }),
             );
           }

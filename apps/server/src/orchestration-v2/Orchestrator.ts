@@ -305,13 +305,25 @@ export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<O
   }
 }
 
+const AWAITING_BACKGROUND_WORK_REFUSALS = {
+  settle: "be settled",
+  worktree: "move to another worktree",
+  model: "switch models",
+  runtimeMode: "change its runtime mode",
+} as const;
+
 /** Detaching would end the process running work the agent waits to be woken by. */
 export class OrchestratorThreadAwaitingBackgroundWorkError extends Schema.TaggedError<OrchestratorThreadAwaitingBackgroundWorkError>()(
   "OrchestratorThreadAwaitingBackgroundWorkError",
-  { commandId: CommandId, threadId: ThreadId },
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    threadTitle: Schema.String,
+    refused: Schema.Literals(["settle", "worktree", "model", "runtimeMode"]),
+  },
 ) {
   override get message(): string {
-    return `Thread ${this.threadId} is waiting on background work. Let it finish or stop it first.`;
+    return `"${this.threadTitle}" is waiting on background work, so it can't ${AWAITING_BACKGROUND_WORK_REFUSALS[this.refused]} yet. Let the work finish, press Stop to end it, or archive the thread.`;
   }
 }
 
@@ -4785,6 +4797,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorThreadAwaitingBackgroundWorkError({
           commandId: command.commandId,
           threadId: command.threadId,
+          threadTitle: thread.title,
+          refused:
+            command.type === "thread.settle"
+              ? "settle"
+              : command.type === "thread.metadata.update"
+                ? "worktree"
+                : command.type === "thread.runtime-mode.set"
+                  ? "runtimeMode"
+                  : "model",
         });
       }
       yield* Effect.forEach(

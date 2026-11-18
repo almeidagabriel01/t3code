@@ -4993,6 +4993,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           result._tag === "Success" ? "Success" : result.failure._tag,
           detaches ? "Success" : "OrchestratorThreadAwaitingBackgroundWorkError",
         );
+        const refused = {
+          "thread.settle": "be settled",
+          "thread.metadata.update": "move to another worktree",
+          "thread.model-selection.set": "switch models",
+          "thread.archive": "",
+        }[commandType];
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure.message,
+            `"Awaited background work" is waiting on background work, so it can't ${refused} yet. Let the work finish, press Stop to end it, or archive the thread.`,
+          );
+        }
       }),
   );
 
