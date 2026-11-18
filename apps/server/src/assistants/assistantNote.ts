@@ -163,15 +163,15 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
   return assistantNoteFor({ ...assistant, projectIds }, userText, teams, sandbox, titles);
 });
 
-/**
- * The waits this conversation was woken for that settled since its previous turn began, derived
- * from its own runs: the note rides with the one turn after a wait ends, and no turn is spent on it.
- */
 // Every turn start delivers the note for waits settled before it, so only a wait told in a
 // recent run can still need one. An older wait that settles goes unmentioned; the notice's
 // live check covers it.
 export const SETTLED_WAIT_RUN_WINDOW = 50;
 
+/**
+ * The waits this conversation was woken for that settled since its previous turn began, derived
+ * from its own runs: the note rides with the one turn after a wait ends, and no turn is spent on it.
+ */
 export const settledWaitsForTurn = Effect.fn("AssistantNote.settledWaits")(function* (
   directory: Option.Option<AssistantDirectoryShape>,
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "startedAt" | "userMessageId">>,
