@@ -567,17 +567,6 @@ export const makeHubAdmin = (
     );
     return true;
   });
-  // Keeps after_sequence and local work: the next join re-snapshots and completeCheckpoint merges.
-  const rebindBootstrapTx: MemoryStoreShape["rebindBootstrapTx"] = Effect.fn(
-    "MemoryStore.rebindBootstrapTx",
-  )(function* (input) {
-    yield* Transaction;
-    const changed = yield* stored(
-      "bootstrap-rebind-cas",
-      sql`UPDATE memory_sync_cursors SET bootstrap_state='unbound',checkpoint_id=NULL,snapshot_token=NULL,checkpoint_sequence=NULL,checkpoint_cursor=NULL,checkpoint_page_count=0 WHERE space=${input.memorySpaceId} AND hub_environment_id=${input.hubEnvironmentId} AND bootstrap_state='ready' AND after_sequence=${input.expectedAfterSequence} RETURNING space`,
-    );
-    return changed.length === 1;
-  });
   const recordSyncSuccess: MemoryStoreShape["recordSyncSuccess"] = Effect.fn(
     "MemoryStore.recordSyncSuccess",
   )(function* (input) {
@@ -646,7 +635,6 @@ export const makeHubAdmin = (
     readLocalProcessingStatus,
     readBootstrap,
     discardBootstrapTx,
-    rebindBootstrapTx,
     recordSyncSuccess,
     retireFrozenClaimTx,
     advanceBootstrapTx,

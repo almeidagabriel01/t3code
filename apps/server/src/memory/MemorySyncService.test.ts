@@ -845,6 +845,110 @@ it.effect("a ready cursor below the hub floor re-snapshots and pushes its local 
   }),
 );
 
+it.effect(
+  "a ready cursor below the hub floor stays ready through a failed join, then re-snapshots",
+  () =>
+    Effect.gen(function* () {
+      const floor = 489;
+      const pushed: M.MemoryOperationId[] = [];
+      let joins = 0;
+      const client = checkpointPeer({
+        join: () =>
+          joins++ === 0
+            ? Effect.fail(new M.MemoryHubError({ code: "unavailable" }))
+            : Effect.succeed({
+                protocolVersion: 1,
+                memorySpaceId: space,
+                hubEnvironmentId: remote,
+                checkpointSequence: floor,
+                retentionFloor: floor,
+                snapshotToken: "floor-token",
+                causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+              }),
+        pull: (_c, input) =>
+          input.snapshotToken
+            ? Effect.succeed({
+                highWatermark: floor,
+                throughSequence: floor,
+                hasMore: false,
+                entries: [],
+                checkpoint: {
+                  memorySpaceId: space,
+                  checkpointSequence: floor,
+                  retentionFloor: floor,
+                  causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+                  pageOrdinal: 0,
+                  items: [],
+                  revisions: [],
+                  tombstones: [],
+                  conflicts: [],
+                  resolutions: [],
+                  compactReceipts: [],
+                  identities: [],
+                  fences: [],
+                  suppressions: [],
+                  importLineage: [],
+                  nextCursor: null,
+                  bootstrapComplete: true,
+                },
+              })
+            : input.afterSequence < floor
+              ? Effect.fail(new M.MemoryHubError({ code: "cursor_expired" }))
+              : Effect.succeed({
+                  highWatermark: floor,
+                  throughSequence: floor,
+                  hasMore: false,
+                  entries: [],
+                }),
+        push: (_c, i) =>
+          Effect.sync(() => {
+            pushed.push(...i.operations.map((op) => op.operationId));
+            return {
+              receipts: i.operations.map((op) => ({
+                operationId: op.operationId,
+                memoryId: op.memoryId,
+                operationDigest: memoryOperationDigest(op),
+                hubSequence: floor + 1,
+                outcome: "accepted" as const,
+              })),
+            };
+          }),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const store = yield* Store.MemoryStore;
+          const sync = yield* Sync.MemorySyncService;
+          yield* ready;
+          yield* sql`UPDATE memory_sync_cursors SET after_sequence=${floor - 1}`;
+          yield* enqueue(20);
+          yield* sync.syncOnce.pipe(Effect.ignore);
+          const held = yield* store.readBootstrap({
+            memorySpaceId: space,
+            hubEnvironmentId: remote,
+          });
+          assert.strictEqual(held.state, "ready");
+          assert.strictEqual(yield* store.readCursor(space, remote), floor - 1);
+          assert.deepStrictEqual(pushed, []);
+          assert.lengthOf(
+            yield* sql`SELECT id FROM memory_outbox WHERE kind='sync' AND status='pending'`,
+            1,
+          );
+          yield* TestClock.adjust(1000);
+          yield* sync.syncOnce;
+          const progress = yield* store.readBootstrap({
+            memorySpaceId: space,
+            hubEnvironmentId: remote,
+          });
+          assert.strictEqual(progress.state, "ready");
+          assert.isAtLeast(yield* store.readCursor(space, remote), floor);
+          assert.deepStrictEqual(pushed, [operation(20).operationId]);
+          assert.strictEqual((yield* sync.syncStatus({}, Effect.void)).state, "online");
+        }).pipe(Effect.provide(fixture(client))),
+      );
+    }),
+);
+
 it.effect("partial member checkpoint preserves token and keeps push blocked across restart", () =>
   Effect.gen(function* () {
     const requests: M.MemoryHubPullInput[] = [];

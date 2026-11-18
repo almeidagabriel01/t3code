@@ -1287,6 +1287,40 @@ const make = Effect.gen(function* () {
       if (!page.hasMore) break;
     }
   });
+  // Joins before moving state, so a failed join leaves a ready replica serving reads.
+  const joinStaging = Effect.fnUntraced(function* (r: Route, expectedState: "unbound" | "ready") {
+    const input: M.MemoryHubJoinInput = {
+      protocolVersion: 1,
+      environmentId: local,
+      memorySpaceId: r.space!,
+    };
+    // The hub device is a replica too; use its active self authority without self HTTP.
+    const join = yield* r.connection
+      ? client.join(r.connection, input)
+      : hub.join(input, r.principal!);
+    yield* ensureEpoch(r.settings.memoryHubVersion);
+    const state: Bootstrap = {
+      state: "staging",
+      checkpointId: `hub:${join.snapshotToken}`,
+      snapshotToken: join.snapshotToken,
+      checkpointSequence: join.checkpointSequence,
+      cursor: null,
+      pageCount: 0,
+    };
+    yield* store.transact(
+      store.advanceBootstrapTx({
+        memorySpaceId: r.space!,
+        hubEnvironmentId: r.hubId,
+        expectedState,
+        nextState: "staging",
+        checkpointId: state.checkpointId!,
+        snapshotToken: state.snapshotToken,
+        checkpointSequence: state.checkpointSequence,
+        nextCursor: null,
+      }),
+    );
+    return state;
+  });
   const bootstrap = Effect.fnUntraced(function* (
     r: Route,
     budget: { pages: number; entries: number },
@@ -1297,38 +1331,7 @@ const make = Effect.gen(function* () {
       yield* rememberReadySpace(r);
       return true;
     }
-    if (state.state === "unbound") {
-      const input: M.MemoryHubJoinInput = {
-        protocolVersion: 1,
-        environmentId: local,
-        memorySpaceId: r.space,
-      };
-      // The hub device is a replica too; use its active self authority without self HTTP.
-      const join = yield* r.connection
-        ? client.join(r.connection, input)
-        : hub.join(input, r.principal!);
-      yield* ensureEpoch(r.settings.memoryHubVersion);
-      state = {
-        state: "staging",
-        checkpointId: `hub:${join.snapshotToken}`,
-        snapshotToken: join.snapshotToken,
-        checkpointSequence: join.checkpointSequence,
-        cursor: null,
-        pageCount: 0,
-      };
-      yield* store.transact(
-        store.advanceBootstrapTx({
-          memorySpaceId: r.space,
-          hubEnvironmentId: r.hubId,
-          expectedState: "unbound",
-          nextState: "staging",
-          checkpointId: state.checkpointId!,
-          snapshotToken: state.snapshotToken,
-          checkpointSequence: state.checkpointSequence,
-          nextCursor: null,
-        }),
-      );
-    }
+    if (state.state === "unbound") state = yield* joinStaging(r, "unbound");
     while (budget.pages < 10) {
       const response = yield* Effect.result(
         callPull(r, {
@@ -1433,13 +1436,7 @@ const make = Effect.gen(function* () {
           hubEnvironmentId: r.hubId,
           afterSequence: after,
         });
-        yield* store.transact(
-          store.rebindBootstrapTx({
-            memorySpaceId: r.space!,
-            hubEnvironmentId: r.hubId,
-            expectedAfterSequence: after,
-          }),
-        );
+        yield* joinStaging(r, "ready");
         if (!(yield* bootstrap(r, budget)) || budget.pages >= 10) return false;
         yield* pullTail(r, budget);
         return true;

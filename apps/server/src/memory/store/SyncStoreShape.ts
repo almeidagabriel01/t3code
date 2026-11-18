@@ -304,12 +304,6 @@ export interface SyncStoreShape {
     frozenHeads: readonly M.MemoryRevisionId[];
     nextAttemptAt: number;
   }) => InTx<boolean>;
-  /** A ready replica whose cursor fell below the hub's retention floor goes back to join. */
-  readonly rebindBootstrapTx: (input: {
-    memorySpaceId: M.MemorySpaceId;
-    hubEnvironmentId: M.EnvironmentId;
-    expectedAfterSequence: number;
-  }) => InTx<boolean>;
   readonly recordSyncSuccess: (input: {
     memorySpaceId: M.MemorySpaceId;
     hubEnvironmentId: M.EnvironmentId;
