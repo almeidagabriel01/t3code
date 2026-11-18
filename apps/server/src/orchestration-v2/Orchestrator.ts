@@ -4760,6 +4760,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
+      // Detaching ends the process, and with it work the agent is still waiting to be woken by.
+      // Only archive closes it anyway; release then drops the roster so the thread never waits.
+      if (
+        command.type !== "thread.archive" &&
+        liveSessions.length > 0 &&
+        (yield* loadProjectionForCommand(command, ["providerThreads"])).providerThreads.some(
+          (providerThread) =>
+            liveSessions.some((session) => session.id === providerThread.providerSessionId) &&
+            backgroundWorkHoldsCompletion(providerThread.pendingBackgroundTasks ?? []),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is waiting on background work. Let it finish or stop it first.`,
+        });
+      }
       yield* Effect.forEach(
         liveSessions,
         (session) =>
