@@ -28,6 +28,7 @@ import {
   matchesAny,
   mayPublish,
   nextHealth,
+  needsBrowser,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -2322,6 +2323,44 @@ describe("an install unfinished in a fresh Linux copy", () => {
     ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);
+  });
+});
+
+describe("whether a Linux run needs Chromium", () => {
+  const FILES: Record<string, string> = {
+    "/w/package.json": JSON.stringify({
+      scripts: {
+        "ci:local": "node scripts/ci-local/run.mjs",
+        "test:e2e": "playwright test",
+        test: "vitest run",
+      },
+    }),
+    "/w/apps/web/package.json": JSON.stringify({
+      devDependencies: { "@vitest/browser-playwright": "5.0.5" },
+    }),
+    "/w/apps/server/package.json": JSON.stringify({ dependencies: { "playwright-core": "1" } }),
+    "/w/apps/broken/package.json": "{",
+  };
+  const read = (path: string) => FILES[path] ?? null;
+  it.each([
+    ["npx playwright test --list", "/w", true],
+    ["npm run ci:local", "/w", false],
+    ["pnpm test:e2e", "/w", true],
+    ["npm run test:e2e", "/w", true],
+    ["node scripts/x.mjs", "/w", false],
+    ["vitest --browser.enabled", "/w", true],
+    // The root's tests depend on no browser.
+    ["pnpm test", "/w", false],
+    ["vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["pnpm exec vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["vp test run apps/web/src/a.browser.test.tsx", "/w", true],
+    ["vp test run src/preview/ServerBrowser.test.ts", "/w/apps/server", true],
+    ["vp test run src/a.test.ts", "/w/apps/other", false],
+    ["vp test run src/a.test.ts", "/w/apps/broken", false],
+    ["vp lint src/a.ts", "/w/apps/web", false],
+    ["vp lint playwright.config.ts", "/w", false],
+  ] as const)("%s from %s: %s", (line, cwd, needs) => {
+    expect(needsBrowser(line.split(" "), cwd, "/w", read)).toBe(needs);
   });
 });
 

@@ -68,6 +68,7 @@ import {
   INSTALL_FAILED,
   linkAttempts,
   linkMachine,
+  needsBrowser,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -1557,6 +1558,7 @@ const runLinuxPart = async (
   let since = 0;
   // This call's own start marker there: parallel calls of one job each list what they wrote.
   const call = `${id}-${process.pid}`;
+  let browser = needsBrowser([command.program, ...command.args], cwd, root, readText);
   const fault = (seen: FaultSeen) => {
     const found = faultOf(seen, unreachable ?? failure ?? lastError, {
       command: labelOf(program, args),
@@ -1626,6 +1628,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
+      browser,
       ...(bringsBack ? { startMarker: call } : {}),
       ...(input === undefined ? {} : { input }),
       ...(inputStart === null ? {} : { inputStart }),
@@ -1676,8 +1679,25 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install, worktree, spentInput: spent } = await run.done;
+  const first = await run.done;
+  let { outcome, progress, platform, install, worktree, spentInput: spent } = first;
   spentInput ||= spent;
+  // Sent without Chromium, it needed one: once more there, with it. Never this Mac's to run.
+  if (
+    !stopped &&
+    !spentInput &&
+    first.browserMissing &&
+    outcome.kind === "finished" &&
+    outcome.code !== 0
+  ) {
+    jobNote("[t3 heavy] Linux: this command needs Chromium, running it again with it\n");
+    browser = true;
+    recorded = null;
+    failure = null;
+    run = start();
+    ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+    spentInput ||= spent;
+  }
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     // The first run read the input: a rerun would get none.

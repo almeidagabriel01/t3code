@@ -1052,6 +1052,25 @@ describe("t3 heavy", () => {
       },
     );
 
+    // Sent without Chromium (`REMOTO_BROWSER=0`), a run Playwright found no browser for goes once
+    // more there with it: Linux lacked a download, never this Mac's to run.
+    it("a run that needed Chromium runs again on Linux with it", async () => {
+      const { dir, env } = setup(
+        [
+          `echo "$REMOTO_BROWSER" >> "$0.browser"`,
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `if [ "$REMOTO_BROWSER" = 0 ]; then echo "browserType.launch: Executable doesn't exist at /x/ms-playwright/chromium/chrome" >&2; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+          "echo linux-ok",
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("linux-ok\n");
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.browser"), "utf8")).toBe("0\n1\n");
+      expect(faults(dir)).toEqual([]);
+    });
+
     // `./node_modules/.bin/effect-tsgo` from a package whose bins live at the root. A bare name
     // may exist on Linux alone, so it goes there and only Linux's own pre-flight can refuse it.
     const missingThere = (tool: string) =>

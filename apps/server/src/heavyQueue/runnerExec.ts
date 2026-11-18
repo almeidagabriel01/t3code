@@ -15,6 +15,7 @@ import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
 import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
 import {
+  browserMissing,
   foldMarker,
   HEARTBEAT_COMMAND,
   MARKER,
@@ -702,6 +703,8 @@ export interface LinuxRunOptions {
   readonly input?: number;
   /** Reads `input` by position from here (`fileOffset`), never moving its offset, so never spent. */
   readonly inputStart?: number;
+  /** It needs Playwright's Chromium there (`needsBrowser`). Unset, `remoto-rodar` decides alone. */
+  readonly browser?: boolean;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -719,6 +722,8 @@ export interface LinuxRun {
     readonly worktree: string | null;
     /** It took bytes off an `input` read in place: a rerun would not get them. */
     readonly spentInput: boolean;
+    /** Sent without Chromium, its own output says Playwright found none. */
+    readonly browserMissing: boolean;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -792,6 +797,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         REMOTO_FALLBACK: "nao",
         REMOTO_HOST: machine.runnerHost,
         REMOTO_MARKERS: "1",
+        ...(options.browser === undefined ? {} : { REMOTO_BROWSER: options.browser ? "1" : "0" }),
         REMOTO_TIMEOUT: String(machine.runnerSshTimeoutSeconds),
       },
     },
@@ -817,8 +823,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const platform = new Set<string>();
   let install: string | null = null;
   let worktree: string | null = null;
+  let lacksBrowser = false;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    if (options.browser === false) lacksBrowser ||= browserMissing(line);
     // Only the steps before the command: its own output may quote the same errors (a test name).
     if (progress.running || progress.commandStarted) return;
     install ??= installFailure(line);
@@ -850,6 +858,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     install: string | null;
     worktree: string | null;
     spentInput: boolean;
+    browserMissing: boolean;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -864,6 +873,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         install: progress.install ?? install,
         worktree,
         spentInput,
+        browserMissing: lacksBrowser,
       });
     };
     child.on("error", (error) => {

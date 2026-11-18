@@ -399,6 +399,90 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
 };
 
+/** Package manager flags that take the next word as their value (`pnpm -F web dev`). */
+const PM_VALUE_FLAGS = new Set([
+  "-F",
+  "--filter",
+  "--filter-prod",
+  "-w",
+  "--workspace",
+  "-C",
+  "--dir",
+  "--prefix",
+  "--cwd",
+]);
+
+/**
+ * A package manager's subcommand words, past its flags and their values and a Yarn `workspace
+ * <name>` (`yarn workspace web dev` → `dev`).
+ */
+const subcommandWords = (after: ReadonlyArray<string>) => {
+  const words = after.filter(
+    (value, at) => !value.startsWith("-") && !PM_VALUE_FLAGS.has(after[at - 1] ?? ""),
+  );
+  return words[0] === "workspace" ? words.slice(2) : words;
+};
+
+/** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
+const scriptName = (values: ReadonlyArray<string>) => {
+  if (!PACKAGE_MANAGERS.has(programName(values[0]))) return null;
+  const [first, second] = subcommandWords(values.slice(1));
+  return first === "run" || first === "run-script" ? (second ?? null) : (first ?? null);
+};
+
+const BROWSER_TOOL =
+  /(^|[\s;&|()'"/])(playwright|cypress|puppeteer)(?=[\s;&|()'"]|$)|(^|\s)--browser(?=[\s=.]|$)/m;
+const TEST_RUNNER = /(^|[\s;&|()'"/])(vitest|jest)(?=[\s;&|()'"]|$)|(^|[\s;&|()'"/])vp\s+test\b/m;
+const BROWSER_DEPENDENCY =
+  /^(playwright|playwright-core|@playwright\/test|@vitest\/browser.*|puppeteer|cypress)$/;
+
+/**
+ * Whether a Linux run needs Playwright's Chromium there (`REMOTO_BROWSER`): the command, or the
+ * package.json script it runs, calls a browser tool or `--browser`; or it runs tests in a package
+ * (of its folder or of a file it names) that depends on one. `read` gives a file's text or null.
+ */
+export const needsBrowser = (
+  values: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  read: (path: string) => string | null,
+): boolean => {
+  const manifestOf = (dir: string): Record<string, unknown> | null => {
+    for (let at = dir; inside(at, root); at = at.slice(0, at.lastIndexOf("/")) || "/") {
+      const text = read(`${at}/package.json`);
+      if (text !== null) {
+        try {
+          const json: unknown = JSON.parse(text);
+          return json !== null && typeof json === "object" ? (json as Record<string, unknown>) : {};
+        } catch {
+          return {};
+        }
+      }
+      if (at === root) break;
+    }
+    return null;
+  };
+  const field = (json: Record<string, unknown> | null, key: string) => {
+    const value = json?.[key];
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  };
+  const name = scriptName(values);
+  const script = name === null ? undefined : field(manifestOf(cwd), "scripts")[name];
+  const text = [...values, typeof script === "string" ? script : ""].join(" ");
+  if (BROWSER_TOOL.test(text)) return true;
+  if (!TEST_RUNNER.test(text)) return false;
+  const named = values
+    .slice(1)
+    .filter((value) => !value.startsWith("-") && value.includes("/"))
+    .map((value) => resolvePath(cwd, value));
+  return [cwd, ...named.map((path) => path.slice(0, path.lastIndexOf("/")) || "/")].some((dir) => {
+    const json = manifestOf(dir);
+    return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some(
+      (key) => Object.keys(field(json, key)).some((dep) => BROWSER_DEPENDENCY.test(dep)),
+    );
+  });
+};
+
 /**
  * Why one part of the work must run on this Mac, or null when Linux can run it from `cwd`. What
  * only the shell knows (a variable set elsewhere, `$(…)`, `cd $d`) passes here: `linux-part`
@@ -1622,10 +1706,26 @@ export const remotePgidScript = (id: string) => {
 
 export const INSTALL_FAILED = "Dependency install on Linux failed";
 
+const PLAYWRIGHT_MISSING = /Executable doesn't exist at \S*ms-playwright/;
+const withoutAnsi = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+/** A test runner's row (`✓ name`): it only quotes a failure. */
+const TEST_ROW = /^\s*[✓↓×✗○❯→√]/;
+/** `pattern` is in `line` outside a double-quoted string, which only quotes it. */
+const saysUnquoted = (line: string, pattern: RegExp) => {
+  const at = line.search(pattern);
+  return at >= 0 && (line.slice(0, at).match(/(?<!\\)"/g)?.length ?? 0) % 2 === 0;
+};
+
+/** The command's own output says Playwright's browser is not installed there. */
+export const browserMissing = (output: string) => {
+  const line = withoutAnsi(output);
+  return !TEST_ROW.test(line) && saysUnquoted(line, PLAYWRIGHT_MISSING);
+};
+
 // A package install or lazy download that was unfinished, or raced, when the run started there.
 const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
   [/Electron failed to install correctly/, "electron"],
-  [/Executable doesn't exist at \S*ms-playwright/, "playwright"],
+  [PLAYWRIGHT_MISSING, "playwright"],
   [/Could not find Chrom(?:e|ium) \(ver\./, "puppeteer"],
   [/Cypress (?:binary is missing|executable not found)/i, "cypress"],
   // Matched where the failure is named, so a quote around it shows.
@@ -1635,13 +1735,9 @@ const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
 
 /** The package an output line says is not installed yet there, else null. */
 export const installFailure = (output: string): string | null => {
-  const line = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  // A test runner's row (`✓ name`), or text inside a double-quoted string, only quotes one.
-  if (/^\s*[✓↓×✗○❯→√]/.test(line)) return null;
-  const hit = INSTALL_FAILURES.find(([pattern]) => {
-    const at = line.search(pattern);
-    return at >= 0 && (line.slice(0, at).match(/(?<!\\)"/g)?.length ?? 0) % 2 === 0;
-  });
+  const line = withoutAnsi(output);
+  if (TEST_ROW.test(line)) return null;
+  const hit = INSTALL_FAILURES.find(([pattern]) => saysUnquoted(line, pattern));
   if (hit === undefined) return null;
   return (
     hit[1] ??
