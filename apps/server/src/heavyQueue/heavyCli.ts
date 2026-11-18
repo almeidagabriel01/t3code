@@ -1263,7 +1263,7 @@ const learnedOf = (
     ? null
     : {
         code: "learned",
-        subject: `${found.route.line} (${new Date(found.route.at).toISOString().slice(0, 10)})`,
+        subject: `${found.route.line}, ${new Date(found.route.at).toISOString().slice(0, 10)}`,
       };
 };
 

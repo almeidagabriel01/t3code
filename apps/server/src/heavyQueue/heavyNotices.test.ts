@@ -108,7 +108,7 @@ describe("what a requeue records", () => {
     ["the user's move", { route: "mac" as const }, null],
     [
       "a part that needs this Mac",
-      { route: "mac" as const, routeReason: "Needs git" },
+      { route: "mac" as const, routeReason: "Changes this Mac's checkout: git commit" },
       "needs-mac",
     ],
     ["a drop", { dropped: true, linuxFailedAt: NOW }, "linux-lost"],
@@ -797,8 +797,13 @@ describe("notices for machine changes", () => {
     ],
     [
       "a part that needs this Mac",
-      requeueRecord(linux, { route: "mac", routeReason: "Needs git" }, policies, NOW),
-      "Needs git",
+      requeueRecord(
+        linux,
+        { route: "mac", routeReason: "Changes this Mac's checkout: git commit" },
+        policies,
+        NOW,
+      ),
+      "Changes this Mac's checkout: git commit",
       "unexpected",
     ],
   ])("moved to this Mac after %s", (_name, value, description, category) => {
@@ -1019,7 +1024,14 @@ describe("grouping", () => {
     [
       {
         records: [
-          record(requeueRecord(linux, { route: "mac", routeReason: "Needs git" }, policies, NOW)),
+          record(
+            requeueRecord(
+              linux,
+              { route: "mac", routeReason: "Changes this Mac's checkout: git commit" },
+              policies,
+              NOW,
+            ),
+          ),
         ],
       },
       "3 jobs moved to this Mac",

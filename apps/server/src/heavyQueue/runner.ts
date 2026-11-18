@@ -168,16 +168,17 @@ export interface Verdict {
   readonly mac?: MacReason;
 }
 
-const COMMITS = "Commits run here: the pre-commit edits this Mac's repository";
+const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
+  "mac-tool": "Mac-only tool",
+  "mac-env": "Uses a file only this Mac has",
+  "mac-state": "Changes this Mac's checkout",
+  pinned: "Pinned to this Mac",
+  "serves-port": "Serves a port used here",
+  learned: "Linux couldn't run this before",
+};
 
 export const macReasonText = ({ code, subject }: MacReason) =>
-  code === "mac-env"
-    ? `Uses a file outside the project: ${subject}`
-    : code === "learned"
-      ? `Linux failed this before: ${subject}`
-      : subject === "git commit"
-        ? COMMITS
-        : `Always on this Mac: ${subject}`;
+  `${MAC_REASON_TEXT[code]}: ${subject}`;
 
 const macOnly = (mac: MacReason): Verdict => ({
   eligibility: "mac-only",
@@ -934,7 +935,8 @@ export const intentOf = (
   return mac(
     verdict.reason ??
       (entry.where === "mac"
-        ? ((entry as QueuedEntry).routeReason ?? "Asked for this Mac")
+        ? ((entry as QueuedEntry).routeReason ??
+          macReasonText({ code: "pinned", subject: "--runner mac" }))
         : "Runner set to this Mac"),
   );
 };

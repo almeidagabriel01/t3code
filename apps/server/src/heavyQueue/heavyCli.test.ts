@@ -508,7 +508,7 @@ describe("t3 heavy", () => {
       [
         (_: string, x: string) => `D=${x}; sh -c "cd $D && vp test run"`,
         "vp on mac: test run",
-        "Uses a file outside the project",
+        "Uses a file only this Mac has",
       ],
     ])("keeps %# on this Mac when Linux can't have all its folders", async (line, ran, why) => {
       const { dir, env } = setup(echoArgs);
@@ -565,7 +565,7 @@ describe("t3 heavy", () => {
         `vp on mac: test run /etc/hosts\nvp|lint|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
       );
       expect(run.stderr()).toContain(
-        "Uses a file outside the project: /etc/hosts; running this call on this Mac",
+        "Uses a file only this Mac has: /etc/hosts; running this call on this Mac",
       );
       expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
     });
@@ -770,7 +770,7 @@ describe("t3 heavy", () => {
       expect(await call()).toContain(`Learned: ${key} `);
       expect(linuxRuns()).toBe(2);
       expect(await call()).toMatch(
-        /Linux failed this before: sh: 1: vp: not found \(\d{4}-\d{2}-\d{2}\); running this call on this Mac/,
+        /Linux couldn't run this before: sh: 1: vp: not found, \d{4}-\d{2}-\d{2}; running this call on this Mac/,
       );
       expect(linuxRuns()).toBe(2);
       // One card per failure Linux had; the learned call never reached it.
@@ -1000,7 +1000,7 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(75);
       expect(run.stdout()).toBe("");
       expect(run.stderr()).toContain(
-        "[t3 heavy] Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts.\n",
+        "[t3 heavy] Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts.\n",
       );
     });
 
@@ -1012,7 +1012,7 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(75);
       expect(run.stdout()).toBe("");
       const why =
-        "Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts";
+        "Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}.\n`);
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
       // An agent's own `remoto` still runs that call here.
@@ -1521,8 +1521,8 @@ describe("t3 heavy", () => {
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
       CHECKOUTS.find((root) => cwd === root || cwd.startsWith(`${root}/`)) ?? null;
-    const COMMITS = "Commits run here: the pre-commit edits this Mac's repository";
-    const OUTSIDE = "Uses a file outside the project: ";
+    const COMMITS = "Changes this Mac's checkout: git commit";
+    const OUTSIDE = "Uses a file only this Mac has: ";
     /** What the hook, the queue and a Linux attempt each make of an agent's Bash line. */
     const placed = (line: string) => {
       const hooked = queueBashCall(
@@ -1691,7 +1691,7 @@ describe("t3 heavy", () => {
       // The rest of what keeps work here, each with its reason.
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
-      ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
+      ["xcodebuild -scheme App test", "Mac-only tool: xcodebuild"],
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
       // A line it can't follow is no reason to keep it here.
       ["vp test run <<EOF\nx\nEOF", "linux", "vp test run <<EOF\nx\nEOF"],

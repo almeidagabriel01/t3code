@@ -21,6 +21,7 @@ import {
   linkMachine,
   LINUX_EVICT_SHARE,
   linuxStops,
+  macReasonText,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -1086,7 +1087,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
       "xcodebuild test",
       { where: "linux" },
       { runnerUnavailable: "mac" },
-      "Asked for Linux, but it needs this Mac: Always on this Mac: xcodebuild",
+      "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
     ],
   ] as const)("asked for Linux: %s, Linux offline → %s", (_, label, fields, config, outcome) => {
     const plan = offline(job("a", label, fields as never), config);
@@ -1096,7 +1097,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
   it("asked for Linux and needing this Mac cancels even with Linux up", () => {
     const plan = planRoutes(input([job("a", "xcodebuild test", { where: "linux" })]));
     expect(plan.cancels.a).toBe(
-      "Asked for Linux, but it needs this Mac: Always on this Mac: xcodebuild",
+      "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
     );
     expect(plan.admits).toEqual({});
   });
@@ -1458,22 +1459,24 @@ describe("runtime toggles", () => {
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
         route: "mac",
-        routeReason: "Uses a file outside the project: /x",
+        routeReason: "Uses a file only this Mac has: /x",
       } as Partial<HeavyQueueEntry>),
       job("forced", "vp test run", { forced: true }),
     ];
     const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
       planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
         .reasons;
-    const commits = "Commits run here: the pre-commit edits this Mac's repository";
+    const commits = "Changes this Mac's checkout: git commit";
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
       commit: `${commits} · the one slot is busy`,
-      install: "Always on this Mac: pnpm install · waiting its turn",
+      install: "Changes this Mac's checkout: pnpm install · waiting its turn",
       moved: "Moved to this Mac · waiting its turn",
-      back: "Uses a file outside the project: /x · waiting its turn",
+      back: "Uses a file only this Mac has: /x · waiting its turn",
     });
-    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(/^Always on this Mac/);
+    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(
+      /^Changes this Mac's checkout/,
+    );
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
       install: "Runner off for this project",
     });
@@ -1516,7 +1519,7 @@ describe("patterns and eligibility", () => {
     ["vp run typecheck && vp run lint", "linux", null],
     ["vp run build && vp test run", "linux", null],
     ["pnpm run build", "linux", null],
-    ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
+    ["xcodebuild -scheme App test", "mac-only", "Mac-only tool: xcodebuild"],
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
     ["echo hi", "linux", null],
     ["./scripts/ci.sh", "linux", null],
@@ -1548,7 +1551,7 @@ describe("patterns and eligibility", () => {
         [
           "vp test run /Users/me/other/a.test.ts",
           "mac-only",
-          "Uses a file outside the project: /Users/me/other/a.test.ts",
+          "Uses a file only this Mac has: /Users/me/other/a.test.ts",
         ],
         ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
       ] as ReadonlyArray<
@@ -1576,10 +1579,10 @@ describe("patterns and eligibility", () => {
     ["pnpm start", "serves-port", "pnpm start"],
     ["npx vite", "serves-port", "vite"],
     ["npx next dev", "serves-port", "next dev"],
-  ])("%s stays on this Mac whatever the lists say", (label, code, subject) => {
+  ] as const)("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
-      reason: `Always on this Mac: ${subject}`,
+      reason: macReasonText({ code, subject }),
       mac: { code, subject },
     });
   });
@@ -1598,13 +1601,9 @@ describe("patterns and eligibility", () => {
     ["vp test run", "linux", null],
     ["cd sub && vp run lint", "linux", null],
     ["vp run build", "linux", null],
-    [
-      "git add . && git commit -m x",
-      "mac-only",
-      "Commits run here: the pre-commit edits this Mac's repository",
-    ],
-    ["vp test run /etc/hosts", "mac-only", "Uses a file outside the project: /etc/hosts"],
-    [null, "mac-only", "Uses a file outside the project: /tmp/s/v.sh"],
+    ["git add . && git commit -m x", "mac-only", "Changes this Mac's checkout: git commit"],
+    ["vp test run /etc/hosts", "mac-only", "Uses a file only this Mac has: /etc/hosts"],
+    [null, "mac-only", "Uses a file only this Mac has: /tmp/s/v.sh"],
   ] as const)("a script outside the project running %j is %s", (body, eligibility, reason) => {
     for (const label of ["bash /tmp/s/v.sh", "/tmp/s/v.sh --fast"]) {
       const scripts = { "/tmp/s/v.sh": body };
@@ -1660,22 +1659,37 @@ describe("patterns and eligibility", () => {
     const entry = {
       ...job("s", "bash missing.sh"),
       where: "mac" as const,
-      routeReason: "Couldn't read this script",
+      routeReason: "Uses a file only this Mac has: /x",
     };
     const plan = planRoutes(input([entry], {}, { runnerOn: true }));
-    expect(plan.reasons.s).toContain("Couldn't read this script");
+    expect(plan.reasons.s).toContain("Uses a file only this Mac has: /x");
   });
 
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
     const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
     expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toMatchObject({
       eligibility: "mac-only",
-      reason: "Uses a file outside the project: /etc/hosts",
+      reason: "Uses a file only this Mac has: /etc/hosts",
     });
     expect(eligibilityOf({ label: "Open iPhone", server: true, cwd: "/w" }, at)).toEqual({
       eligibility: "exclusive",
       reason: "Always on this Mac: Open iPhone",
     });
+  });
+
+  it.each([
+    ["mac-tool", "xcodebuild", "Mac-only tool: xcodebuild"],
+    ["mac-env", "~/.t3/userdata", "Uses a file only this Mac has: ~/.t3/userdata"],
+    ["mac-state", "git commit", "Changes this Mac's checkout: git commit"],
+    ["pinned", "--runner mac", "Pinned to this Mac: --runner mac"],
+    ["serves-port", "vite", "Serves a port used here: vite"],
+    [
+      "learned",
+      "sh: 1: vp: not found, 2026-11-18",
+      "Linux couldn't run this before: sh: 1: vp: not found, 2026-11-18",
+    ],
+  ] as const)("a %s reason reads as its code and subject", (code, subject, text) => {
+    expect(macReasonText({ code, subject })).toBe(text);
   });
 
   it("finds Mac-only test files in a failed run's output", () => {

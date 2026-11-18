@@ -1468,13 +1468,13 @@ describe("Runner in the queue file", () => {
       name: "a file outside the project keeps it on this Mac",
       line: "vp test run /etc/hosts",
       over: { runnerWhere: "linux" as const },
-      expected: { runsOn: "mac", reason: "Uses a file outside the project: /etc/hosts" },
+      expected: { runsOn: "mac", reason: "Uses a file only this Mac has: /etc/hosts" },
     },
     {
       name: "Always on this Mac keeps a Linux-bound command here",
       line: "vp test run integration",
       over: { runnerWhere: "linux" as const, runnerMacOnly: ["integration"] },
-      expected: { runsOn: "mac", reason: "Always on this Mac: integration" },
+      expected: { runsOn: "mac", reason: "Pinned to this Mac: integration" },
     },
     {
       name: "an agent's remoto that needs this Mac is canceled, never run",
@@ -1484,8 +1484,7 @@ describe("Runner in the queue file", () => {
         runsOn: "linux",
         canceled: true,
         startsNow: false,
-        reason:
-          "Asked for Linux, but it needs this Mac: Uses a file outside the project: /etc/hosts",
+        reason: "Asked for Linux, but it needs this Mac: Uses a file only this Mac has: /etc/hosts",
       },
     },
     {

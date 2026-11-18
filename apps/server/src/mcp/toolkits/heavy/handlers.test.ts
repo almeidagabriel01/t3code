@@ -204,9 +204,13 @@ describe("heavyStatus", () => {
     },
     {
       name: "Mac-bound under pressure: ask",
-      change: { busyCores: 6, linux, destination: { ...toMac, reason: "Needs git" } },
+      change: {
+        busyCores: 6,
+        linux,
+        destination: { ...toMac, reason: "Changes this Mac's checkout: git commit" },
+      },
       askUser: true,
-      reason: "Needs git",
+      reason: "Changes this Mac's checkout: git commit",
     },
     {
       name: "Mac-bound, queue off: never ask",
