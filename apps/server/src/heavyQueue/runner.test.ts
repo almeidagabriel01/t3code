@@ -2391,10 +2391,14 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // Commands that left the group (setsid, a daemon) still carry the copy's tag.
+    expect(script).toContain("grep -qzs '^REMOTO_RUN=app-1a2b3c4d:'");
+    expect(script).toContain("kill -KILL $(tagged)");
+    expect(remoteStopScript("app.1-2", null, 5)).toContain("'^REMOTO_RUN=app\\.1-2:'");
     // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
     const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
     expect(group).toContain('kill -TERM -- "-$p"');
-    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid/);
+    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid|REMOTO_RUN/);
     expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
     // `kill -- -1` would reach every process there.
     for (const pgid of [0, 1, -3, 1.5]) {

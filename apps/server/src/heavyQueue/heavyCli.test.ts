@@ -1540,7 +1540,7 @@ describe("t3 heavy", () => {
           "vp",
           [
             `touch "${home}/up-$2"`,
-            `while [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; do sleep 0.05; done`,
+            `while [ -d "${home}" ] && { [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; }; do sleep 0.05; done`,
             command(dir),
           ].join("\n"),
         );
@@ -1579,7 +1579,7 @@ describe("t3 heavy", () => {
         // `b` ends only once `a`'s results are back here, after `a` listed what changed there.
         const { dir, run } = parallel(
           (mac) =>
-            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
+            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ -d ${mac} ] && [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
         );
         expect(await run.exited).toBe(0);
         expect(run.stderr()).not.toContain("Could not copy");
@@ -1620,7 +1620,7 @@ describe("t3 heavy", () => {
         const { dir, env } = setup(
           [
             `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2`,
-            `while [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
+            `while [ -d "\${0%/*}" ] && [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
           ].join("\n"),
           { runnerDropped: "agent", runnerUnavailable: "mac" },
         );
