@@ -52,6 +52,7 @@ import {
   RunnerLinuxSlots,
   RunnerMacFirstAfter,
   RunnerRouteMemoryDays,
+  RunnerRouteLearnAfter,
   RunnerBringBackMaxMB,
   RunnerOfflineAfterFailures,
   RunnerPatterns,
@@ -1402,6 +1403,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerLinuxEverything",
   "runnerBringBack",
   "runnerRouteMemoryDays",
+  "runnerRouteLearnAfter",
   "runnerBringBackExclude",
   "runnerBringBackMaxMB",
   "runnerMacTools",
@@ -1478,6 +1480,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerRouteLearnAfter: Schema.optionalKey(RunnerRouteLearnAfter),
   runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
   runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
   runnerMacTools: Schema.optionalKey(RunnerPatterns),
@@ -1793,6 +1796,9 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerRouteMemoryDays: RunnerRouteMemoryDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerRouteLearnAfter: RunnerRouteLearnAfter.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteLearnAfter)),
   ),
   runnerBringBackExclude: RunnerPatterns.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),
@@ -2350,6 +2356,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
   runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerRouteLearnAfter: Schema.optionalKey(RunnerRouteLearnAfter),
   runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
   runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
   runnerMacTools: Schema.optionalKey(RunnerPatterns),

@@ -53,6 +53,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerMacFirstAfter: RUNNER_DEFAULTS.runnerMacFirstAfter,
   runnerBringBack: RUNNER_DEFAULTS.runnerBringBack,
   runnerRouteMemoryDays: RUNNER_DEFAULTS.runnerRouteMemoryDays,
+  runnerRouteLearnAfter: RUNNER_DEFAULTS.runnerRouteLearnAfter,
   runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
   runnerBringBackMaxMB: RUNNER_DEFAULTS.runnerBringBackMaxMB,
   runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,

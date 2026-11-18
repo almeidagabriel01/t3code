@@ -49,6 +49,8 @@ export const RUNNER_DEFAULTS = {
   runnerLinuxEverything: false,
   runnerBringBack: true,
   runnerRouteMemoryDays: 7,
+  /** Environment faults that teach a route: this program in this package then skips Linux. */
+  runnerRouteLearnAfter: 2,
   /** File or folder names (`*` globs) never copied back from Linux. */
   runnerBringBackExclude: [
     "node_modules",
@@ -135,6 +137,7 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerLinuxEverything",
   "runnerBringBack",
   "runnerRouteMemoryDays",
+  "runnerRouteLearnAfter",
   "runnerBringBackExclude",
   "runnerBringBackMaxMB",
   "runnerMacTools",
@@ -205,9 +208,12 @@ export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
 export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
 export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
-/** Days a call Linux twice failed to run for its environment keeps going to this Mac. */
+/** Days a call with a learned route keeps going to this Mac. */
 export const RunnerRouteMemoryDays = Schema.Int.check(
   Schema.makeFilter((value: number) => (value >= 1 && value <= 90) || "Use 1 to 90 days."),
+);
+export const RunnerRouteLearnAfter = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10) || "Use 1 to 10 failures."),
 );
 export const RunnerBringBackMaxMB = Schema.Int.check(
   Schema.makeFilter((value: number) => (value >= 1 && value <= 10_240) || "Use 1 to 10240 MB."),
@@ -233,6 +239,9 @@ export const RunnerProjectConfig = Schema.Struct({
   // Older publishers' blocks lack it.
   runnerRouteMemoryDays: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerRouteLearnAfter: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteLearnAfter)),
   ),
   runnerBringBackExclude: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),

@@ -66,39 +66,39 @@ describe("route memory", () => {
     NodeFS.writeFileSync(NodePath.join(worktree, "apps", "server", "package.json"), "{}");
     const folder = (root: string) => routeFolder(NodePath.join(root, "apps", "server"), root);
     const key = routeKey("vp", folder(one), "no-git");
-    recordRouteFault(dir, key, MISSING, NOW, 7);
-    recordRouteFault(dir, key, MISSING, NOW, 7);
-    expect(learnedRoute(dir, "vp", folder(one), NOW, 7)?.key).toBe(key);
-    expect(learnedRoute(dir, "vp", folder(worktree), NOW, 7)?.key).toBe(key);
-    expect(learnedRoute(dir, "vp", folder(other), NOW, 7)).toBeNull();
+    recordRouteFault(dir, key, MISSING, NOW, 7, 2);
+    recordRouteFault(dir, key, MISSING, NOW, 7, 2);
+    expect(learnedRoute(dir, "vp", folder(one), NOW, 7, 2)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", folder(worktree), NOW, 7, 2)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", folder(other), NOW, 7, 2)).toBeNull();
   });
 
   it("learns on the second fault, for that program and folder only", () => {
     const dir = tempDir();
     const key = routeKey("vp", ".", "missing-program");
-    expect(recordRouteFault(dir, key, MISSING, NOW, 7).learned).toBe(false);
-    expect(learnedRoute(dir, "vp", ".", NOW, 7)).toBeNull();
-    expect(recordRouteFault(dir, key, MISSING, NOW + 1, 7).learned).toBe(true);
-    expect(learnedRoute(dir, "/x/vp", ".", NOW + 2, 7)?.key).toBe(key);
-    expect(learnedRoute(dir, "vp", "apps/web", NOW + 2, 7)).toBeNull();
-    expect(learnedRoute(dir, "pnpm", ".", NOW + 2, 7)).toBeNull();
+    expect(recordRouteFault(dir, key, MISSING, NOW, 7, 2).learned).toBe(false);
+    expect(learnedRoute(dir, "vp", ".", NOW, 7, 2)).toBeNull();
+    expect(recordRouteFault(dir, key, MISSING, NOW + 1, 7, 2).learned).toBe(true);
+    expect(learnedRoute(dir, "/x/vp", ".", NOW + 2, 7, 2)?.key).toBe(key);
+    expect(learnedRoute(dir, "vp", "apps/web", NOW + 2, 7, 2)).toBeNull();
+    expect(learnedRoute(dir, "pnpm", ".", NOW + 2, 7, 2)).toBeNull();
   });
 
   it("expiry and forget bring Linux back", () => {
     const dir = tempDir();
     const key = routeKey("vp", ".", "missing-program");
-    recordRouteFault(dir, key, MISSING, NOW, 7);
-    recordRouteFault(dir, key, MISSING, NOW, 7);
-    expect(learnedRoute(dir, "vp", ".", NOW + 6 * DAY, 7)).not.toBeNull();
-    expect(learnedRoute(dir, "vp", ".", NOW + 7 * DAY, 7)).toBeNull();
+    recordRouteFault(dir, key, MISSING, NOW, 7, 2);
+    recordRouteFault(dir, key, MISSING, NOW, 7, 2);
+    expect(learnedRoute(dir, "vp", ".", NOW + 6 * DAY, 7, 2)).not.toBeNull();
+    expect(learnedRoute(dir, "vp", ".", NOW + 7 * DAY, 7, 2)).toBeNull();
     expect(listRoutes(dir, NOW + 7 * DAY, 7)).toEqual([]);
     // A fault after it expired starts counting again.
-    expect(recordRouteFault(dir, key, MISSING, NOW + 8 * DAY, 7).route.faults).toBe(1);
-    recordRouteFault(dir, key, MISSING, NOW + 8 * DAY, 7);
+    expect(recordRouteFault(dir, key, MISSING, NOW + 8 * DAY, 7, 2).route.faults).toBe(1);
+    recordRouteFault(dir, key, MISSING, NOW + 8 * DAY, 7, 2);
     expect(forgetRoutes(dir, "vp@.#no-git")).toBe(0);
     expect(forgetRoutes(dir, key)).toBe(1);
-    expect(learnedRoute(dir, "vp", ".", NOW + 8 * DAY, 7)).toBeNull();
-    recordRouteFault(dir, routeKey("pnpm", ".", "no-git"), MISSING, NOW, 7);
+    expect(learnedRoute(dir, "vp", ".", NOW + 8 * DAY, 7, 2)).toBeNull();
+    recordRouteFault(dir, routeKey("pnpm", ".", "no-git"), MISSING, NOW, 7, 2);
     expect(forgetRoutes(dir, "all")).toBe(1);
     expect(listRoutes(dir, NOW, 7)).toEqual([]);
   });
@@ -126,7 +126,7 @@ describe("route memory", () => {
             "-e",
             `const { recordRouteFault } = await import(${JSON.stringify(module)});
              for (let i = 0; i < 25; i++)
-               recordRouteFault(${JSON.stringify(dir)}, ${JSON.stringify(key)}, ${JSON.stringify(MISSING)}, ${NOW}, 7);`,
+               recordRouteFault(${JSON.stringify(dir)}, ${JSON.stringify(key)}, ${JSON.stringify(MISSING)}, ${NOW}, 7, 2);`,
           ],
           { stdio: "inherit" },
         );

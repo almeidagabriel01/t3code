@@ -793,6 +793,29 @@ describe("t3 heavy", () => {
       expect(linuxRuns()).toBe(3);
     });
 
+    it("learns on the first fault when the setting says one", async () => {
+      const { dir, env } = setup(
+        [
+          `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+          `printf '${M} phase=running pgid=4\\n' >&2; echo 'sh: 1: vp: not found' >&2`,
+          `printf '${M} exit=127\\n' >&2; exit 127`,
+        ].join("\n"),
+        { runnerRouteLearnAfter: 1 },
+      );
+      const call = () => heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      const first = call();
+      expect(await first.exited).toBe(0);
+      expect(first.stderr()).toContain("[t3 heavy] Learned: ");
+      expect(await call().exited).toBe(0);
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe("1");
+      const listed = NodeChildProcess.execFileSync(
+        process.execPath,
+        [BIN, "heavy", "routes", "--queue-dir", dir],
+        { cwd: dir, encoding: "utf8" },
+      );
+      expect(listed).toContain("on this Mac until");
+    });
+
     // Linux already read the input it was handed, so a rerun here would get none.
     it("does not rerun a call whose input went to Linux", async () => {
       const { dir, env } = setup(

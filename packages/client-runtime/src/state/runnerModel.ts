@@ -91,7 +91,12 @@ export const RUNNER_SETTING_COPY: Record<
   runnerRouteMemoryDays: {
     title: "Remember Linux failures for",
     description:
-      "A command Linux twice failed to run for a tool or file it lacks runs on this Mac for this many days. `t3 heavy routes --forget` clears one sooner.",
+      "A command Linux failed to run for a tool or file it lacks runs on this Mac for this many days. `t3 heavy routes --forget` clears one sooner.",
+  },
+  runnerRouteLearnAfter: {
+    title: "Learn a Linux failure after",
+    description:
+      "How many times Linux must fail a command for a tool or file it lacks before that command runs on this Mac instead.",
   },
   runnerHost: {
     title: "Linux host",

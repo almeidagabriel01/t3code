@@ -12,7 +12,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
 
-import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
+import type { RunnerMachineConfig, RunnerProjectConfig, RunnerWhere } from "@t3tools/contracts";
 
 import {
   HEAVY_JOB_ENV,
@@ -1256,9 +1256,16 @@ const learnedOf = (
   program: string,
   cwd: string,
   root: string,
-  days: number,
+  config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
 ): MacReason | null => {
-  const found = learnedRoute(dir, program, routeFolder(cwd, root), Date.now(), days);
+  const found = learnedRoute(
+    dir,
+    program,
+    routeFolder(cwd, root),
+    Date.now(),
+    config.runnerRouteMemoryDays,
+    config.runnerRouteLearnAfter,
+  );
   return found === null
     ? null
     : {
@@ -1283,12 +1290,18 @@ const runRoutes = (args: ReadonlyArray<string>) => {
     process.stdout.write(`Forgot ${forgetRoutes(dir, forget)} route(s).\n`);
     return;
   }
-  const days = configFor(readDoc(dir), process.cwd()).runnerRouteMemoryDays;
+  const { runnerRouteMemoryDays: days, runnerRouteLearnAfter: learnAfter } = configFor(
+    readDoc(dir),
+    process.cwd(),
+  );
   const routes = listRoutes(dir, Date.now(), days);
   if (routes.length === 0) process.stdout.write("No routes learned.\n");
   for (const [key, route] of routes) {
     const until = new Date(route.at + days * 86_400_000).toISOString().slice(0, 10);
-    const state = route.faults >= 2 ? `on this Mac until ${until}` : "1 fault, not learned yet";
+    const state =
+      route.faults >= learnAfter
+        ? `on this Mac until ${until}`
+        : `${route.faults} of ${learnAfter} faults, not learned yet`;
     process.stdout.write(`${key}\t${state}\t${route.line}\n`);
   }
 };
@@ -1367,7 +1380,7 @@ const runCall = (
       { config, home: NodeOS.homedir(), rootOf: gitRootOf },
       scriptReader(cwd),
     ) !== null ||
-    learnedOf(dir, given, cwd, root, config.runnerRouteMemoryDays) !== null;
+    learnedOf(dir, given, cwd, root, config) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1426,14 +1439,15 @@ const runLinuxPart = async (
   const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
+  const config = configFor(doc, cwd);
   const mac = macReasonOf(
     [program, ...args],
     cwd,
-    { config: configFor(doc, cwd), home, rootOf: gitRootOf },
+    { config, home, rootOf: gitRootOf },
     scriptReader(cwd),
   );
-  const days = configFor(doc, cwd).runnerRouteMemoryDays;
-  const here = mac ?? learnedOf(dir, program, cwd, root, days);
+  const days = config.runnerRouteMemoryDays;
+  const here = mac ?? learnedOf(dir, program, cwd, root, config);
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),
@@ -1482,7 +1496,9 @@ const runLinuxPart = async (
       });
     }
     const key = routeKey(program, routeFolder(cwd, root), lacked.kind);
-    if (recordRouteFault(dir, key, lacked, Date.now(), days).learned) {
+    if (
+      recordRouteFault(dir, key, lacked, Date.now(), days, config.runnerRouteLearnAfter).learned
+    ) {
       jobNote(
         `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
       );

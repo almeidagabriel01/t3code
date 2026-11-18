@@ -1437,6 +1437,8 @@ describe("Runner in the queue file", () => {
     ["runnerBringBackMaxMB", "200"],
     ["runnerRouteMemoryDays", null],
     ["runnerRouteMemoryDays", 91],
+    ["runnerRouteLearnAfter", null],
+    ["runnerRouteLearnAfter", 0],
   ] as const)("a stored %s of %j reads as its default", (key, stored) => {
     const dir = tempDir();
     const bad = { ...config(), [key]: stored } as unknown as RunnerProjectConfig;

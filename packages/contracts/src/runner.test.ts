@@ -36,6 +36,7 @@ describe("Runner settings", () => {
     expect(decodeProjectConfig(saved)).toEqual({
       ...current,
       runnerRouteMemoryDays: 7,
+      runnerRouteLearnAfter: 2,
       runnerBringBackExclude: ["node_modules", ".git", ".turbo", "*.tsbuildinfo"],
       runnerBringBackMaxMB: 200,
       runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,

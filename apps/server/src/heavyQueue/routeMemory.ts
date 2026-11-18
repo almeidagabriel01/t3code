@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
 /**
- * Route memory: a call Linux failed to run for its environment twice goes straight to this Mac
+ * Route memory: a call Linux failed to run for its environment `learnAfter` times goes to this Mac
  * until the entry expires or is forgotten. `routes.json` in the queue dir, written under the
  * queue file's lock; readers take no lock, so a write replaces the file whole.
  */
@@ -10,7 +10,6 @@ import * as NodePath from "node:path";
 import type { EnvironmentFault, EnvironmentFaultKind } from "./heavyNotices.ts";
 import { withLock } from "./queueFile.ts";
 
-const LEARN_AFTER = 2;
 const DAY_MS = 86_400_000;
 
 export interface Route {
@@ -113,21 +112,23 @@ export const learnedRoute = (
   folder: string,
   now: number,
   days: number,
+  learnAfter: number,
 ) => {
   const prefix = routePrefix(program, folder);
   const found = listRoutes(dir, now, days).find(
-    ([key, route]) => key.startsWith(prefix) && route.faults >= LEARN_AFTER,
+    ([key, route]) => key.startsWith(prefix) && route.faults >= learnAfter,
   );
   return found === undefined ? null : { key: found[0], route: found[1] };
 };
 
-/** Counts one environment fault; returns the entry, learned once it reaches two. */
+/** Counts one environment fault; returns the entry, learned once it reaches `learnAfter`. */
 export const recordRouteFault = (
   dir: string,
   key: string,
   fault: EnvironmentFault,
   now: number,
   days: number,
+  learnAfter: number,
 ) =>
   withLock(dir, () => {
     const routes = Object.fromEntries(listRoutes(dir, now, days));
@@ -138,7 +139,7 @@ export const recordRouteFault = (
       line: fault.line,
     };
     writeAll(dir, { ...routes, [key]: route });
-    return { route, learned: route.faults >= LEARN_AFTER };
+    return { route, learned: route.faults >= learnAfter };
   });
 
 /** Removes one entry, or every one with `all`; the count removed. */

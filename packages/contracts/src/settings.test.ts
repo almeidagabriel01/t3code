@@ -756,6 +756,7 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerLinuxEverything",
     "runnerBringBack",
     "runnerRouteMemoryDays",
+    "runnerRouteLearnAfter",
     "runnerBringBackExclude",
     "runnerBringBackMaxMB",
     "runnerMacTools",
@@ -766,12 +767,12 @@ describe("ServerSettings project overrides across versions", () => {
     [
       "an older file reads the new defaults",
       {},
-      ["mac", "agent", 4, false, true, 7, EXCLUDE, 200, TOOLS],
+      ["mac", "agent", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
     ],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, true, 7, EXCLUDE, 200, TOOLS],
+      ["automatic", "ask", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
     ],
     [
       "the new values",
@@ -782,11 +783,12 @@ describe("ServerSettings project overrides across versions", () => {
         runnerLinuxEverything: true,
         runnerBringBack: false,
         runnerRouteMemoryDays: 30,
+        runnerRouteLearnAfter: 1,
         runnerBringBackExclude: ["dist"],
         runnerBringBackMaxMB: 50,
         runnerMacTools: ["xcodebuild", "fastlane"],
       },
-      ["macFirst", "agent", 32, true, false, 30, ["dist"], 50, ["xcodebuild", "fastlane"]],
+      ["macFirst", "agent", 32, true, false, 30, 1, ["dist"], 50, ["xcodebuild", "fastlane"]],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");
@@ -806,6 +808,10 @@ describe("ServerSettings project overrides across versions", () => {
 
   it.each([0, 10_241, 2.5])("Bring-back size cap refuses %s", (value) => {
     expect(() => decodeServerSettingsPatch({ runnerBringBackMaxMB: value })).toThrow();
+  });
+
+  it.each([0, 11, 1.5])("Learn a Linux failure after refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerRouteLearnAfter: value })).toThrow();
   });
 });
 
