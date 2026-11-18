@@ -1425,6 +1425,31 @@ describe("Runner in the queue file", () => {
     expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).runner.global.runnerOverflow).toBe(0);
   });
 
+  it.each([
+    ["runnerMacTools", null],
+    ["runnerMacTools", "xcodebuild"],
+    ["runnerMacTools", [1]],
+    ["runnerBringBackExclude", null],
+    ["runnerBringBackExclude", {}],
+    ["runnerBringBackMaxMB", null],
+    ["runnerBringBackMaxMB", 0],
+    ["runnerBringBackMaxMB", 2.5],
+    ["runnerBringBackMaxMB", "200"],
+    ["runnerRouteMemoryDays", null],
+    ["runnerRouteMemoryDays", 91],
+  ] as const)("a stored %s of %j reads as its default", (key, stored) => {
+    const dir = tempDir();
+    const bad = { ...config(), [key]: stored } as unknown as RunnerProjectConfig;
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "queue.json"),
+      JSON.stringify({ runner: block(bad, [{ root: "/w", config: bad }]) }),
+    );
+    const doc = Queue.readDoc(dir);
+    for (const cwd of ["/w/a", "/elsewhere"]) {
+      expect(Queue.configFor(doc, cwd)[key]).toEqual(DEFAULT_PROJECT_CONFIG[key]);
+    }
+  });
+
   it("resolves a worktree's folder through its main checkout, without git", () => {
     const root = tempDir();
     const main = NodePath.join(root, "main");

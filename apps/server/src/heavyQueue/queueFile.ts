@@ -16,8 +16,12 @@ import {
   type HeavyQueueLimitKey,
   type HeavyQueueRule,
   type HeavyRunner,
+  RunnerBringBackMaxMB,
+  RunnerPatterns,
   type RunnerProjectConfig,
+  RunnerRouteMemoryDays,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_MAX_RUNNING,
@@ -272,11 +276,34 @@ const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey
     : HEAVY_QUEUE_DEFAULTS[key];
 };
 
+/** Keys read whole only when valid: a null or bad one would throw where it is used. */
+const CHECKED_PROJECT_KEYS = {
+  runnerRouteMemoryDays: Schema.is(RunnerRouteMemoryDays),
+  runnerBringBackExclude: Schema.is(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.is(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.is(RunnerPatterns),
+} satisfies Partial<Record<keyof RunnerProjectConfig, (value: unknown) => boolean>>;
+
+/** Each checked key keeps a valid stored value, else its default. */
+const checked = <T extends object>(
+  config: T,
+  defaults: T,
+  checks: Partial<Record<keyof T, (value: unknown) => boolean>>,
+): T => {
+  const out = { ...config };
+  for (const key of Object.keys(checks) as Array<keyof T>) {
+    if (!checks[key]!(out[key])) out[key] = defaults[key];
+  }
+  return out;
+};
+
 /** An older publisher's settings lack newer keys, which read as their defaults. */
-const projectConfigOf = (value: unknown) => ({
-  ...DEFAULT_PROJECT_CONFIG,
-  ...(isObject(value) ? value : {}),
-});
+const projectConfigOf = (value: unknown) =>
+  checked(
+    { ...DEFAULT_PROJECT_CONFIG, ...(isObject(value) ? value : {}) },
+    DEFAULT_PROJECT_CONFIG,
+    CHECKED_PROJECT_KEYS,
+  );
 
 /** A block missing any part reads as no block, so a half-written one never routes anything. */
 const parseRunner = (value: unknown): RunnerBlock | null =>
