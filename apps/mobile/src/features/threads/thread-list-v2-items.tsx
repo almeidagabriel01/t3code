@@ -90,7 +90,7 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { DraftMark } from "./draft-mark";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { clearComposerDraftContent, useHasUnsentDraft } from "../../state/use-composer-drafts";
+import { discardComposerDraft, useHasUnsentDraft } from "../../state/use-composer-drafts";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -921,7 +921,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           newThreadOnBranch: () => onNewThreadOnBranch(thread),
           copyThread: () => copyThreadMenuReference(thread),
           copyThreadId: () => copyTextWithHaptic(thread.id, { target: "thread-id" }),
-          discardDraft: () => clearComposerDraftContent(draftKey),
+          discardDraft: () => discardComposerDraft(draftKey),
           settle: handleSettle,
           unsettle: handleUnsettle,
           unsnooze: handleUnsnooze,

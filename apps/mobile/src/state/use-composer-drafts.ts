@@ -27,6 +27,7 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { draftHasUserContent } from "@t3tools/client-runtime/composerDraft";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
@@ -57,6 +58,8 @@ import {
 import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
+import * as Dialog from "../components/ui/Dialog";
+import { showThreadUndoNotice } from "../features/home/thread-undo-notice";
 import {
   abortComposerDraftOperations,
   abortComposerDraftOperationsWhere,
@@ -1963,6 +1966,39 @@ export function clearComposerDraft(
   if (!options?.deferAttachmentCleanup) {
     scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
+}
+
+/**
+ * Discards a draft behind the Undo notice. Undo puts back the whole draft (text, caret,
+ * attachments, context, settings) unless the user has written a new one since.
+ */
+export function discardComposerDraft(
+  draftKey: string,
+  options?: { readonly clearModelSelection?: boolean; readonly clearWorkspaceSelection?: boolean },
+): void {
+  const snapshot = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+  if (snapshot === undefined) return;
+  const selection = appAtomRegistry.get(composerDraftSelectionAtom(draftKey));
+  const claim = ThreadUndo.begin("discard", draftKey);
+  clearComposerDraftContent(draftKey, { ...options, deferAttachmentCleanup: true });
+  const release = () => scheduleUnusedComposerAttachmentCleanup(snapshot.attachments);
+  showThreadUndoNotice({
+    action: "Discarded",
+    claim,
+    commit: release,
+    undo: async () => {
+      if (composerDraftHasUserContent(getComposerDraftSnapshot(draftKey))) {
+        release();
+        Dialog.alert("Failed to restore draft", "The draft has new content.");
+        return;
+      }
+      markComposerDraftReset(draftKey);
+      updateComposerDrafts((current) =>
+        restoreComposerDraftSnapshotState(current, draftKey, snapshot),
+      );
+      appAtomRegistry.set(composerDraftSelectionAtom(draftKey), selection);
+    },
+  });
 }
 
 export function removeComposerDraftsForEnvironment(

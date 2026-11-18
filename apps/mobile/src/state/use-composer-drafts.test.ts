@@ -143,6 +143,7 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
   removePersistedComposerAttachmentFile: composerAttachmentCleanupMocks.remove,
 }));
 
+vi.mock("../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
@@ -171,6 +172,8 @@ import {
   collectComposerContextReferences,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
+import * as Dialog from "../components/ui/Dialog";
+import { readThreadUndoNotice } from "../features/home/thread-undo-notice";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
@@ -182,6 +185,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  discardComposerDraft,
   composerDraftHasUserContent,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
@@ -2291,7 +2295,7 @@ describe("mobile composer drafts", () => {
     ["a thread", "environment-1:thread-1"],
     ["an assistant's conversation", "environment-1:assistant:a1:1"],
     ["a group, a reply to a request included", "group"],
-  ])("tells when %s holds an unsent draft, until it is sent or emptied", (_, rawKey) => {
+  ])("tells when %s holds an unsent draft, until it is sent or emptied", async (_, rawKey) => {
     const key =
       rawKey === "group"
         ? assistantGroupDraftKey(EnvironmentId.make("environment-1"), AssistantTeamId.make("t1"))
@@ -2330,6 +2334,28 @@ describe("mobile composer drafts", () => {
       },
     });
     expect(has()).toBe(true);
+    // Discard, then Undo, puts back the same draft: text, caret, attachments and settings.
+    const kept = {
+      ...getComposerDraftSnapshot(key),
+      text: "keep this",
+      runtimeMode: "full-access" as const,
+    };
+    appAtomRegistry.set(composerDraftsAtom, { [key]: kept });
+    rememberComposerDraftSelection(key, "keep this", { start: 2, end: 4 });
+    discardComposerDraft(key);
+    expect(has()).toBe(false);
+    await readThreadUndoNotice()?.undo();
+    expect(getComposerDraftSnapshot(key)).toEqual(kept);
+    expect(captureComposerDraftInsertion(key)).toEqual({ text: "keep this", start: 2, end: 4 });
+    // A draft written after the discard wins over the Undo.
+    discardComposerDraft(key);
+    setComposerDraftText(key, "newer");
+    await readThreadUndoNotice()?.undo();
+    expect(getComposerDraftSnapshot(key).text).toBe("newer");
+    expect(Dialog.alert).toHaveBeenLastCalledWith(
+      "Failed to restore draft",
+      "The draft has new content.",
+    );
     appAtomRegistry.set(composerDraftsAtom, {});
   });
 

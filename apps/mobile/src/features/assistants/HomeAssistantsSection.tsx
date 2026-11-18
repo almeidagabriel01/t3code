@@ -36,7 +36,7 @@ import { DraftMark, DRAFT_MARK_LABEL } from "../threads/draft-mark";
 import { DISCARD_DRAFT_ACTION } from "../threads/thread-menu";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { assistantGroupDraftKey } from "../../state/assistant-group-draft-key";
-import { clearComposerDraftContent, useHasUnsentDraft } from "../../state/use-composer-drafts";
+import { discardComposerDraft, useHasUnsentDraft } from "../../state/use-composer-drafts";
 import type { ThreadListV2ThreadListItem } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -388,7 +388,7 @@ const AssistantRow = memo(function AssistantRow(props: {
     },
   ];
   const onAction = (id: string) => {
-    if (id === DISCARD_DRAFT_ACTION.id && draftKey !== null) clearComposerDraftContent(draftKey);
+    if (id === DISCARD_DRAFT_ACTION.id && draftKey !== null) discardComposerDraft(draftKey);
     else if (id === "info") openInfo.assistant(environmentId, assistant.id);
     else if (id === "reset") flows.reset(assistant, { openAfter: true });
     else if (id === "work") openWork(environmentId, assistant.id);
@@ -705,7 +705,7 @@ const FolderRow = memo(function FolderRow(props: {
           },
         ]}
         onAction={(id) => {
-          if (id === DISCARD_DRAFT_ACTION.id) clearComposerDraftContent(draftKey);
+          if (id === DISCARD_DRAFT_ACTION.id) discardComposerDraft(draftKey);
           else if (id === "chat") openTeam.chat(environmentId, team.id);
           else if (id === "info") openInfo.group(environmentId, team.id);
           else if (id === "read") void flows.markRead(team);

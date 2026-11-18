@@ -66,7 +66,7 @@ const { mocks } = vi.hoisted(() => ({
     }>,
     dismissTask: vi.fn(),
     drafts: new Set<string>(),
-    clearDraft: vi.fn(),
+    discardDraft: vi.fn(),
     pin: vi.fn(),
     unpin: vi.fn(),
     liveWork: {
@@ -324,7 +324,7 @@ vi.mock("../../state/assistants", async () => {
 vi.mock("../../state/decisions", () => ({ useDecisionEntries: () => ({ open: [] }) }));
 vi.mock("../../state/use-composer-drafts", () => ({
   useHasUnsentDraft: (key: string | null) => key !== null && mocks.drafts.has(key),
-  clearComposerDraftContent: mocks.clearDraft,
+  discardComposerDraft: mocks.discardDraft,
 }));
 vi.mock("../../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -578,7 +578,7 @@ beforeEach(() => {
     mocks.toggleGroup,
     mocks.pin,
     mocks.unpin,
-    mocks.clearDraft,
+    mocks.discardDraft,
     mocks.info.assistant,
     mocks.info.group,
   ]) {
@@ -828,7 +828,7 @@ describe("HomeAssistantsSection", () => {
     // The row's long-press menu and its ⋯ button for Bot0, the ⋯ button for the group.
     expect(discards).toHaveLength(3);
     await act(async () => discards.forEach((button) => (button as HTMLButtonElement).click()));
-    expect(mocks.clearDraft.mock.calls).toEqual([
+    expect(mocks.discardDraft.mock.calls).toEqual([
       ["hub:t0"],
       ["hub:t0"],
       ["hub:assistant-group:g1"],
