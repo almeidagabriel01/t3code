@@ -12,22 +12,25 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
 
-import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
+import type { RunnerMachineConfig, RunnerProjectConfig, RunnerWhere } from "@t3tools/contracts";
 
 import {
   HEAVY_JOB_ENV,
   heavyRoute,
+  heavySegment,
   isQueued,
   lineParts,
   readLine,
-  rewriteLine,
   scriptOf,
+  SHIMMED,
   shellQuote,
-  UNREADABLE_SCRIPT,
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import {
+  appendTail,
+  environmentFaultOf,
+  type EnvironmentFault,
   errorLineOf,
   faultOf,
   type FaultSeen,
@@ -38,6 +41,7 @@ import {
 } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
+  addSyncBack,
   answerBashCall,
   claimHealthCheck,
   configFor,
@@ -45,12 +49,12 @@ import {
   enqueue,
   finish,
   gitRootOf,
-  syncedInCopy,
   modeFor,
   readDoc,
   recordFault,
   recordHealth,
   recordSampleIfStale,
+  remove,
   requeue,
   scriptReader,
   setProgress,
@@ -59,16 +63,14 @@ import {
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
+  askedLinux,
+  eligibilityOf,
   INSTALL_FAILED,
   linkAttempts,
-  bodyVerdict,
   linkMachine,
+  macReasonOf,
+  macReasonText,
   movedPart,
-  NEEDS_GIT,
-  needsGit,
-  programTie,
-  outsideTie,
-  shellTextOf,
   startFolder,
 } from "./runner.ts";
 import {
@@ -77,11 +79,24 @@ import {
   checkLinux,
   confirmed,
   drainLostRuns,
+  fileOffset,
+  forwardedInput,
   resolveRemoto,
   startLinuxRun,
   stopRemote,
 } from "./runnerExec.ts";
-import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
+import { listensHere } from "./localPorts.ts";
+import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
+import {
+  forgetRoutes,
+  learnedRoute,
+  learnedRoutes,
+  recordRouteFault,
+  resetRoutes,
+  routeFolder,
+  routeKey,
+} from "./routeMemory.ts";
+import { ensureShims, realProgram, withoutShims } from "./shims.ts";
 
 /**
  * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
@@ -244,7 +259,13 @@ export const heavyLaunch = (
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
   const mode = modeAt(job.cwd);
-  if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
+  // `--runner linux` queues even then: the queue cancels it with why instead of a Mac run.
+  if (
+    (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) &&
+    command.where !== "linux"
+  ) {
+    return { kind: "direct" };
+  }
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
   if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
     return { kind: "direct" };
@@ -278,14 +299,21 @@ const isShellLine = (program: string, args: ReadonlyArray<string>) =>
 const jobLine = (program: string, args: ReadonlyArray<string>) =>
   isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
 
+const BIN_PATH = /(^|\/)node_modules\/\.bin\/([^/]+)$/;
+
 /**
- * The shell and line a Linux job runs here: each work part goes through `executor`, the rest
- * stays in this shell.
+ * A project bin a line names by path (`./node_modules/.bin/vitest`) goes through `call` as is,
+ * by `env`: after `nice` or `timeout`, a leading `ELECTRON_RUN_AS_NODE=1` would be the program.
  */
-export const linuxLine = (program: string, args: ReadonlyArray<string>, executor: string) =>
-  isShellLine(program, args)
-    ? { shell: program, args: ["-c", rewriteLine(args[1]!, executor), ...args.slice(2)] }
-    : { shell: "/bin/sh", args: ["-c", rewriteLine(jobLine(program, args), executor)] };
+export const callingBins = (line: string, call: string) =>
+  readLine(line)
+    .parts.flatMap((part) => {
+      const word = part.command.words[part.programAt];
+      const name = word === undefined ? undefined : BIN_PATH.exec(word.value)?.[2];
+      return name !== undefined && SHIMMED.has(name) ? [word!.start] : [];
+    })
+    .toSorted((a, b) => b - a)
+    .reduce((text, at) => `${text.slice(0, at)}/usr/bin/env ${call} -- ${text.slice(at)}`, line);
 
 /**
  * Tools that size themselves by cores and the flag that caps them, placed right after the program
@@ -571,7 +599,7 @@ const makeHostReader = () => {
 export const selfPrefix = (
   dir: string,
   environment: NodeJS.ProcessEnv = process.env,
-  subcommand?: "linux-part",
+  subcommand?: "linux-part" | "call",
 ) =>
   [
     ...(environment.ELECTRON_RUN_AS_NODE === "1" ? ["ELECTRON_RUN_AS_NODE=1"] : []),
@@ -601,19 +629,21 @@ const runHook = async (dir: string) => {
   }
 };
 
-const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) => {
-  const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
-  child.on("error", (error) => {
-    process.stderr.write(
-      `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
-    );
-    process.exit(127);
+/** Runs a program with this process's stdio; its exit code, 127 when it can't start. */
+const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
+  new Promise<number>((resolve) => {
+    const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
+    child.on("error", (error) => {
+      process.stderr.write(
+        `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
+      );
+      resolve(127);
+    });
+    child.on("exit", (code, signal) => resolve(exitCodeOf(code, signal)));
   });
-  child.on("exit", (code, signal) => {
-    process.exit(code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0));
-  });
-  return child;
-};
+
+const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
+  void spawnCode(program, args, env).then((code) => process.exit(code));
 
 const exitCodeOf = (code: number | null, signal: NodeJS.Signals | null) =>
   code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0);
@@ -634,16 +664,20 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
     return;
   }
-  if (argv[0] === "linux-part") {
+  if (argv[0] === "routes") {
+    runRoutes(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "linux-part" || argv[0] === "call") {
     const part = parseHeavyArgs(argv.slice(1));
-    await runLinuxPart(part.dir, part.program, part.args);
+    runCall(part.dir, part.program, part.args, argv[0] === "call");
     return;
   }
   const { dir, name, priority, where, now, requestId, routeReason, program, args } =
     parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
+      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n",
     );
     process.exit(2);
   }
@@ -689,6 +723,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
+    ...(process.env[CALL_ENV] === "1"
+      ? { call: true }
+      : where === "linux"
+        ? { linuxOnly: true }
+        : {}),
   };
   // Another process owns this request's job: wait for it to end and answer with its code. An
   // owner that died without one leaves no result, so this process runs the job itself.
@@ -697,7 +736,9 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
   }
   // The code a failure notice reports; every exit path ends here.
-  process.on("exit", (code) =>
+  process.on("exit", (code) => {
+    NodeFS.rmSync(envFile(dir, id), { force: true });
+    for (const file of partRemoteFiles(dir, id)) NodeFS.rmSync(file, { force: true });
     finish(
       dir,
       id,
@@ -705,8 +746,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       Date.now(),
       startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
       commandFailure,
-    ),
-  );
+    );
+  });
 
   /** What a signal does right now: exit while waiting, or stop the running attempt. */
   let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
@@ -715,8 +756,20 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 
   const readHost = makeHostReader();
   const environment = process.env;
+  const queuedCall = environment[CALL_ENV] === "1";
   while (true) {
-    const start = await waitForStart(dir, id, readHost, environment);
+    const start = await waitForStart(
+      dir,
+      id,
+      readHost,
+      environment,
+      queuedCall && launch.where === "linux",
+    );
+    if (start === null) {
+      // Its parent holds this Mac: run it under that slot rather than wait for a second one.
+      runDirect(launch.program, launch.args, { ...environment, [HEAVY_JOB_ENV]: "1" });
+      return;
+    }
     const doc = readDoc(dir);
     const self = doc.entries.find((entry) => entry.id === id);
     const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
@@ -735,6 +788,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
               workers: start.workers,
               lane: self?.priority,
               environment,
+              shims: !queuedCall && self !== undefined && reasonedMac(doc, self),
             },
             (handler) => (onSignal = handler),
           );
@@ -743,11 +797,26 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
 };
 
+/** On this Mac for a closed-list reason: its other heavy calls may still go to Linux (D3). */
+const reasonedMac = (doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
+  const config = configFor(doc, entry.cwd);
+  if (!config.runnerEnabled) return false;
+  const { mac } = eligibilityOf(entry, {
+    config,
+    home: NodeOS.homedir(),
+    rootOf: gitRootOf,
+    listening: listensHere,
+  });
+  return mac !== undefined && mac.code !== "pinned";
+};
+
+/** Null: `leavesForMac` and the plan sends it to this Mac, so it left the queue. */
 const waitForStart = async (
   dir: string,
   id: string,
   readHost: ReturnType<typeof makeHostReader>,
   environment: NodeJS.ProcessEnv,
+  leavesForMac: boolean,
 ) => {
   let lastSampleTry = 0;
   let lastShown = "";
@@ -769,6 +838,13 @@ const waitForStart = async (
     if (start.status === "started") {
       if (start.reason !== undefined) process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
       return start;
+    }
+    if (leavesForMac && start.runner === "mac") {
+      process.stderr.write(
+        `[t3 heavy] ${start.reason ?? "Sent to this Mac"}; running under the job that called it.\n`,
+      );
+      remove(dir, id);
+      return null;
     }
     const shown = `${start.position}|${start.running?.id ?? ""}|${start.runner ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
@@ -853,19 +929,24 @@ const runMacAttempt = async (
     readonly workers: number | null;
     readonly lane: "low" | "normal" | "high" | undefined;
     readonly environment: NodeJS.ProcessEnv;
+    readonly shims: boolean;
   },
   setSignal: SignalHook,
 ): Promise<Attempt> => {
   // Ungated (queue off) jobs keep their own worker counts and CPU priority.
-  const run =
+  const counted =
     job.workers === null
       ? { args: job.args, env: { ...job.environment, [HEAVY_JOB_ENV]: "1" } }
       : withWorkers(job.program, job.args, job.workers, job.environment, {
           cwd: process.cwd(),
           read: readText,
         });
+  const run = job.shims
+    ? withShims(job.dir, job.id, MAC_JOB_ENV, job.program, counted.args, counted.env)
+    : counted;
   const launch = launchOf(
-    job.program,
+    // The job's own program is never its shim: its calls inside are.
+    job.shims ? realProgram(job.program, job.environment.PATH) : job.program,
     run.args,
     job.workers !== null && AGENT_JOB_CPU === "background" && job.lane === "low",
     // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
@@ -873,17 +954,26 @@ const runMacAttempt = async (
   );
   // Queue off leaves CPU priority alone, so there is nothing for a row to show or change.
   if (job.workers !== null && launch.qos !== null) setQos(job.dir, job.id, launch.qos);
+  // Its own group, so Stop and a move end its calls too, and their queued jobs with them.
   const child = NodeChildProcess.spawn(launch.program, launch.args, {
     stdio: "inherit",
+    detached: true,
     env: run.env,
   });
-  setSignal((signal) => child.kill(signal));
+  const signalGroup = (signal: NodeJS.Signals) => {
+    try {
+      if (child.pid !== undefined) process.kill(-child.pid, signal);
+    } catch {
+      // Already gone.
+    }
+  };
+  setSignal(signalGroup);
   let moved: "mac" | "linux" | undefined;
   const watch = setInterval(() => {
     const requeue = requeueOf(job.dir, job.id);
     if (requeue === undefined || moved !== undefined) return;
     moved = requeue;
-    child.kill("SIGTERM");
+    signalGroup("SIGTERM");
   }, POLL_MS);
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
@@ -908,20 +998,91 @@ const PHASE_LABEL = { syncing: "syncing", installing: "installing deps", running
 const runnerName = (runner: "mac" | "linux") => (runner === "linux" ? "Linux" : "this Mac");
 
 const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
+/** Set when the job's line reads its own stdin (`while read`): its calls then leave a pipe here. */
+const LINE_READS_ENV = "T3CODE_HEAVY_LINE_READS";
+const READS_STDIN = /(?:^|[\s;&|({!])(?:read|mapfile|readarray)(?=[\s;&|)]|$)/;
+const MAC_JOB_ENV = "T3CODE_HEAVY_MAC_JOB";
+const GROUP_ENV = "T3CODE_HEAVY_GROUP";
+/** On a job a heavy call queued: its program never goes through the shims again. */
+const CALL_ENV = "T3CODE_HEAVY_CALL";
+/** What the queuing job's line set for that call, by name: Linux gets them as `env` words. */
+const CALL_KEYS_ENV = "T3CODE_HEAVY_CALL_KEYS";
+
+/** The environment a job gave its line, as hashes: a call sends only what the line set. */
+const envFile = (dir: string, id: string) => NodePath.join(dir, `env-${id}.json`);
+const hashOf = (value: string) => NodeCrypto.createHash("sha1").update(value).digest("hex");
+/** Set by shells, git hooks, package runners and T3: never something the line asked a call for. */
+const OWN_ENV =
+  /^(PATH|PWD|OLDPWD|SHLVL|_|ELECTRON_RUN_AS_NODE|INIT_CWD|GIT_\w+|npm_\w+|PNPM_\w+|T3CODE_HEAVY_\w+)$/;
+
+/**
+ * The line as written with the shims first on PATH, and the project bins it names by path sent
+ * through `call`; `idEnv` tells each call which job it is in.
+ */
+const withShims = (
+  dir: string,
+  id: string,
+  idEnv: string,
+  program: string,
+  args: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+) => {
+  const call = selfPrefix(dir, environment, "call");
+  const env = {
+    ...environment,
+    PATH: `${ensureShims(dir, call)}:${environment.PATH ?? ""}`,
+    [idEnv]: id,
+    ...(isShellLine(program, args) && READS_STDIN.test(args[1]!) ? { [LINE_READS_ENV]: "1" } : {}),
+  };
+  NodeFS.writeFileSync(
+    envFile(dir, id),
+    JSON.stringify(
+      Object.fromEntries(Object.entries(env).map(([key, value]) => [key, hashOf(value ?? "")])),
+    ),
+    { mode: 0o600 },
+  );
+  return {
+    args: isShellLine(program, args)
+      ? [args[0]!, callingBins(args[1]!, call), ...args.slice(2)]
+      : args,
+    env,
+  };
+};
+
+/** The variables the line set for this call since its job began (`A=1 vp test`). */
+const lineKeys = (dir: string, id: string) => {
+  let base: Record<string, string>;
+  try {
+    base = JSON.parse(NodeFS.readFileSync(envFile(dir, id), "utf8")) as Record<string, string>;
+  } catch {
+    return [];
+  }
+  return Object.entries(process.env).flatMap(([key, value]) =>
+    value === undefined || OWN_ENV.test(key) || base[key] === hashOf(value) ? [] : [key],
+  );
+};
+
+/**
+ * `NAME=value` pairs for what the line set for this call, here or in the job that queued it. They
+ * travel on the run's stdin (`envHeader`), never in argv.
+ */
+const lineEnv = (dir: string, id: string) =>
+  [...new Set([...lineKeys(dir, id), ...(process.env[CALL_KEYS_ENV]?.split(" ") ?? [])])]
+    .filter((key) => key !== "")
+    .map((key) => `${key}=${process.env[key] ?? ""}`);
 
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
 
-/** Linux never ran a part or dropped it, couldn't run it, or it turned out to need this Mac. */
+/** Linux never ran a part or dropped it, or the part can't run anywhere as it is. */
 type PartOutcome =
   | RemoteOutcome
-  | { readonly kind: "mac"; readonly reason: string }
-  /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
-  | { readonly kind: "environment"; readonly reason: string; readonly code?: number }
   /** The worktree's own files broke the install there; `reason` is the fix. */
   | { readonly kind: "worktree"; readonly reason: string }
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
-  | { readonly kind: "command"; readonly reason: string };
+  | { readonly kind: "command"; readonly reason: string }
+  /** Its job asked for Linux, and Linux can't run this part: the job ends with `code`. */
+  | { readonly kind: "refused"; readonly reason: string; readonly code: number };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -939,10 +1100,24 @@ const remoteOf = (dir: string, id: string) => {
   return remote === undefined ? null : { id: remote.id, pgid: remote.pgid ?? null };
 };
 
+/** Each work part's own run there, until it ends: parallel parts of one job run at once. */
+const partRemotePath = (dir: string, id: string) =>
+  NodePath.join(dir, `remote-${id}-${process.pid}.json`);
+
+const partRemoteFiles = (dir: string, id: string) => {
+  try {
+    return NodeFS.readdirSync(dir)
+      .filter((name) => name.startsWith(`remote-${id}-`) && name.endsWith(".json"))
+      .map((name) => NodePath.join(dir, name));
+  } catch {
+    return [];
+  }
+};
+
 /**
- * A Linux job runs its line in a shell here, in a process group of its own: each work part goes
- * to Linux through `t3 heavy linux-part` while redirects, pipes and the rest stay here. A part
- * Linux never ran or dropped ends the group, so the line never carries on past it.
+ * A Linux job runs its line in a shell here, in a process group of its own: each heavy call goes
+ * to Linux through its shim while redirects, pipes and the rest stay here. A call Linux never ran
+ * or dropped ends the group, so the line never carries on past it.
  */
 const runLinuxAttempt = async (
   job: {
@@ -965,17 +1140,37 @@ const runLinuxAttempt = async (
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
-  const { shell, args } = linuxLine(
-    job.program,
-    job.args,
-    selfPrefix(dir, environment, "linux-part"),
+  // A shell line runs here as written, its heavy calls through the shims. A program alone, or a
+  // line read in full with no heavy call to pick out, is itself the work.
+  const read = isShellLine(job.program, job.args)
+    ? readLine(job.args[1]!, scriptReader(process.cwd()))
+    : null;
+  const line = read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy));
+  const shell = line ? job.program : "/bin/sh";
+  const run = withShims(
+    dir,
+    id,
+    LINUX_JOB_ENV,
+    shell,
+    line
+      ? job.args
+      : [
+          "-c",
+          `${selfPrefix(dir, environment, "linux-part")} -- ${[job.program, ...job.args].map(shellQuote).join(" ")}`,
+        ],
+    { ...environment, [HEAVY_JOB_ENV]: "1", T3CODE_REMOTO: remoto },
   );
-  const child = NodeChildProcess.spawn(shell, args, {
-    // fd 3 is the job's own stderr, which the line's redirects never touch.
-    stdio: ["inherit", "inherit", "inherit", 2],
-    detached: true,
-    env: { ...environment, [HEAVY_JOB_ENV]: "1", [LINUX_JOB_ENV]: id, T3CODE_REMOTO: remoto },
-  });
+  // Its own group, named for calls inside `timeout`, which starts a group of its own.
+  const child = NodeChildProcess.spawn(
+    "/bin/sh",
+    ["-c", `export ${GROUP_ENV}=$$; exec "$@"`, "sh", shell, ...run.args],
+    {
+      // fd 3 is the job's own stderr, which the line's redirects never touch.
+      stdio: ["inherit", "inherit", "inherit", 2],
+      detached: true,
+      env: run.env,
+    },
+  );
   const signalGroup = (signal: NodeJS.Signals) => {
     try {
       if (child.pid !== undefined) process.kill(-child.pid, signal);
@@ -990,11 +1185,31 @@ const runLinuxAttempt = async (
     });
     child.on("exit", (code, signal) => resolve({ code, signal }));
   });
+  /** Stops every part's run still going there; true once Linux confirms each one ended. */
   const confirmGone = async () => {
-    const remote = remoteOf(dir, id);
-    return remote === null
-      ? true
-      : confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+    const stop = async (remote: { readonly id: string; readonly pgid: number | null }) =>
+      confirmed(await stopRemote(machine, environment, remote.id, remote.pgid));
+    const files = partRemoteFiles(dir, id);
+    // No call's own record is left: the entry still names the last run there.
+    if (files.length === 0) {
+      const remote = remoteOf(dir, id);
+      return remote === null || (await stop(remote));
+    }
+    const stops = await Promise.all(
+      files.map(async (file) => {
+        let remote: { readonly id: string; readonly pgid: number | null };
+        try {
+          remote = JSON.parse(NodeFS.readFileSync(file, "utf8")) as typeof remote;
+        } catch (error) {
+          // Removed since it was listed, its run ended; unreadable, nothing confirms it did.
+          return (error as NodeJS.ErrnoException).code === "ENOENT";
+        }
+        const gone = await stop(remote);
+        if (gone) NodeFS.rmSync(file, { force: true });
+        return gone;
+      }),
+    );
+    return stops.every(Boolean);
   };
   let stopping = false;
   setSignal((signal) => {
@@ -1062,29 +1277,20 @@ const runLinuxAttempt = async (
   if (outcome === null || outcome.kind === "finished") {
     return { kind: "exit", code: exitCodeOf(exit.code, exit.signal) };
   }
-  if (outcome.kind === "mac") {
-    process.stderr.write(`[t3 heavy] ${outcome.reason}; running the line on this Mac.\n`);
-    requeue(dir, id, { route: "mac", routeReason: outcome.reason });
-    return { kind: "requeued" };
-  }
   if (outcome.kind === "command") {
     commandFailure = outcome.reason;
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
     return { kind: "exit", code: 127 };
   }
+  if (outcome.kind === "refused") {
+    commandFailure = outcome.reason;
+    process.stderr.write(`[t3 heavy] ${outcome.reason}.\n`);
+    return { kind: "exit", code: outcome.code };
+  }
   if (outcome.kind === "worktree") {
     process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
     setProgress(dir, id, { worktree: outcome.reason });
     return { kind: "exit", code: 1 };
-  }
-  if (outcome.kind === "environment") {
-    // It ended there with its exit code, so nothing is left to confirm.
-    process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
-    if (configFor(readDoc(dir), process.cwd()).runnerDropped === "agent") {
-      return { kind: "exit", code: outcome.code ?? LINUX_UNAVAILABLE_EXIT };
-    }
-    requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
-    return { kind: "requeued" };
   }
   if (outcome.kind === "unavailable") {
     process.stderr.write("[t3 heavy] Linux is unavailable; it never started there.\n");
@@ -1112,10 +1318,161 @@ const runLinuxAttempt = async (
   return { kind: "requeued" };
 };
 
+/** The route memory's reason to keep this program's calls in this package here, if learned. */
+const learnedOf = (
+  dir: string,
+  command: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
+): MacReason | null => {
+  const found = learnedRoute(
+    dir,
+    command,
+    routeFolder(cwd, root),
+    Date.now(),
+    config.runnerRouteMemoryDays,
+    config.runnerRouteLearnAfter,
+  );
+  return found === null
+    ? null
+    : {
+        code: "learned",
+        subject: `${found.route.line}, ${new Date(found.route.at).toISOString().slice(0, 10)}`,
+      };
+};
+
 /**
- * `t3 heavy linux-part -- <program> [args...]`: one work part of a Linux job, run there through
- * `remoto` from this folder, with its output passed through and its progress on the job's entry.
+ * Why a call (program first) runs on this Mac: a reason of its own, or a learned route. The
+ * variables its line set (`NAME=value`) are judged like its arguments.
  */
+const callMacReason = (
+  dir: string,
+  values: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  config: RunnerProjectConfig,
+  env: ReadonlyArray<string>,
+) =>
+  macReasonOf(
+    env.length === 0 ? values : ["env", ...env, ...values],
+    cwd,
+    { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
+    scriptReader(cwd),
+  ) ?? learnedOf(dir, values, cwd, root, config);
+
+/** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
+const runRoutes = (args: ReadonlyArray<string>) => {
+  const valueOf = (flag: string) => {
+    const at = args.indexOf(flag);
+    return at === -1 ? undefined : (args[at + 1] ?? "");
+  };
+  const dir = valueOf("--queue-dir") || defaultQueueDir();
+  const forget = valueOf("--forget");
+  if (forget === "") {
+    process.stderr.write("Usage: t3 heavy routes [--forget <key|all>]\n");
+    process.exit(2);
+  }
+  if (forget !== undefined) {
+    process.stdout.write(`Forgot ${forgetRoutes(dir, forget)} route(s).\n`);
+    return;
+  }
+  const routes = learnedRoutes(dir, process.cwd(), Date.now());
+  if (routes.length === 0) process.stdout.write("No routes learned.\n");
+  for (const route of routes) {
+    const state = route.learned
+      ? `on this Mac until ${route.expiresAt.slice(0, 10)}`
+      : `${route.faults} of ${route.learnAfter} faults, not learned yet`;
+    process.stdout.write(`${route.key}\t${state}\t${route.line}\n`);
+  }
+};
+
+/** Runs a call here as the program it names, past the shims; `strip` keeps its own calls here. */
+const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) => {
+  const real = realProgram(program, process.env.PATH);
+  // A bare name left unresolved would find its own shim on PATH: shim, call, shim, without end.
+  if (!real.includes("/")) {
+    process.stderr.write(`[t3 heavy] ${program}: not found on this Mac\n`);
+    process.exit(127);
+  }
+  runDirect(
+    real,
+    args,
+    strip ? { ...process.env, PATH: withoutShims(process.env.PATH) } : process.env,
+  );
+};
+
+/**
+ * One call as a job of its own on `where`, from this folder; the job it is in keeps its slot.
+ * Resolves with its exit code; the caller exits with it.
+ */
+const spawnCall = (
+  dir: string,
+  where: "mac" | "linux",
+  values: ReadonlyArray<string>,
+  { reason, keys = [] }: { readonly reason?: string; readonly keys?: ReadonlyArray<string> },
+) => {
+  const env = {
+    ...process.env,
+    PATH: withoutShims(process.env.PATH),
+    [CALL_ENV]: "1",
+    [CALL_KEYS_ENV]: keys.join(" "),
+    [HEAVY_JOB_ENV]: undefined,
+    [LINUX_JOB_ENV]: undefined,
+    [MAC_JOB_ENV]: undefined,
+  };
+  if (reason !== undefined) {
+    process.stderr.write(`[t3 heavy] ${reason}; running this call on this Mac.\n`);
+  }
+  const options = `--runner ${where}${reason === undefined ? "" : ` --route-reason ${shellQuote(reason)}`}`;
+  return spawnCode(
+    "/bin/sh",
+    ["-c", `${selfPrefix(dir, env)} ${options} -- ${values.map(shellQuote).join(" ")}`],
+    env,
+  );
+};
+
+const queueCall = (...args: Parameters<typeof spawnCall>) =>
+  void spawnCall(...args).then((code) => process.exit(code));
+
+/**
+ * `t3 heavy call -- <program> [args...]`: a heavy program called inside a queue job, through its
+ * shim, judged expanded. A light call runs here. In a Linux job it runs on Linux unless it needs
+ * this Mac, then as a Mac job of its own; in a Mac job it runs here when it needs this Mac, else
+ * as a Linux job of its own. `linux-part` is a Linux job's own program: no light check.
+ */
+const runCall = (
+  dir: string,
+  given: string | undefined,
+  args: ReadonlyArray<string>,
+  light: boolean,
+) => {
+  const environment = process.env;
+  const linuxJob = environment[LINUX_JOB_ENV];
+  const macJob = environment[MAC_JOB_ENV];
+  if (given === undefined) {
+    process.stderr.write("[t3 heavy] call needs a program.\n");
+    process.exit(2);
+  }
+  if (
+    environment[HEAVY_JOB_ENV] !== "1" ||
+    (linuxJob === undefined && macJob === undefined) ||
+    (light && heavySegment(jobLine(given, args)) === null)
+  ) {
+    return runHere(given, args, false);
+  }
+  if (linuxJob !== undefined) return void runLinuxPart(dir, given, args, linuxJob);
+  const cwd = process.cwd();
+  const doc = readDoc(dir);
+  const config = configFor(doc, cwd);
+  const root = gitRootOf(cwd);
+  const mac =
+    root === null ||
+    callMacReason(dir, [given, ...args], cwd, root, config, lineEnv(dir, macJob!)) !== null;
+  if (mac || !config.runnerEnabled) return runHere(given, args, true);
+  queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
+};
+
 /** Progress for the job's own stderr, outside any redirect the line put on this part. */
 const jobNote = (text: string) => {
   try {
@@ -1125,14 +1482,18 @@ const jobNote = (text: string) => {
   }
 };
 
+/**
+ * One heavy call of a Linux job, run there through `remoto` from this folder, with its output
+ * passed through and its progress on the job's entry.
+ */
 const runLinuxPart = async (
   dir: string,
-  given: string | undefined,
+  given: string,
   givenArgs: ReadonlyArray<string>,
+  id: string,
 ) => {
-  const id = process.env[LINUX_JOB_ENV];
   const remoto = process.env.T3CODE_REMOTO;
-  if (given === undefined || id === undefined || remoto === undefined) {
+  if (remoto === undefined) {
     process.stderr.write("[t3 heavy] linux-part runs only inside a Linux job.\n");
     process.exit(2);
   }
@@ -1147,41 +1508,39 @@ const runLinuxPart = async (
   const cwd = moved?.cwd ?? process.cwd();
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
+  // Asked for Linux: none of its calls runs here, so the job ends with why instead.
+  const linuxOnly = doc.entries.some((entry) => entry.id === id && askedLinux(entry));
+  const toMac = (reason: string) =>
+    linuxOnly
+      ? endLine(dir, id, {
+          kind: "refused",
+          reason: `Asked for Linux, but it needs this Mac: ${reason}`,
+          code: LINUX_UNAVAILABLE_EXIT,
+        })
+      : queueCall(dir, "mac", [given, ...givenArgs], { reason });
   if (root === null || program === undefined) {
-    return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
+    return toMac(macReasonText({ code: "mac-env", subject: cwd }));
   }
   // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
   const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
-  if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
-  // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
-  const local = programTie([program, ...args], cwd, root, syncedInCopy, scriptReader(cwd));
-  if (local !== null) return endLine(dir, id, { kind: "mac", reason: local });
-  // A `sh -c` text goes whole: judged again expanded, so it never names a folder Linux lacks.
-  const text = shellTextOf([program, ...args]);
-  if (text !== undefined) {
-    const verdict = bodyVerdict(text, cwd, root, {
-      config: configFor(doc, cwd),
-      home,
-      rootOf: gitRootOf,
-      synced: syncedInCopy,
-    });
-    if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") {
-      return endLine(dir, id, { kind: "mac", reason: verdict.reason! });
-    }
-  }
-  const env = args.includes("check:changed") ? changedInputs(args, cwd, root) : [];
-  if (env === null) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
+  // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
+  const config = configFor(doc, cwd);
+  const days = config.runnerRouteMemoryDays;
+  const here = callMacReason(dir, [program, ...args], cwd, root, config, lineEnv(dir, id));
+  if (here !== null) return toMac(macReasonText(here));
+  const env = [
+    ...lineEnv(dir, id),
+    ...((args.includes("check:changed") ? changedInputs(args, cwd, root) : null) ?? []),
+  ];
   // A script outside the checkout goes as its text: its path does not exist in the Linux copy.
   const script = scriptOf([program, ...args], 0, scriptReader(cwd));
-  const tie = args
-    .filter((arg) => arg !== script?.word)
-    .map((arg) => outsideTie(arg, cwd, root))
-    .find((why) => why !== null);
-  if (tie !== undefined && tie !== null) return endLine(dir, id, { kind: "mac", reason: tie });
   let command = { program, args };
-  if (script !== null && outsideTie(NodePath.resolve(cwd, script.word), cwd, root) !== null) {
-    if (script.body === null) return endLine(dir, id, { kind: "mac", reason: UNREADABLE_SCRIPT });
+  if (
+    script !== null &&
+    script.body !== null &&
+    !NodePath.resolve(cwd, script.word).startsWith(`${root}/`)
+  ) {
     const rest = script.word === program ? args : args.slice(args.indexOf(script.word) + 1);
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }
@@ -1190,38 +1549,94 @@ const runLinuxPart = async (
   /** The first line naming a failure: what a card quotes when no exit code explains it. */
   let failure: string | null = null;
   let unreachable: string | null = null;
+  /** The end of its output, stdout and stderr, to tell what Linux lacked from a failure. */
+  let tail = "";
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
+  // This call's own start marker there: parallel calls of one job each list what they wrote.
+  const call = `${id}-${process.pid}`;
   const fault = (seen: FaultSeen) => {
-    const found = faultOf(
-      seen,
-      seen.kind === "exit" ? lastError : (unreachable ?? failure ?? lastError),
-      {
-        command: labelOf(program, args),
-        projectFolder: root,
-      },
-    );
+    const found = faultOf(seen, unreachable ?? failure ?? lastError, {
+      command: labelOf(program, args),
+      projectFolder: root,
+    });
     if (found !== null) recordFault(dir, id, found);
+  };
+  // Its stdin goes as a program here would get it. A file is read in place, never spent; a pipe the
+  // line's `read` loop reads stays here unless the call names stdin, or ssh would drain the loop.
+  const named = args.some((arg) => arg === "-" || arg.startsWith("--stdin"));
+  const stdin = forwardedInput(0) === 0 ? NodeFS.fstatSync(0) : null;
+  const inputStart = stdin?.isFile() === true ? fileOffset(0) : null;
+  const input =
+    inputStart !== null ||
+    (stdin !== null && (named || (stdin.isFIFO() && process.env[LINE_READS_ENV] !== "1")))
+      ? 0
+      : undefined;
+  /** Whether Linux took bytes off a pipe it was handed: a rerun would not get them. */
+  let spentInput = false;
+  /** Whether Linux wrote any of the call's stdout: a pipe after it already holds that. */
+  let wroteOutput = false;
+  /**
+   * What Linux lacked: this call alone runs again here, once. Input it handed Linux is spent, and
+   * output it wrote is already downstream, so then the call ends with Linux's code. Only a rerun
+   * here that passes confirms the fault was Linux's, and counts toward its learned route.
+   */
+  const fallBack = async (lacked: EnvironmentFault, code: number) => {
+    if (linuxOnly) {
+      return endLine(dir, id, {
+        kind: "refused",
+        reason: `Linux couldn't run this: ${lacked.line}`,
+        code,
+      });
+    }
+    if (spentInput || wroteOutput) {
+      const spent = spentInput ? "its input went to Linux" : "it already wrote output";
+      process.stderr.write(
+        `[t3 heavy] Linux couldn't run this: ${lacked.line}; ${spent}, so it does not run again here.\n`,
+      );
+      process.exit(code);
+    }
+    const here = await spawnCall(dir, "mac", [given, ...givenArgs], {
+      reason: `Linux couldn't run this: ${lacked.line}`,
+    });
+    const key = routeKey([program, ...args], routeFolder(cwd, root), lacked.kind);
+    if (
+      here === 0 &&
+      recordRouteFault(dir, key, lacked, Date.now(), days, config.runnerRouteLearnAfter).learned
+    ) {
+      jobNote(
+        `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
+      );
+    }
+    process.exit(here);
   };
   const start = () => {
     since = Date.now();
+    tail = "";
     return startLinuxRun({
       remoto,
       program: command.program,
       args: command.args,
       cwd,
       root,
-      environment: process.env,
+      environment: { ...process.env, PATH: withoutShims(process.env.PATH) },
       // `remoto` reads its ssh timeout from `REMOTO_TIMEOUT`, which this sets.
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
-      ...(bringsBack ? { startMarker: id } : {}),
-      stdout: (chunk) => process.stdout.write(chunk),
+      ...(bringsBack ? { startMarker: call } : {}),
+      ...(input === undefined ? {} : { input }),
+      ...(inputStart === null ? {} : { inputStart }),
+      stdout: (chunk) => {
+        wroteOutput ||= chunk.length > 0;
+        process.stdout.write(chunk);
+        tail = appendTail(tail, String(chunk));
+      },
       stderr: (text) => {
         process.stderr.write(text);
+        tail = appendTail(tail, text);
         const lines = errorLineOf(text);
         lastError = lines.last ?? lastError;
         failure ??= lines.failure;
@@ -1230,7 +1645,12 @@ const runLinuxPart = async (
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;
         recorded = progress.phase;
-        jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
+        if (progress.id !== null) {
+          NodeFS.writeFileSync(
+            partRemotePath(dir, id),
+            JSON.stringify({ id: progress.id, pgid: progress.pgid }),
+          );
+        }
         setProgress(dir, id, {
           phase: progress.phase,
           ...(progress.id === null
@@ -1242,6 +1662,8 @@ const runLinuxPart = async (
                 },
               }),
         });
+        // Last: whoever reads the note finds the run recorded.
+        jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
       },
     });
   };
@@ -1254,47 +1676,128 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install, worktree } = await run.done;
+  let { outcome, progress, platform, install, worktree, spentInput: spent } = await run.done;
+  spentInput ||= spent;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
-    jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
-    recorded = null;
-    failure = null;
-    run = start();
-    ({ outcome, progress, platform, install, worktree } = await run.done);
+    // The first run read the input: a rerun would get none.
+    if (!spentInput) {
+      jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
+      recorded = null;
+      failure = null;
+      run = start();
+      ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+      spentInput ||= spent;
+    }
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
-      return endLine(dir, id, {
-        kind: "environment",
-        reason: INSTALL_FAILED,
-        code: outcome.code ?? 1,
-      });
+      return fallBack(
+        { kind: "install", subject: install, line: INSTALL_FAILED },
+        outcome.code ?? 1,
+      );
     }
   }
   if (stopped) process.exit(143);
+  // Linux never ran it or dropped it: this call alone goes again, so its line never repeats. On
+  // Linux while it answers, then as "If a Linux run fails" (dropped) or "When Linux is offline"
+  // (never started) says, for this call alone; a job asked for Linux ends instead. ponytail: "ask"
+  // ends the call like "agent": the queue's question belongs to a waiting job, not a running call.
+  for (
+    let attempt = 1;
+    (outcome.kind === "unavailable" || outcome.kind === "dropped") && worktree === null;
+    attempt++
+  ) {
+    const lost = outcome;
+    const why = lost.kind === "dropped" ? "Linux dropped it mid-run" : "Linux is unavailable";
+    const lostFault: FaultSeen =
+      lost.kind === "dropped"
+        ? { kind: "lost" }
+        : lost.touched
+          ? { kind: "sync" }
+          : { kind: "unreachable" };
+    process.stderr.write(`[t3 heavy] ${why}.\n`);
+    // Unconfirmed, it may still run there: the job holds it until Linux confirms, as before.
+    if (
+      (lost.kind === "dropped" || lost.touched) &&
+      (progress.id === null ||
+        !confirmed(await stopRemote(machine, process.env, progress.id, progress.pgid)))
+    ) {
+      if (linkFailuresOf(dir, id) >= linkAttempts(machine)) fault(lostFault);
+      return endLine(dir, id, lost);
+    }
+    NodeFS.rmSync(partRemotePath(dir, id), { force: true });
+    if (spentInput || wroteOutput) {
+      const spent = spentInput ? "its input went to Linux" : "it already wrote output";
+      process.stderr.write(`[t3 heavy] ${why}; ${spent}, so it does not run again.\n`);
+      process.exit(LINUX_UNAVAILABLE_EXIT);
+    }
+    const health = await checkLinux(linkMachine(machine, doc.sample), process.env);
+    recordHealth(dir, health);
+    if (!health.ok || attempt >= linkAttempts(machine)) {
+      fault(lostFault);
+      if (linuxOnly) {
+        return endLine(dir, id, {
+          kind: "refused",
+          reason: `Asked for Linux, but ${why}`,
+          code: LINUX_UNAVAILABLE_EXIT,
+        });
+      }
+      const policy = lost.kind === "dropped" ? config.runnerDropped : config.runnerUnavailable;
+      if (policy === "mac") {
+        process.exit(await spawnCall(dir, "mac", [given, ...givenArgs], { reason: why }));
+      }
+      if (policy !== "wait") {
+        process.stderr.write(`[t3 heavy] Linux couldn't run this: ${why}.\n`);
+        process.exit(LINUX_UNAVAILABLE_EXIT);
+      }
+      jobNote(`[t3 heavy] ${why}: waiting for Linux to run this call again.\n`);
+      for (let up = health.ok; !up;) {
+        await pause(machine.runnerSshTimeoutSeconds * 1000);
+        if (stopped) process.exit(143);
+        const again = await checkLinux(linkMachine(machine, doc.sample), process.env);
+        recordHealth(dir, again);
+        up = again.ok;
+      }
+      attempt = 0;
+    }
+    recorded = null;
+    failure = null;
+    run = start();
+    ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+    spentInput ||= spent;
+    if (stopped) process.exit(143);
+  }
+  // Its command ended there: nothing of it is left to stop.
+  if (outcome.kind === "finished") NodeFS.rmSync(partRemotePath(dir, id), { force: true });
   // Rerunning anywhere fails the same way until the worktree is fixed.
   if (outcome.kind !== "finished" && worktree !== null) {
     return endLine(dir, id, { kind: "worktree", reason: worktree });
   }
+  // The command ran there, whatever its code: what it wrote comes back before anything else.
+  if (outcome.kind === "finished" && bringsBack && progress.id !== null) {
+    await syncBack(dir, id, {
+      machine: linkMachine(machine, doc.sample),
+      environment: process.env,
+      copyId: progress.id,
+      job: call,
+      root,
+      since,
+      exclude: configFor(doc, cwd).runnerBringBackExclude,
+      maxBytes: configFor(doc, cwd).runnerBringBackMaxMB * 1024 ** 2,
+    });
+  }
   if (outcome.kind === "finished") {
-    if (bringsBack && progress.id !== null) {
-      const back = await bringBack({
-        machine: linkMachine(machine, doc.sample),
-        environment: process.env,
-        copyId: progress.id,
-        job: id,
-        root,
-        since,
-      });
-      for (const path of back?.skipped ?? []) {
-        jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
-      }
+    // What Linux lacked is its environment's failure, not the command's.
+    const lacked = environmentFaultOf(outcome.code, tail, {
+      program: command.program,
+      folders: [cwd, root],
+    });
+    if (lacked !== null) {
+      fault({ kind: "environment", fault: lacked });
+      return fallBack(lacked, outcome.code);
     }
-    fault({ kind: "exit", code: outcome.code, program: command.program });
-    // A tool or file Linux lacks is its environment's failure, which the policy decides.
-    const error = lastError as string | null;
-    if ((outcome.code === 126 || outcome.code === 127) && error !== null) {
-      return endLine(dir, id, { kind: "environment", reason: error, code: outcome.code });
+    if (outcome.code === 0) {
+      resetRoutes(dir, [program, ...args], routeFolder(cwd, root), Date.now(), days);
     }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
@@ -1308,24 +1811,55 @@ const runLinuxPart = async (
     const nowhere = notFoundHere(outcome.tool, cwd, root);
     if (nowhere !== undefined) return endLine(dir, id, { kind: "command", reason: nowhere });
     fault({ kind: "missing", tool: outcome.tool });
-    return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
-  }
-  // A lost link is retried: it's a fault only once this job has used up its attempts.
-  if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {
-    fault(
-      outcome.kind === "dropped"
-        ? { kind: "lost" }
-        : outcome.touched
-          ? { kind: "sync" }
-          : { kind: "unreachable" },
+    return fallBack(
+      {
+        kind: "missing-program",
+        subject: outcome.tool,
+        line: `Not installed on Linux: ${outcome.tool}`,
+      },
+      127,
     );
   }
   endLine(dir, id, outcome);
 };
 
+/** Brings one call's results back and adds what stayed there to its job; never fails the call. */
+const syncBack = async (dir: string, id: string, options: Parameters<typeof bringBack>[0]) => {
+  try {
+    const back = await bringBack(options);
+    if (back === null) jobNote("[t3 heavy] Could not copy this run's results back from Linux.\n");
+    for (const path of back?.skipped ?? []) {
+      jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
+    }
+    for (const path of back?.deleted ?? []) {
+      jobNote(`[t3 heavy] Deleted on Linux, kept here: ${path}\n`);
+    }
+    const overCapMB = back?.overCap == null ? undefined : Math.ceil(back.overCap / 1024 ** 2);
+    if (overCapMB !== undefined) {
+      jobNote(
+        `[t3 heavy] Nothing copied back: ${overCapMB} MB of results is over the ${options.maxBytes / 1024 ** 2} MB cap.\n`,
+      );
+    }
+    addSyncBack(dir, id, {
+      copied: back?.copied.length ?? 0,
+      skipped: back?.skipped.length ?? 0,
+      deleted: back?.deleted.length ?? 0,
+      failed: back === null ? 1 : 0,
+      ...(overCapMB === undefined ? {} : { overCapMB }),
+    });
+  } catch (error) {
+    jobNote(`[t3 heavy] Could not copy this run's results back from Linux: ${String(error)}\n`);
+  }
+};
+
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {
-  NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome));
-  process.kill(0, "SIGTERM");
+  try {
+    // The first part to end the line names why; a parallel one stopped by it adds nothing.
+    NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome), { flag: "wx" });
+  } catch {
+    // Another part already ended the line.
+  }
+  process.kill(-Number(process.env[GROUP_ENV] ?? 0), "SIGTERM");
   process.exit(LINUX_UNAVAILABLE_EXIT);
 };

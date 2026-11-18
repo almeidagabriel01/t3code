@@ -110,6 +110,18 @@ describe("heavy queue file", () => {
     expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 127, error });
   });
 
+  it("a result sums what its Linux calls did not copy back", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), runner: "linux", phase: "running" }, at);
+    Queue.addSyncBack(dir, "r1", { copied: 2, skipped: 1, deleted: 0, failed: 0 });
+    Queue.addSyncBack(dir, "r1", { copied: 0, skipped: 0, deleted: 3, overCapMB: 250, failed: 1 });
+    Queue.finish(dir, "r1", 1, at);
+    const syncBack = { copied: 2, skipped: 1, deleted: 3, overCapMB: 250, failed: 1 };
+    expect(Queue.readDoc(dir).results[0]).toMatchObject({ id: "r1", code: 1, syncBack });
+    expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 1, syncBack });
+  });
+
   it("a Linux run's 127 keeps its line but not a reason checked on this Mac", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");
@@ -773,30 +785,6 @@ describe("heavy queue file", () => {
     expect(sizing()).toEqual([256, 1024, 1024, 1000, 60]);
   });
 
-  it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {
-    const repo = NodeFS.realpathSync(tempDir());
-    NodeChildProcess.spawnSync("git", ["init", "-q", repo]);
-    NodeFS.writeFileSync(NodePath.join(repo, ".gitignore"), "dist/\n.venv/\nnode_modules/\n");
-    NodeFS.mkdirSync(NodePath.join(repo, "web"));
-    NodeFS.writeFileSync(NodePath.join(repo, "web", "pnpm-lock.yaml"), "");
-    for (const [path, synced] of [
-      ["src/a.test.ts", true],
-      ["dist/cli.js", false],
-      [".venv/bin/pytest", false],
-      ["web/node_modules/.bin/vitest", true],
-      ["node_modules/.bin/vitest", false],
-      ["tools/node_modules/.bin/x", false],
-    ] as const) {
-      expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
-    }
-    // An answer is reused only briefly: a changed .gitignore shows within a minute.
-    const script = NodePath.join(repo, "scripts", "go.sh");
-    expect(Queue.syncedInCopy(script, 0)).toBe(true);
-    NodeFS.appendFileSync(NodePath.join(repo, ".gitignore"), "scripts/\n");
-    expect(Queue.syncedInCopy(script, 1_000)).toBe(true);
-    expect(Queue.syncedInCopy(script, 61_000)).toBe(false);
-  });
-
   it("sets several settings in one write, each clamped, ignoring unknown keys", () => {
     const dir = tempDir();
     Queue.setLimit(dir, "macCpuCeilingPercent", 80);
@@ -1246,25 +1234,15 @@ describe("Runner in the queue file", () => {
       test("u", { unconfirmed: true }),
       // Asked for this Mac with `--runner mac`.
       test("m", { where: "mac" }),
-      // Not on the Can run on Linux list: a hand route sends it all the same.
-      test("n", { label: "vp run build" }),
     ];
     for (const waiter of waiters) Queue.enqueue(dir, waiter);
     const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null, n: null });
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null });
     expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
-    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b", "n"]);
-    expect(routes()).toEqual({
-      r: null,
-      a: "linux",
-      b: "linux",
-      x: null,
-      u: null,
-      m: null,
-      n: "linux",
-    });
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
+    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null, m: null });
     expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
     // With the Runner off for the project, nothing can go to Linux, so nothing claims to.
     const off = queueWith(block(config({ runnerEnabled: false })));
@@ -1443,7 +1421,6 @@ describe("Runner in the queue file", () => {
     } = DEFAULT_MACHINE_CONFIG;
     const {
       runnerMacFirstAfter: _m,
-      runnerLinuxEverything: _e,
       runnerBringBack: _b,
       ...older
     } = config({ runnerWhere: "automatic", runnerOverflow: 0 } as never);
@@ -1473,8 +1450,8 @@ describe("Runner in the queue file", () => {
     for (const cwd of ["/w/a", "/elsewhere"]) {
       expect(Queue.configFor(doc, cwd)).toMatchObject({
         runnerMacFirstAfter: 4,
-        runnerLinuxEverything: false,
-        runnerBringBack: false,
+        runnerBringBack: true,
+        runnerBringBackMaxMB: 200,
       });
     }
     Queue.enqueue(dir, test("a"));
@@ -1484,6 +1461,43 @@ describe("Runner in the queue file", () => {
       workers: expect.any(Number),
     });
     expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).runner.global.runnerOverflow).toBe(0);
+  });
+
+  it.each([
+    ["runnerMacTools", null],
+    ["runnerMacTools", "xcodebuild"],
+    ["runnerMacTools", [1]],
+    ["runnerBringBackExclude", null],
+    ["runnerBringBackExclude", {}],
+    ["runnerBringBackMaxMB", null],
+    ["runnerBringBackMaxMB", 0],
+    ["runnerBringBackMaxMB", 2.5],
+    ["runnerBringBackMaxMB", "200"],
+    ["runnerRouteMemoryDays", null],
+    ["runnerRouteMemoryDays", 91],
+    ["runnerRouteLearnAfter", null],
+    ["runnerRouteLearnAfter", 0],
+  ] as const)("a stored %s of %j reads as its default", (key, stored) => {
+    const dir = tempDir();
+    const bad = { ...config(), [key]: stored } as unknown as RunnerProjectConfig;
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "queue.json"),
+      JSON.stringify({ runner: block(bad, [{ root: "/w", config: bad }]) }),
+    );
+    const doc = Queue.readDoc(dir);
+    for (const cwd of ["/w/a", "/elsewhere"]) {
+      expect(Queue.configFor(doc, cwd)[key]).toEqual(DEFAULT_PROJECT_CONFIG[key]);
+    }
+  });
+
+  it.each([null, 0, 1.5, "2"])("a stored machine eviction count of %j reads as 2", (stored) => {
+    const dir = tempDir();
+    const machine = { ...DEFAULT_MACHINE_CONFIG, runnerLinuxEvictionsBeforeAlone: stored };
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "queue.json"),
+      JSON.stringify({ runner: { ...block(), machine } }),
+    );
+    expect(Queue.readDoc(dir).runner?.machine.runnerLinuxEvictionsBeforeAlone).toBe(2);
   });
 
   it("resolves a worktree's folder through its main checkout, without git", () => {
@@ -1526,16 +1540,27 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "linux", startsNow: true },
     },
     {
-      name: "git-driven work stays on this Mac",
-      line: "vp test run --changed",
+      name: "a file outside the project keeps it on this Mac",
+      line: "vp test run /etc/hosts",
       over: { runnerWhere: "linux" as const },
-      expected: { runsOn: "mac", reason: "Needs git, which the Linux copy doesn't have" },
+      expected: { runsOn: "mac", reason: "Uses a file only this Mac has: /etc/hosts" },
     },
     {
       name: "Always on this Mac keeps a Linux-bound command here",
       line: "vp test run integration",
       over: { runnerWhere: "linux" as const, runnerMacOnly: ["integration"] },
-      expected: { runsOn: "mac", reason: "Always on this Mac: integration" },
+      expected: { runsOn: "mac", reason: "Pinned to this Mac: integration" },
+    },
+    {
+      name: "an agent's remoto that needs this Mac runs here",
+      line: "remoto vp test run /etc/hosts",
+      over: { runnerWhere: "linux" as const },
+      expected: {
+        runsOn: "mac",
+        canceled: false,
+        startsNow: true,
+        reason: "Uses a file only this Mac has: /etc/hosts",
+      },
     },
     {
       name: "Runner off",
@@ -1587,11 +1612,12 @@ describe("Runner in the queue file", () => {
 
   it("counts a waiter's place and running job on the machine it waits for", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })));
-    Queue.enqueue(dir, { ...test("m"), label: "vp run build" });
+    const macOnly = "vp test run --project ios -- xcodebuild";
+    Queue.enqueue(dir, { ...test("m"), label: macOnly });
     expect(Queue.tryStart(dir, "m", NOW)).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "m", NOW)).not.toHaveProperty("runner");
     startOnLinux(dir, ["l1", "l2"]);
-    Queue.enqueue(dir, { ...test("macWaiter"), label: "vp run build" });
+    Queue.enqueue(dir, { ...test("macWaiter"), label: macOnly });
     Queue.enqueue(dir, test("linuxWaiter"));
     expect(Queue.tryStart(dir, "linuxWaiter", NOW + 3)).toMatchObject({
       status: "waiting",
@@ -1763,6 +1789,7 @@ describe("Runner in the queue file", () => {
         reason: "No commit hook in this repository: runs directly",
         startsNow: true,
         linuxFull: false,
+        canceled: false,
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
       expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();

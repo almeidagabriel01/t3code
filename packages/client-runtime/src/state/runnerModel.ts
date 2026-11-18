@@ -41,7 +41,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerMacOnly: {
     title: "Always on this Mac",
     description:
-      "A heavy command that matches one of these always runs on this Mac, even when sent to Linux by hand.",
+      "A heavy command that matches one of these always runs on this Mac; one asked to run on Linux ends with why instead.",
   },
   runnerUnavailable: {
     title: "When Linux is offline",
@@ -50,7 +50,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerDropped: {
     title: "If a Linux run fails",
     description:
-      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
+      "What a job does when the PC drops its run and its retries run out. A command Linux lacks a tool or folder for runs again on this Mac by itself.",
   },
   runnerAskMinutes: {
     title: "Wait for an answer",
@@ -73,7 +73,31 @@ export const RUNNER_SETTING_COPY: Record<
   runnerBringBack: {
     title: "Bring results back",
     description:
-      "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone.",
+      "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone, and a file deleted there stays here.",
+  },
+  runnerBringBackExclude: {
+    title: "Never bring back",
+    description: "File or folder names, `*` allowed, that a Linux job never copies back.",
+  },
+  runnerBringBackMaxMB: {
+    title: "Bring back up to",
+    description:
+      "A Linux run whose results come to more than this many MB copies nothing back, and its card says so.",
+  },
+  runnerMacTools: {
+    title: "Mac-only tools",
+    description:
+      "Programs only this Mac has. A heavy command that runs one stays here; one asked to run on Linux ends with why instead.",
+  },
+  runnerRouteMemoryDays: {
+    title: "Remember Linux failures for",
+    description:
+      "A command Linux failed to run for a tool or file it lacks runs on this Mac for this many days. `t3 heavy routes --forget` clears one sooner.",
+  },
+  runnerRouteLearnAfter: {
+    title: "Learn a Linux failure after",
+    description:
+      "How many times Linux must fail a command for a tool or file it lacks before that command runs on this Mac instead.",
   },
   runnerHost: {
     title: "Linux host",
@@ -106,6 +130,11 @@ export const RUNNER_SETTING_COPY: Record<
   runnerLinuxCpuCeilingPercent: {
     title: "CPU limit",
     description: "A new job waits while the PC's CPU is busier than this.",
+  },
+  runnerLinuxEvictionsBeforeAlone: {
+    title: "Run alone on Linux after",
+    description:
+      "A job Linux stopped this many times for lack of memory waits to run there with no other job.",
   },
 };
 

@@ -585,6 +585,10 @@ import {
   HeavyQueueSetRuleInput,
   HeavyQueueRouteAllInput,
   HeavyQueueRouteAllResult,
+  HeavyQueueListRoutesInput,
+  HeavyQueueListRoutesResult,
+  HeavyQueueForgetRoutesInput,
+  HeavyQueueForgetRoutesResult,
   HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
@@ -894,6 +898,8 @@ export const WS_METHODS = {
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueRoute: "heavyQueue.route",
   heavyQueueRouteAll: "heavyQueue.routeAll",
+  heavyQueueListRoutes: "heavyQueue.listRoutes",
+  heavyQueueForgetRoutes: "heavyQueue.forgetRoutes",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
   heavyQueueSetMacMemoryFloorPercent: "heavyQueue.setMacMemoryFloorPercent",
   heavyQueueSetMacCpuCeilingPercent: "heavyQueue.setMacCpuCeilingPercent",
@@ -2767,6 +2773,18 @@ const WsHeavyQueueRouteAllRpc = Rpc.make(WS_METHODS.heavyQueueRouteAll, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueListRoutesRpc = Rpc.make(WS_METHODS.heavyQueueListRoutes, {
+  payload: HeavyQueueListRoutesInput,
+  success: HeavyQueueListRoutesResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueForgetRoutesRpc = Rpc.make(WS_METHODS.heavyQueueForgetRoutes, {
+  payload: HeavyQueueForgetRoutesInput,
+  success: HeavyQueueForgetRoutesResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
   payload: HeavyQueueSetRuleInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -3277,6 +3295,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueRouteRpc,
   WsHeavyQueueRouteAllRpc,
+  WsHeavyQueueListRoutesRpc,
+  WsHeavyQueueForgetRoutesRpc,
   WsHeavyQueueSetMaxRunningRpc,
   WsHeavyQueueSetMacMemoryFloorPercentRpc,
   WsHeavyQueueSetMacCpuCeilingPercentRpc,

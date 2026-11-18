@@ -7,9 +7,12 @@ import { describe, expect, it } from "@effect/vitest";
 import type { HeavyNoticesMode, HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
+  appendTail,
   deadlineRecord,
   endedRecord,
+  type SyncBack,
   errorLineOf,
+  environmentFaultOf,
   EVENT_LOG_SIZE,
   faultOf,
   unreachableLine,
@@ -29,6 +32,7 @@ import {
   STUCK_FLOOR_MS,
   STUCK_NO_HISTORY_MS,
   stuckJobs,
+  TAIL_CHARS,
   withRecord,
   worktreeProblemOf,
 } from "./heavyNotices.ts";
@@ -104,7 +108,7 @@ describe("what a requeue records", () => {
     ["the user's move", { route: "mac" as const }, null],
     [
       "a part that needs this Mac",
-      { route: "mac" as const, routeReason: "Needs git" },
+      { route: "mac" as const, routeReason: "Changes this Mac's checkout: git commit" },
       "needs-mac",
     ],
     ["a drop", { dropped: true, linuxFailedAt: NOW }, "linux-lost"],
@@ -180,6 +184,204 @@ describe("the event log", () => {
   });
 });
 
+// What Linux's own environment lacked, from a call's exit code and output tail. Each pattern has
+// a row where it shows up and is still the command's own failure.
+describe("environment faults of a Linux call", () => {
+  const ROOT = "/w/app";
+  const local = new Set([`${ROOT}/mymod`, `${ROOT}/apps/py/helpers.py`]);
+  it.each<[string, number, string, string | null, string | null]>([
+    // [case, exit code, output tail, kind:subject, cause the card files]
+    [
+      "127 naming the tool",
+      127,
+      "sh: 1: vp: not found\n",
+      "missing-program:vp",
+      "command-not-found:vp",
+    ],
+    // 127 and 126 alone are any program's own exit codes: only the shell's line names what's missing.
+    ["127 with no line", 127, "", null, null],
+    ["a wrapper exiting 127 on purpose", 127, "running wrapper\nwrapper: giving up\n", null, null],
+    ["126 with no line", 126, "make: *** [all] Error 126\n", null, null],
+    [
+      "127 from exec of a missing path",
+      127,
+      "bash: line 1: ./scripts/gen.sh: No such file or directory\n",
+      "missing-program:./scripts/gen.sh",
+      "command-not-found:./scripts/gen.sh",
+    ],
+    [
+      "127 from env",
+      127,
+      "env: 'tsx': No such file or directory\n",
+      "missing-program:tsx",
+      "command-not-found:tsx",
+    ],
+    [
+      "127 quoting a missing file, not a program",
+      127,
+      "cat: a.txt: No such file or directory\n",
+      null,
+      null,
+    ],
+    [
+      "127 reads past output after the line",
+      127,
+      "bash: tsgo: command not found\n[t3 heavy] Linux: running\n",
+      "missing-program:tsgo",
+      "command-not-found:tsgo",
+    ],
+    [
+      "126",
+      126,
+      "bash: ./run.sh: Permission denied\n",
+      "not-executable:./run.sh",
+      "command-not-found:./run.sh",
+    ],
+    [
+      "128 outside a repository",
+      128,
+      "fatal: not a git repository (or any of the parent directories): .git\n",
+      "no-git:pnpm",
+      "linux-sync:no-git",
+    ],
+    ["128 for another git failure", 128, "fatal: bad revision 'HEAD~3'\n", null, null],
+    [
+      "not a git repository quoted by a failing test",
+      1,
+      "AssertionError: not a git repository\n",
+      null,
+      null,
+    ],
+    [
+      "pnpm finds no such command",
+      1,
+      ' ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "vitest" not found\n',
+      "package-command:vitest",
+      "command-not-found:vitest",
+    ],
+    [
+      "pnpm's command failing in its own code",
+      1,
+      " ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run\n",
+      null,
+      null,
+    ],
+    [
+      "Playwright's browser missing",
+      1,
+      "browserType.launch: Executable doesn't exist at /home/dev/.cache/ms-playwright/chromium-1140/chrome-linux/chrome\n",
+      "no-browser:chromium-1140",
+      "command-not-found:playwright-browser",
+    ],
+    [
+      "another executable missing",
+      1,
+      "Error: Executable doesn't exist at ./bin/tool\n",
+      null,
+      null,
+    ],
+    [
+      "a refused local service",
+      1,
+      "Error: connect ECONNREFUSED 127.0.0.1:5432 (Connection refused)\n",
+      "local-service:127.0.0.1:5432",
+      "network:localhost",
+    ],
+    [
+      "a refused local service on ::1",
+      1,
+      "FetchError: request to http://localhost:3000/ failed, reason: connect ECONNREFUSED ::1:3000\n",
+      "local-service:::1:3000",
+      "network:localhost",
+    ],
+    [
+      "a test asserting on ECONNREFUSED with no localhost",
+      1,
+      "AssertionError: expected 'ECONNREFUSED' to equal 'ok'\n",
+      null,
+      null,
+    ],
+    [
+      "a refused port nothing on this Mac listens on: the test's own server",
+      1,
+      " FAIL  src/ws.test.ts > reconnects\nError: connect ECONNREFUSED 127.0.0.1:54321\n",
+      null,
+      null,
+    ],
+    ["a refused remote host", 1, "Error: connect ECONNREFUSED 10.0.0.5:5432\n", null, null],
+    [
+      "a refused localhost in a passing run",
+      0,
+      "connect ECONNREFUSED 127.0.0.1:5432\n",
+      null,
+      null,
+    ],
+    [
+      "a Python package missing there",
+      1,
+      "ModuleNotFoundError: No module named 'numpy.linalg'\n",
+      "python-module:numpy",
+      "command-not-found:python-numpy",
+    ],
+    [
+      "a project-local module missing",
+      1,
+      "ModuleNotFoundError: No module named 'mymod'\n",
+      null,
+      null,
+    ],
+    ["a project-local file module", 1, "No module named helpers\n", null, null],
+    ["a test failing is the code's", 1, "FAIL src/a.test.ts\n", null, null],
+    // An earlier passing test's output: what ended the run is near its end.
+    ...[
+      "connect ECONNREFUSED 127.0.0.1:5432",
+      'Command "vitest" not found',
+      "No module named 'numpy'",
+    ].map((early): [string, number, string, string | null, string | null] => [
+      `${early}, 20 lines before the end`,
+      1,
+      `${early}\n${"ok\n".repeat(19)}\nFAIL src/a.test.ts\n`,
+      null,
+      null,
+    ]),
+    [
+      "a refused local service 19 lines before the end",
+      1,
+      `connect ECONNREFUSED 127.0.0.1:5432\n${"ok\n".repeat(18)}FAIL src/a.test.ts\n`,
+      "local-service:127.0.0.1:5432",
+      "network:localhost",
+    ],
+  ])("%s", (_, code, tail, expected, cause) => {
+    const found = environmentFaultOf(code, tail, {
+      program: "pnpm",
+      folders: [`${ROOT}/apps/py`, ROOT],
+      exists: (path) => local.has(path),
+      listens: (port) => port === 5432 || port === 3000,
+    });
+    expect(found === null ? null : `${found.kind}:${found.subject}`).toBe(expected);
+    const fault =
+      found === null
+        ? null
+        : faultOf({ kind: "environment", fault: found }, null, {
+            command: "pnpm test",
+            projectFolder: ROOT,
+          });
+    expect(fault?.cause ?? null).toBe(cause);
+    if (fault !== null) {
+      expect(fault.cause.startsWith(`${fault.reason}:`)).toBe(true);
+      expect(fault.error).not.toBe("");
+    }
+  });
+
+  it("keeps only a bounded tail of the output", () => {
+    let tail = "";
+    for (let i = 0; i < 50; i++) tail = appendTail(tail, `${"x".repeat(10_000)}\n`);
+    tail = appendTail(tail, "sh: 1: vp: not found\n");
+    expect(tail.length).toBeLessThanOrEqual(TAIL_CHARS);
+    expect(environmentFaultOf(127, tail, { program: "sh", folders: [] })?.subject).toBe("vp");
+  });
+});
+
 describe("faults T3 records for the problem detector", () => {
   const job = { command: "vp test run", projectFolder: "/w/app" };
   const sync = { kind: "sync" } as const;
@@ -193,32 +395,14 @@ describe("faults T3 records for the problem detector", () => {
       "vp: command not found",
     ],
     [
-      "exit 127 naming the tool",
-      { kind: "exit", code: 127, program: "bash" },
-      "sh: 1: vp: not found",
+      "an environment fault from the table",
+      {
+        kind: "environment",
+        fault: { kind: "missing-program", subject: "vp", line: "sh: 1: vp: not found" },
+      },
+      null,
       "command-not-found:vp",
       "sh: 1: vp: not found",
-    ],
-    [
-      "exit 127 with no line",
-      { kind: "exit", code: 127, program: "pnpm" },
-      null,
-      "command-not-found:pnpm",
-      "pnpm: command not found",
-    ],
-    [
-      "exit 126",
-      { kind: "exit", code: 126, program: "bash" },
-      "bash: ./run.sh: Permission denied",
-      "command-not-found:./run.sh",
-      "bash: ./run.sh: Permission denied",
-    ],
-    [
-      "a test failing is the code's",
-      { kind: "exit", code: 1, program: "vp" },
-      "FAIL src/a.test.ts",
-      null,
-      null,
     ],
     [
       "install raced twice",
@@ -422,6 +606,13 @@ describe("notices for each problem", () => {
       "linux",
     ],
     [
+      "failed on Linux, with results left there",
+      endedRecord({ ...linux, syncBack: { copied: 4, skipped: 1, deleted: 2, failed: 0 } }, 1, NOW),
+      "pnpm test failed on Linux",
+      "Exit code 1. Not copied back from Linux: 1 file changed on this Mac during the run; 2 deletions there",
+      "linux",
+    ],
+    [
       "sync failed",
       endedRecord({ ...linux, phase: "syncing" }, 1, NOW),
       "Linux sync failed for pnpm test",
@@ -530,6 +721,36 @@ describe("notices for each problem", () => {
     expect(endedRecord({ ...mac, ...fields }, 127, NOW)!.job.label).toBe(label);
   });
 
+  it("a job that succeeded tells what of its results stayed on Linux", () => {
+    const left = (syncBack: SyncBack) => endedRecord({ ...linux, syncBack }, 0, NOW);
+    expect(left({ copied: 3, skipped: 0, deleted: 0, failed: 0 })).toBeNull();
+    const notices = rawNotices(
+      tick({
+        records: [
+          record(left({ copied: 0, skipped: 0, deleted: 0, overCapMB: 350, failed: 0 })),
+          record(left({ copied: 0, skipped: 2, deleted: 0, failed: 1 })),
+        ],
+      }),
+    );
+    expect(
+      notices.map(({ one, description, category, tone }) => ({ one, description, category, tone })),
+    ).toEqual([
+      {
+        one: "Not all of pnpm test's results came back from Linux",
+        description: "Not copied back from Linux: 350 MB of results, over the size cap",
+        category: "unexpected",
+        tone: "warning",
+      },
+      {
+        one: "Not all of pnpm test's results came back from Linux",
+        description:
+          "Not copied back from Linux: the copy failed; 2 files changed on this Mac during the run",
+        category: "unexpected",
+        tone: "warning",
+      },
+    ]);
+  });
+
   it("a job that could not start says what was missing", () => {
     const missing = record(endedRecord(mac, 127, NOW, "script not found: /s/fmt.sh"));
     expect(rawNotices(tick({ records: [missing] }))[0]!.description).toBe(
@@ -621,8 +842,13 @@ describe("notices for machine changes", () => {
     ],
     [
       "a part that needs this Mac",
-      requeueRecord(linux, { route: "mac", routeReason: "Needs git" }, policies, NOW),
-      "Needs git",
+      requeueRecord(
+        linux,
+        { route: "mac", routeReason: "Changes this Mac's checkout: git commit" },
+        policies,
+        NOW,
+      ),
+      "Changes this Mac's checkout: git commit",
       "unexpected",
     ],
   ])("moved to this Mac after %s", (_name, value, description, category) => {
@@ -843,7 +1069,14 @@ describe("grouping", () => {
     [
       {
         records: [
-          record(requeueRecord(linux, { route: "mac", routeReason: "Needs git" }, policies, NOW)),
+          record(
+            requeueRecord(
+              linux,
+              { route: "mac", routeReason: "Changes this Mac's checkout: git commit" },
+              policies,
+              NOW,
+            ),
+          ),
         ],
       },
       "3 jobs moved to this Mac",

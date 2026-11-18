@@ -150,7 +150,8 @@ it("saves the Mac first, Everything, failure and bring-back choices", async () =
   expect(patches()).toEqual([
     { runnerWhere: "linux" },
     { runnerMacFirstAfter: 5 },
-    { runnerBringBack: true },
+    // On by default: the switch turns it off.
+    { runnerBringBack: false },
     { runnerDropped: "wait" },
   ]);
   await expect.element(screen.getByText("jobs", { exact: true }).first()).toBeVisible();

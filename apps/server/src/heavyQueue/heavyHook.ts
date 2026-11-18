@@ -41,20 +41,57 @@ const DIRECT = new Set([
   "mvn",
   "emulator",
 ]);
-const SUBCOMMANDS: Readonly<Record<string, RegExp>> = {
-  docker: /^(build|buildx|compose|run)$/,
-  cargo: /^(build|test|check|clippy|run|bench|nextest)$/,
-  go: /^(test|build|vet)$/,
-  swift: /^(build|test)$/,
-  expo: /^(run(:ios|:android)?|prebuild|export)$/,
-  eas: /^build$/,
-  simctl: /^boot$/,
+const SUBCOMMANDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  docker: ["build", "buildx", "compose", "run"],
+  cargo: ["build", "test", "check", "clippy", "run", "bench", "nextest"],
+  go: ["test", "build", "vet"],
+  swift: ["build", "test"],
+  expo: ["run", "run:ios", "run:android", "prebuild", "export"],
+  eas: ["build"],
+  simctl: ["boot"],
 };
 /** Script names that run tests, builds or checks; dev servers stay out, they never finish. */
-const SCRIPT =
-  /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$|^dev:desktop$/;
+const SCRIPT_NAMES = [
+  "test",
+  "tests",
+  "build",
+  "check",
+  "lint",
+  "typecheck",
+  "e2e",
+  "bundle",
+  "compile",
+  "knip",
+  "coverage",
+  "fmt",
+  "format",
+  "ci",
+  "verify",
+];
+const FORMAT_NAMES = ["fmt", "format"];
+const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
 const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+const SCRIPT_RUNNERS = ["vpr", "make", "just"];
+
+/** Every program `heavyWords` can call heavy but `node` and `git`: a queue job's PATH shims. */
+export const SHIMMED = new Set([
+  ...DIRECT,
+  ...Object.keys(SUBCOMMANDS),
+  ...RUNNERS,
+  ...EXECUTORS,
+  ...SCRIPT_RUNNERS,
+]);
+/**
+ * For a shim's `case` filter, a superset of what `heavyWords` reads: programs always heavy, and
+ * the words (script names take a `:`-style suffix) that can make another call heavy.
+ */
+export const SHIM_FILTER = {
+  always: [...DIRECT],
+  words: [...DIRECT, ...Object.values(SUBCOMMANDS).flat(), "t", "dev:desktop"],
+  scripts: SCRIPT_NAMES.filter((name) => !FORMAT_NAMES.includes(name)),
+  formats: FORMAT_NAMES,
+};
 const PREFIXES = new Set([
   "time",
   "nice",
@@ -157,7 +194,7 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   };
 };
 
-const FORMAT = /^(fmt|format)([:._-].*)?$/;
+const FORMAT = new RegExp(`^(${FORMAT_NAMES.join("|")})([:._-].*)?$`);
 // ponytail: source files only; a folder with a dot (`apps/v1.2`) must not pass. Add one when needed.
 const FILE_ARG =
   /(^|\/)[^/]*[^/.]\.(ts|tsx|js|mjs|cjs|jsx|json|jsonc|md|mdx|css|scss|html|yml|yaml|toml|vue|svelte)$/;
@@ -218,7 +255,7 @@ const heavyWords = (
   const [first, second] = words;
   if (DIRECT.has(program)) return true;
   const sub = SUBCOMMANDS[program];
-  if (sub !== undefined) return first !== undefined && sub.test(first);
+  if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {
     return first !== undefined && heavyWords(base(first), words.slice(1), flags, lists);
   }
@@ -226,7 +263,7 @@ const heavyWords = (
   if (program === "git") {
     return first === "commit" && !flags.some((flag) => flag === "--no-verify" || flag === "-n");
   }
-  if (program === "vpr" || program === "make" || program === "just") {
+  if (SCRIPT_RUNNERS.includes(program)) {
     return heavyScript(words, 0, flags, lists);
   }
   if (!RUNNERS.has(program) || first === undefined) return false;
@@ -253,9 +290,7 @@ const PROGRAMS = [
   ...DIRECT,
   ...Object.keys(SUBCOMMANDS),
   ...RUNNERS,
-  "vpr",
-  "make",
-  "just",
+  ...SCRIPT_RUNNERS,
   "remoto",
   // Scripts: the queue reads them (`bash x.sh`, `./verify`).
   "sh",
@@ -284,7 +319,8 @@ const HEAVY_PREFILTER = STARTS.flatMap((start) => [
  */
 export const hookScript = (hookCommand: string) => `#!/bin/sh
 # Written by T3 Code for its Claude Code hook (Settings > Maintenance > Heavy work).
-[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && exit 0
+# Read the input first even when leaving: a writer racing an early exit gets EPIPE.
+[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && { cat >/dev/null; exit 0; }
 input=
 while IFS= read -r line || [ -n "$line" ]; do input="$input$line
 "; done
@@ -334,7 +370,6 @@ export interface Part {
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
 export type ReadScript = (word: string) => string | null;
 export const SCRIPT_MAX_BYTES = 64 * 1024;
-export const UNREADABLE_SCRIPT = "Couldn't read this script";
 const SHEBANG = /^#!\s*(\S*\/)?(env\s+)?(sh|bash|zsh|dash)(\s|$)/;
 
 /** The path word of the script a command runs: `bash x.sh`, `./x.sh`, or any path (`./verify`). */
@@ -539,39 +574,12 @@ const spanEnd = (line: string, end: number) => {
   return at;
 };
 
-/**
- * The line with each work part sent through `executor`, spliced at source offsets so the user's
- * shell reads the rest as written: redirects, pipes, `;` and assignments stay local. Null runs
- * the work here. Either way an agent's `remoto` word goes, since T3 decides where work runs.
- */
-export const rewriteLine = (line: string, executor: string | null) => {
-  const { parts } = readLine(line);
-  const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
-  for (const part of parts) {
-    if (part.remoto !== null) {
-      edits.push({ start: part.remoto.start, end: spanEnd(line, part.remoto.end), text: "" });
-    }
-  }
-  if (executor !== null) {
-    for (const part of workParts(parts)) {
-      const { assigns, words } = part.command;
-      // `remoto` passes argv alone, so assignments travel as `env` arguments.
-      const env = assigns.map((word) => line.slice(word.start, word.end));
-      for (const word of assigns) {
-        edits.push({ start: word.start, end: spanEnd(line, word.end), text: "" });
-      }
-      const at = words[part.remoteAt]!.start;
-      edits.push({
-        start: at,
-        end: at,
-        text: `${executor} ${env.length === 0 ? "" : `env ${env.join(" ")} `}`,
-      });
-    }
-  }
-  return edits
+/** The line without an agent's `remoto` words: T3 decides where work runs. */
+const withoutRemoto = (line: string) =>
+  readLine(line)
+    .parts.flatMap((part) => (part.remoto === null ? [] : [part.remoto]))
     .toSorted((a, b) => b.start - a.start)
-    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), line);
-};
+    .reduce((text, word) => text.slice(0, word.start) + text.slice(spanEnd(line, word.end)), line);
 
 /**
  * A shell line as `[cd <dir> && …] <command>`: the folders its leading `cd`s name, in order (`~`
@@ -603,7 +611,7 @@ export const lineParts = (line: string) => {
   return {
     dirs,
     remoto: parts.some((part) => part.remoto !== null),
-    command: rewriteLine(line.slice(from), null).trimStart(),
+    command: withoutRemoto(line.slice(from)).trimStart(),
   };
 };
 
@@ -651,10 +659,6 @@ export const queueBashCall = (
     ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
     : heavySegment(command, options.readScript);
   if (segment === null) return null;
-  // A script it couldn't read may be heavy: it waits on this Mac, saying why.
-  const unreadable = readLine(segment, options.readScript).parts.some(
-    (part) => part.script !== null && part.script.body === null,
-  );
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   // A repeat of the same call attaches to its job instead of running it twice.
   const request =
@@ -667,7 +671,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${request}${unreadable ? ` --runner mac --route-reason ${shellQuote(UNREADABLE_SCRIPT)}` : ""} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

@@ -67,7 +67,7 @@ external display.
 
 When several agents run tests, builds or simulators at once, they queue on the
 Mac that hosts T3 Code (with the [Runner](#runner-heavy-work-on-a-linux-pc) on,
-listed commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
+heavy commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
 commands (tests, builds, type checks, `git commit` with its hooks, simulators)
 go through the queue on their own, even when the agent forgets. A `git commit`
@@ -185,19 +185,12 @@ work queue, and each section says what the two do together.
   - **This Mac** keeps everything here.
   - **Mac first** fills this Mac, then sends the rest to Linux: a job goes to
     Linux once this Mac has **Send to Linux after** jobs running or waiting
-    (default 4).
+    (default 4), or sooner when this Mac is full and Linux can start it now.
   - **Hybrid** splits jobs between both: each goes to the machine with the
     shorter queue per slot (this Mac on a tie), and neither starts a job past
     its own limits. While Linux is offline everything stays here.
-  - **Linux** sends the commands in **Can run on Linux** (tests, lint, type
-    checks; builds stay here, since their output is needed on the Mac). Turn on
-    **Everything** to send every heavy command instead, except what has to stay
-    on this Mac: git commands that write, installs that change the lockfile,
-    **Always on this Mac** matches, simulator, emulator and Xcode tools, dev
-    servers, commands that touch Mac paths outside the project, Python (the
-    PC gets no Python environment), programs and scripts in files git ignores
-    (a `node_modules` with a lockfile is reinstalled there, so it goes), and
-    work after a `source` in the same line.
+  - **Linux** sends every heavy command there, except work with one of the
+    reasons below to stay on this Mac.
 
   With the queue off, work starts here at once and Hybrid or Mac first send it
   to Linux only while this Mac is over its limits. All of these, and the
@@ -213,45 +206,92 @@ work queue, and each section says what the two do together.
 - **Over the limit for.** Either machine counts as over its limits, or back
   under them, only once its readings stay there this long (default 20
   seconds), so a short spike never moves work.
-- **What goes to Linux.** In a line such as
-  `cd apps/web && vp test run > out.log 2>&1; tail out.log`, only the listed
-  commands run on Linux, each from the folder the line is in at that point;
-  redirects, pipes and everything else run here, and the job holds one Linux
-  slot. A job stays on this Mac, and its row says why, when a command is not
-  listed, is on **Always on this Mac**, reads its input from this Mac
-  (`cat x | vp test run`), runs in the background (`vp test run &`), runs
-  outside a git checkout, names a file outside its checkout, is a git command
-  (commits run here, since the pre-commit hook edits this Mac's repository),
-  diffs against git (`vp staged`, `--changed`; the Linux copy has no git
-  history; `check:changed` still runs on Linux, with the changed files worked
-  out here), or uses shell syntax T3 Code cannot follow (`eval`, `case`,
-  functions). A path or flag that is only known when the line runs is checked
-  then: if it turns out to need this Mac, the job runs here instead. A script
-  that calls git inside cannot be seen from its line; add it to **Always on
-  this Mac**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
+- **What goes to Linux.** A line such as
+  `cd apps/web && vp test run > out.log 2>&1; tail out.log` runs in this Mac's
+  shell as written. Only its heavy commands (`vp`, `pnpm`, `vitest`, `tsc` and
+  the like, even inside scripts and git hooks) go to Linux, each from the folder
+  the line is in at that point and with its paths and variables already
+  expanded; redirects, pipes, `cd`, read-only git and everything else run here.
+  On Linux, the project's own tools (`vp`, `vitest`) come first, from
   `node_modules/.bin` between the command's folder and the checkout.
+- **Why work stays on this Mac.** A heavy command stays here only for one of
+  these reasons, which its row, its card and the agent's output show with what
+  caused it:
+  - **Mac-only tool**: Xcode and simulator tools, `adb`, `open`, `pbcopy`,
+    `hyperfine` and the rest of the Runner's Mac-only tools list, plus
+    `expo run`, `expo prebuild` and `playwright install`.
+  - **Builds native code for this Mac**: native toolchains such as
+    `cargo build` or `cargo test`, `go build` or `go test`, `swift`, `make`,
+    `cmake`, `clang`, `gcc` and `codesign`. Linux would build binaries this Mac
+    can't run, and skip its macOS-only code.
+  - **Uses a file only this Mac has**: an argument, or a variable set for the
+    command (`T3CODE_HOME=~/.t3/dev vp test run`, `env`, `export`), names a
+    path outside the project, such as `~/.t3`, `~/Library` or another checkout.
+  - **Changes this Mac's checkout**: git commands that write (commits run here,
+    since the pre-commit hook edits this Mac's repository) and installs.
+  - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
+    with `t3 heavy --runner mac`.
+  - **Serves a port used here**: dev servers such as `vite`, `next dev`,
+    `expo start`, a `dev`, `start` or `serve` script or `turbo`/`nx` task, or a
+    test runner's `--ui`.
+  - **Watches this Mac's files**: `--watch`, or `-w` on a test runner or `tsc`.
+    On Linux it would watch a copy your edits never reach.
+  - **Uses this Mac's Docker**: `docker` and `podman` commands, whose images
+    and containers live in this Mac's daemon.
+  - **Talks to a port open here**: an argument or variable names `localhost`,
+    `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
+    `--base-url http://localhost:5733`.
+
+  A tenth reason is learned: **Linux couldn't run this before** (see **If a
+  Linux run fails**). Waiting for a slot or for a machine under its limits is
+  never a reason; the row shows it separately. Simulators, emulators, device
+  opens and `dev:desktop` also run here, alone, as **Always on this Mac**.
+
+- **Asking for Linux.** A command started with `t3 heavy --runner linux` never
+  runs on this Mac. If one of its commands turns out to need this Mac, the job
+  ends with exit code 75 and "Asked for Linux, but it needs this Mac: <reason>".
+  If Linux lacks a tool or file it needs, the job ends with Linux's exit code
+  and "Linux couldn't run this: <error>", without running it here or learning
+  a route. An agent's own `remoto` call is sent to Linux too, but it did not
+  ask for Linux: one that needs this Mac runs here, with a note saying why.
 - **When Linux is offline.** A job headed for Linux that is still waiting
-  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A question
+  follows **Run on this Mac**, **Wait for Linux** or **Ask me**, an agent's own
+  `remoto` included. A job started with `t3 heavy --runner linux` never moves
+  to this Mac: where the setting would run it here, it ends with exit code 75
+  and "Linux is offline and this job asked for Linux". A question
   shows on the job in the Resource Manager with a countdown; unanswered, it
   follows the deadline setting. An agent's foreground command gives up after 10
   minutes, so longer waits only help background commands.
-- **If a Linux run fails.** A run the PC drops (the connection, or the PC
-  restarting) goes back to Linux by itself, up to 3 attempts by default; while
-  Linux is offline it follows **When Linux is offline**. Jobs going back start
-  there one at a time, as **Linux limits** describes. After the last attempt,
-  or when Linux couldn't run a job at all (a tool or folder is missing there),
-  this setting decides. **Tell the agent** (the default) ends the job with
-  Linux's error and "Linux couldn't run this: <reason>", and nothing reruns it.
-  **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job to this
-  Mac, back to Linux, or to you instead. When Linux runs very short of memory
-  with several jobs, it stops the newest one and queues it again; that is not a
-  failure. A command that fails on Linux for its own reasons, such as a failing
-  test, returns its exit code and output unchanged and never reruns.
-- **Bring results back.** Off by default. When on, the files a Linux job
-  created or changed are copied back to this Mac when it ends, except
-  `node_modules` and `.git`. A file you changed here during the job is left
-  alone, and the job's output lists it as "Not copied back (changed on this
-  Mac)".
+- **If a Linux run fails.** A command the PC drops mid-run, or never starts,
+  goes again alone: the rest of its job never runs twice. It goes back to
+  Linux while Linux answers, up to 3 attempts by default. After that, this
+  setting decides for that command (**When Linux is offline** for one that
+  never started): **Tell the agent** (the default) ends it with exit code 75
+  and "Linux couldn't run this: <reason>", and the rest of its job goes on;
+  **Run on this Mac** runs it here; **Wait for Linux** waits and runs it there
+  again; **Ask me** acts as **Tell the agent**, since a running command can't
+  wait for an answer. A job that asked for Linux ends with "Asked for Linux,
+  but …" instead. A command that already printed output or read piped input
+  does not run again: it fails with exit code 75 and says why. When Linux
+  restarts, or can't confirm a dropped run stopped, the whole job goes back to
+  the queue and follows this setting as before. A command Linux lacks a tool or folder
+  for runs again on this Mac by itself, whatever this setting says, unless its
+  job asked for Linux (see **Asking for Linux**). Two such
+  failures (by default) whose rerun here passed teach the route for that command
+  and package (`pnpm exec playwright`, not every `pnpm`) for a while; `t3 heavy routes` lists what it
+  learned and `t3 heavy routes --forget <key|all>` clears it. When Linux runs
+  very short of memory with several jobs, it stops the newest one and queues it
+  again; that is not a failure. A command that fails on Linux for its own
+  reasons, such as a failing test, returns its exit code and output unchanged
+  and never reruns.
+- **Bring results back.** On by default. The files a Linux command created or
+  changed come back to this Mac when it ends, whether it passed or failed, with
+  their file modes, except names in **Never bring back** (`node_modules`,
+  `.git`, `.turbo`, `*.tsbuildinfo` and native build output such as `target`,
+  `.build` and `DerivedData` by default). A file you changed here
+  during the job is left alone, a file the command deleted on Linux stays here,
+  and a run whose results come to more than **Bring back up to** (200 MB)
+  copies nothing back. The job's card says what stayed on Linux.
 - **Moving jobs.** A job's **⋯** menu has **Run on this Mac** and **Run on
   Linux**. Moving a running job stops it and starts it again on the other side.
   A job Linux dropped runs again only once Linux confirms the earlier run

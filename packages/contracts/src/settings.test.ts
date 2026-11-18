@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import { MemoryHubSettings, MemoryHubSettingsUpdateInput } from "./memory.ts";
+import { RUNNER_DEFAULTS } from "./runner.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
@@ -754,13 +755,24 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerMacFirstAfter",
     "runnerLinuxEverything",
     "runnerBringBack",
+    "runnerRouteMemoryDays",
+    "runnerRouteLearnAfter",
+    "runnerBringBackExclude",
+    "runnerBringBackMaxMB",
+    "runnerMacTools",
   ] as const;
+  const EXCLUDE = RUNNER_DEFAULTS.runnerBringBackExclude;
+  const TOOLS = RUNNER_DEFAULTS.runnerMacTools;
   it.each([
-    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false]],
+    [
+      "an older file reads the new defaults",
+      {},
+      ["mac", "agent", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
+    ],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, false],
+      ["automatic", "ask", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS],
     ],
     [
       "the new values",
@@ -769,9 +781,14 @@ describe("ServerSettings project overrides across versions", () => {
         runnerDropped: "agent",
         runnerMacFirstAfter: 32,
         runnerLinuxEverything: true,
-        runnerBringBack: true,
+        runnerBringBack: false,
+        runnerRouteMemoryDays: 30,
+        runnerRouteLearnAfter: 1,
+        runnerBringBackExclude: ["dist"],
+        runnerBringBackMaxMB: 50,
+        runnerMacTools: ["xcodebuild", "fastlane"],
       },
-      ["macFirst", "agent", 32, true, true],
+      ["macFirst", "agent", 32, true, false, 30, 1, ["dist"], 50, ["xcodebuild", "fastlane"]],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");
@@ -787,6 +804,14 @@ describe("ServerSettings project overrides across versions", () => {
 
   it.each([0, 33, 2.5])("Send to Linux after refuses %s", (value) => {
     expect(() => decodeServerSettingsPatch({ runnerMacFirstAfter: value })).toThrow();
+  });
+
+  it.each([0, 10_241, 2.5])("Bring-back size cap refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerBringBackMaxMB: value })).toThrow();
+  });
+
+  it.each([0, 11, 1.5])("Learn a Linux failure after refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerRouteLearnAfter: value })).toThrow();
   });
 });
 

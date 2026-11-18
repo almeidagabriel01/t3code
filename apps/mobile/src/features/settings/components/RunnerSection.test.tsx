@@ -428,7 +428,8 @@ describe("RunnerSection", () => {
     await view.unmount();
     expect(view.write.mock.calls.map(([patch]) => patch)).toEqual([
       { runnerMacFirstAfter: 6 },
-      { runnerBringBack: true },
+      // On by default: the switch turns it off.
+      { runnerBringBack: false },
       { runnerDropped: "agent" },
       { runnerDropped: "wait" },
     ]);

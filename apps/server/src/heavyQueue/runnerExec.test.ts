@@ -1,8 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTty from "node:tty";
 import { describe, expect, it } from "@effect/vitest";
+
+import { RUNNER_DEFAULTS } from "@t3tools/contracts";
 
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
@@ -10,11 +14,14 @@ import {
   changedInputs,
   checkLinux,
   confirmed,
+  forwardedInput,
+  READ_ENV,
   remoteCommand,
   removeRunnerCopy,
   resolveRemoto,
   startLinuxRun,
   stopRemote,
+  touchStartMarker,
   withProjectBins,
 } from "./runnerExec.ts";
 
@@ -29,7 +36,13 @@ const fake = (body: string) => {
 };
 const M = "\\036remoto";
 
-const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
+const runWith = (
+  remoto: string,
+  script = "vp test run",
+  cwd = dir,
+  input?: number,
+  env?: ReadonlyArray<string>,
+) => {
   const stdout: Buffer[] = [];
   let stderr = "";
   const phases: string[] = [];
@@ -44,6 +57,8 @@ const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
     environment: process.env,
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
+    ...(input === undefined ? {} : { input }),
+    ...(env === undefined ? {} : { env }),
     onProgress: (progress) => {
       phases.push(progress.phase ?? "");
       if (progress.running) started();
@@ -61,6 +76,77 @@ const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
 };
 
 describe("running on Linux through remoto", () => {
+  it.each([
+    ["a file", () => NodeFS.openSync(NodePath.join(dir, "input.txt"), "w+"), true],
+    [
+      "a pipe",
+      () => {
+        const fifo = NodePath.join(dir, "input.fifo");
+        NodeChildProcess.execFileSync("mkfifo", [fifo]);
+        return NodeFS.openSync(fifo, NodeFS.constants.O_RDWR | NodeFS.constants.O_NONBLOCK);
+      },
+      true,
+    ],
+    ["/dev/null", () => NodeFS.openSync("/dev/null", "r"), false],
+    [
+      "a TTY",
+      () => {
+        const fd = NodeFS.openSync("/dev/ptmx", "r+");
+        expect(NodeTty.isatty(fd)).toBe(true);
+        return fd;
+      },
+      false,
+    ],
+  ])("forwards %s as the command's input: %s", (_, open, forwarded) => {
+    const fd = open();
+    try {
+      expect(forwardedInput(fd)).toBe(forwarded ? fd : undefined);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+  });
+
+  // `ps` there shows argv: what the line set (`DATABASE_URL=… vp test`) goes on stdin instead,
+  // ahead of the job's own input.
+  it.each([
+    ["with input", "x\ny", "postgres://u:pw@h/db|it's|x\ny"],
+    ["without input", undefined, "postgres://u:pw@h/db|it's|"],
+  ])(
+    "hands the command its variables and the job's stdin %s, never in argv",
+    async (_, text, sent) => {
+      const file = NodePath.join(dir, "stdin.txt");
+      NodeFS.writeFileSync(file, text ?? "");
+      const fd = text === undefined ? undefined : NodeFS.openSync(file, "r");
+      const argv = NodePath.join(dir, "argv.txt");
+      try {
+        // Stands in for `remoto` and `remoto-rodar`: records its argv, then runs the wrapper.
+        const remoto = fake(
+          [
+            `printf '%s\\n' "$@" > ${argv}`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            '"$@"; c=$?',
+            `printf '${M} exit=%s\\n' "$c" >&2`,
+            'exit "$c"',
+          ].join("\n"),
+        );
+        const { run, out } = runWith(
+          remoto,
+          'printf "%s|%s|" "$DATABASE_URL" "$STRIPE_KEY"; cat',
+          dir,
+          fd,
+          ["DATABASE_URL=postgres://u:pw@h/db", "STRIPE_KEY=it's", "not a name=x"],
+        );
+        expect((await run.done).outcome).toEqual({ kind: "finished", code: 0 });
+        expect(out()).toBe(sent);
+        const args = NodeFS.readFileSync(argv, "utf8");
+        expect(args).not.toContain("pw@h");
+        expect(args).not.toContain("it's");
+      } finally {
+        if (fd !== undefined) NodeFS.closeSync(fd);
+      }
+    },
+  );
+
   it.each([
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
     ["/opt/homebrew/bin/node", ["--test"], ["node", "--test"]],
@@ -125,10 +211,10 @@ describe("running on Linux through remoto", () => {
     ]);
     expect(
       wrapped[2]!.startsWith(
-        `export T3_COPY=${copy} PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
+        `${READ_ENV}; export T3_COPY=${copy} PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
       ),
     ).toBe(true);
-    expect(wrapped[2]!.endsWith('; exec "$@"')).toBe(true);
+    expect(wrapped[2]!.endsWith('; eval "$t3v"; exec "$@"')).toBe(true);
   });
 
   // Linux has no Mac home: the text's paths into the checkout point at its copy (`$T3_COPY`).
@@ -404,18 +490,6 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     expect(result.install).toBe(install);
   });
 
-  it("runs with the env it is handed, ahead of the command", () => {
-    expect(withProjectBins(["vp", "run", "x"], "/w", "/w", ["A=1", "B=x y"]).slice(3)).toEqual([
-      "t3",
-      "env",
-      "A=1",
-      "B=x y",
-      "vp",
-      "run",
-      "x",
-    ]);
-  });
-
   it("runs the nearest project tool from the job's folder, then the checkout's", async () => {
     const web = NodePath.join(dir, "apps", "web");
     const tool = (folder: string, name: string, text: string) => {
@@ -556,6 +630,16 @@ describe("ssh calls around a Linux run", () => {
 });
 
 describe("bringing results back", () => {
+  it("lists a file written right after the start marker, even on a coarse clock", () => {
+    const at = NodeFS.mkdtempSync(NodePath.join(dir, "marker-"));
+    // Counts the rounds whose file `find -cnewer` misses.
+    const missed = `n=0; for i in $(seq 50); do ${touchStartMarker('"$1/m"')}; echo x > "$1/f$i"; [ -n "$(find "$1" -name "f$i" -cnewer "$1/m")" ] || n=$((n+1)); done; echo $n`;
+    const out = NodeChildProcess.execFileSync("bash", ["-c", missed, "t3", at], {
+      encoding: "utf8",
+    });
+    expect(out.trim()).toBe("0");
+  });
+
   const T0 = 1_800_000_000;
   const COPY = "app-0123abcd";
   /** Linux's home with the copy and the job's start marker, and the Mac checkout. */
@@ -571,16 +655,17 @@ describe("bringing results back", () => {
       T3_FAKE_HOME: home,
       // Runs the command in Linux's home, as ssh would.
       T3CODE_RUNNER_SSH: fake('eval "c=\\${$#}"; cd "$T3_FAKE_HOME" && exec sh -c "$c"'),
-      // Copies each listed file from the copy there, as rsync --files-from would.
+      // Copies each listed file from the copy there, as rsync --from0 --files-from would.
       T3CODE_RUNNER_RSYNC: fake(
         [
+          'printf "%s\\n" "$@" > "$T3_FAKE_HOME/rsync-args"',
           'for a; do case "$a" in --files-from=*) list="${a#--files-from=}";; esac; done',
           'eval "src=\\${$(($# - 1))}"; eval "dst=\\${$#}"; src="$T3_FAKE_HOME/${src#*:}"',
-          'while IFS= read -r f; do mkdir -p "$dst$(dirname "$f")"; cp "$src$f" "$dst$f"; done < "$list"',
+          'export src dst; xargs -0 sh -c \'for f; do mkdir -p "$dst$(dirname "$f")" && cp "$src$f" "$dst$f" || exit 1; done\' sh < "$list"',
         ].join("\n"),
       ),
     };
-    const back = () =>
+    const back = (exclude = RUNNER_DEFAULTS.runnerBringBackExclude, maxBytes = 200 * 1024 ** 2) =>
       bringBack({
         machine: DEFAULT_MACHINE_CONFIG,
         environment,
@@ -588,8 +673,12 @@ describe("bringing results back", () => {
         job: "job-1",
         root,
         since: T0 * 1000,
+        exclude,
+        maxBytes,
       });
-    return { copy, marker, root, environment, back };
+    const rsyncArgs = () =>
+      NodeFS.readFileSync(NodePath.join(home, "rsync-args"), "utf8").trim().split("\n");
+    return { copy, marker, root, environment, back, rsyncArgs };
   };
   const write = (path: string, text: string, at: number) => {
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
@@ -605,6 +694,8 @@ describe("bringing results back", () => {
     ["in node_modules", "node_modules/x/index.js", "after", null, "left"],
     ["in a nested node_modules", "apps/web/node_modules/y.js", "after", null, "left"],
     ["in .git", ".git/HEAD", "after", null, "left"],
+    ["in .turbo", "apps/web/.turbo/cache.json", "after", null, "left"],
+    ["a tsbuildinfo", "apps/web/tsconfig.tsbuildinfo", "after", null, "left"],
   ] as const)("a file %s (%s) is %s", async (_, path, linux, mac, result) => {
     const { copy, marker, root, back } = setup();
     // Linux compares change times, which only the clock sets: the marker moves instead. The
@@ -616,6 +707,8 @@ describe("bringing results back", () => {
     expect(await back()).toEqual({
       copied: result === "copied" ? [path] : [],
       skipped: result === "skipped" ? [path] : [],
+      deleted: [],
+      overCap: null,
     });
     const here = NodePath.join(root, path);
     expect(NodeFS.existsSync(here) ? NodeFS.readFileSync(here, "utf8") : null).toBe(
@@ -624,19 +717,132 @@ describe("bringing results back", () => {
     expect(NodeFS.existsSync(marker)).toBe(false);
   });
 
+  it("keeps modes, and notes what Linux deleted without deleting it here", async () => {
+    const { copy, marker, root, back, rsyncArgs } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    // Both had them at the run's sync; the job deleted `gone.txt` and a folder there.
+    for (const path of ["kept.txt", "gone.txt", "old/a.txt"]) {
+      write(NodePath.join(root, path), "mac", T0 - 100);
+    }
+    write(NodePath.join(copy, "kept.txt"), "mac", 500_000_000);
+    write(NodePath.join(copy, "new.txt"), "linux", 500_000_000);
+    // Never on Linux: ignored by git, excluded, or made here during the run.
+    NodeChildProcess.execFileSync("git", ["init", "-q", root]);
+    NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "dist\n");
+    write(NodePath.join(copy, ".gitignore"), "dist\n", 500_000_000);
+    write(NodePath.join(root, "dist", "x.js"), "mac", T0 - 100);
+    write(NodePath.join(root, ".turbo", "x"), "mac", T0 - 100);
+    write(NodePath.join(root, "fresh.txt"), "mac", T0 + 5);
+    const back1 = await back();
+    expect({ ...back1, copied: [...(back1?.copied ?? [])].sort() }).toEqual({
+      copied: [".gitignore", "kept.txt", "new.txt"],
+      skipped: [],
+      deleted: ["gone.txt", "old"],
+      overCap: null,
+    });
+    expect(NodeFS.readFileSync(NodePath.join(root, "gone.txt"), "utf8")).toBe("mac");
+    expect(rsyncArgs()).toContain("-p");
+  });
+
+  it("leaves out excluded names, and brings nothing back over the size cap", async () => {
+    const { copy, marker, root, back } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    write(NodePath.join(copy, "run.log"), "log", 500_000_000);
+    write(NodePath.join(copy, "logs", "a.txt"), "log", 500_000_000);
+    write(NodePath.join(copy, "out.txt"), "12345", 500_000_000);
+    write(NodePath.join(copy, "mine.txt"), "1234567890", 500_000_000);
+    // Changed here during the run: skipped, so its size does not count.
+    write(NodePath.join(root, "mine.txt"), "mac", T0 + 5);
+    expect(await back(["*.log", "logs"], 4)).toEqual({
+      copied: [],
+      skipped: ["mine.txt"],
+      deleted: [],
+      overCap: 5,
+    });
+    expect(NodeFS.existsSync(NodePath.join(root, "out.txt"))).toBe(false);
+    NodeFS.writeFileSync(marker, "");
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    expect((await back(["*.log", "logs"], 5))?.copied).toEqual(["out.txt"]);
+  });
+
+  it("never copies into .git, even with no excludes, nor a line a file name forged", async () => {
+    const { copy, marker, root, back } = setup();
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    write(NodePath.join(copy, ".git", "hooks", "pre-commit"), "evil", 500_000_000);
+    // Its name's newline would read as a second line naming `b.txt`, which the job never wrote.
+    const forged = "x\n 1 .";
+    write(NodePath.join(copy, forged, "b.txt"), "linux", 500_000_000);
+    write(NodePath.join(root, "b.txt"), "mac", T0 - 100);
+    expect((await back([]))?.copied).toEqual([`${forged}/b.txt`]);
+    expect(NodeFS.existsSync(NodePath.join(root, ".git", "hooks", "pre-commit"))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(root, "b.txt"), "utf8")).toBe("mac");
+    expect(NodeFS.readFileSync(NodePath.join(root, forged, "b.txt"), "utf8")).toBe("linux");
+  });
+
+  it("drops listed paths that leave the checkout, enter .git, or name an excluded entry", async () => {
+    const { copy, root, environment } = setup();
+    write(NodePath.join(copy, "ok.txt"), "linux", 500_000_000);
+    const listing = ["../x", "./../x", "/etc/x", ".git/hooks/x", "a/.git/x", "a//b", "./logs/x"]
+      .map((path) => `F 1 ./${path}`)
+      .concat(["F 1 ./ok.txt", "D ./..", "D ./.git"]);
+    const canned = {
+      ...environment,
+      T3CODE_RUNNER_SSH: fake(`printf '${listing.join("\\0")}\\0'`),
+    };
+    const back = await bringBack({
+      machine: DEFAULT_MACHINE_CONFIG,
+      environment: canned,
+      copyId: COPY,
+      job: "job-1",
+      root,
+      since: 0,
+      exclude: ["logs"],
+      maxBytes: 1024,
+    });
+    expect(back?.copied).toEqual(["ok.txt"]);
+    expect(back?.deleted).toEqual([]);
+  });
+
   it("is null when Linux can't list or send them, and leaves this Mac alone", async () => {
     const { copy, root, marker, environment } = setup();
     write(NodePath.join(copy, "new.txt"), "linux", T0 + 10);
     NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
-    const args = { machine: DEFAULT_MACHINE_CONFIG, copyId: COPY, job: "job-1", root, since: 0 };
+    const args = {
+      machine: DEFAULT_MACHINE_CONFIG,
+      copyId: COPY,
+      job: "job-1",
+      root,
+      since: 0,
+      exclude: [],
+      maxBytes: 1024,
+    };
     const down = { ...environment, T3CODE_RUNNER_SSH: fake("exit 255") };
     expect(await bringBack({ ...args, environment: down })).toBeNull();
-    const failing = { ...environment, T3CODE_RUNNER_RSYNC: fake("exit 12") };
+    const given = NodePath.join(root, "files-from");
+    const failing = {
+      ...environment,
+      T3CODE_RUNNER_RSYNC: fake(
+        `for a; do case "$a" in --files-from=*) echo "\${a#--files-from=}" > ${given};; esac; done; exit 12`,
+      ),
+    };
     expect(await bringBack({ ...args, environment: failing })).toBeNull();
     expect(NodeFS.existsSync(NodePath.join(root, "new.txt"))).toBe(false);
+    // The file list is private to this call and gone even when the copy failed.
+    const list = NodeFS.readFileSync(given, "utf8").trim();
+    expect(NodeFS.existsSync(list)).toBe(false);
+    expect(NodeFS.existsSync(NodePath.dirname(list))).toBe(false);
     // The listing took the marker: with none left, there is nothing to list.
     expect(NodeFS.existsSync(marker)).toBe(false);
     expect(await bringBack({ ...args, environment })).toBeNull();
+    // A `find` that lists part of the tree, then fails: the partial listing is no listing.
+    const bin = NodeFS.mkdtempSync(NodePath.join(dir, "bin-"));
+    NodeFS.copyFileSync(fake('command -p find "$@"; exit 1'), NodePath.join(bin, "find"));
+    NodeFS.chmodSync(NodePath.join(bin, "find"), 0o755);
+    NodeFS.writeFileSync(marker, "");
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
+    const partial = { ...environment, PATH: `${bin}:${process.env.PATH}` };
+    expect(await bringBack({ ...args, environment: partial })).toBeNull();
+    expect(NodeFS.existsSync(NodePath.join(root, "new.txt"))).toBe(false);
   });
 
   it.each([
@@ -667,9 +873,16 @@ describe("bringing results back", () => {
   );
 
   it("refuses ids that could escape the runs folder", async () => {
-    expect(() => withProjectBins(["vp"], "/w", "/w", [], "../x")).toThrow(/Unsafe/);
+    expect(() => withProjectBins(["vp"], "/w", "/w", "../x")).toThrow(/Unsafe/);
     const { environment } = setup();
-    const args = { machine: DEFAULT_MACHINE_CONFIG, environment, root: dir, since: 0 };
+    const args = {
+      machine: DEFAULT_MACHINE_CONFIG,
+      environment,
+      root: dir,
+      since: 0,
+      exclude: [],
+      maxBytes: 1024,
+    };
     expect(await bringBack({ ...args, copyId: "..", job: "job-1" })).toBeNull();
     expect(await bringBack({ ...args, copyId: COPY, job: "../x" })).toBeNull();
   });

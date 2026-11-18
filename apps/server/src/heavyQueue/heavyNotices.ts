@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { listensHere, localPortsIn } from "./localPorts.ts";
 import type {
   HeavyNotice,
   HeavyNoticesMode,
@@ -22,6 +23,37 @@ import type {
 /** What the Runner does next with a job Linux lost. */
 export type FollowUp = RunnerFailedPolicy;
 
+/** What a Linux job's calls copied back to this Mac, and what they left there, summed. */
+export interface SyncBack {
+  readonly copied: number;
+  /** Changed on this Mac during the run: this Mac's version stays. */
+  readonly skipped: number;
+  /** Deleted on Linux: deletions are not applied here. */
+  readonly deleted: number;
+  /** The largest result over the size cap, in MB: that call copied nothing. */
+  readonly overCapMB?: number;
+  /** Calls whose copy failed. */
+  readonly failed: number;
+}
+
+const counted = (count: number, one: string, many: string) =>
+  `${count} ${count === 1 ? one : many}`;
+
+/** What stayed on Linux, for a card; null when everything came back. */
+const syncBackText = (sync: SyncBack) => {
+  const parts = [
+    ...(sync.overCapMB === undefined ? [] : [`${sync.overCapMB} MB of results, over the size cap`]),
+    ...(sync.failed === 0
+      ? []
+      : [sync.failed === 1 ? "the copy failed" : `${sync.failed} copies failed`]),
+    ...(sync.skipped === 0
+      ? []
+      : [`${counted(sync.skipped, "file", "files")} changed on this Mac during the run`]),
+    ...(sync.deleted === 0 ? [] : [`${counted(sync.deleted, "deletion", "deletions")} there`]),
+  ];
+  return parts.length === 0 ? null : `Not copied back from Linux: ${parts.join("; ")}`;
+};
+
 export type HeavyEvent =
   /** Exited with a failure; `phase` is where a Linux job was. */
   | {
@@ -32,7 +64,10 @@ export type HeavyEvent =
       readonly phase?: HeavyRunnerPhase;
       /** What in its worktree kept Linux from installing it, and the fix. */
       readonly worktree?: string;
+      readonly syncBack?: SyncBack;
     }
+  /** Succeeded on Linux, and part of its results stayed there. */
+  | { readonly kind: "sync-back"; readonly syncBack: SyncBack }
   /** Its Linux question went unanswered and the deadline action is Cancel. */
   | { readonly kind: "deadline"; readonly dropped: boolean }
   /** Linux dropped it mid-run, or was unavailable when it started there. */
@@ -81,8 +116,8 @@ export interface Fault {
 export type FaultSeen =
   /** The pre-flight found the tool missing there. */
   | { readonly kind: "missing"; readonly tool: string }
-  /** It ran and exited 126 or 127: something it calls is missing or not executable there. */
-  | { readonly kind: "exit"; readonly code: number; readonly program: string }
+  /** It ran and its exit code and output show Linux lacked something (`environmentFaultOf`). */
+  | { readonly kind: "environment"; readonly fault: EnvironmentFault }
   /** A package's install was unfinished in the copy twice in a row. */
   | { readonly kind: "install"; readonly package: string | null }
   /** `remoto` reached the PC and started syncing, but the command never ran. */
@@ -143,8 +178,154 @@ const WORKTREE_PROBLEMS: ReadonlyArray<readonly [RegExp, string]> = [
 export const worktreeProblemOf = (line: string) =>
   WORKTREE_PROBLEMS.find(([pattern]) => pattern.test(line))?.[1] ?? null;
 
-/** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
-const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
+/** A shell's own prefix on an error: `sh: 1: `, `bash: line 1: `, `/bin/sh: `, `sh: 1: exec: `. */
+const SHELL = String.raw`(?:\S*/)?(?:ba|da|z|k)?sh(?:: line \d+|: \d+)?: (?:exec: )?`;
+/**
+ * The shell or `env` saying it found no program to run: `vp: command not found`, `sh: 1: vp: not
+ * found`, `zsh: command not found: vp`, `bash: ./x.sh: No such file or directory`, `env: 'tsx': …`.
+ */
+const MISSING_TOOL = new RegExp(
+  [
+    String.raw`^(?:${SHELL})?([^\s:]+): command not found$`,
+    String.raw`^${SHELL}([^\s:]+): (?:not found|No such file or directory)$`,
+    String.raw`^zsh: command not found: (\S+)$`,
+    String.raw`^(?:\S*/)?env: ['‘]?([^\s:'’]+)['’]?: No such file or directory$`,
+  ].join("|"),
+);
+/** The shell saying it found a program it can't run: `bash: ./run.sh: Permission denied`. */
+const NOT_EXECUTABLE = new RegExp(
+  String.raw`^(?:${SHELL}|(?:\S*/)?env: )['‘]?([^\s:'’]+)['’]?: (?:Permission denied|cannot execute.*)$`,
+);
+
+/** What Linux lacked for a call that ran there; `install` is the copy's unfinished install. */
+export type EnvironmentFaultKind =
+  | "missing-program"
+  | "not-executable"
+  | "no-git"
+  | "package-command"
+  | "no-browser"
+  | "local-service"
+  | "python-module"
+  | "install";
+
+export interface EnvironmentFault {
+  readonly kind: EnvironmentFaultKind;
+  /** What it lacked: a program, a module, a service's address. */
+  readonly subject: string;
+  /** The output line that shows it, for the card. */
+  readonly line: string;
+}
+
+/** How much of a call's output is kept to classify its failure. */
+export const TAIL_CHARS = 64 * 1024;
+export const appendTail = (tail: string, text: string) => {
+  const joined = tail + text;
+  return joined.length > TAIL_CHARS ? joined.slice(-TAIL_CHARS) : joined;
+};
+
+/** How far from the end a `recent` row's line may be: earlier, a test that passed may have logged it. */
+const RECENT_LINES = 20;
+
+/**
+ * Exit code and output line that mean Linux lacked something the Mac has. Every row needs its
+ * line: an exit code alone is any program's own (a wrapper may exit 127 on purpose). A row without
+ * a code takes any failure. A `recent` row's line counts only among the last `RECENT_LINES`.
+ */
+const ENVIRONMENT_FAULTS: ReadonlyArray<{
+  readonly kind: Exclude<EnvironmentFaultKind, "install">;
+  readonly code?: number;
+  readonly pattern: RegExp;
+  readonly recent?: true;
+}> = [
+  { kind: "missing-program", code: 127, pattern: MISSING_TOOL },
+  { kind: "not-executable", code: 126, pattern: NOT_EXECUTABLE },
+  { kind: "no-git", code: 128, pattern: /^fatal: not a git repository/ },
+  {
+    kind: "package-command",
+    pattern: /(?:ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL\s+|^)Command "([^"]+)" not found/,
+    recent: true,
+  },
+  { kind: "no-browser", pattern: /Executable doesn't exist at \S*ms-playwright\/([^/\s]+)/ },
+  {
+    kind: "local-service",
+    pattern: /ECONNREFUSED ((?:localhost|127\.0\.0\.1|::1|\[::1\]):\d+)/,
+    recent: true,
+  },
+  { kind: "python-module", pattern: /No module named '?([\w.]+)'?/, recent: true },
+];
+
+/**
+ * The environment fault a call that ran on Linux shows, from its exit code and output tail, or
+ * null when it failed in its own code. A Python module that is a file or folder in `folders` is
+ * the project's own, missing anywhere. A refused local port is Linux's only while something on
+ * this Mac listens on it (`listens`): else it is a server the run itself was to start.
+ */
+export const environmentFaultOf = (
+  code: number,
+  tail: string,
+  context: {
+    readonly program: string;
+    readonly folders: ReadonlyArray<string>;
+    readonly exists?: (path: string) => boolean;
+    readonly listens?: (port: number) => boolean;
+  },
+): EnvironmentFault | null => {
+  if (code === 0) return null;
+  const exists = context.exists ?? NodeFS.existsSync;
+  const listens = context.listens ?? listensHere;
+  const lines = meaningfulLines(tail.slice(-TAIL_CHARS))
+    .filter((line) => !line.startsWith("[t3 heavy]"))
+    .toReversed();
+  for (const row of ENVIRONMENT_FAULTS) {
+    if (row.code !== undefined && row.code !== code) continue;
+    let match: RegExpExecArray | null = null;
+    let line = "";
+    for (const each of row.recent ? lines.slice(0, RECENT_LINES) : lines) {
+      match = row.pattern.exec(each);
+      if (match !== null) {
+        line = each;
+        break;
+      }
+    }
+    if (match === null) continue;
+    const subject = match.slice(1).find((group) => group !== undefined) ?? context.program;
+    if (row.kind === "local-service" && !localPortsIn(subject).some(listens)) continue;
+    if (row.kind === "python-module") {
+      const top = subject.split(".")[0]!;
+      const own = context.folders.some(
+        (folder) =>
+          exists(NodePath.join(folder, top)) || exists(NodePath.join(folder, `${top}.py`)),
+      );
+      if (own) continue;
+    }
+    return {
+      kind: row.kind,
+      subject: row.kind === "python-module" ? subject.split(".")[0]! : subject,
+      line,
+    };
+  }
+  return null;
+};
+
+/** The problem detector's reason and stable cause detail for each environment fault. */
+const environmentCause = ({ kind, subject }: EnvironmentFault): [FaultReason, string] => {
+  switch (kind) {
+    case "missing-program":
+    case "not-executable":
+    case "package-command":
+      return ["command-not-found", subject];
+    case "no-browser":
+      return ["command-not-found", "playwright-browser"];
+    case "python-module":
+      return ["command-not-found", `python-${subject}`];
+    case "no-git":
+      return ["linux-sync", "no-git"];
+    case "local-service":
+      return ["network", "localhost"];
+    case "install":
+      return ["linux-install", subject];
+  }
+};
 
 /**
  * A Linux environment failure as the problem detector files it, with a cause key that stays the same for the
@@ -166,10 +347,9 @@ export const faultOf = (
   if (seen.kind === "missing") {
     return fault("command-not-found", seen.tool, `${seen.tool}: command not found`);
   }
-  if (seen.kind === "exit") {
-    if (seen.code !== 126 && seen.code !== 127) return null;
-    const tool = (line === null ? null : MISSING_TOOL.exec(line)?.[1]) ?? seen.program;
-    return fault("command-not-found", tool, `${tool}: command not found`);
+  if (seen.kind === "environment") {
+    const [reason, detail] = environmentCause(seen.fault);
+    return { ...fault(reason, detail, ""), error: seen.fault.line };
   }
   if (line !== null && PC_UNREACHABLE.test(line)) return null;
   const pc = line === null ? undefined : PC_CAUSES.find(([pattern]) => pattern.test(line));
@@ -346,26 +526,39 @@ const recordOf = (
 
 /** A job's own process ending; null for success, a stop, or an entry already gone. */
 export const endedRecord = (
-  entry: (HeavyQueueEntry & { readonly worktree?: string; readonly line?: string }) | undefined,
+  entry:
+    | (HeavyQueueEntry & {
+        readonly worktree?: string;
+        readonly line?: string;
+        readonly syncBack?: SyncBack;
+      })
+    | undefined,
   code: number,
   now: number,
   error?: string,
-): HeavyEventRecord | null =>
-  entry === undefined || STOPPED_CODES.has(code)
-    ? null
-    : recordOf(
-        entry,
-        {
-          kind: "ended",
-          code,
-          ...(error === undefined ? {} : { error }),
-          ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
-          ...(entry.runner === "linux" && entry.worktree !== undefined
-            ? { worktree: entry.worktree }
-            : {}),
-        },
-        now,
-      );
+): HeavyEventRecord | null => {
+  if (entry === undefined) return null;
+  const { syncBack } = entry;
+  if (STOPPED_CODES.has(code)) {
+    return code === 0 && syncBack !== undefined && syncBackText(syncBack) !== null
+      ? recordOf(entry, { kind: "sync-back", syncBack }, now)
+      : null;
+  }
+  return recordOf(
+    entry,
+    {
+      kind: "ended",
+      code,
+      ...(error === undefined ? {} : { error }),
+      ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
+      ...(entry.runner === "linux" && entry.worktree !== undefined
+        ? { worktree: entry.worktree }
+        : {}),
+      ...(syncBack === undefined ? {} : { syncBack }),
+    },
+    now,
+  );
+};
 
 export const deadlineRecord = (entry: HeavyQueueEntry, now: number) =>
   recordOf(entry, { kind: "deadline", dropped: entry.dropped === true }, now);
@@ -601,6 +794,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
           description: `Exit code ${record.code}`,
         });
       }
+      const left = record.syncBack === undefined ? null : syncBackText(record.syncBack);
       return notice({
         group: `failed:${job.runner}`,
         category: "problem",
@@ -608,9 +802,19 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         machine: job.runner,
         one: `${name} failed on ${on}`,
         many: (n) => `${jobs(n)} failed on ${on}`,
-        description: `Exit code ${record.code}`,
+        description: `Exit code ${record.code}${left === null ? "" : `. ${left}`}`,
       });
     }
+    case "sync-back":
+      return notice({
+        group: "sync-back",
+        category: "unexpected",
+        tone: "warning",
+        machine: "linux",
+        one: `Not all of ${name}'s results came back from Linux`,
+        many: (n) => `Not all results of ${jobs(n)} came back from Linux`,
+        description: syncBackText(record.syncBack) ?? "",
+      });
     case "deadline":
       return notice({
         group: "deadline",

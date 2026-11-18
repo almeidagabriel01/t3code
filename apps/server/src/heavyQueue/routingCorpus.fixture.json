@@ -1,0 +1,1393 @@
+{
+  "rules": [
+    "Verdicts are decided by hand from context.md and design.md; never regenerate them by running the code.",
+    "exclusive: the queue kind (admission's EXCLUSIVE words anywhere in the line) stays on this Mac as before.",
+    "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs is judged the same way, one level down. A -c text made by $(...) is judged only when it runs.",
+    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
+    "The first part in source order with a reason decides; otherwise linux. Never a reason: redirects, cd targets, glue, read-only git, Python, sourced files, pipes, stdin, &, syntax the parser cannot follow, an unreadable script inside the checkout, the retired Can-run-on-Linux list.",
+    "Subjects: the program (plus the subcommand that decides), the pattern, or the resolved path.",
+    "Sanitized: home is /Users/dev, session and scratch ids are ID (a literal <id> would parse as a redirect), commit messages are msg, Python heredoc bodies are pass, company projects are left out."
+  ],
+  "rows": [
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; mkdir -p $S/fix; F=\"apps/web/src/index.css apps/web/src/pierre-tree-theme.ts apps/web/src/lib/visibleAnimation.ts\"; for f in ${=F}; do cp $f $S/fix/$(basename $f); git show HEAD:$f > $f; done; git status --short; cat > $S/run-ab.sh <<'EOF'\n#!/bin/zsh\n# $1 = label; runs 4 replay agents and measures frames + per-process CPU\nS=/private/tmp/claude-501/ID/ID/scratchpad\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980/apps/server\n~/DEV/Pessoal/t3code-evidence/resource-load-detail/scripts/load.sh 4 140 > /dev/null 2>&1 &\nsleep 15\ncd ~/DEV/Pessoal/t3code-evidence/resource-load-detail/scripts\nexport PW_FROM=$(ls -d /Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980/node_modules/.pnpm/playwright@1.64.1*/node_modules/playwright)/package.json\nnode trace.mjs http://localhost:6799/ $1-trace --seconds 15 2>&1 | head -1\nnode proccpu.mjs http://localhost:6799/ $1-cpu --seconds 30 2>&1 | head -5\nwait\nEOF\nchmod +x $S/run-ab.sh; sleep 5; $S/run-ab.sh before",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980",
+      "scripts": {
+        "$S/run-ab.sh": null
+      },
+      "observed": "Couldn't read this script",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/run-ab.sh",
+      "why": "unreadable script outside the checkout (written by this line)"
+    },
+    {
+      "line": "'../../node_modules/.bin/effect-tsgo' 'tsrs' '--noEmit'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-linux-el-2dedea2b90b2dca4/apps/server",
+      "scripts": {
+        "../../node_modules/.bin/effect-tsgo": "#!/bin/sh\n# Resolve $0 through symlinks so basedir is the shim's real directory.\n# Cap hops at the kernel's ELOOP limit so a cycle cannot hang the shim.\n#\n# A shim runs with node_modules/.bin at the front of PATH, so readlink, sed,\n# uname, and printf go through `command -p`, which searches the system default\n# path instead. A dependency's bin cannot stand in for one of them and take over\n# the shim before it reaches its target. Directories come from `${link%/*}`,\n# which needs no helper at all.\n#\n# A helper the default path lacks, as in a Nix build sandbox, comes from PATH\n# instead, with node_modules and relative entries dropped from it.\ncaller_path_set=${PATH+set}\ncaller_path=${PATH-}\nhelper_path=\nrest=$caller_path:\nwhile [ -n \"$rest\" ]; do\n  dir=${rest%%:*}\n  rest=${rest#*:}\n  case \"$dir\" in\n    */node_modules/*|*/node_modules) ;;\n    /*) helper_path=${helper_path:+$helper_path:}$dir ;;\n  esac\ndone\n# An empty PATH searches the current directory.\nPATH=${helper_path:-/}\n# A helper comes from PATH only when the default path lacks it and PATH has it.\n# The bash 3.2 that macOS ships as sh answers `command -p -v` from PATH.\nrun_helper() {\n  if command -p -v \"$1\" >/dev/null 2>&1 || ! command -v \"$1\" >/dev/null 2>&1; then command -p \"$@\"; else command \"$@\"; fi\n}\nlink=\"$0\"\n# `${link%/*}` needs a separator to strip. A bare name came from a PATH lookup\n# and stands for a file in the current directory.\ncase \"$link\" in\n  */*|*\\\\*) ;;\n  *) link=\"./$link\" ;;\nesac\nhops=0\nwhile [ -L \"$link\" ] && [ \"$hops\" -lt 40 ]; do\n  hops=$((hops+1))\n  target=$(run_helper readlink \"$link\")\n  case \"$target\" in\n    /*) link=\"$target\" ;;\n    *)  link=\"${link%/*}/$target\" ;;\n  esac\ndone\nbasedir=$(run_helper printf '%s\\n' \"$link\" | run_helper sed -e 's,\\\\,/,g')\nbasedir=\"${basedir%/*}\"\nbasedir_abs=$(CDPATH= cd -P -- \"$basedir\" && pwd -P) || exit $?\nbasedir=\"$basedir_abs\"\nbasedir_win=\"$basedir\"\nexe=\"\"\nmsys=\"\"\n\ncase `run_helper uname -a` in\n  *CYGWIN*|*MINGW*|*MSYS*)\n    if converted=$(command -p cygpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n    elif command -v cygpath > /dev/null 2>&1; then\n      basedir_win=`cygpath -w \"$basedir\"`\n    fi\n    exe=\".exe\"\n    msys=\"true\"\n  ;;\n  *WSL2*)\n    if converted=$(command -p wslpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n      exe=\".exe\"\n    elif command -v wslpath > /dev/null 2>&1; then\n      basedir_win=\"$(wslpath -w \"$basedir\" 2> /dev/null)\"\n      if [ $? -ne 0 ] || [ -z \"$basedir_win\" ]; then\n        basedir_win=\"$basedir\"\n      else\n        exe=\".exe\"\n      fi\n    fi\n  ;;\nesac\nif [ -n \"$caller_path_set\" ]; then PATH=$caller_path; else unset PATH; fi\n\nif [ -z \"$NODE_PATH\" ]; then\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules\"\nelse\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules:$NODE_PATH\"\nfi\nif [ -n \"$exe\" ] && [ -x \"$basedir/node.exe\" ]; then\n  exec \"$basedir/node.exe\"  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$msys\" ] && command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$exe\" ] && command -v node.exe >/dev/null 2>&1; then\n  exec node.exe  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelse\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nfi\n# cmd-shim-target=../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\n"
+      },
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "a package bin is a launcher, its case shim is not read"
+    },
+    {
+      "line": "../../node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error\" | head; echo CONTRACTS_DONE; cd ../../apps/server && ../../node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error\" | head -20; echo SERVER_DONE",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-group-asks-use-9a9471d6bb4d4640/packages/contracts",
+      "scripts": {
+        "../../node_modules/.bin/effect-tsgo": "#!/bin/sh\n# Resolve $0 through symlinks so basedir is the shim's real directory.\n# Cap hops at the kernel's ELOOP limit so a cycle cannot hang the shim.\n#\n# A shim runs with node_modules/.bin at the front of PATH, so readlink, sed,\n# uname, and printf go through `command -p`, which searches the system default\n# path instead. A dependency's bin cannot stand in for one of them and take over\n# the shim before it reaches its target. Directories come from `${link%/*}`,\n# which needs no helper at all.\n#\n# A helper the default path lacks, as in a Nix build sandbox, comes from PATH\n# instead, with node_modules and relative entries dropped from it.\ncaller_path_set=${PATH+set}\ncaller_path=${PATH-}\nhelper_path=\nrest=$caller_path:\nwhile [ -n \"$rest\" ]; do\n  dir=${rest%%:*}\n  rest=${rest#*:}\n  case \"$dir\" in\n    */node_modules/*|*/node_modules) ;;\n    /*) helper_path=${helper_path:+$helper_path:}$dir ;;\n  esac\ndone\n# An empty PATH searches the current directory.\nPATH=${helper_path:-/}\n# A helper comes from PATH only when the default path lacks it and PATH has it.\n# The bash 3.2 that macOS ships as sh answers `command -p -v` from PATH.\nrun_helper() {\n  if command -p -v \"$1\" >/dev/null 2>&1 || ! command -v \"$1\" >/dev/null 2>&1; then command -p \"$@\"; else command \"$@\"; fi\n}\nlink=\"$0\"\n# `${link%/*}` needs a separator to strip. A bare name came from a PATH lookup\n# and stands for a file in the current directory.\ncase \"$link\" in\n  */*|*\\\\*) ;;\n  *) link=\"./$link\" ;;\nesac\nhops=0\nwhile [ -L \"$link\" ] && [ \"$hops\" -lt 40 ]; do\n  hops=$((hops+1))\n  target=$(run_helper readlink \"$link\")\n  case \"$target\" in\n    /*) link=\"$target\" ;;\n    *)  link=\"${link%/*}/$target\" ;;\n  esac\ndone\nbasedir=$(run_helper printf '%s\\n' \"$link\" | run_helper sed -e 's,\\\\,/,g')\nbasedir=\"${basedir%/*}\"\nbasedir_abs=$(CDPATH= cd -P -- \"$basedir\" && pwd -P) || exit $?\nbasedir=\"$basedir_abs\"\nbasedir_win=\"$basedir\"\nexe=\"\"\nmsys=\"\"\n\ncase `run_helper uname -a` in\n  *CYGWIN*|*MINGW*|*MSYS*)\n    if converted=$(command -p cygpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n    elif command -v cygpath > /dev/null 2>&1; then\n      basedir_win=`cygpath -w \"$basedir\"`\n    fi\n    exe=\".exe\"\n    msys=\"true\"\n  ;;\n  *WSL2*)\n    if converted=$(command -p wslpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n      exe=\".exe\"\n    elif command -v wslpath > /dev/null 2>&1; then\n      basedir_win=\"$(wslpath -w \"$basedir\" 2> /dev/null)\"\n      if [ $? -ne 0 ] || [ -z \"$basedir_win\" ]; then\n        basedir_win=\"$basedir\"\n      else\n        exe=\".exe\"\n      fi\n    fi\n  ;;\nesac\nif [ -n \"$caller_path_set\" ]; then PATH=$caller_path; else unset PATH; fi\n\nif [ -z \"$NODE_PATH\" ]; then\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules\"\nelse\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules:$NODE_PATH\"\nfi\nif [ -n \"$exe\" ] && [ -x \"$basedir/node.exe\" ]; then\n  exec \"$basedir/node.exe\"  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$msys\" ] && command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$exe\" ] && command -v node.exe >/dev/null 2>&1; then\n  exec node.exe  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelse\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nfi\n# cmd-shim-target=../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\n"
+      },
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "{ ../../node_modules/.bin/effect-tsgo tsrs --noEmit -p tsconfig.json 2>&1 | tail -30; echo \"WEB_TSC_EXIT ${pipestatus[1]}\"; (cd ../../packages/client-runtime && ../../node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | tail -10; echo \"CR_TSC_EXIT ${pipestatus[1]}\"); }",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-38a34aa501128718/apps/web",
+      "scripts": {
+        "../../node_modules/.bin/effect-tsgo": "#!/bin/sh\n# Resolve $0 through symlinks so basedir is the shim's real directory.\n# Cap hops at the kernel's ELOOP limit so a cycle cannot hang the shim.\n#\n# A shim runs with node_modules/.bin at the front of PATH, so readlink, sed,\n# uname, and printf go through `command -p`, which searches the system default\n# path instead. A dependency's bin cannot stand in for one of them and take over\n# the shim before it reaches its target. Directories come from `${link%/*}`,\n# which needs no helper at all.\n#\n# A helper the default path lacks, as in a Nix build sandbox, comes from PATH\n# instead, with node_modules and relative entries dropped from it.\ncaller_path_set=${PATH+set}\ncaller_path=${PATH-}\nhelper_path=\nrest=$caller_path:\nwhile [ -n \"$rest\" ]; do\n  dir=${rest%%:*}\n  rest=${rest#*:}\n  case \"$dir\" in\n    */node_modules/*|*/node_modules) ;;\n    /*) helper_path=${helper_path:+$helper_path:}$dir ;;\n  esac\ndone\n# An empty PATH searches the current directory.\nPATH=${helper_path:-/}\n# A helper comes from PATH only when the default path lacks it and PATH has it.\n# The bash 3.2 that macOS ships as sh answers `command -p -v` from PATH.\nrun_helper() {\n  if command -p -v \"$1\" >/dev/null 2>&1 || ! command -v \"$1\" >/dev/null 2>&1; then command -p \"$@\"; else command \"$@\"; fi\n}\nlink=\"$0\"\n# `${link%/*}` needs a separator to strip. A bare name came from a PATH lookup\n# and stands for a file in the current directory.\ncase \"$link\" in\n  */*|*\\\\*) ;;\n  *) link=\"./$link\" ;;\nesac\nhops=0\nwhile [ -L \"$link\" ] && [ \"$hops\" -lt 40 ]; do\n  hops=$((hops+1))\n  target=$(run_helper readlink \"$link\")\n  case \"$target\" in\n    /*) link=\"$target\" ;;\n    *)  link=\"${link%/*}/$target\" ;;\n  esac\ndone\nbasedir=$(run_helper printf '%s\\n' \"$link\" | run_helper sed -e 's,\\\\,/,g')\nbasedir=\"${basedir%/*}\"\nbasedir_abs=$(CDPATH= cd -P -- \"$basedir\" && pwd -P) || exit $?\nbasedir=\"$basedir_abs\"\nbasedir_win=\"$basedir\"\nexe=\"\"\nmsys=\"\"\n\ncase `run_helper uname -a` in\n  *CYGWIN*|*MINGW*|*MSYS*)\n    if converted=$(command -p cygpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n    elif command -v cygpath > /dev/null 2>&1; then\n      basedir_win=`cygpath -w \"$basedir\"`\n    fi\n    exe=\".exe\"\n    msys=\"true\"\n  ;;\n  *WSL2*)\n    if converted=$(command -p wslpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n      exe=\".exe\"\n    elif command -v wslpath > /dev/null 2>&1; then\n      basedir_win=\"$(wslpath -w \"$basedir\" 2> /dev/null)\"\n      if [ $? -ne 0 ] || [ -z \"$basedir_win\" ]; then\n        basedir_win=\"$basedir\"\n      else\n        exe=\".exe\"\n      fi\n    fi\n  ;;\nesac\nif [ -n \"$caller_path_set\" ]; then PATH=$caller_path; else unset PATH; fi\n\nif [ -z \"$NODE_PATH\" ]; then\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules\"\nelse\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules:$NODE_PATH\"\nfi\nif [ -n \"$exe\" ] && [ -x \"$basedir/node.exe\" ]; then\n  exec \"$basedir/node.exe\"  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$msys\" ] && command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$exe\" ] && command -v node.exe >/dev/null 2>&1; then\n  exec node.exe  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelse\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nfi\n# cmd-shim-target=../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\n"
+      },
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; node $S/compile.cjs src/state/integrations.ts \"function openIntegrationNames\" | cut -c1-260; cd .. && cd .. && files=(apps/mobile/src/features/settings/SettingsRouteScreen.tsx apps/mobile/src/state/integrations.ts); for f in \"${files[@]}\"; do vp fmt --stdin-filepath=\"$f\" < \"$f\" 2>/dev/null | cmp -s - \"$f\" || echo \"FMT DIFF $f\"; done; vp lint --no-ignore \"${files[@]}\" > $S/lint.txt 2>&1; echo \"lint exit=$?\"; grep -v \"^note\" $S/lint.txt | tail -3",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-d/apps/mobile",
+      "scripts": {
+        "/private/tmp/claude-501/ID/ID/scratchpad/compile.cjs": "const path = require(\"node:path\");\nconst root = process.cwd();\nconst req = require(\"node:module\").createRequire(path.join(root, \"package.json\"));\nconst babel = req(\"@babel/core\");\nconst cfg = req(\"./babel.config.js\")({ cache: () => {} });\nconst presets = cfg.presets.map(([n, o]) => n === \"babel-preset-expo\" ? [req.resolve(n), o] : [n, o]);\nconst out = babel.transformFileSync(path.join(root, process.argv[2]), { babelrc: false, configFile: false, cwd: root, presets,\n  caller: { name: \"metro\", bundler: \"metro\", platform: \"ios\", isDev: false, isServer: false, isNodeModule: false, supportsStaticESM: true, supportsReactCompiler: true } });\nconst code = out.code; const i = code.indexOf(process.argv[3]);\nconsole.log(code.slice(i, i + 1600));\n"
+      },
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "node running a scratch file is glue"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84/apps/mobile/src; python3 - <<'EOF'\npass\nEOF\ncd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84; files=(apps/mobile/src/state/use-composer-drafts.ts apps/mobile/src/state/use-composer-drafts.test.ts apps/mobile/src/features/threads/thread-list-v2-items.tsx apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.test.tsx apps/mobile/src/features/layout/workspace/WorkspaceThreadSidebar.tsx apps/mobile/src/features/layout/workspace/open-conversation-key.ts apps/mobile/src/features/layout/workspace/open-conversation-key.test.ts); { ./node_modules/.bin/vp fmt \"${files[@]}\"; ./node_modules/.bin/vp fmt --check \"${files[@]}\"; echo \"FMT_EXIT $?\"; ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\"; echo \"LINT_EXIT $?\"; } 2>&1 | grep -v \"t3 heavy\\|^note:\" | tail -8",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84/apps/mobile/src",
+      "scripts": {
+        "./node_modules/.bin/vp": null
+      },
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "/private/tmp/claude-501/ID/ID/scratchpad/commit.sh 2>&1 | grep -v \"t3 heavy\"; echo \"rc=${pipestatus[1]}\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-5e86915ac00a8d4f",
+      "scripts": {
+        "/private/tmp/claude-501/ID/ID/scratchpad/commit.sh": "#!/bin/zsh\nset -e\nS=/private/tmp/claude-501/ID/ID/scratchpad\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-5e86915ac00a8d4f/apps/mobile/src\ngit commit -q -m msg \\\n  persistence/mobile-preferences.ts persistence/mobile-preferences.test.ts \\\n  features/settings/projectGroupingCopy.ts features/settings/ThreadSettingsSections.tsx \\\n  features/settings/ThreadOrderSettings.test.tsx features/threads/use-thread-list-v2-shelf-preferences.ts\ngit commit -q -m msg \\\n  features/threads/threadListV2.ts features/threads/threadListV2.test.ts \\\n  features/threads/thread-list-v2-items.tsx features/threads/thread-list-v2-items.test.tsx \\\n  features/threads/threadStatusLabels.ts features/threads/useThreadListV2.ts features/threads/useThreadListV2.test.tsx \\\n  features/threads/ThreadArrangementSheet.tsx features/threads/ThreadArrangementSheet.test.tsx \\\n  features/threads/ThreadNavigationSidebar.tsx features/home/HomeScreen.tsx \\\n  features/assistants/AssistantTaskRows.tsx features/assistants/HomeAssistantsSection.tsx features/assistants/HomeAssistantsSection.test.tsx\ngit commit -q -m msg \\\n  features/home/useThreadListActions.ts features/home/useThreadListActions.test.ts\ngit log --oneline -4\ngit status --short\n"
+      },
+      "observed": "unknown",
+      "expect": "mac-state:git commit",
+      "why": "readable script outside the checkout travels; its text commits"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile; remoto pnpm exec vp test run src/features/assistants/AssistantGroupChatRouteScreen.test.tsx 2>&1 | tail -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile; pnpm exec vp test run src/features/assistants/AssistantGroupChatRouteScreen.test.tsx --coverage.enabled --coverage.provider=v8 --coverage.reporter=json --coverage.reporter=text --coverage.reportsDirectory=/tmp/cov-strip --coverage.include=src/features/assistants/AssistantGroupChatRouteScreen.tsx --coverage.include=src/features/assistants/GroupWaitingStrip.tsx 2>&1 | grep -vE \"act\\(|^$|When testing|fire events|assert on|This ensures|^\\}\\);|stderr|An update\" | tail -15",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile",
+      "observed": "linux",
+      "expect": "mac-env:/tmp/cov-strip"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile; remoto pnpm exec vp test run src/features/assistants/AssistantGroupChatRouteScreen.test.tsx --coverage.enabled --coverage.provider=v8 --coverage.reporter=json --coverage.reporter=text --coverage.reportsDirectory=/tmp/cov-strip --coverage.include=src/features/assistants/AssistantGroupChatRouteScreen.tsx --coverage.include=src/features/assistants/GroupWaitingStrip.tsx 2>&1 | grep -vE \"act\\(|^$|When testing|fire events|assert on|This ensures|^\\}\\);|stderr|An update\" | tail -15",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-qa2-5828b46990ed21df/apps/mobile",
+      "observed": "Uses a file outside the project",
+      "expect": "mac-env:/tmp/cov-strip",
+      "why": "flag value of the test run names a path outside the checkout"
+    },
+    {
+      "line": "S=apps/server/src && H=$S/heavyQueue && \\\ngit commit -q -m msg $S/resourceTelemetry/Model.ts $S/resourceTelemetry/Model.test.ts && \\\ngit commit -q -m msg packages/contracts/src/heavyQueue.ts && \\\ngit add $H/processTable.ts $H/processTable.test.ts $H/jobActivity.ts $H/jobActivity.test.ts $H/outsideUsage.ts $H/outsideUsage.test.ts && \\\ngit commit -q -m msg $H/processTable.ts $H/processTable.test.ts $H/jobActivity.ts $H/jobActivity.test.ts $H/outsideUsage.ts $H/outsideUsage.test.ts $H/HeavyQueueSampler.ts $H/HeavyQueueSampler.test.ts $H/admission.ts $H/queueFile.ts $H/HeavyQueue.ts $H/classifyHeavyCommands.ts $H/classifyHeavyCommands.test.ts $H/HeavyCommands.ts $S/resourceTelemetry/ProcessGroupMetrics.ts && \\\ngit commit -q -m msg $S/mcp/toolkits/heavy/handlers.ts $S/mcp/toolkits/heavy/model.ts; echo EXIT=$?; git log --oneline -5; git status --short",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--c4fd445dde569ef7",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "git commit --no-edit -m msg 2>&1 | grep -v 'waiting on this Mac' | tail -6; git log --oneline -1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "pnpm exec vp fmt --no-ignore --check packages/client-runtime/src/state/heavyQueueModel.ts packages/client-runtime/src/state/heavyQueueModel.test.ts apps/mobile/src/features/resources/HeavyWork.tsx apps/mobile/src/features/resources/HeavyWork.test.tsx apps/mobile/src/features/resources/ProcessSections.tsx apps/mobile/src/features/resources/ResourceManagerRouteScreen.tsx apps/mobile/src/features/resources/resourceManagerCopy.ts 2>&1 | grep -v \"^\\[t3 heavy\\]\" | tail -12",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--7fcd8abfca2785f9",
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "fmt --check on named files is light: nothing outside"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-phantom-approval-not-c245244b3140d884/apps/server/src/orchestration-v2/Adapters; python3 - <<'EOF'\npass\nEOF\ncd /Users/dev/.t3/worktrees/t3code/t3-phantom-approval-not-c245244b3140d884/apps/server && ../../node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | tail -20",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-phantom-approval-not-c245244b3140d884/apps/server",
+      "scripts": {
+        "../../node_modules/.bin/effect-tsgo": "#!/bin/sh\n# Resolve $0 through symlinks so basedir is the shim's real directory.\n# Cap hops at the kernel's ELOOP limit so a cycle cannot hang the shim.\n#\n# A shim runs with node_modules/.bin at the front of PATH, so readlink, sed,\n# uname, and printf go through `command -p`, which searches the system default\n# path instead. A dependency's bin cannot stand in for one of them and take over\n# the shim before it reaches its target. Directories come from `${link%/*}`,\n# which needs no helper at all.\n#\n# A helper the default path lacks, as in a Nix build sandbox, comes from PATH\n# instead, with node_modules and relative entries dropped from it.\ncaller_path_set=${PATH+set}\ncaller_path=${PATH-}\nhelper_path=\nrest=$caller_path:\nwhile [ -n \"$rest\" ]; do\n  dir=${rest%%:*}\n  rest=${rest#*:}\n  case \"$dir\" in\n    */node_modules/*|*/node_modules) ;;\n    /*) helper_path=${helper_path:+$helper_path:}$dir ;;\n  esac\ndone\n# An empty PATH searches the current directory.\nPATH=${helper_path:-/}\n# A helper comes from PATH only when the default path lacks it and PATH has it.\n# The bash 3.2 that macOS ships as sh answers `command -p -v` from PATH.\nrun_helper() {\n  if command -p -v \"$1\" >/dev/null 2>&1 || ! command -v \"$1\" >/dev/null 2>&1; then command -p \"$@\"; else command \"$@\"; fi\n}\nlink=\"$0\"\n# `${link%/*}` needs a separator to strip. A bare name came from a PATH lookup\n# and stands for a file in the current directory.\ncase \"$link\" in\n  */*|*\\\\*) ;;\n  *) link=\"./$link\" ;;\nesac\nhops=0\nwhile [ -L \"$link\" ] && [ \"$hops\" -lt 40 ]; do\n  hops=$((hops+1))\n  target=$(run_helper readlink \"$link\")\n  case \"$target\" in\n    /*) link=\"$target\" ;;\n    *)  link=\"${link%/*}/$target\" ;;\n  esac\ndone\nbasedir=$(run_helper printf '%s\\n' \"$link\" | run_helper sed -e 's,\\\\,/,g')\nbasedir=\"${basedir%/*}\"\nbasedir_abs=$(CDPATH= cd -P -- \"$basedir\" && pwd -P) || exit $?\nbasedir=\"$basedir_abs\"\nbasedir_win=\"$basedir\"\nexe=\"\"\nmsys=\"\"\n\ncase `run_helper uname -a` in\n  *CYGWIN*|*MINGW*|*MSYS*)\n    if converted=$(command -p cygpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n    elif command -v cygpath > /dev/null 2>&1; then\n      basedir_win=`cygpath -w \"$basedir\"`\n    fi\n    exe=\".exe\"\n    msys=\"true\"\n  ;;\n  *WSL2*)\n    if converted=$(command -p wslpath -w \"$basedir\" 2>/dev/null) && [ -n \"$converted\" ]; then\n      basedir_win=\"$converted\"\n      exe=\".exe\"\n    elif command -v wslpath > /dev/null 2>&1; then\n      basedir_win=\"$(wslpath -w \"$basedir\" 2> /dev/null)\"\n      if [ $? -ne 0 ] || [ -z \"$basedir_win\" ]; then\n        basedir_win=\"$basedir\"\n      else\n        exe=\".exe\"\n      fi\n    fi\n  ;;\nesac\nif [ -n \"$caller_path_set\" ]; then PATH=$caller_path; else unset PATH; fi\n\nif [ -z \"$NODE_PATH\" ]; then\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules\"\nelse\n  export NODE_PATH=\"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/node_modules:$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules:$basedir_abs/../.pnpm/node_modules:$NODE_PATH\"\nfi\nif [ -n \"$exe\" ] && [ -x \"$basedir/node.exe\" ]; then\n  exec \"$basedir/node.exe\"  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -x \"$basedir/node\" ]; then\n  exec \"$basedir/node\"  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$msys\" ] && command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif command -v node >/dev/null 2>&1; then\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelif [ -n \"$exe\" ] && command -v node.exe >/dev/null 2>&1; then\n  exec node.exe  \"$basedir_win/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nelse\n  exec node  \"$basedir_abs/../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\" \"$@\"\nfi\n# cmd-shim-target=../.pnpm/@effect+tsgo@0.67.1/node_modules/@effect/tsgo/dist/effect-tsgo.cjs\n"
+      },
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "'vp' 'run' 'dev'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-qa-phantom-activity-5c6e67791e39c1b2",
+      "observed": "unknown",
+      "expect": "serves-port:vp dev"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-phantom-approval-not-c245244b3140d884; grep -v \"t3 heavy\" /private/tmp/claude-501/ID/ID/tasks/b3z09ks4m.output | tail -20; for f in apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts; do vp fmt --stdin-filepath=$f < $f > /private/tmp/claude-501/ID/ID/scratchpad/fmt.ts 2>/dev/null && cp /private/tmp/claude-501/ID/ID/scratchpad/fmt.ts $f; done; git diff --stat",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-phantom-approval-not-c245244b3140d884/apps/server",
+      "observed": "mac",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/tasks/b3z09ks4m.output",
+      "why": "nothing heavy: every program is work, grep reads a path outside"
+    },
+    {
+      "line": "'git' 'merge' '--no-edit' '2f7d6ef4b9'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-5e86915ac00a8d4f",
+      "observed": "unknown",
+      "expect": "mac-state:git merge"
+    },
+    {
+      "line": "F=(apps/server/src/heavyQueue/heavyCli.test.ts apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/heavyHook.ts apps/server/src/heavyQueue/heavyHook.test.ts); vp lint --no-ignore \"${F[@]}\" 2>&1 | tail -3; for f in \"${F[@]}\"; do cat \"$f\" | vp fmt --stdin-filepath=\"$f\" > /private/tmp/claude-501/x.fmt 2>/dev/null; cmp -s \"$f\" /private/tmp/claude-501/x.fmt && echo \"ok $f\" || { [ -s /private/tmp/claude-501/x.fmt ] && cp /private/tmp/claude-501/x.fmt \"$f\" && echo \"formatted $f\"; }; done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-route-pipes-li-b5cb766cc69f7a8c",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "sh -c 'for f in src/features/resources/HeavyWork.test.tsx src/features/resources/ProcessSections.tsx src/features/resources/ResourceManagerRouteScreen.tsx src/features/resources/resourceManagerCopy.ts; do pnpm exec vp fmt --stdin-filepath=$f < $f > /tmp/fmtout 2>/dev/null; cmp -s /tmp/fmtout $f && echo \"OK $f\" || { echo \"DIFF $f\"; diff $f /tmp/fmtout | head -20; }; done' 2>&1 | grep -v \"^\\[t3 heavy\\]\\|^\\[remoto\\]\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--7fcd8abfca2785f9/apps/mobile",
+      "observed": "linux",
+      "expect": "mac-env:/tmp/fmtout",
+      "why": "nothing heavy in the sh -c text: cmp names a path outside"
+    },
+    {
+      "line": "mkdir -p ~/.t3/shared && git show 5908ae8994:packages/contracts/src/heavyQueue.ts > ~/.t3/shared/front-heavyQueue-contract.ts && files=(packages/client-runtime/src/state/heavyQueueModel.ts packages/client-runtime/src/state/heavyQueueModel.test.ts); ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\" 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -v \"^note\\|t3 heavy\" | tail -5; echo \"LINT_EXIT ${pipestatus[1]}\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980",
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "~/.t3 only in glue and a redirect"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; grep -iE \"warn|error|✖|problems|Found\" $S/lint.txt | grep -v \"t3 heavy\" | head; files=(${(f)\"$(git diff --name-only)\"}); for f in \"${files[@]}\"; do vp fmt --stdin-filepath=\"$f\" < \"$f\" 2>/dev/null | cmp -s - \"$f\" || echo \"FMT DIFF: $f\"; done; echo fmt-ok",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-bg-task-wake-55fbba6ec35aae86",
+      "observed": "unknown",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/lint.txt",
+      "why": "nothing heavy: grep reads a path outside"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles-d5b9bbb58c1910fc; python3 - <<'EOF'\npass\nEOF\nF=(packages/contracts/src/clientRpcPermissions.test.ts packages/contracts/src/clientRpcPermissions.ts packages/contracts/src/heavyQueue.ts packages/contracts/src/rpc.ts)\ngit reset -q -- \"${F[@]}\"; git status --short\nfor f in \"${F[@]}\"; do vp fmt --stdin-filepath=$f < $f | diff -q - $f >/dev/null || echo \"FMT $f\"; done\nvp lint --no-ignore \"${F[@]}\" 2>&1 | tail -3\ncd packages/contracts && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error TS\" | head; echo tsc=${pipestatus[1]}; pnpm exec vp test run src/clientRpcPermissions.test.ts 2>&1 | grep -E \"Tests|FAIL\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles-d5b9bbb58c1910fc",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux",
+      "why": "git reset is glue; redirects never count"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\npnpm exec vp test run costClass.test.ts > /private/tmp/claude-501/cc.log 2>&1; grep -E \"Tests |×\" /private/tmp/claude-501/cc.log | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "which t3; S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/cross.sh <<'EOF'\n#!/usr/bin/env bash\nS=\"$1\"; cd \"$2\" || exit 2\necho \"=== knip 1/2\"; pnpm exec knip --include files,dependencies --no-config-hints; echo \"KNIP1_EXIT=$?\"\necho \"=== knip 2/2\"; eval \"pnpm exec $(node -p 'require(\"./package.json\").scripts[\"knip:check:exports\"]')\"; echo \"KNIP2_EXIT=$?\"\necho \"=== graphql (apps/server)\"; vp run --filter ./apps/server generate --check; echo \"GRAPHQL_EXIT=$?\"\necho \"=== unused patches\"; T=\"$S/patch-check\"; rm -rf \"$T\"; mkdir -p \"$T\"\n( git ls-files -- '*package.json' | grep -v -E '^\\.repos/'; ls apps/mobile/modules/*/package.json 2>/dev/null ) | sort -u | while read -r f; do mkdir -p \"$T/$(dirname \"$f\")\"; cp \"$f\" \"$T/$f\"; done\ncp pnpm-workspace.yaml \"$T/\"; for x in apps/mobile/deps patches .pnpmfile.cjs; do [ -e \"$x\" ] && mkdir -p \"$T/$(dirname \"$x\")\" && cp -R \"$x\" \"$T/$x\"; done\n(cd \"$T\" && vp install --lockfile-only --ignore-scripts); echo \"PATCHES_EXIT=$?\"\nEOF\nchmod +x $S/cross.sh; echo ok",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-3ff5c062-09f2477943e805fa",
+      "observed": "unknown",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/cross.sh",
+      "why": "nothing heavy: chmod names a path outside"
+    },
+    {
+      "line": "F=\"src/assistants/AssistantGroupPacket.ts src/assistants/AssistantGroups.test.ts src/assistants/AssistantGroups.ts src/assistants/assistantNote.ts\"; remoto sh -c \"pnpm exec effect-tsgo tsrs --noEmit > /tmp/tc-s.txt 2>&1; echo server=\\$?; grep ' error ' /tmp/tc-s.txt | head; (cd ../../packages/contracts && pnpm exec effect-tsgo tsrs --noEmit > /tmp/tc-c.txt 2>&1; echo contracts=\\$?; grep ' error ' /tmp/tc-c.txt | head); pnpm exec vp fmt --check $F 2>&1 | grep -v '^note'; pnpm exec vp lint --no-ignore $F 2>&1 | grep -v '^note' | tail -4\" 2>&1 | grep -v \"^\\[t3 heavy\\]\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942",
+      "observed": "Runs outside a git checkout",
+      "expect": "mac-env:/Users/dev/.t3/worktrees/packages/contracts",
+      "why": "sh -c text: its cd leaves the checkout before effect-tsgo runs"
+    },
+    {
+      "line": "remoto sh -c 'pnpm exec vp run knip:check 2>&1 | tail -30' 2>&1 | grep -v '^\\[t3 heavy\\]'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8",
+      "observed": "waiting for Linux: all 5 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml 2>&1 | grep -v \"t3 heavy\" | tail -3; ls native/resource-monitor/target/release/ | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229",
+      "observed": "Not on the Can run on Linux list",
+      "expect": "native-build:cargo build",
+      "why": "a native build stays here: Linux would build an ELF the Mac can't run (D2 holds for JS builds only)"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8 && files=$(git status --short | awk '{print $2}' | grep -E '\\.(ts|tsx)$' | tr '\\n' ' '); T=\"src/features/settings/components/SettingsDependents.test.tsx src/features/settings/components/RunnerSection.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx src/features/settings/ThreadOrderSettings.test.tsx src/features/settings/SettingsMemoryRouteScreen.test.tsx src/features/settings/SettingsServerControlsRouteScreen.test.tsx src/features/resources/HeavyWork.test.tsx src/features/assistants/AutonomySettingsSection.test.tsx\"; cat > /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate-remote.sh <<EOF\necho \"== LINT\"; pnpm exec vp lint --no-ignore $files 2>&1 | tail -30\ncd apps/mobile\necho \"== TESTS\"; pnpm exec vp test run $T 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -E \"FAIL|AssertionError|Error|expected|Test Files|Tests  \" | head -60\necho \"== TYPECHECK\"; pnpm exec vp run typecheck > /tmp/tc.log 2>&1; echo \"exit \\$?\"; sed 's/\\x1b\\[[0-9;]*m//g' /tmp/tc.log | grep -vE \"suggestion TS\" | grep -E \"error|Error|✓|✗|Found\" | tail -20\necho \"== COVERAGE\"; cd ../.. && pnpm add -D -w @vitest/coverage-v8@5.0.5 >/dev/null 2>&1; cd apps/mobile && pnpm exec vp test run $T --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcovonly \"--coverage.include=src/**/*.{ts,tsx}\" --coverage.reportOnFailure=true --testTimeout=300000 >/dev/null 2>&1\necho \"LCOV-BEGIN\"; cat coverage/lcov.info; echo \"LCOV-END\"\nEOF\nremoto sh -c \"$(cat /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate-remote.sh)\" > /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate.out 2>&1; grep -v \"^\\[t3 heavy\\]\" /Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents/gate.out | sed -n '/== LINT/,/LCOV-BEGIN/p' | head -80",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8/apps/mobile/src/features/assistants",
+      "observed": "Needs git, which the Linux copy doesn't have",
+      "expect": "linux",
+      "why": "sh -c text is $(…): judged when it runs"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-b/packages/client-runtime && python3 - <<'EOF'\npass\nEOF\ngit stash list >/dev/null; pnpm exec vp test run src/connection/presentation.test.ts 2>&1 | tail -4",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146 && S=/private/tmp/claude-501/ID/ID/scratchpad && T=apps/mobile/src/features/assistants/AssistantGroupChatRouteScreen.test.tsx && cp $T $S/route.test.full && git show HEAD:$T > $T && n=$(grep -n '^vi.mock(\"../../components/ui/useBarInset\"' $T | cut -d: -f1) && sed -i '' \"${n}i\\\\\nvi.mock(\\\"./GroupContextMeter\\\", () => ({ GroupContextMeter: () => null }));\n\" $T && git diff --stat $T && git add apps/mobile/src/features/assistants/GroupContextMeter.tsx apps/mobile/src/features/assistants/GroupContextMeter.test.tsx && git commit -m msg apps/mobile/src/features/assistants/GroupContextMeter.tsx apps/mobile/src/features/assistants/GroupContextMeter.test.tsx apps/mobile/src/features/assistants/GroupComposer.tsx apps/mobile/vite.config.ts $T > $S/commit.log 2>&1; echo rc=$?; cp $S/route.test.full $T; grep -v \"t3 heavy\" $S/commit.log | tail -6",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile/src/features/assistants",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "remoto bash -c 'uname -sn; for i in 1 2 3; do env SSH_CLIENT=\"1.2.3.4 1 22\" SHLVL=0 pnpm exec vp test run src/runHook.test.ts 2>&1 | sed \"s/\\x1b\\[[0-9;]*m//g\" | grep -E \"Tests  |Test Files|FAIL\"; echo \"run$i exit=${PIPESTATUS[0]}\"; done' 2>&1 | grep -v \"^\\[t3 heavy\\]\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-fix-platform-t-440f304bbf5c5c00/infra/task-cache",
+      "observed": "Linux is unavailable; it never started there",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad && mv apps/mobile/src/features/assistants/GroupMemberWork.tsx $S/ && vp run knip:check > $S/knip.log 2>&1; echo rc=$?; mv $S/GroupMemberWork.tsx apps/mobile/src/features/assistants/; grep -v \"^\\$ knip\\|t3 heavy\" $S/knip.log | cut -c1-200 | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146",
+      "observed": "waiting for Linux: a fresh reading since the last job started there",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-linux-el-2dedea2b90b2dca4 && S=/private/tmp/claude-501/ID/ID/scratchpad; F=\"$(git diff --name-only | tr '\\n' ' ')\"; remoto sh -c \"pnpm exec vp fmt $F >&2 && tar -cf - $F\" > $S/fmt.tar 2> $S/fmt-write.log; echo \"exit=$?\"; tail -3 $S/fmt-write.log; tar -tf $S/fmt.tar | wc -l",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-linux-el-2dedea2b90b2dca4/apps/server/src/heavyQueue",
+      "observed": "waiting for Linux: CPU 301%, limit 90%",
+      "expect": "linux"
+    },
+    {
+      "line": "L=~/DEV/Pessoal/t3code-captures/card119/logs/2026-11-15; until grep -q EXIT $L/job-b6r.log; do sleep 5; done; date +%T; grep -E 'WSL back' $L/hold.log | tail -1; grep -E '^\\[t3 heavy\\]|^\\[remoto\\]|EXIT|Test Files' $L/job-b6r.log | uniq; sed -n '/=== b6r start/,$p' $L/poll.log | cut -c1-360 | sed -E 's/en=True slots=3 runner=[^|]*\\| //' | awk '{k=substr($0,10)} k!=p {print; p=k}' | grep b6r | tail -16; python3 ~/DEV/Pessoal/t3code-captures/card119/scripts/events.py ~/.t3/worktrees/t3code/t3-fork-next/.t3/heavy-queue-dev/queue.json 19:35:50 | grep -v '^21:05'; ls $L/*.png",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork-next",
+      "scripts": {
+        "/Users/dev/DEV/Pessoal/t3code-captures/card119/scripts/events.py": "# events.py queue.json [since-HH:MM:SS]: event kinds (and faults) recorded, optionally since a time today\nimport json, sys, datetime, collections\nd = json.load(open(sys.argv[1])); since = sys.argv[2] if len(sys.argv) > 2 else None\nc = collections.Counter(); faults = []\nfor e in d.get(\"events\", []):\n    at = e.get(\"at\"); t = datetime.datetime.fromtimestamp(at/1000).strftime(\"%H:%M:%S\") if isinstance(at,(int,float)) else datetime.datetime.fromisoformat(str(at).replace(\"Z\",\"+00:00\")).astimezone().strftime(\"%H:%M:%S\")\n    if since and t < since: continue\n    k = e.get(\"kind\"); c[k] += 1\n    if k == \"t3-fault\": faults.append((t, e.get(\"cause\"), str(e.get(\"error\",\"\"))[:60]))\n    print(t, k, {x: str(e[x])[:50] for x in (\"name\",\"cause\",\"reason\",\"runner\",\"action\",\"answer\") if x in e})\nprint(\"COUNTS\", dict(c)); print(\"FAULTS\", faults)\n"
+      },
+      "observed": "Linux is unavailable: asking you",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-captures/card119/logs/2026-11-15/job-b6r.log",
+      "why": "nothing heavy: grep reads a path outside"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad/r7-tests.sh\ncat > $S <<'EOF'\nset -u\nW=/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-ef180e3b2f8026b4\ncd $W/packages/client-runtime && remoto pnpm exec vp test run src/assistantGroupChat.test.ts 2>&1 | tail -5; echo \"cr exit ${PIPESTATUS[0]}\"\ncd $W/apps/web && remoto pnpm exec vp test run src/components/assistants/AssistantGroupChat.browser.test.tsx 2>&1 | tail -5; echo \"web exit ${PIPESTATUS[0]}\"\ncd $W && files=(apps/web/src/components/assistants/GroupTaskCard.tsx apps/web/src/components/assistants/AssistantGroupChat.browser.test.tsx packages/client-runtime/src/assistantGroupChat.ts packages/client-runtime/src/assistantGroupChat.test.ts)\n./node_modules/.bin/vp lint --no-ignore \"${files[@]}\" 2>&1 | grep -v '^note' | tail -3; echo \"lint exit ${PIPESTATUS[0]}\"\nfor f in \"${files[@]}\"; do ./node_modules/.bin/vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f && echo \"fmt ok\" || echo \"fmt DIFF $f\"; done\nEOF\nbash $S 2>&1 | grep -v '^\\[t3 heavy\\]'",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "scripts": {
+        "$S": null
+      },
+      "observed": "Couldn't read this script",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/r7-tests.sh",
+      "why": "unreadable script outside the checkout"
+    },
+    {
+      "line": "cd ~/.t3/worktrees/game/jg-gap-pending-tab && python3 - <<'EOF'\npass\nEOF\nnpx eslint src/session/session.ts src/queries/orders.ts && npx tsc -b --noEmit && git add -A -- src && git commit -q --amend --no-edit && git log --oneline -1 && git show --stat HEAD | tail -5",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-e2e-checkout-realtim-127186e2126f4b72",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c \"error TS\"; cd ../.. && pnpm exec vp lint --no-ignore apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts 2>&1 | tail -3; for f in apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts; do pnpm exec vp fmt --check $f 2>&1 | tail -1; done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server/src/assistants",
+      "observed": "Not on the Can run on Linux list",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork-next/native/resource-monitor && python3 - <<'EOF'\npass\nEOF\nexport PATH=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH; cargo fmt && cargo test 2>&1 | grep -E \"^error|warning:|test result|FAILED|panicked\" | head -20",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "unknown",
+      "expect": "native-build:cargo test",
+      "why": "cargo test on Linux skips the macOS-only code paths"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\n(cd packages/contracts && pnpm exec vp test run src/assistantGroups.test.ts 2>&1 | grep -E 'Tests '; pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c 'error TS'); f=(packages/contracts/src/assistantGroups.ts packages/contracts/src/assistantGroups.test.ts apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts apps/server/src/persistence/ForkSchema.ts apps/server/src/persistence/ForkSchema.test.ts); git commit -q \"${f[@]}\" -m msg 2>&1 | grep -E '✖|error'; git log --oneline -1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server && python3 - <<'EOF'\npass\nEOF\nsource /private/tmp/claude-501/it.env && pnpm exec vp test run src/heavyQueue/runnerExec.linux.test.ts > /private/tmp/claude-501/it.log 2>&1; grep -E \"^ +[×✓]|Tests \" /private/tmp/claude-501/it.log; grep -E \"^AssertionError\" -A3 /private/tmp/claude-501/it.log | head -12",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Sets up its shell here first",
+      "expect": "linux",
+      "why": "a sourced file is not a reason"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-needs-you--0d0d56f3a39d33b8 && F=(); while IFS= read -r l; do F+=(\"$l\"); done < <(git diff --name-only 90cca01a4b..HEAD); echo \"${#F[@]} files\"; vp lint --no-ignore \"${F[@]}\" 2>&1 | grep -v \"^\\[t3 heavy\\]\" | grep -vE \"^note\" | tail -4",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Couldn't read this command safely (process substitution)",
+      "expect": "linux",
+      "why": "process substitution is glue"
+    },
+    {
+      "line": "files=(\"${(@f)$(cat /private/tmp/claude-501/ID/ID/scratchpad/files.txt)}\"); git add \"${files[@]}\" && git status --porcelain \"${files[@]}\" | cut -c1-2 | sort | uniq -c; cd apps/mobile && pnpm exec effect-tsgo tsrs --noEmit > ../../../tsc-final.txt 2>&1 ; echo tsc_exit=$?",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux",
+      "why": "git add is glue"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cd $S; python3 set.py runnerDropped='\"wait\"' | head -1; (./case.sh c4 > case-c4.out 2>&1 &); sleep 50; cat case-c4.out; echo PC d5 now: $(ssh remoto 'pgrep -af \"[r]uns/d5\"|wc -l'); awk '{k=$4\" \"$5\" \"$6; if(k!=l){print;l=k}}' tl-c4.txt | head; cut -c1-100 out-c4.log | tail -4",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Linux dropped it mid-run",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad",
+      "why": "the script runs from a folder outside any checkout"
+    },
+    {
+      "line": "files=($(git status --short | awk '{print $2}')); ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\" 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -v \"^note\" | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--c4fd445dde569ef7",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081 && for f in apps/server/src/heavyQueue/runnerExec.test.ts apps/server/src/heavyQueue/runnerExec.ts; do vp fmt --stdin-filepath=$f < $f > $f.fmt && mv $f.fmt $f; done; git commit -m msg apps/server/src/heavyQueue/runnerExec.ts apps/server/src/heavyQueue/runnerExec.test.ts 2>&1 | grep -v \"t3 heavy\\|^note\" | tail -4",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081/apps/server/src/heavyQueue",
+      "observed": "Reads its input from this Mac",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork-next && pnpm exec vp lint --report-unused-disable-directives apps/server/src/heavyQueue/HeavyQueue.ts apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/claudeSettingsHook.ts apps/server/src/heavyQueue/queueFile.ts 2>&1 | grep -v \"^note\" | tail -5; pnpm exec vp fmt --check apps/server/src/heavyQueue/HeavyQueue.ts 2>&1 | tail -2; cd apps/server && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep \"error\" | head",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Uses a file outside the project",
+      "expect": "linux",
+      "why": "cd into another checkout: its paths are inside it"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\ncd ../.. && S=/private/tmp/claude-501/ID/ID/scratchpad; pnpm exec vp test run src/heavyQueue/daemons.test.ts src/heavyQueue/runner.test.ts src/heavyQueue/queueFile.test.ts > $S/x.log 2>&1; grep -E \"^ +×|      Tests \" $S/x.log",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp run knip:check 2>&1 | grep -A3 \"Unused\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "files=($(git status --short | awk '{print $2}' | grep -E '\\.(ts|tsx)$')); remoto vp lint --no-ignore \"${files[@]}\" 2>&1 | grep -v \"^\\[t3 heavy\\]\" | tail -40",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8",
+      "observed": "waiting for Linux: all 5 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "remoto bash -lc \"cd apps/web && ../../node_modules/.bin/vp test run src/components/chat/threadTabsProject.test.ts 2>&1 | grep -E '✓|×|Tests |Error' | cut -c1-200 | tail -8\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-1074b909-4bf59e0edf26d4c5",
+      "observed": "waiting for Linux: all 2 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile && grep -n '\"typecheck\"' package.json; time (vp run typecheck 2>&1 | tail -8)",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile/src",
+      "observed": "Couldn't read this command safely (function or array)",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/packages/contracts/src && python3 - <<'EOF'\npass\nEOF\ncd .. && pnpm exec vp test run src/heavyQueue.test.ts 2>&1 | grep -E \"^ +×|Tests |Error\" ; pnpm exec effect-tsgo tsrs --noEmit 2>&1 | tail -5",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "mac",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; bash $S/job.sh $S/d4 30 0 t1; sleep 4; tail -1 $S/out-t1.log",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Linux is unavailable: waiting for your answer",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/job.sh",
+      "why": "unreadable script outside the checkout"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-bbeae03a9c680fd6/apps/web && ./node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error TS|t3 heavy\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-bbeae03a9c680fd6",
+      "observed": "Not installed on Linux",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/fl.sh <<'EOF'\n#!/usr/bin/env bash\n# usage: fl.sh <repo-relative files...>; formats in place, then lints the .ts ones.\ncd /Users/dev/.t3/worktrees/t3code/t3-needs-you-global-e0b7610f9fb06ff5\nout=$(mktemp)\nfor f in \"$@\"; do\n  ./node_modules/.bin/vp fmt --stdin-filepath=\"$f\" < \"$f\" > \"$out\" 2>/dev/null\n  if [ ! -s \"$out\" ]; then echo \"FMT-EMPTY $f\"; exit 1; fi\n  cmp -s \"$f\" \"$out\" || { cp \"$out\" \"$f\"; echo \"reformatted $f\"; }\ndone\nts=()\nfor f in \"$@\"; do case \"$f\" in *.ts|*.tsx) ts+=(\"$f\");; esac; done\nif [ ${#ts[@]} -gt 0 ]; then\n  ./node_modules/.bin/vp lint --no-ignore \"${ts[@]}\" 2>&1 | grep -v \"^note:\"\n  echo \"lint exit ${PIPESTATUS[0]} (${#ts[@]} files)\"\nfi\nEOF\nchmod +x $S/fl.sh; $S/fl.sh apps/server/src/autonomy/AutonomyService.ts apps/server/src/autonomy/AutonomyService.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-needs-you-global-e0b7610f9fb06ff5/apps/server",
+      "scripts": {
+        "$S/fl.sh": null
+      },
+      "observed": "unknown",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/fl.sh",
+      "why": "unreadable script outside the checkout: the queue reads $S/fl.sh as written"
+    },
+    {
+      "line": "D=/Users/dev/DEV/Pessoal/auditorias-t3/mobile-settings-dependents; cat $D/gate-remote.sh | head -3 | cut -c1-300; cd /Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8 && remoto sh -c \"$(cat $D/gate-remote.sh)\" > $D/gate.out 2>&1; grep -v \"^\\[t3 heavy\\]\" $D/gate.out | sed -n '/== LINT/,/LCOV-BEGIN/p' | head -80",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8/apps/mobile/src/features/assistants",
+      "observed": "Uses a file outside the project",
+      "expect": "linux",
+      "why": "sh -c text is $(…): judged when it runs"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles--3274f72d1d500da2 && git log --format='%h %b' t3/fork2..HEAD | grep -i co-author; files=$(git diff --name-only t3/fork2..HEAD -- apps/mobile | grep -E '\\.test\\.tsx?$' | sed 's#apps/mobile/##'); echo $files; cd apps/mobile && remoto pnpm exec vp test run ${=files} 2>&1 | grep -vE '^\\[t3 heavy\\]' | grep -E 'FAIL|×|Test Files|Tests ' | head",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-fork2-qa-polish-b505f39b8c980910; files=($(git diff --name-only) packages/client-runtime/src/settingsEmptySelection.test.ts); vp lint --no-ignore \"${files[@]}\" 2>&1 | tail -6; for f in \"${files[@]}\"; do vp fmt --stdin-filepath=\"$f\" < \"$f\" > /tmp/claude-501/fmt.out 2>/dev/null || mkdir -p /tmp/claude-501; vp fmt --stdin-filepath=\"$f\" < \"$f\" | cmp -s - \"$f\" || echo \"FMT DIFF: $f\"; done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-qa-polish-b505f39b8c980910",
+      "observed": "Linux is unavailable; it never started there",
+      "expect": "linux"
+    },
+    {
+      "line": "sed -i '' 's/^type ActiveSortInput = ThreadStatusInput \\&/export type ActiveSortInput = ThreadStatusInput \\&/' src/state/threadSort.ts && python3 - <<'EOF'\npass\nEOF\ngrep -n \"ThreadStatusInput\" src/state/threadStatus.test.ts; pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error TS\" | head -5; echo done-cr",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-sidebar-status-bbeae03a9c680fd6/packages/client-runtime",
+      "observed": "Linux is unavailable; it never started there",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad && mkdir -p $S/l3 && for f in HeavyWork.tsx HeavyWork.test.tsx; do git show HEAD:apps/mobile/src/features/resources/$f > $S/l3/$f; cp apps/mobile/src/features/resources/$f $S/l3/$f.front; done && python3 $S/l3.py $S/l3/HeavyWork.tsx && python3 $S/l3test.py $S/l3/HeavyWork.test.tsx && git diff --no-index --stat apps/mobile/src/features/resources/HeavyWork.tsx $S/l3/HeavyWork.tsx | tail -1; diff <(git show HEAD:apps/mobile/src/features/resources/HeavyWork.tsx) $S/l3/HeavyWork.tsx | head -60; diff <(git show HEAD:apps/mobile/src/features/resources/HeavyWork.test.tsx) $S/l3/HeavyWork.test.tsx; for f in HeavyWork.tsx HeavyWork.test.tsx; do vp fmt --stdin-filepath=apps/mobile/src/features/resources/$f < $S/l3/$f | diff -q - $S/l3/$f && echo \"fmt ok $f\"; done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229",
+      "scripts": {
+        "/private/tmp/claude-501/ID/ID/scratchpad/l3test.py": "import sys\np=sys.argv[1]\ns=open(p).read()\nold='''    const light = all.host.querySelector('section[aria-label=\"Light commands\"]') as HTMLElement;\n    expect(outline(light)).toEqual([\"Watch: Agent, 1m\"]);\n    await all.unmount();'''\nnew='''    const light = all.host.querySelector('section[aria-label=\"Light commands\"]') as HTMLElement;\n    expect(outline(light)).toEqual([\"Watch: Agent, 1m\"]);\n    await all.unmount();\n\n    setup([]);\n    const lightOnly = await render(\n      <ProjectHeavyWork environmentId={\"env\" as EnvironmentId} projectId=\"p1\" />,\n    );\n    expect(lightOnly.host.querySelector('section[aria-label=\"Heavy work\"]')).toBeNull();\n    expect(lightOnly.host.textContent).not.toContain(\"No heavy work in this project\");\n    await lightOnly.unmount();\n    const idle = await render(\n      <ProjectHeavyWork environmentId={\"env\" as EnvironmentId} projectId=\"p3\" />,\n    );\n    expect(idle.host.textContent).toContain(\"Nothing running in this project\");\n    await idle.unmount();'''\nassert s.count(old)==1, \"anchor\"\ns=s.replace(old,new)\nopen(p,\"w\").write(s)\n",
+        "/private/tmp/claude-501/ID/ID/scratchpad/l3.py": "import sys\np=sys.argv[1]\ns=open(p).read()\nold='''      <SettingsSection title=\"Heavy work\">\n        {count === 0 ? (\n          <ListRowLayout\n            icon=\"checkmark\"\n            label=\"No heavy work in this project\"\n            description=\"Tests, builds and other heavy commands from this project show here while they run or wait.\"\n          />\n        ) : (\n          <HeavyWorkList\n            environmentId={environmentId}\n            state={state}\n            commands={commands}\n            cpuCount={cpuCount}\n            assistants={assistants}\n            projectId={projectId}\n          />\n        )}\n      </SettingsSection>'''\nnew='''      {count === 0 && light.length === 0 ? (\n        <SettingsSection title=\"Heavy work\">\n          <ListRowLayout\n            icon=\"checkmark\"\n            label={\n              include === \"all\"\n                ? \"Nothing running in this project\"\n                : \"No heavy work in this project\"\n            }\n            description={\n              include === \"all\"\n                ? \"Commands agents and terminals run in this project show here once they run 3 seconds.\"\n                : \"Tests, builds and other heavy commands from this project show here while they run or wait.\"\n            }\n          />\n        </SettingsSection>\n      ) : count === 0 ? null : (\n        <SettingsSection title=\"Heavy work\">\n          <HeavyWorkList\n            environmentId={environmentId}\n            state={state}\n            commands={commands}\n            cpuCount={cpuCount}\n            assistants={assistants}\n            projectId={projectId}\n          />\n        </SettingsSection>\n      )}'''\nassert s.count(old)==1\ns=s.replace(old,new)\nopen(p,\"w\").write(s)\n"
+      },
+      "observed": "Couldn't read this command safely (process substitution)",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/l3",
+      "why": "nothing heavy: every program is work, mkdir names a path outside"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad/lock; rm -rf $S; mkdir -p $S/a $S/b $S/c $S/d; cd $S/a && echo '{\"name\":\"a\",\"version\":\"1.0.0\"}' > package.json && pnpm install --lockfile-only >/dev/null 2>&1; echo '{\"name\":\"a\",\"version\":\"1.0.0\",\"dependencies\":{\"left-pad\":\"1.3.0\"}}' > package.json; CI=1 pnpm install --frozen-lockfile 2>&1 | tail -4; echo ===b; cd $S/b && printf '{\\n<<<<<<< HEAD\\n\"name\":\"b\",\\n=======\\n\"name\":\"c\",\\n>>>>>>> x\\n\"version\":\"1.0.0\"}\\n' > package.json && CI=1 pnpm install --frozen-lockfile 2>&1 | tail -3; echo ===c; cd $S/c && echo '{\"name\":\"c\",\"version\":\"1.0.0\"}' > package.json && printf \"lockfileVersion: '9.0'\\n<<<<<<< HEAD\\nfoo: 1\\n=======\\nfoo: 2\\n>>>>>>> x\\n\" > pnpm-lock.yaml && CI=1 pnpm install --frozen-lockfile 2>&1 | tail -3; echo ===d; cd $S/d && echo '{\"name\":\"d\",\"version\":\"1.0.0\",\"dependencies\":{\"left-pad\":\"1.3.0\"}}' > package.json && echo '{\"name\":\"d\",\"version\":\"1.0.0\",\"lockfileVersion\":3,\"requires\":true,\"packages\":{\"\":{\"name\":\"d\",\"version\":\"1.0.0\"}}}' > package-lock.json && npm ci --offline 2>&1 | tail -4",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081/apps/server/src/heavyQueue",
+      "observed": "mac",
+      "expect": "mac-state:npm ci",
+      "why": "npm ci runs a ci script, so it is the work; an install changes this Mac"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/cov.sh <<'EOF'\n#!/bin/zsh\ncd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84\nremoto sh -c 'pnpm add -D -w @vitest/coverage-v8@5.0.5 >/dev/null 2>&1; cd apps/mobile && pnpm exec vp test run --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcovonly --coverage.include=\"src/**/*.{ts,tsx}\" --coverage.reportOnFailure=true --testTimeout=300000 src/state/use-composer-drafts.test.ts src/state/pending-new-tasks-model.test.ts src/features/threads/thread-menu.test.ts src/features/threads/thread-list-v2-items.test.tsx src/features/assistants/HomeAssistantsSection.test.tsx src/features/assistants/AssistantGroupChatRouteScreen.test.tsx src/features/layout/workspace/open-conversation-key.test.ts 2>&1 | grep -E \"Test Files|Tests |FAIL\" ; echo \"@@LCOV@@\"; cat coverage/lcov.info' > $HOME/DEV/Pessoal/t3code-captures/draft-mobile-cov.out 2>&1\necho exit $?\nEOF\nchmod +x $S/cov.sh; $S/cov.sh; grep -E \"Test Files|Tests |FAIL|@@LCOV\" ~/DEV/Pessoal/t3code-captures/draft-mobile-cov.out | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84/apps/mobile",
+      "observed": "Couldn't read this script",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/cov.sh",
+      "why": "unreadable script outside the checkout"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\ncd ../.. && pnpm exec vp test run src/heavyQueue/costClass.test.ts 2>&1 | grep -E \"✗|×|FAIL|Tests \" | head -12",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server && cat package.json | grep -n typecheck; time (pnpm exec effect-tsgo tsrs --noEmit 2>&1 | tail -30)",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server/src/assistants",
+      "observed": "Couldn't read this command safely (function or array)",
+      "expect": "linux"
+    },
+    {
+      "line": "sed 's/\\x1b\\[[0-9;]*m//g' /private/tmp/claude-501/ID/ID/scratchpad/tests.log | grep -E \"Test Files|^ +Tests|FAIL|×|^exit\" | head -20",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-settings-dependents--1031e6cfc5eeb9c9/apps/web",
+      "observed": "waiting for Linux: CPU 247%, limit 90%",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/tests.log",
+      "why": "nothing heavy: sed reads a path outside"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229/apps/web && remoto ../../node_modules/.bin/effect-tsgo tsrs --noEmit > /private/tmp/claude-501/ID/ID/scratchpad/tsc-web.log 2>&1; echo exit=$?",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229/apps/mobile/src/features/resources",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "D=/private/tmp/claude-501/ID/ID; timeout 580 bash -c \"until [ -n \\\"\\$(grep -v 't3 heavy' $D/tasks/bmpqrezvj.output)\\\" ] || grep -q 'heavy\\] done\\|finished' $D/tasks/bmpqrezvj.output; do sleep 15; done\"; tail -c 1500 $D/tasks/bmpqrezvj.output",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
+      "observed": "Reads its input from this Mac",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/tasks/bmpqrezvj.output",
+      "why": "nothing heavy: the bash -c text reads a path outside"
+    },
+    {
+      "line": "sed -i '' 's|^import { useAssistantStatus } from \"../sidebar/useSidebarZones\";|import { useAssistantStatus } from \"../sidebar/useSidebarZones\";\\nimport { useUsageLimitLabel } from \"./useUsageLimitLabel\";|' apps/web/src/components/assistants/AssistantGroupChat.tsx && f=apps/web/src/components/assistants/AssistantGroupChat.tsx && vp fmt --stdin-filepath=$f < $f > /tmp/f.$$ 2>/dev/null && cp /tmp/f.$$ $f; rm -f /tmp/f.$$; cd apps/web && vp run typecheck 2>&1 | grep \"error TS\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-da5277134d0cde3d",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux"
+    },
+    {
+      "line": "ssh -o BatchMode=yes -o ConnectTimeout=15 remoto 'cat ~/mockloop/summary 2>/dev/null; desc(){ for c in $(ps -o pid= --ppid $1); do desc $c; echo $c; done; }; T=$(desc 294719); echo \"tree: 294719 $T\" | tr \"\\n\" \" \"; echo; kill -TERM 294719 $T 2>/dev/null; sleep 5; for p in 294719 $T; do kill -0 $p 2>/dev/null && kill -KILL $p; done; sleep 1; ps -eo pid,args | grep -E \"vitest|vp test|chrom\" | grep -F \"t3-fork2-fix-web-mock-f\" | grep -v grep | cut -c1-160; echo left=$?; ps -o pid= -p 294719 $T | wc -l'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-fix-web-mock-f-59e151f0c320acd9/apps/web",
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "nothing heavy and no reason: ssh is not a Mac tool"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942 && head -c 600 /private/tmp/claude-501/ID/ID/tasks/b1vcwpg43.output; echo; remoto sh -c 'pnpm exec vp lint --no-ignore apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts 2>&1 | tail -3; for f in apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts; do pnpm exec vp fmt --check $f 2>&1 | tail -1; done' 2>&1 | grep -v \"t3 heavy\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server/src/assistants",
+      "observed": "Not on the Can run on Linux list",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229/apps/mobile && (../../node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | grep -v \"t3 heavy\" | grep -E \"error\" | head; echo ---); files=(src/state/heavyQueue.ts src/state/heavyQueue.test.tsx src/features/resources/HeavyWork.tsx src/features/resources/HeavyWork.test.tsx src/features/resources/ResourceManagerRouteScreen.tsx src/features/resources/resourceManagerCopy.ts); (vp lint --no-ignore \"${files[@]}\" 2>&1 | grep -v \"t3 heavy\" | tail -8); (vp test run --project react src/features/resources src/state/heavyQueue.test.tsx src/features/projectViews 2>&1 | grep -E \"Test Files|Tests |FAIL\")",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-9d6b128f72bc6831/apps/mobile && cp package.json ../../../mob-pkg.bak && cp ../../pnpm-lock.yaml ../../../lock.bak && pnpm add -D @vitest/coverage-v8@5.0.5 >/dev/null 2>&1; echo add=$?; remoto pnpm exec vp test run src/features/assistants/AssistantGroupChatRouteScreen.test.tsx --coverage.enabled --coverage.provider=v8 --coverage.include=src/features/assistants/GroupTaskCard.tsx --coverage.include=src/features/assistants/AssistantGroupChatRouteScreen.tsx --coverage.reporter=json-summary --coverage.reporter=text --coverage.reportsDirectory=../../../cov-mob 2>&1 | grep -v \"^\\[t3 heavy\\]\" | grep -E \"Tests|GroupTaskCard|RouteScreen|All files\"; cp ../../../mob-pkg.bak package.json; cp ../../../lock.bak ../../pnpm-lock.yaml; rm ../../../mob-pkg.bak ../../../lock.bak; git status --short",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-9d6b128f72bc6831",
+      "observed": "Uses a file outside the project",
+      "expect": "mac-env:/Users/dev/.t3/worktrees/t3code/cov-mob",
+      "why": "flag value of the test run names a path outside the checkout"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cd $S\npython3 set.py runnerHost='\"remoto\"' runnerUnavailable='\"ask\"' runnerDeadlineAction='\"mac\"' | head -1\nfor i in $(seq 1 20); do sleep 2; o=$(python3 -c \"\nimport json;d=json.load(open('/Users/dev/.t3/worktrees/t3code/t3-6e7ba6be/.t3/heavy-queue-dev/queue.json'))['linux'];print(d['online'],d['failures'])\"); case \"$o\" in True*) echo online $o; break;; esac; done\n$S/job.sh $S/d2 120 0 c; sleep 12; cat out-c.log; echo BEFORE; ssh remoto 'pgrep -af \"[r]uns/d2\"|cut -c1-90'; bash st.sh|tail -n +2 | cut -c1-20,60-200\necho SIGTERM $(cat pid-c); kill -TERM $(cat pid-c); sleep 10; echo exit=$(cat exit-c); tail -2 out-c.log; echo AFTER; ssh remoto 'pgrep -af \"[r]uns/d2\"|cut -c1-90; echo n=$(pgrep -af \"[r]uns/\"|wc -l); pgrep -af \"sleep 120\"|grep -v pgrep|wc -l'; bash st.sh | tail -n +2",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "linux",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad",
+      "why": "its scripts run from a folder outside any checkout"
+    },
+    {
+      "line": "sed -i '' '61{/taskEventHeadline,/d;}' apps/server/src/assistants/AssistantGroups.ts && sed -n 58,63p apps/server/src/assistants/AssistantGroups.ts; F=\"apps/server/src/assistants/AssistantGroups.test.ts apps/server/src/assistants/AssistantTaskReactor.ts apps/server/src/assistants/AssistantGroups.ts\"; remoto sh -c \"cd ../../../../; pwd; pnpm exec vp fmt --no-ignore $F >/dev/null 2>&1 || pnpm exec vp fmt $F >/dev/null 2>&1; git diff -- $F > /tmp/fmt.patch; cat /tmp/fmt.patch\" 2>&1 | grep -v \"^\\[t3 heavy\\]\\|^note\" > /private/tmp/claude-501/ID/ID/scratchpad/fmt-out.txt; head -5 /private/tmp/claude-501/ID/ID/scratchpad/fmt-out.txt; wc -l /private/tmp/claude-501/ID/ID/scratchpad/fmt-out.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942",
+      "observed": "Runs outside a git checkout",
+      "expect": "mac-env:/Users/dev",
+      "why": "sh -c text: its cd leaves the checkout"
+    },
+    {
+      "line": "B=~/DEV/Pessoal/auditorias-t3/2026-11-17/scripts; cat > $B/prep-f2.sh <<'EOF'\n#!/bin/bash\n# Runs inside the heavy queue: seed the worktree DB from a read-only copy of live data, then dev.\nset -e\nW=$1; cd \"$W\"\nvp run migrate-dev-db\nD=$W/.t3/userdata/statev2.sqlite; L='file:/Users/dev/.t3/userdata/statev2.sqlite?mode=ro'\nMEM=$(sqlite3 \"$D\" \"select group_concat(quote(j.value)) from assistant_teams t, json_each(t.member_ids_json) j\")\nPRJ=$(sqlite3 \"$D\" \"select group_concat(quote(j.value)) from assistant_teams t, json_each(t.project_ids_json) j\")\n{ echo \"BEGIN;\"\n  [ -n \"$MEM\" ] && sqlite3 -readonly \"$L\" \".mode insert assistants\" \"select * from assistants where assistant_id in ($MEM)\" | sed 's/^INSERT INTO/INSERT OR IGNORE INTO/'\n  [ -n \"$PRJ\" ] && sqlite3 -readonly \"$L\" \".mode insert projection_projects\" \"select * from projection_projects where project_id in ($PRJ)\" | sed 's/^INSERT INTO/INSERT OR IGNORE INTO/'\n  echo \"COMMIT;\"; } | sqlite3 \"$D\"\necho \"seed: teams=$(sqlite3 \"$D\" 'select count(*) from assistant_teams') missing_members=$(sqlite3 \"$D\" \"select count(*) from assistant_teams t, json_each(t.member_ids_json) j left join assistants a on a.assistant_id=j.value where a.assistant_id is null\") threads=$(sqlite3 \"$D\" 'select count(*) from projection_threads')\"\nexec vp run dev\nEOF\nchmod +x $B/prep-f2.sh\ncat > $B/start-dev-q.sh <<'EOF'\n#!/bin/bash\n# Queued (no --now) variant: own PGID, prints the wrapper PID.\nWT=$1; LOG=$2; cd \"$WT\" || exit 1\nHEAVY=\"ELECTRON_RUN_AS_NODE=1 '/Applications/T3 Code (Beta).app/Contents/MacOS/T3 Code (Beta)' '/Applications/T3 Code (Beta).app/Contents/Resources/app.asar/apps/server/dist/bin.mjs' heavy --queue-dir '$HOME/.t3/heavy-queue'\"\nnohup perl -e 'setpgrp(0,0); exec @ARGV' env -u T3CODE_HEAVY_JOB -u T3_HEAVY_WORKERS -u T3CODE_THREAD_ID -u T3CODE_CLI_PATH T3CODE_HEAVY_QUEUE_DIR=\"$WT/.t3/heavy-queue-qa\" bash -c \"$HEAVY --runner mac --name 'QA fork2 dev' -- bash '$(dirname \"$0\")/prep-f2.sh' '$WT'\" >\"$LOG\" 2>&1 < /dev/null &\necho $!\nEOF\nchmod +x $B/start-dev-q.sh\nW=/Users/dev/.t3/worktrees/t3code/t3-3ff5c062-09f2477943e805fa; P=$($B/start-dev-q.sh $W $B/dev-f2.log); echo $P > $B/dev-f2.pid; sleep 3; ps -o pid=,pgid=,command= -p $P | cut -c1-120; tail -2 $B/dev-f2.log",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Uses a file outside the project",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/auditorias-t3/2026-11-17/scripts/start-dev-q.sh",
+      "why": "unreadable script outside the checkout"
+    },
+    {
+      "line": "C=~/DEV/Pessoal/t3code-captures/card119; sleep 80; $C/scripts/view.sh b3 | tail -8; grep -a \"t3 heavy\\|EXIT\\|Test Files\\|submit\" $C/logs/job-b3.log",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "scripts": {
+        "$C/scripts/view.sh": null
+      },
+      "observed": "Linux is unavailable: asking you",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-captures/card119/scripts/view.sh",
+      "why": "unreadable script outside the checkout: the queue reads $C/scripts/view.sh as written"
+    },
+    {
+      "line": "git add apps/mobile && git diff --name-only --diff-filter=U; cd apps/mobile && timeout 600 ./node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | tail -15; echo exit ${pipestatus[1]}",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-mobile-setting-ffb9ed5482d0ebf8",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "sleep 1; cat /private/tmp/claude-501/ID/ID/tasks/bz7y1nnob.output | tail -3",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
+      "observed": "Linux is unavailable: running here",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/tasks/bz7y1nnob.output",
+      "why": "nothing heavy: cat reads a path outside"
+    },
+    {
+      "line": "F=/private/tmp/claude-501/ID/ID/tasks/b24qrakpi.output; timeout 580 tail -n +1 -f $F | grep -m1 -E \"exited with code\" >/dev/null; cat $F",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-bg-task-wake-55fbba6ec35aae86/apps/server/src/orchestration-v2",
+      "observed": "waiting for Linux: CPU 137%, limit 90%",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/tasks/b24qrakpi.output",
+      "why": "nothing heavy: tail reads a path outside"
+    },
+    {
+      "line": "(cd apps/web && vp run typecheck 2>&1 | grep \"error TS\" | head -3); (cd packages/client-runtime && vp run typecheck 2>&1 | grep \"error TS\" | head -3); git commit -m msg 2>&1 | tail -1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-da5277134d0cde3d",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "D=~/DEV/Pessoal/t3code-captures/draft-parity; cd $D && node b.mjs \"default\" 2>&1 | tail -2; tail -c 600 /private/tmp/claude-501/ID/ID/tasks/bfec52kw3.output",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-38a34aa501128718",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-captures/draft-parity",
+      "why": "nothing heavy: node runs from a folder outside any checkout"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081 && F=($(git diff --name-only)); git commit -m msg \"${F[@]}\" 2>&1 | grep -v \"t3 heavy\\|^note\\|^p=\\|^old\\|^new\\|^ *it(\" | tail -4",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-nested-remoto-dd40ee8f75245081/apps/server/src/heavyQueue",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "./node_modules/.bin/vp lint --no-ignore apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/heavyCli.test.ts 2>&1 | tail -2; for f in apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/heavyCli.test.ts; do ./node_modules/.bin/vp fmt --stdin-filepath=\"$f\" < \"$f\" 2>/dev/null | cmp -s - \"$f\" || echo \"unformatted $f\"; done; echo ok",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-linux-el-2dedea2b90b2dca4",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "B=~/DEV/Pessoal/auditorias-t3/2026-11-17; W=/Users/dev/.t3/worktrees/t3code/t3-3ff5c062-09f2477943e805fa; bash $B/scripts/pair.sh $W 7916 && cd $B/scripts && PW_FROM=$W/node_modules/.pnpm/playwright@1.64.1/node_modules/playwright/ node cap-f2.mjs pair.url ../fork2-ca47bb2a79/web $W \"mcp:ID\" 2>&1 | cut -c1-1500",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "scripts": {
+        "$B/scripts/pair.sh": null
+      },
+      "observed": "Uses a file outside the project",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/auditorias-t3/2026-11-17/scripts/pair.sh",
+      "why": "unreadable script outside the checkout: the queue reads $B/scripts/pair.sh as written"
+    },
+    {
+      "line": "cd ~/DEV/Pessoal/auditorias-t3/2026-11-17 && sed -i '' 's/(`rm-on-\\*`, `rm-off-400-dark`)/(`rm-on-*`)/; s/(`settings-on-\\*`)/(`settings-on-*`, `settings-on-400`)/' RELATORIO-web.md && grep -n \"off\" RELATORIO-web.md; tail -1 /private/tmp/claude-501/ID/ID/tasks/bn9tglnfc.output | cut -c1-200",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Couldn't read this script",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/auditorias-t3/2026-11-17",
+      "why": "nothing heavy: sed runs from a folder outside any checkout"
+    },
+    {
+      "line": "until grep -q \"Local:\" /private/tmp/claude-501/ID/ID/scratchpad/dev.log; do sleep 1; done; sleep 10; cd ~/DEV/Pessoal/t3code-evidence/fold-image && ACTIONS=a1.json LOAD_MS=10000 ./run.sh /group/ID/mcp-49e597e42c83045fcff2ab10 before-group-click.png 1400 | grep -v \"t3 heavy\" | tail -6",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fold-and-image-viewe-5ae6e98ac0d34b3e",
+      "observed": "Runs outside a git checkout",
+      "expect": "mac-env:/Users/dev/DEV/Pessoal/t3code-evidence/fold-image",
+      "why": "the unreadable script runs from a folder outside any checkout"
+    },
+    {
+      "line": "sleep 1; tail -1 /private/tmp/claude-501/ID/ID/tasks/buzbk0st7.output | cut -c1-140; cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile/src/features/threads && grep -n 'item.type === \"skill\"' -A14 use-composer-command-menu.ts | head -30; grep -n \"selectedProviderStatus\" ThreadComposer.tsx | head -5",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile/src/features/threads",
+      "observed": "Commits run here",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/tasks/buzbk0st7.output",
+      "why": "nothing heavy: tail reads a path outside"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\n./node_modules/.bin/vp fmt --stdin-filepath=apps/server/src/heavyQueue/classifyHeavyCommands.test.ts < apps/server/src/heavyQueue/classifyHeavyCommands.test.ts > \"$TMPDIR/f\" && cp \"$TMPDIR/f\" apps/server/src/heavyQueue/classifyHeavyCommands.test.ts; cd apps/server && pnpm exec vp test run src/heavyQueue/classifyHeavyCommands.test.ts src/heavyQueue/HeavyCommands.test.ts src/mcp/toolkits/heavy src/resourceTelemetry src/heavyQueue/HeavyQueueSampler.test.ts src/heavyQueue/processTable.test.ts src/heavyQueue/jobActivity.test.ts src/heavyQueue/outsideUsage.test.ts src/heavyQueue/HeavyQueue.test.ts src/heavyQueue/queueFile.test.ts src/heavyQueue/slowdown.test.ts src/heavyQueue/daemons.test.ts 2>&1 | grep -v \"^\\[t3\" | sed 's/\\x1b\\[[0-9;]*m//g' | grep -E \"×|Expected|Received|^[-+] |Tests |Test Files\" | head -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--c4fd445dde569ef7",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux"
+    },
+    {
+      "line": "(timeout 900 pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep \" error \"; echo tc_done) | grep -v \"t3 heavy\"; vp lint --no-ignore src/features/resources/HeavyWork.tsx src/features/resources/HeavyWork.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx 2>&1 | grep -v \"t3 heavy\" | tail -3; git commit -q -m msg -- src/features/resources/HeavyWork.tsx src/features/resources/HeavyWork.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx 2>&1 | grep -E \"✖|error\" ; git log --oneline -2 | cat; git status --short",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles--3274f72d1d500da2/apps/mobile",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/all.sh <<EOF\n#!/bin/bash\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5/packages/contracts\necho \"== share test\"; $S/share.sh\necho \"== bench\"; STRESS=10 ROUNDS=12 VARIANTS=\"normal normal2 background nice tier\" ../../scripts/heavy-priority-bench.sh -- ../../node_modules/.bin/effect-tsgo tsrs --noEmit\necho \"== share test again\"; $S/share.sh\nEOF\nchmod +x $S/all.sh; bash -n $S/all.sh && bash -n $S/share.sh && echo syntax-ok",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5",
+      "scripts": {
+        "$S/all.sh": null,
+        "$S/share.sh": null
+      },
+      "observed": "Couldn't read this script",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/all.sh",
+      "why": "unreadable script outside the checkout: the queue reads $S/all.sh as written"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server && sed -i '' 's|    expect(result.stdout).toBe(\"from-Linux --fast\\\\nhello\\\\n\");|    expect(result.stdout, result.stderr).toBe(\"from-Linux --fast\\\\nhello\\\\n\");|; s|    expect(result.stdout).toBe(\"from-Darwin\\\\n\");|    expect(result.stdout, result.stderr).toBe(\"from-Darwin\\\\n\");|' src/heavyQueue/runnerExec.linux.test.ts && grep -c \"result.stdout, result.stderr\" src/heavyQueue/runnerExec.linux.test.ts && source /private/tmp/claude-501/it.env && pnpm exec vp test run src/heavyQueue/runnerExec.linux.test.ts -t \"outside the checkout\" > /private/tmp/claude-501/it.log 2>&1; grep -E \"^AssertionError\" -A2 /private/tmp/claude-501/it.log | head -20",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Sets up its shell here first",
+      "expect": "linux",
+      "why": "a sourced file is not a reason"
+    },
+    {
+      "line": "pwd; python3 - <<'EOF'\npass\nEOF\nvp fmt --stdin-filepath=src/assistants/AssistantGroups.test.ts < src/assistants/AssistantGroups.test.ts > \"$TMPDIR/f.ts\" && diff \"$TMPDIR/f.ts\" src/assistants/AssistantGroups.test.ts && echo fmt-ok\nnpx effect-tsgo tsrs --noEmit > \"$TMPDIR/tsgo.txt\" 2>&1; echo \"tsgo exit=$?\"; grep -c \"error TS\" \"$TMPDIR/tsgo.txt\"; grep \"error TS\" \"$TMPDIR/tsgo.txt\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-needs-you--0d0d56f3a39d33b8/apps/server",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095 && python3 - <<'EOF'\npass\nEOF\nf=apps/server/src/heavyQueue/queueFile.ts; vp fmt --stdin-filepath=$f < $f | cmp -s - $f && echo fmt-ok; vp lint --no-ignore $f 2>&1 | grep -E \"error|Found\" | grep -v \"t3 heavy\"; cd apps/server && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -E \" error \" | grep -v \"runner\\.\\(test\\.\\)\\?ts\" | head; cd ../../packages/contracts && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c \" error \"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux"
+    },
+    {
+      "line": "files=(\"${(@f)$(cat /private/tmp/claude-501/ID/ID/scratchpad/files.txt)}\"); vp lint --no-ignore \"${files[@]}\" >/dev/null 2>&1; echo lint_exit=$?; bad=0; for f in \"${files[@]}\"; do vp fmt --stdin-filepath=$f < $f > /private/tmp/claude-501/ID/ID/scratchpad/fmt.out 2>/dev/null; cmp -s $f /private/tmp/claude-501/ID/ID/scratchpad/fmt.out || { echo \"unformatted $f\"; bad=$((bad+1)); }; done; echo fmt_bad=$bad; git add \"${files[@]}\"; cd apps/web && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c \"error TS\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux"
+    },
+    {
+      "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cd $S\ncat > drop.sh <<'E'\n#!/bin/bash\n# drop.sh <tag>: start Linux job in d5, kill its ssh child (pgrep -P chain)\nS=/private/tmp/claude-501/ID/ID/scratchpad\ntag=$1\nP=$($S/job.sh $S/d5 60 0 $tag)\nfor i in $(seq 1 30); do grep -q 'Linux: running' $S/out-$tag.log && break; sleep 1; done\nsleep 3\nc=$P; while n=$(pgrep -P $c | head -1); [ -n \"$n\" ]; do c=$n; done\necho \"node=$P leaf=$c: $(ps -o command= -p $c | cut -c1-40)\"\necho \"PC before kill: $(ssh remoto 'pgrep -af \"[r]uns/d5\"|wc -l') procs\"\nkill -TERM $c; date +%T\nE\nchmod +x drop.sh\npython3 set.py runnerWhere='\"linux\"' runnerDropped='\"ask\"' runnerAskMinutes=1 runnerDeadlineAction='\"mac\"' runnerHeartbeatSeconds=600 | head -1\nsleep 25; python3 -c \"\nimport json,time;d=json.load(open('/Users/dev/.t3/worktrees/t3code/t3-6e7ba6be/.t3/heavy-queue-dev/queue.json'))['linux'];print('checkedAt age',int(time.time()-d['checkedAt']/1000),d['online'])\"\n(bash snap.sh $S/snap-f2a.txt 110 >/dev/null 2>&1 &)\n./drop.sh f2a; sleep 6; echo \"PC after kill: $(ssh remoto 'pgrep -af \"[r]uns/d5\"|wc -l')\"; tail -2 out-f2a.log; grep -h 'runner=' snap-f2a.txt | awk '{$1=\"\";print}'| cut -c1-12,36-200 | uniq | tail -4\npython3 - <<'E'\npass\nE",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "Linux dropped it mid-run",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad",
+      "why": "its scripts run from a folder outside any checkout"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server && python3 - <<'EOF'\npass\nEOF\nsource /private/tmp/claude-501/it.env && pnpm exec vp test run src/heavyQueue/runnerExec.linux.test.ts > /private/tmp/claude-501/it.log 2>&1; grep -E \"^ +[×✓]|Tests \" /private/tmp/claude-501/it.log",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Sets up its shell here first",
+      "expect": "linux"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\ncd ../.. && pnpm exec vp test run src/heavyQueue/runner.test.ts > /private/tmp/claude-501/i1.log 2>&1; grep -E \"^ +×|Tests \" /private/tmp/claude-501/i1.log",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "python3 - <<'EOF'\npass\nEOF\ncd ../.. && pnpm exec vp test run src/heavyQueue/heavyCli.test.ts -t \"%j\" 2>&1 | grep -E \"^ +× |Tests |Expected|Received|^\\s+[-+] \" | head -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "vp run knip:check",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-520af368-4a6ebe16e1426c8f",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm run typecheck 2>&1 | tail -15",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-quiet-task-events-4499a82b96ed49ee",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/assistantPresence.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-520af368-4a6ebe16e1426c8f/packages/client-runtime",
+      "observed": "Uses a file outside the project",
+      "expect": "linux"
+    },
+    {
+      "line": "git commit --no-edit 2>&1 | tail -3; git log --oneline -1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-ceiling-toggle-58989d3db6f84818",
+      "observed": "Commits run here",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "pnpm typecheck 2>&1 | tail -20; pnpm lint 2>&1 | tail -20",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-e2e-perfil-estados-e5c4aef3645a1efd",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "remoto pnpm build 2>&1 | grep -v \"^\\[t3 heavy\\]\" | tail -4",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux",
+      "why": "builds go to Linux (D2)"
+    },
+    {
+      "line": "remoto pnpm test:e2e 2>&1 | grep -v \"^\\[t3 heavy\\]\" | tail -10",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm -C apps/server run typecheck > /dev/null 2>&1; echo exit=$?",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-dispatch-provider-re-8a1edbe670e0422b",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp fmt src/components/assistants/AssistantInfoPanel.tsx",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-520af368-4a6ebe16e1426c8f/apps/web",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec effect-tsgo tsrs --noEmit > ../../.t3/typecheck-server.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-e5b4005f-794f134bfb990ea9/apps/server",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "remoto sh -c \"pwd; tail -20 /tmp/tc-s.txt\" 2>&1 | grep -v \"^\\[t3 heavy\\]\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942",
+      "observed": "Uses a file outside the project",
+      "expect": "mac-env:/tmp/tc-s.txt",
+      "why": "nothing heavy: the sh -c text reads a path outside"
+    },
+    {
+      "line": "vp lint $(git diff --name-only) 2>&1 | grep -vE \"^\\[t3 heavy\\]\" | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-telegram-attachments-e04fd5af64b68458/apps/server",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "git commit -qm msg && git log --oneline -1",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "ps aux | grep -E \"detail.spec|eslint e2e\" | grep -v grep | head -5 | cut -c1-200",
+      "cwd": "/Users/dev/DEV/Pessoal/game-e2e",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec eslint e2e/regressions.spec.ts && pnpm exec tsc -b --noEmit && echo OK",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-fix-borda-7825864008a9c811",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "cd ~/DEV/Pessoal/game && remoto pnpm test:e2e --reporter=list 2>&1 | tail -80",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -E \"error TS\" | head -20; echo exit-done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-group-projects-7d6eb3a9413d62dc/apps/server",
+      "observed": "Uses a file outside the project",
+      "expect": "linux"
+    },
+    {
+      "line": "cd ~/DEV/Pessoal/game && pnpm -s typecheck && echo TS-OK && pnpm -s lint && echo LINT-OK",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "ps -eo pid,ppid,etime,command | grep -E \"cov-p6|vp test|vitest\" | grep -v grep | cut -c1-220 | head -10",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "timeout 900 pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -v \"t3 heavy\" | head -40; echo rc=${pipestatus[1]}",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles--3274f72d1d500da2/apps/mobile",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "date +%H:%M; ps -o pid,etime -p 14662; pgrep -f \"CI=1 && pnpm lint && pnpm typecheck && pnpm test:e2e\" | head -3",
+      "cwd": "/Users/dev/.t3/scratch/2026-11-03-jarvis-tjarvis1",
+      "observed": "unknown",
+      "expect": "mac-env:/Users/dev/.t3/scratch/2026-11-03-jarvis-tjarvis1",
+      "why": "nothing heavy: runs from a folder outside any checkout"
+    },
+    {
+      "line": "remoto bash -lc \"cd apps/web && ls ../../node_modules/.bin | grep -E '^(vp|vite|vitest)' ; which vp\" 2>&1 | tail -10",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-1074b909-4bf59e0edf26d4c5",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/heavyQueue/runner.test.ts -t \"ties a body\" 2>&1 | grep -v \"^\\s*$\" | grep -v \"✓\" | head -50",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "ps -ax -o pid,etime,command | grep -E \"mobile:install|mobile-install|xcodebuild|expo\" | grep -v grep | cut -c1-220 | head",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "unknown",
+      "expect": "linux",
+      "why": "tool names inside a grep pattern are not programs"
+    },
+    {
+      "line": "PW_DEV=1 pnpm exec playwright test e2e/spike.spec.ts --project=desktop --reporter=line 2>&1 | grep -v \"Progress\" | tail -20",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "cd ~/DEV/Pessoal/t3code/packages/contracts && /usr/bin/time -p ./node_modules/.bin/effect-tsgo tsrs --noEmit 2>&1 | tail -5",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5",
+      "observed": "waiting for Linux: a fresh reading since the last job started there",
+      "expect": "linux"
+    },
+    {
+      "line": "date; remoto sh -c \"pnpm -s typecheck && echo TC_OK; pnpm -s lint && echo LINT_OK\" 2>&1 | grep -v '^\\[t3 heavy\\]' | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-fix-reflow-honesto-0712a34902595ec3",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/game/jg-gap-unit-tests-ccbb55207c7595b1 && pnpm -s test:unit 2>&1 | tail -6",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/heavyQueue/runner.test.ts -t \"remoto scripts/gate.sh is mac-only\" 2>&1 | grep -E \"^\\s+[-+]   \\\"\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "bash /private/tmp/claude-501/ID/ID/scratchpad/jobs.sh",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "scripts": {
+        "/private/tmp/claude-501/ID/ID/scratchpad/jobs.sh": "#!/bin/bash\n# Queues three stub vitest jobs in the worktree's dev queue; PIDs go to jobs.pid. `stop` kills exactly those.\nSP=/private/tmp/claude-501/ID/ID/scratchpad\nW=/Users/dev/.t3/worktrees/t3code/t3-fork-next\nQ=$W/.t3/heavy-queue-dev\nif [ \"$1\" = stop ]; then\n  for p in $(cat $SP/jobs.pid); do kill \"$p\" 2>/dev/null && echo \"stopped $p\"; done\n  exit 0\nfi\nmkdir -p $SP/stubbin\nprintf '#!/bin/sh\\nexec sleep 900\\n' > $SP/stubbin/vitest\nchmod +x $SP/stubbin/vitest\ncd $W || exit 2\n: > $SP/jobs.pid\nfor n in 1 2 3; do\n  PATH=$SP/stubbin:$PATH nohup node apps/server/src/bin.ts heavy --queue-dir $Q --name \"stub $n\" -- vitest run > $SP/job$n.log 2>&1 &\n  echo $! >> $SP/jobs.pid\ndone\nsleep 8\ncat $SP/jobs.pid\nfor n in 1 2 3; do tail -2 $SP/job$n.log; done\n"
+      },
+      "observed": "linux",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/jobs.pid",
+      "why": "nothing heavy: the script travels, its text reads a path outside"
+    },
+    {
+      "line": "FILES=$(git diff --name-only) && vp fmt $=FILES 2>&1 | tail -3 && vp lint --report-unused-disable-directives $=FILES 2>&1 | tail -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-dbc44a53-b84b649a3923d4cd",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/components/assistants/AssistantGroupChat.browser.test.tsx 2>&1 | grep -E \"Test Files|Tests |FAIL\" | head -8",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-quiet-task-events-4499a82b96ed49ee/apps/web",
+      "observed": "Linux is unavailable; it never started there",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-runner-ui && grep -n \"Gradle\\|cargo\\|xcodebuild\" docs/user/background-service.md",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "cd ~/DEV/Pessoal/game && ./node_modules/.bin/eslint --fix e2e/helpers/checkout.ts; echo \"exit=$?\"; git diff; git status --short",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/heavyQueue/runner.test.ts -t \"gate.sh is exclusive\" 2>&1 | grep -A6 \"Expected\" | grep -E \"^\\s*[-+] \" | head -4",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "npx eslint e2e/navigation.spec.ts && git commit -q --amend --no-edit e2e/navigation.spec.ts && git log --oneline -2 && git status --short",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-fix-auth-scroll-5c556d41d18b48a0",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "remoto pnpm test 2>&1 | grep -vE \"^\\s*$\" | grep -E \"Test Files|Tests |FAIL|×|Duration|ERR|error\" | head -40; echo \"exit ${pipestatus[1]}\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-7fae2c9f-651a925fea7f8245/apps/server",
+      "observed": "waiting for Linux: all 2 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "pkill -f \"bncyrzitr.output\" ; f=$(find /private/tmp/claude-501 -name 'bncyrzitr.output' 2>/dev/null | head -1); echo \"$f\"; cat \"$f\" | tail -5",
+      "cwd": "/Users/dev/.t3/scratch/2026-11-03-jarvis-tjarvis1",
+      "observed": "linux",
+      "expect": "mac-env:/Users/dev/.t3/scratch/2026-11-03-jarvis-tjarvis1",
+      "why": "nothing heavy: runs from a folder outside any checkout"
+    },
+    {
+      "line": "node_modules/.bin/vp fmt apps/web/src/components/Sidebar.tsx apps/web/src/components/Sidebar.drag.browser.test.tsx 2>&1 | tail -2; git diff --stat",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-1074b909-4bf59e0edf26d4c5",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "remoto pnpm test:e2e --repeat-each=5 -g \"catálogo\" 2>&1 | grep -E \"passed|failed|flaky\" ; remoto pnpm build 2>&1 | grep -v \"^\\[t3 heavy\\]\" | tail -4",
+      "cwd": "/Users/dev/DEV/Pessoal/game",
+      "observed": "linux",
+      "expect": "linux",
+      "why": "builds go to Linux (D2)"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-settings-dependents--1031e6cfc5eeb9c9; git commit --no-edit 2>&1 | tail -5; git log --oneline -1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-settings-dependents--1031e6cfc5eeb9c9/apps/web/src/components/settings",
+      "observed": "mac",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "for p in packages/contracts packages/client-runtime apps/server; do echo \"== $p\"; (cd $p && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | tail -25); done",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-group-projects-7d6eb3a9413d62dc",
+      "observed": "Uses a file outside the project",
+      "expect": "linux"
+    },
+    {
+      "line": "VITEST_MAX_WORKERS=2 ./node_modules/.bin/vp run check:changed 7be79d5a63 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -vE \"ResizeObserver|^\\s*$\" | tail -40",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-59f25236-e768d6a64288f8ea",
+      "observed": "linux",
+      "expect": "linux"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229/apps/web && ../../node_modules/.bin/effect-tsgo tsrs --noEmit",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-resource-manager-all-f372ca2063c30229/apps/mobile/src/features/resources",
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux"
+    },
+    {
+      "line": "/private/tmp/claude-501/ID/ID/scratchpad/hq63.sh vp run lint 2>&1 | tail -30",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code/.claude/worktrees/agent-ae51104b3e80fdba8",
+      "observed": "unknown",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/hq63.sh",
+      "why": "unreadable script outside the checkout"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095 && pnpm exec vp run knip:check 2>&1 | grep -A4 \"Unused\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/mcp",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run src/heavyQueue/runner.test.ts -t \"outputFile=~|xcodebuild -scheme App test ties\" 2>&1 | grep -E \"AssertionError|^\\s+[-+] +\\\"\" | head",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux",
+      "why": "a pattern matches whole words: |xcodebuild in the -t text is not one"
+    },
+    {
+      "line": "git status -s | head; git commit -q -m msg && git log --oneline -1 && git merge --no-ff --no-commit fcd336e; git status -s",
+      "cwd": "/Users/dev/.t3/worktrees/game/jg-trem-3f548d2d6a67e7ee",
+      "observed": "unknown",
+      "expect": "mac-state:git commit"
+    },
+    {
+      "line": "vp test run src/heavyQueue/heavyCli.test.ts 2>&1 > /private/tmp/claude-501/cli.log; grep -E \"×|Tests |Test Files\" /private/tmp/claude-501/cli.log | head -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-route-pipes-li-b5cb766cc69f7a8c/apps/server/src/heavyQueue",
+      "observed": "waiting for Linux: a fresh reading since the last job started there",
+      "expect": "linux"
+    },
+    {
+      "line": "cd ../.. && pnpm exec vp test run src/heavyQueue/heavyCli.test.ts -t \"fmt --stdin|xcodebuild -scheme App test\" 2>&1 | grep -E \"Expected|Received|^\\s+[-+] |\\[\" | head -30",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server/src/heavyQueue",
+      "observed": "Linux is unavailable: running here",
+      "expect": "linux",
+      "why": "a pattern matches whole words: |xcodebuild in the -t text is not one"
+    },
+    {
+      "line": "cd /Users/dev/.t3/worktrees/t3code/t3-agent-device-recycle-93f682169946bc07; grep -n \"web\" scripts/check-changed.ts | grep -i \"tsc\\|typecheck\\|tsgo\" | head -5",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-agent-device-recycle-93f682169946bc07",
+      "observed": "unknown",
+      "expect": "linux"
+    },
+    {
+      "line": "W=/Users/dev/.t3/worktrees/t3code/t3-fork-next; cd $W/apps/web && pnpm exec vp test run src/components/settings/settingsLayout.browser.test.tsx 2>&1 | tail -30",
+      "cwd": "/Users/dev/DEV/Pessoal/t3code",
+      "observed": "waiting for Linux: all 2 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "remoto pnpm --dir apps/server exec vp test run src/orchestration-v2/testkit/AcpRegistryReplayFixtures.integration.test.ts -t stop_background_work_after_release 2>&1 | tail -60",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-fix-server-sta-202efdda7c0a6e89",
+      "observed": "waiting for Linux: all 2 Linux slots are busy",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vp test run --root ~/.t3/userdata",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.t3/userdata",
+      "why": "~/.t3 as an argument"
+    },
+    {
+      "line": "vp test run src/a.test.ts 2>&1 | pbcopy",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "pbcopy is glue here"
+    },
+    {
+      "line": "cat coverage/summary.txt | pbcopy",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:pbcopy",
+      "why": "nothing heavy: pbcopy is work"
+    },
+    {
+      "line": "hyperfine --warmup 1 'pnpm exec vp test run src/a.test.ts'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:hyperfine",
+      "why": "measures this Mac"
+    },
+    {
+      "line": "vp lint --no-ignore $(git diff --name-only)",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "read-only git is glue"
+    },
+    {
+      "line": "git diff --stat",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "read-only git is no reason"
+    },
+    {
+      "line": "sh -c 'git checkout main && vp test run'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "in the text, git checkout is glue"
+    },
+    {
+      "line": "bash scripts/ios.sh test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "scripts/ios.sh": "#!/bin/sh\ncase \"$1\" in\n  test) xcodebuild -scheme App test ;;\nesac\n"
+      },
+      "observed": "synthetic",
+      "expect": "mac-tool:xcodebuild",
+      "why": "a script the parser cannot follow (case) still names xcodebuild"
+    },
+    {
+      "line": "bash scripts/ios.sh test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an unreadable script inside the checkout travels with it"
+    },
+    {
+      "line": "pnpm exec vite --host",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:vite"
+    },
+    {
+      "line": "pnpm exec vite build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm exec vitest --watch src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "watches:vitest --watch",
+      "why": "a watcher on Linux watches its copy: edits made here never reach it"
+    },
+    {
+      "line": "npm run watch:css",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a watch script serves nothing"
+    },
+    {
+      "line": "pnpm dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:pnpm dev"
+    },
+    {
+      "line": "npx next dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:next dev"
+    },
+    {
+      "line": "npx wrangler dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:wrangler dev"
+    },
+    {
+      "line": "docker compose up",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:docker compose"
+    },
+    {
+      "line": "npx expo prebuild --platform ios",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:expo prebuild"
+    },
+    {
+      "line": "pnpm exec playwright install chromium",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:playwright install"
+    },
+    {
+      "line": "xcodebuild -scheme App test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:xcodebuild"
+    },
+    {
+      "line": "open http://localhost:5173",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:open"
+    },
+    {
+      "line": "agent-device screenshot",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:agent-device"
+    },
+    {
+      "line": "pnpm install",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-state:pnpm install"
+    },
+    {
+      "line": "pnpm --filter web remove lodash",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-state:pnpm remove"
+    },
+    {
+      "line": "pnpm install && vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "the install is glue on this Mac"
+    },
+    {
+      "line": "vp run build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "builds go to Linux (D2)"
+    },
+    {
+      "line": "pytest tests",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "Python is no reason"
+    },
+    {
+      "line": "source .venv/bin/activate && vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a sourced file is no reason"
+    },
+    {
+      "line": "eval \"$(direnv export bash)\" && vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "unparseable syntax is no reason"
+    },
+    {
+      "line": "./gradlew assembleDebug",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "pinned:gradlew"
+    },
+    {
+      "line": "vp run mobile:install ios",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "pinned:mobile:install"
+    },
+    {
+      "line": "vp run dev:desktop",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "exclusive"
+    },
+    {
+      "line": "vp test run --outputFile=/tmp/r.json",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/tmp/r.json"
+    },
+    {
+      "line": "vp test run > /tmp/r.log",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "redirects never count"
+    },
+    {
+      "line": "cd /tmp && vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/tmp",
+      "why": "the work runs from a folder outside any checkout"
+    },
+    {
+      "line": "vp test run ../other/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.t3/worktrees/t3code/other/a.test.ts"
+    },
+    {
+      "line": "swift build -c release",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/native/device-capture",
+      "observed": "synthetic",
+      "expect": "native-build:swift build"
+    },
+    {
+      "line": "codesign --verify dist/T3.app",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:codesign"
+    },
+    {
+      "line": "pnpm exec cmake --build build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:cmake",
+      "why": "judged on the program pnpm exec runs"
+    },
+    {
+      "line": "go test ./...",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:go test"
+    },
+    {
+      "line": "make -C native/resource-monitor",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "native-build:make",
+      "why": "make runs arbitrary native recipes"
+    },
+    {
+      "line": "cargo fmt --check && go mod tidy",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "formatting and module upkeep build nothing"
+    },
+    {
+      "line": "pnpm exec playwright test --base-url http://127.0.0.1:5733",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-port:localhost:5733",
+      "why": "the dev server it tests listens on this Mac"
+    },
+    {
+      "line": "pnpm exec playwright test --base-url=http://localhost:4173",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "nothing listens there on this Mac"
+    },
+    {
+      "line": "pnpm exec vitest --ui",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:vitest --ui"
+    },
+    {
+      "line": "pnpm exec turbo run dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:turbo dev"
+    },
+    {
+      "line": "nx serve web",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:nx serve"
+    },
+    {
+      "line": "pnpm exec vitest -w",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "watches:vitest -w"
+    },
+    {
+      "line": "pnpm -w exec vitest run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "pnpm's -w is the workspace root, not watch"
+    },
+    {
+      "line": "docker build -t app .",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-docker:docker build",
+      "why": "the image lands in the daemon that builds it"
+    },
+    {
+      "line": "docker run -p 5432:5432 postgres",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-docker:docker run"
+    },
+    {
+      "line": "T3CODE_HOME=/Users/dev/.t3/dev pnpm exec vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.t3/dev",
+      "why": "a variable's value is judged like an argument"
+    },
+    {
+      "line": "BASE_URL=http://localhost:5733 pnpm exec playwright test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-port:localhost:5733"
+    },
+    {
+      "line": "export CLAUDE_CONFIG_DIR=~/.claude-test; vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/Users/dev/.claude-test",
+      "why": "an exported variable reaches the command"
+    },
+    {
+      "line": "env DATABASE_URL=postgres://u:p@127.0.0.1:5733/db vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-port:localhost:5733"
+    },
+    {
+      "line": "S=/tmp/x; CI=1 vp test run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an unexported variable never reaches the command"
+    }
+  ]
+}
