@@ -845,6 +845,25 @@ describe("t3 heavy", () => {
       expect(listed).toContain("on this Mac until");
     });
 
+    // A pipe already holds what Linux printed: a rerun here would append the Mac's output to it.
+    it("does not rerun a call that already wrote output, and still learns from it", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n' >&2; echo partial; echo 'sh: 1: vp: not found' >&2; printf '${M} exit=127\\n' >&2; exit 127`,
+        { runnerRouteLearnAfter: 1 },
+      );
+      const run = heavyHere(
+        dir,
+        ["/bin/sh", "-c", 'vp test run; echo "code $?"'],
+        env,
+        ["--"],
+        dir,
+      );
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("partial\ncode 127\n");
+      expect(run.stderr()).toContain("it already wrote output, so it does not run again here");
+      expect(run.stderr()).toContain("[t3 heavy] Learned: ");
+    });
+
     // Only a call that asks for stdin gets it: any other would drain a loop's input over ssh.
     it("hands Linux stdin only for a call that asks for it", async () => {
       const { dir, env } = setup(

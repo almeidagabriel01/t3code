@@ -1499,9 +1499,12 @@ const runLinuxPart = async (
   const input = args.some((arg) => arg === "-" || arg.startsWith("--stdin"))
     ? forwardedInput(0)
     : undefined;
+  /** Whether Linux wrote any of the call's stdout: a pipe after it already holds that. */
+  let wroteOutput = false;
   /**
    * What Linux lacked: this call alone runs again here, once, and counts toward its learned route.
-   * Input it handed Linux is spent, so then the call ends with Linux's code.
+   * Input it handed Linux is spent, and output it wrote is already downstream, so then the call
+   * ends with Linux's code.
    */
   const fallBack = (lacked: EnvironmentFault, code: number) => {
     if (linuxOnly) {
@@ -1519,9 +1522,10 @@ const runLinuxPart = async (
         `[t3 heavy] Learned: ${key} runs on this Mac for ${days} days (\`t3 heavy routes --forget ${shellQuote(key)}\` undoes it).\n`,
       );
     }
-    if (input !== undefined) {
+    if (input !== undefined || wroteOutput) {
+      const spent = input !== undefined ? "its input went to Linux" : "it already wrote output";
       process.stderr.write(
-        `[t3 heavy] Linux couldn't run this: ${lacked.line}; its input went to Linux, so it does not run again here.\n`,
+        `[t3 heavy] Linux couldn't run this: ${lacked.line}; ${spent}, so it does not run again here.\n`,
       );
       process.exit(code);
     }
@@ -1546,6 +1550,7 @@ const runLinuxPart = async (
       ...(bringsBack ? { startMarker: id } : {}),
       ...(input === undefined ? {} : { input }),
       stdout: (chunk) => {
+        wroteOutput ||= chunk.length > 0;
         process.stdout.write(chunk);
         tail = appendTail(tail, String(chunk));
       },
