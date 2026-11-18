@@ -149,6 +149,14 @@ export const HeavyQueueEntry = Schema.Struct({
 });
 export type HeavyQueueEntry = typeof HeavyQueueEntry.Type;
 
+export const HeavyRunnerLinuxStatus = Schema.Literals([
+  "online",
+  "over-limit",
+  "unresponsive",
+  "offline",
+]);
+export type HeavyRunnerLinuxStatus = typeof HeavyRunnerLinuxStatus.Type;
+
 /** Linux as the heartbeat last saw it; `online` is null until the first check. */
 export const HeavyRunnerLinux = Schema.Struct({
   host: Schema.String,
@@ -164,6 +172,13 @@ export const HeavyRunnerLinux = Schema.Struct({
   totalMemoryBytes: Schema.NullOr(Schema.Number),
   /** Why the last check failed, for people. */
   error: Schema.optionalKey(Schema.String),
+  /**
+   * Offline: unreachable. Unresponsive: reached but too loaded to answer. Over-limit: answering,
+   * past a limit `overLimitBy` names. Absent while unchecked and from older servers.
+   */
+  status: Schema.optionalKey(HeavyRunnerLinuxStatus),
+  /** The limit Linux is past, with its reading ("memory stalled 57% of the time (limit 10%)"). */
+  overLimitBy: Schema.optionalKey(Schema.String),
 });
 export type HeavyRunnerLinux = typeof HeavyRunnerLinux.Type;
 

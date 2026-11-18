@@ -136,6 +136,14 @@ describe("Linux status", () => {
     ],
     [{ ...linux, online: false, error: "Connection refused" }, "Linux offline: Connection refused"],
     [{ ...linux, online: false }, "Linux offline"],
+    [
+      { ...linux, online: false, status: "unresponsive", error: "banner exchange" },
+      "Linux not responding, too loaded to answer: banner exchange",
+    ],
+    [
+      { ...linux, status: "over-limit", overLimitBy: "memory stalled 57% of the time (limit 10%)" },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free · over its limits: memory stalled 57% of the time (limit 10%)",
+    ],
     [{ ...linux, online: null }, "Checking Linux (pc)…"],
   ] as const)("%j reads %s", (state, text) => {
     expect(linuxLine(state)).toBe(text);

@@ -740,6 +740,31 @@ describe("machineBar", () => {
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
   });
 
+  it.each([
+    // One timed-out check while still online already hides gauges that would be stale.
+    [true, "unresponsive", undefined, { text: "Not responding" }, null],
+    [false, "unresponsive", undefined, { text: "Not responding" }, null],
+    [
+      true,
+      "over-limit",
+      "memory stalled 57% of the time (limit 10%)",
+      null,
+      "remoto · over its limits: memory stalled 57% of the time (limit 10%)",
+    ],
+  ] as const)("Linux online=%s %s says so", (online, status, overLimitBy, offline, statusHint) => {
+    const { linux } = machineBar(
+      state({
+        linux: { ...LINUX, online, status, ...(overLimitBy === undefined ? {} : { overLimitBy }) },
+        paused: true,
+      }),
+      null,
+    );
+    expect(linux).toMatchObject({ offline });
+    if (statusHint !== null) expect(linux!.statusHint).toBe(statusHint);
+    expect(linux!.cpu === null).toBe(status === "unresponsive");
+    expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
   it("reads Linux's CPU in use like the Mac's, its load only a hint", () => {
     const { linux } = machineBar(state({ linux: LINUX }), null);
     expect(linux!.cpu).toEqual({

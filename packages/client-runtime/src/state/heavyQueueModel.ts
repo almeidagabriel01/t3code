@@ -532,14 +532,18 @@ export function machineBar(
   };
   if (linux === null) return { mac, linux: null };
   const linuxRunning = work.linux.running.length;
-  const live = linux.online === true;
+  const live = linux.online === true && linux.status !== "unresponsive";
   const cores = linux.cpuCount;
   return {
     mac,
     linux: {
       runner: "linux",
       online: linux.online,
-      statusHint: live ? `${linux.host} · online` : linuxLine(linux),
+      statusHint: !live
+        ? linuxLine(linux)
+        : linux.status === "over-limit" && linux.overLimitBy !== undefined
+          ? `${linux.host} · over its limits: ${linux.overLimitBy}`
+          : `${linux.host} · online`,
       cpu: !live
         ? null
         : linux.cpuPercent === undefined || linux.cpuPercent === null
@@ -565,7 +569,15 @@ export function machineBar(
             },
       offline: live
         ? null
-        : { text: linux.online === false ? "Offline" : "Checking…", hint: linuxLine(linux) },
+        : {
+            text:
+              linux.status === "unresponsive"
+                ? "Not responding"
+                : linux.online === false
+                  ? "Offline"
+                  : "Checking…",
+            hint: linuxLine(linux),
+          },
       slots: {
         running: linuxRunning,
         slots: linux.slots,

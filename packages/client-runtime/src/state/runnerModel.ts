@@ -256,6 +256,9 @@ const GB = 1024 ** 3;
 export function linuxLine(linux: HeavyRunnerLinux): string {
   const jobs = `${linux.running} of ${linux.slots} running`;
   if (linux.online === null) return `Checking Linux (${linux.host})…`;
+  if (linux.status === "unresponsive") {
+    return `Linux not responding, too loaded to answer${linux.error === undefined ? "" : `: ${linux.error}`}`;
+  }
   if (!linux.online) {
     return `Linux offline${linux.error === undefined ? "" : `: ${linux.error}`}`;
   }
@@ -271,7 +274,11 @@ export function linuxLine(linux: HeavyRunnerLinux): string {
     linux.availableMemoryBytes === null
       ? ""
       : ` · ${(linux.availableMemoryBytes / GB).toFixed(1)} GB free`;
-  return `Linux online · ${jobs}${cpu}${load}${memory}`;
+  const over =
+    linux.status === "over-limit" && linux.overLimitBy !== undefined
+      ? ` · over its limits: ${linux.overLimitBy}`
+      : "";
+  return `Linux online · ${jobs}${cpu}${load}${memory}${over}`;
 }
 
 /** "4:05" until the deadline, never negative. */
