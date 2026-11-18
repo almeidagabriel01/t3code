@@ -12449,6 +12449,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       // A running run's start may already have a native turn this projection cannot see yet.
+      // A starting one may too: its running write can land while Stop reads, so the
+      // post-commit lookup below runs for every attempt; it is a no-op without a turn.
       const providerMayHaveStarted = run.status === "running";
       const interruptResultItem: OrchestrationV2TurnItem = {
         id: idAllocator.derive.runSignalTurnItem({
@@ -12584,7 +12586,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
-      if (providerMayHaveStarted && providerThread.providerSessionId !== null) {
+      if (providerThread.providerSessionId !== null) {
         otherProviderInterrupts.push({
           id: `effect:${command.commandId}:run-attempt.interrupt:${attempt.id}`,
           commandId: command.commandId,

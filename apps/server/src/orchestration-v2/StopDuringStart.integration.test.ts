@@ -14,8 +14,10 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -33,7 +35,15 @@ const modelSelection = { instanceId, model: "test-model" };
  * Stop lands after the adapter accepted a turn but before that turn is recorded, as when
  * `startTurn` returns before the adapter's own turn event is ingested.
  */
-const stopDuringStart = (scenario: "ingested-turn" | "recorded-turn" | "next-message") =>
+const stopDuringStart = (
+  scenario:
+    | "ingested-turn"
+    | "recorded-turn"
+    | "starting-snapshot"
+    | "next-message"
+    | "slow-release"
+    | "never-released",
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("stop-during-start");
@@ -43,7 +53,13 @@ const stopDuringStart = (scenario: "ingested-turn" | "recorded-turn" | "next-mes
       const firstInterrupt = yield* Deferred.make<void>();
       // The adapter refuses a new turn while it still owns one, like every adapter with a turn slot.
       let active: ProviderTurnId | null = null;
-      let honorInterrupts = scenario !== "next-message";
+      let honorInterrupts =
+        scenario === "ingested-turn" ||
+        scenario === "recorded-turn" ||
+        scenario === "starting-snapshot";
+      // Refusals after the next start interrupted the stopped turn, which still holds the slot.
+      let refusalsAfterRecovery = 0;
+      const refusedAfterRecovery = yield* Deferred.make<void>();
       const turnOf = (
         turn: ProviderAdapter.ProviderAdapterV2TurnInput,
         status: OrchestrationV2ProviderTurn["status"],
@@ -105,6 +121,12 @@ const stopDuringStart = (scenario: "ingested-turn" | "recorded-turn" | "next-mes
               resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
               startTurn: (turn) =>
                 Effect.gen(function* () {
+                  if (active !== null && interrupts.length > 1) {
+                    refusalsAfterRecovery += 1;
+                    yield* Deferred.succeed(refusedAfterRecovery, undefined);
+                    // Some adapters free the slot only after the native turn reports its end.
+                    if (scenario === "slow-release" && refusalsAfterRecovery === 3) active = null;
+                  }
                   if (active !== null) {
                     return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                       driver,
@@ -230,18 +252,69 @@ const stopDuringStart = (scenario: "ingested-turn" | "recorded-turn" | "next-mes
           assert.isNull(active);
           return;
         }
+        if (scenario === "starting-snapshot") {
+          assert.isNull(active);
+          // The session is open; Stop reads the next run before its start writes "running".
+          yield* send("second");
+          const second = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!;
+          assert.notEqual(second.status, "running");
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop-second"),
+            threadId,
+          });
+          // The start's native turn is recorded after Stop's read, before its effects run.
+          const secondTurnId = ProviderTurnId.make(`provider-turn:${second.activeAttemptId}`);
+          active = secondTurnId;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("late-second-turn"),
+                type: "provider-turn.updated",
+                threadId,
+                runId: second.id,
+                nodeId: second.rootNodeId!,
+                providerInstanceId: instanceId,
+                occurredAt: now,
+                payload: {
+                  ...turnOf(first, "running", now),
+                  id: secondTurnId,
+                  nodeId: second.rootNodeId!,
+                  runAttemptId: second.activeAttemptId!,
+                  ordinal: first.providerTurnOrdinal + 1,
+                },
+              },
+            ],
+          });
+          yield* worker.drain();
+          assert.deepEqual(interrupts, [firstTurnId, secondTurnId]);
+          assert.isNull(active);
+          return;
+        }
 
         // The stopped turn is still running in the provider when the next message arrives.
         assert.equal(active, firstTurnId);
-        honorInterrupts = true;
-        yield* send("next");
-        yield* worker.drain();
+        honorInterrupts = scenario === "next-message";
+        const next = yield* Effect.forkChild(send("next").pipe(Effect.andThen(worker.drain())));
+        if (scenario !== "next-message") {
+          yield* Deferred.await(refusedAfterRecovery);
+          yield* TestClock.adjust("15 seconds");
+        }
+        yield* Fiber.join(next);
         const after = yield* orchestrator.getThreadProjection(threadId);
+        const nextFailed = after.turnItems.some(
+          (item) => item.runId === after.runs[1]?.id && item.type === "error",
+        );
+        if (scenario === "never-released") {
+          // The retry window is bounded: one try after the interrupt plus 40 retries.
+          assert.equal(refusalsAfterRecovery, 41);
+          assert.lengthOf(started, 1);
+          assert.isTrue(nextFailed);
+          return;
+        }
         assert.lengthOf(started, 2);
         assert.equal(after.runs[1]?.status, "running");
-        assert.isFalse(
-          after.turnItems.some((item) => item.runId === after.runs[1]?.id && item.type === "error"),
-        );
+        assert.isFalse(nextFailed);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -262,6 +335,18 @@ it.effect("Stop interrupts a turn recorded between its read and its commit", () 
   stopDuringStart("recorded-turn"),
 );
 
+it.effect("Stop interrupts a turn whose start ran while Stop read a starting run", () =>
+  stopDuringStart("starting-snapshot"),
+);
+
 it.effect("the next message ends a stopped turn the provider still runs, then starts", () =>
   stopDuringStart("next-message"),
+);
+
+it.effect("the next message waits for a stopped turn that frees its slot late", () =>
+  stopDuringStart("slow-release"),
+);
+
+it.effect("the next message gives up after the retry window when the slot never frees", () =>
+  stopDuringStart("never-released"),
 );
