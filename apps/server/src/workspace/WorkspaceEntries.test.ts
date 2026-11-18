@@ -457,43 +457,109 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("excludes gitignored paths for git repositories", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
-        yield* writeTextFile(cwd, ".gitignore", ".convex/\nconvex/\nignored.txt\n");
-        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
-        yield* writeTextFile(cwd, "ignored.txt", "ignore me");
-        yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
-        yield* writeTextFile(cwd, "convex/UOoS-l/convex_local_storage/modules/data.json", "{}");
+    const hiddenFixture = [
+      "src/keep.ts",
+      "src/environment.ts",
+      "src/env-utils.ts",
+      ".env",
+      "apps/web/.env.local",
+      ".github/workflows/ci.yml",
+      ".specs/plan.md",
+      "secrets/key.json",
+      "node_modules/pkg/index.js",
+      "packages/ui/node_modules/dep/index.js",
+      "dist/out.js",
+    ];
+    const writeHiddenFixture = Effect.fn(function* (cwd: string) {
+      for (const file of hiddenFixture) yield* writeTextFile(cwd, file, "x");
+    });
+    const searchPaths = Effect.fn(function* (
+      cwd: string,
+      query: string,
+      options?: { limit?: number; kind?: "file" | "directory" },
+    ) {
+      const result = yield* searchWorkspaceEntries({
+        cwd,
+        query,
+        limit: options?.limit ?? 100,
+        ...(options?.kind ? { kind: options.kind } : {}),
+      });
+      return result.entries.map((entry) => entry.path);
+    });
 
-        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
-        const paths = result.entries.map((entry) => entry.path);
+    it.effect.each([true, false])(
+      "finds dotfiles and ignored files but skips heavy folders unless typed (git: %s)",
+      (git) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ prefix: "t3code-workspace-hidden-", git });
+          yield* writeTextFile(cwd, ".gitignore", ".env*\nnode_modules/\ndist/\nsecrets/\n");
+          yield* writeHiddenFixture(cwd);
 
-        expect(paths).toContain("src");
-        expect(paths).toContain("src/keep.ts");
-        expect(paths).not.toContain("ignored.txt");
-        expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
-        expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
-      }),
+          const all = yield* searchPaths(cwd, "");
+          for (const visible of [
+            ".env",
+            "apps/web/.env.local",
+            ".github/workflows/ci.yml",
+            ".specs/plan.md",
+            "secrets/key.json",
+            "node_modules",
+            "src/keep.ts",
+          ]) {
+            expect(all).toContain(visible);
+          }
+          for (const heavy of [
+            "node_modules/pkg/index.js",
+            "packages/ui/node_modules/dep/index.js",
+            "dist/out.js",
+          ]) {
+            expect(all).not.toContain(heavy);
+          }
+
+          expect(yield* searchPaths(cwd, ".env", { limit: 1 })).toEqual([".env"]);
+          expect(yield* searchPaths(cwd, "env.local")).toContain("apps/web/.env.local");
+          expect(yield* searchPaths(cwd, ".github/workflows")).toContain(
+            ".github/workflows/ci.yml",
+          );
+          expect(yield* searchPaths(cwd, "node_modules/pkg/ind")).toEqual([
+            "node_modules/pkg/index.js",
+          ]);
+          expect(yield* searchPaths(cwd, "@node_modules/p", { kind: "directory" })).toEqual([
+            "node_modules/pkg",
+          ]);
+          expect(yield* searchPaths(cwd, "packages/ui/node_modules/")).toEqual([
+            "packages/ui/node_modules/dep",
+          ]);
+          expect(yield* searchPaths(cwd, "node_modules/../../")).toEqual([]);
+        }),
     );
 
-    it.effect("excludes tracked paths that match ignore rules", () =>
+    it.effect("finds tracked files that match ignore rules", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({
           prefix: "t3code-workspace-tracked-gitignore-",
           git: true,
         });
-        yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
+        yield* writeTextFile(cwd, ".env.example", "A=");
         yield* writeTextFile(cwd, "src/keep.ts", "export {};");
-        yield* git(cwd, ["add", ".convex/local-storage/data.json", "src/keep.ts"]);
-        yield* writeTextFile(cwd, ".gitignore", ".convex/\n");
+        yield* git(cwd, ["add", ".env.example", "src/keep.ts"]);
+        yield* writeTextFile(cwd, ".gitignore", ".env*\n");
 
-        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
-        const paths = result.entries.map((entry) => entry.path);
+        expect(yield* searchPaths(cwd, "env.example")).toContain(".env.example");
+      }),
+    );
 
-        expect(paths).toContain("src");
-        expect(paths).toContain("src/keep.ts");
-        expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
+    it.effect("picks up a new ignored file after a refresh", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-hidden-refresh-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env*\n");
+        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
+        expect(yield* searchPaths(cwd, "env.local")).toEqual([]);
+
+        yield* writeTextFile(cwd, ".env.local", "A=1");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* workspaceEntries.refresh(cwd);
+
+        expect(yield* searchPaths(cwd, "env.local")).toEqual([".env.local"]);
       }),
     );
   });

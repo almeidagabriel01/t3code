@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 
 import type {
   DirItem,
@@ -26,6 +29,13 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import {
+  insertRankedSearchResult,
+  scoreQueryMatch,
+  type RankedSearchResult,
+} from "@t3tools/shared/searchRanking";
+
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
@@ -38,6 +48,49 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const HIDDEN_SCAN_BATCH_SIZE = 64;
+
+/**
+ * Regenerable folders search never walks into. fff also leaves out dotfiles (outside git)
+ * and ignored files; those come back through the hidden-entry scan, but these stay a
+ * single folder entry, reachable by typing a path into them.
+ */
+const HEAVY_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
+  ".git",
+  "node_modules",
+  "bower_components",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  "target",
+  "vendor",
+  "Pods",
+  "DerivedData",
+  ".next",
+  ".nuxt",
+  ".output",
+  ".svelte-kit",
+  ".turbo",
+  ".vercel",
+  ".wrangler",
+  ".expo",
+  ".gradle",
+  ".dart_tool",
+  ".cache",
+  ".parcel-cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".tox",
+  ".terraform",
+]);
+
+export function hasHeavyDirectorySegment(relativePath: string): boolean {
+  return relativePath.split("/").some((segment) => HEAVY_DIRECTORY_NAMES.has(segment));
+}
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -284,6 +337,101 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+/** Breadth-first and without following links; a heavy folder is listed but not entered. */
+async function walkEntries(
+  cwd: string,
+  roots: ReadonlyArray<string>,
+  limit: number,
+): Promise<ProjectEntry[]> {
+  const entries: ProjectEntry[] = [];
+  const pending = [...roots];
+  while (pending.length > 0 && entries.length < limit) {
+    const listed = await Promise.all(
+      pending.splice(0, HIDDEN_SCAN_BATCH_SIZE).map((directory) =>
+        NodeFSP.readdir(NodePath.join(cwd, directory), { withFileTypes: true }).then(
+          (children) => ({ directory, children }),
+          () => ({ directory, children: [] }),
+        ),
+      ),
+    );
+    for (const { directory, children } of listed) {
+      for (const child of children) {
+        if (child.name === ".git") continue;
+        const path = directory ? `${directory}/${child.name}` : child.name;
+        if (child.isDirectory()) {
+          entries.push({ path, kind: "directory" });
+          if (!HEAVY_DIRECTORY_NAMES.has(child.name)) pending.push(path);
+        } else if (child.isFile()) {
+          entries.push({ path, kind: "file" });
+        }
+      }
+    }
+  }
+  return entries.slice(0, limit);
+}
+
+/** Leading dots dropped per segment, so `env` finds `.env` and `github/` finds `.github/`. */
+function undotted(value: string): string {
+  return value.toLowerCase().replace(/(^|\/)\.+/g, "$1");
+}
+
+const STRONG_HIDDEN_MATCH = 1000;
+
+/** Ranks hidden entries; `strong` ones (name or path prefix) go above fff's fuzzy results. */
+function rankHiddenEntries(
+  entries: ReadonlyArray<ProjectEntry>,
+  query: string,
+  limit: number,
+  kind: ProjectEntryKind | undefined,
+  imageOnly: boolean | undefined,
+): { readonly strong: ProjectEntry[]; readonly weak: ProjectEntry[] } {
+  const wantedKind = imageOnly ? "file" : kind;
+  const normalizedQuery = undotted(query);
+  const ranked: RankedSearchResult<ProjectEntry>[] = [];
+  for (const entry of entries) {
+    if (wantedKind !== undefined && entry.kind !== wantedKind) continue;
+    if (imageOnly && !isProjectFaviconPath(entry.path)) continue;
+    const name = undotted(entry.path.slice(entry.path.lastIndexOf("/") + 1));
+    const score = !normalizedQuery
+      ? STRONG_HIDDEN_MATCH
+      : name === normalizedQuery
+        ? 0
+        : name.startsWith(normalizedQuery)
+          ? 1 + name.length
+          : scoreQueryMatch({
+              value: undotted(entry.path),
+              query: normalizedQuery,
+              exactBase: 0,
+              prefixBase: 100,
+              boundaryBase: STRONG_HIDDEN_MATCH,
+              includesBase: 2 * STRONG_HIDDEN_MATCH,
+              fuzzyBase: 3 * STRONG_HIDDEN_MATCH,
+            });
+    if (score === null) continue;
+    insertRankedSearchResult(ranked, { item: entry, score, tieBreaker: entry.path }, limit);
+  }
+  return {
+    strong: ranked.filter((result) => result.score < STRONG_HIDDEN_MATCH).map((r) => r.item),
+    weak: ranked.filter((result) => result.score >= STRONG_HIDDEN_MATCH).map((r) => r.item),
+  };
+}
+
+function mergeHiddenEntries(
+  indexed: ProjectSearchEntriesResult,
+  hidden: { readonly strong: ProjectEntry[]; readonly weak: ProjectEntry[] },
+  limit: number,
+): ProjectSearchEntriesResult {
+  const byPath = new Map<string, ProjectEntry>();
+  for (const entry of [...hidden.strong, ...indexed.entries, ...hidden.weak]) {
+    if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
+  }
+  const entries = [...byPath.values()];
+  return {
+    entries: entries.slice(0, limit),
+    truncated: indexed.truncated || entries.length > limit,
+  };
+}
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
@@ -370,6 +518,73 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const listIgnored = (args: ReadonlyArray<string>) =>
+    vcsProcess
+      .run({
+        operation: "WorkspaceSearchIndex.scanHiddenEntries",
+        command: "git",
+        args: [
+          "-c",
+          "core.fsmonitor=false",
+          "ls-files",
+          "--ignored",
+          "--exclude-standard",
+          "-z",
+        ].concat(args),
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      })
+      .pipe(
+        Effect.map((result) =>
+          result.exitCode === 0 ? result.stdout.split("\0").filter(Boolean) : undefined,
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+
+  // What fff leaves out: ignored files in git (`--directory` stops at wholly ignored folders,
+  // which are walked unless heavy), and dotfiles plus ignored files outside git.
+  const scanHiddenEntries = Effect.fn("WorkspaceSearchIndex.scanHiddenEntries")(function* () {
+    if (variant !== "paths") return [];
+    const [tracked, untracked] = yield* Effect.all(
+      [listIgnored(["--cached"]), listIgnored(["--others", "--directory", "--no-empty-directory"])],
+      { concurrency: "unbounded" },
+    );
+    if (tracked === undefined || untracked === undefined) {
+      const walked = yield* Effect.promise(() =>
+        walkEntries(cwd, [""], WORKSPACE_INDEX_MAX_ENTRIES),
+      );
+      const indexed = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
+        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      ).pipe(
+        Effect.map(
+          (result) => new Set(mapMixedSearchResult(result, Infinity).entries.map((e) => e.path)),
+        ),
+        Effect.orElseSucceed(() => new Set<string>()),
+      );
+      return walked.filter((entry) => !indexed.has(entry.path));
+    }
+    const listed: ProjectEntry[] = [];
+    const walkRoots: string[] = [];
+    for (const listedPath of [...tracked, ...untracked]) {
+      if (listed.length >= WORKSPACE_INDEX_MAX_ENTRIES) break;
+      const path = trimDirectorySeparator(listedPath);
+      if (hasHeavyDirectorySegment(parentPathOf(path) ?? "")) continue;
+      if (!listedPath.endsWith("/")) {
+        listed.push({ path, kind: "file", ignored: true });
+        continue;
+      }
+      listed.push({ path, kind: "directory", ignored: true });
+      if (!hasHeavyDirectorySegment(path)) walkRoots.push(path);
+    }
+    const walked = yield* Effect.promise(() =>
+      walkEntries(cwd, walkRoots, Math.max(0, WORKSPACE_INDEX_MAX_ENTRIES - listed.length)),
+    );
+    return [...listed, ...walked.map((entry) => ({ ...entry, ignored: true }))];
+  });
+
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
@@ -397,6 +612,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     return result.value;
   });
+
+  let hiddenEntries: ReadonlyArray<ProjectEntry> = yield* scanHiddenEntries();
 
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
@@ -428,6 +645,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+    hiddenEntries = yield* scanHiddenEntries();
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -437,8 +655,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
-        left.path.localeCompare(right.path),
+      const sortedEntries = withDirectoryAncestors([...mapped.entries, ...hiddenEntries]).toSorted(
+        (left, right) => left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
@@ -454,25 +672,34 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   )(function* (query, limit, kind, imageOnly) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
-    if (kind === "file" || imageOnly) {
-      const result = yield* runSearch(query, pageSize, "fileSearch", () =>
-        finder.fileSearch(query, { pageSize }),
-      );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
-    }
-    if (kind === "directory") {
-      const result = yield* runSearch(query, pageSize, "directorySearch", () =>
-        finder.directorySearch(query, { pageSize }),
-      );
-      const mapped = mapDirectorySearchResult(result, limit);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
-    }
-    const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
-      finder.mixedSearch(query, { pageSize }),
+    const indexed =
+      kind === "file" || imageOnly
+        ? mapFileSearchResult(
+            yield* runSearch(query, pageSize, "fileSearch", () =>
+              finder.fileSearch(query, { pageSize }),
+            ),
+            limit,
+            imageOnly,
+          )
+        : kind === "directory"
+          ? mapDirectorySearchResult(
+              yield* runSearch(query, pageSize, "directorySearch", () =>
+                finder.directorySearch(query, { pageSize }),
+              ),
+              limit,
+            )
+          : mapMixedSearchResult(
+              yield* runSearch(query, pageSize, "mixedSearch", () =>
+                finder.mixedSearch(query, { pageSize }),
+              ),
+              limit,
+            );
+    const merged = mergeHiddenEntries(
+      indexed,
+      rankHiddenEntries(hiddenEntries, query, limit + 1, kind, imageOnly),
+      limit,
     );
-    const mapped = mapMixedSearchResult(result, limit);
-    return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+    return { ...merged, truncated: incompleteBeforeQuery || merged.truncated };
   });
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
