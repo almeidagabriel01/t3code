@@ -312,7 +312,7 @@ describe("environment faults of a Linux call", () => {
       "connect ECONNREFUSED 127.0.0.1:5432",
       'Command "vitest" not found',
       "No module named 'numpy'",
-    ].map((early) => [
+    ].map((early): [string, number, string, string | null, string | null] => [
       `${early}, 20 lines before the end`,
       1,
       `${early}\n${"ok\n".repeat(19)}\nFAIL src/a.test.ts\n`,
