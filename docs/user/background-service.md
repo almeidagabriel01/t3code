@@ -231,15 +231,17 @@ work queue, and each section says what the two do together.
 
   A sixth reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
-  never a reason; the row shows it separately.
+  never a reason; the row shows it separately. Simulators, emulators, device
+  opens and `dev:desktop` also run here, alone, as **Always on this Mac**.
 
 - **Asking for Linux.** A command started with `t3 heavy --runner linux` never
   runs on this Mac. If one of its commands turns out to need this Mac, the job
   ends with exit code 75 and "Asked for Linux, but it needs this Mac: <reason>".
   If Linux lacks a tool or file it needs, the job ends with Linux's exit code
   and "Linux couldn't run this: <error>", without running it here or learning
-  a route. An agent's own `remoto` call is sent to Linux too, but a command
-  that turns out to need this Mac still runs here.
+  a route. An agent's own `remoto` call is sent to Linux too: one that needs
+  this Mac ends with the same 75 before it starts, but a command whose reason
+  only shows once the line runs still runs here.
 - **When Linux is offline.** A job headed for Linux that is still waiting
   follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A job that
   asked for Linux itself (`t3 heavy --runner linux`, or an agent's own
@@ -256,7 +258,8 @@ work queue, and each section says what the two do together.
   Linux's error and "Linux couldn't run this: <reason>", and nothing reruns it.
   **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job to this
   Mac, back to Linux, or to you instead. A command Linux lacks a tool or folder
-  for runs again on this Mac by itself, whatever this setting says. Two such
+  for runs again on this Mac by itself, whatever this setting says, unless its
+  job asked for Linux (see **Asking for Linux**). Two such
   failures teach the route for a while; `t3 heavy routes` lists what it
   learned and `t3 heavy routes --forget <key|all>` clears it. When Linux runs
   very short of memory with several jobs, it stops the newest one and queues it
