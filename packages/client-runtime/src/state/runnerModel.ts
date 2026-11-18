@@ -40,7 +40,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerMacOnly: {
     title: "Always on this Mac",
     description:
-      "A heavy command that matches one of these always runs on this Mac, even when sent to Linux by hand.",
+      "A heavy command that matches one of these always runs on this Mac; one asked to run on Linux ends with why instead.",
   },
   runnerUnavailable: {
     title: "When Linux is offline",
