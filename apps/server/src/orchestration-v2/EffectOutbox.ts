@@ -57,6 +57,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerTurnId: ProviderTurnId,
     subagent: Schema.optional(Schema.Struct({ id: NodeId, nativeTaskId: Schema.String })),
   }),
+  /** Stop saw no provider turn for a running attempt; its turn is looked up after the commit. */
+  Schema.Struct({
+    type: Schema.Literal("run-attempt.interrupt"),
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
+    attemptId: RunAttemptId,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.steer"),
     providerSessionId: ProviderSessionId,
@@ -151,6 +158,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "run-attempt.interrupt",
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",
