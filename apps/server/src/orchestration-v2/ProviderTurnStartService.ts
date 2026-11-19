@@ -20,6 +20,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,6 +37,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { makeThreadWorkspace } from "./ThreadWorkspace.ts";
@@ -186,6 +188,17 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const memorySnapshot = yield* Effect.serviceOption(MemorySnapshot.MemorySnapshot);
     const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+    const serverEnvironment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+    const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+    // The note names where launches run; a turn's fiber does not carry these on its own.
+    const addOption =
+      <I, S>(key: Context.Key<I, S>, service: Option.Option<S>) =>
+      <C>(context: Context.Context<C>) =>
+        Option.isSome(service) ? Context.add(context, key, service.value) : context;
+    const noteServices = Context.make(ServerSettings.ServerSettingsService, serverSettings).pipe(
+      addOption(ServerEnvironment.ServerEnvironment, serverEnvironment),
+      addOption(SqlClient.SqlClient, sql),
+    );
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const budgetGate = yield* ProviderBudgetGate;
@@ -1011,7 +1024,9 @@ export const layer: Layer.Layer<
         attempts: projection.attempts,
       });
       const restartNote = [
-        yield* assistantNote(assistantDirectory, projection.thread.id, userText),
+        yield* assistantNote(assistantDirectory, projection.thread.id, userText).pipe(
+          Effect.provide(noteServices),
+        ),
         yield* settledWaitsForTurn(assistantDirectory, projection.runs, run, userText),
         restartCancelledWork.length === 0
           ? ""
