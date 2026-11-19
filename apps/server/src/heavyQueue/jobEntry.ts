@@ -3,7 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
-import { lineParts, readLine, shellQuote, type ReadScript } from "./heavyHook.ts";
+import { lineParts, scriptsOf, shellQuote, type ReadScript } from "./heavyHook.ts";
 import { startFolder, type QueuedEntry } from "./runner.ts";
 
 const LABEL_CHARS = 200;
@@ -93,8 +93,7 @@ export const jobEntryOf = (
   const label = labelOf(program, args);
   const line = jobLine(program, args);
   // The scripts it runs travel with the job: the Runner judges them by their text.
-  const scripts: Record<string, string | null> = {};
-  readLine(line, (word) => (scripts[word] = readScript(word)));
+  const scripts = scriptsOf(line, readScript);
   return {
     ...rest,
     label,

@@ -420,7 +420,14 @@ describe("HeavyQueue", () => {
         // As a version that sampled the wrapper left it in the file.
         const file = NodePath.join(dir, "queue.json");
         const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
-        doc.entries[0] = { ...doc.entries[0], cpu: 0.1, memory: 9, peakCpu: 0.2, peakMemory: 9 };
+        doc.entries[0] = {
+          ...doc.entries[0],
+          cpu: 0.1,
+          memory: 9,
+          peakCpu: 0.2,
+          peakMemory: 9,
+          scripts: { "a.ts": "source" },
+        };
         // A minute-long run: a standard job, which waits for its worktree on Linux, not a quick one.
         doc.history = Object.fromEntries(
           Object.entries(doc.history as Record<string, ReadonlyArray<object>>).map(
@@ -434,7 +441,8 @@ describe("HeavyQueue", () => {
         expect(state.routes).toMatchObject({ macWaiter: "mac", linuxWaiter: "linux" });
         expect(Object.keys(state.estimates ?? {})).toEqual(["macWaiter"]);
         const running = state.entries.find((entry) => entry.id === "linuxRun");
-        for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+        // The texts of the files it runs stay in the queue file, off every client and agent.
+        for (const key of ["cpu", "memory", "peakCpu", "peakMemory", "scripts"]) {
           expect(running).not.toHaveProperty(key);
         }
         // Move all to this Mac takes the Linux waiter and leaves the running job.

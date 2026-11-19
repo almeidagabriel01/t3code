@@ -1039,6 +1039,34 @@ describe("admission by real capacity", () => {
     }
   });
 
+  // A server or watcher left running never ends: it holds no slot and never runs alone.
+  it.each([
+    ["vp run dev", {}],
+    ["vp run dev:desktop", {}],
+    ["vp run dev:desktop", { forced: true, name: "dev desktop proof" }],
+    ["vp run dev app", {}],
+    ["sh -c 'cd apps/web && vp run dev:desktop'", {}],
+    ["npx expo start", {}],
+    ["vp test --watch", {}],
+    ["pnpm run serve", {}],
+    ["/bin/zsh -c 'T3CODE_HOME=/tmp/h vp run dev:desktop > /tmp/d.log 2>&1'", {}],
+    ["pnpm --filter @t3tools/desktop dev", {}],
+    ["vp run --filter @t3tools/web dev", {}],
+    ["npx vite", {}],
+  ] as const)("%s running %j leaves a free Mac to the queue", (label, extra) => {
+    const result = plan({
+      ...base,
+      maxRunning: 1,
+      entries: [
+        { ...entry("svc", label, 3_600_000), ...extra },
+        entry("t", "vp test run"),
+        entry("b", "vp run build"),
+      ],
+    });
+    expect(result.admits).toContain("t");
+    expect(result.hold).toBeNull();
+  });
+
   const fmt = (id: string, startedMsAgo: number | null = null) =>
     entry(id, `vp fmt ${id}.ts`, startedMsAgo);
   const roomy = { ...q2, availableMemoryBytes: 8 * GIB };

@@ -595,7 +595,11 @@ const tieOf = (
   // `remoto` syncs the checkout it runs from, so each part is judged against its own.
   const root = rootOf(cwd);
   if (root === null) return { code: "mac-env", subject: cwd };
-  const { script } = part;
+  const { script, source } = part;
+  // Linux's copy has only the synced tree: a source that reaches this Mac's home stays here.
+  if (source?.body != null && LOCAL_STATE.test(source.body)) {
+    return { code: "mac-env", subject: source.word };
+  }
   const valueReason = (value: string): MacReason | null => {
     const path = outsidePath(value, cwd, root);
     if (path !== null) return { code: "mac-env", subject: path };
@@ -623,6 +627,10 @@ const tieOf = (
 };
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/** A source reading this Mac's home: `os.homedir()`, `$HOME`, `~/`, `Path.home()`, `expanduser`. */
+const LOCAL_STATE =
+  /\bhomedir\s*\(|\benv\.HOME\b|\$\{?HOME\b|["'`]~\/|\bPath\.home\s*\(|\bexpanduser\s*\(|\b(ENV|environ|getenv|Getenv|env\.get)\W{1,3}HOME\b/;
 
 const programName = (path: string | undefined) => path?.split("/").pop() ?? "";
 
@@ -829,8 +837,13 @@ const lineReason = (
           body,
           at ?? start,
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
-          // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
-          part.script === null ? read : undefined,
+          // A script inside a `sh -c` text was read with the job, and a package script's files
+          // (not its package scripts); a shell script's own scripts are not.
+          part.script === null
+            ? read
+            : part.script.word.startsWith(PACKAGE_SCRIPT) && read !== undefined
+              ? (word) => (word.startsWith(PACKAGE_SCRIPT) ? null : read(word))
+              : undefined,
           // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
           whole || part.remoto !== null,
           inScript || scriptBody !== undefined,
@@ -1566,6 +1579,10 @@ const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
 export const askedLinux = (entry: HeavyQueueEntry) =>
   entry.where === "linux" && !isCall(entry) && (entry as QueuedEntry).linuxOnly === true;
 
+/** An agent's own `remoto` or `ssh` sent it to Linux: that choice outranks this Mac's checks. */
+export const sentToLinux = (entry: HeavyQueueEntry) =>
+  entry.ssh === true || (entry.where === "linux" && !isCall(entry) && !askedLinux(entry));
+
 /** `--runner mac` with no reason given, on work Linux could run: kept here, and said so. */
 export const ASKED_MAC_NEEDLESSLY =
   "Asked for this Mac, but nothing here needs it: drop --runner mac so the PC can take it";
@@ -1585,8 +1602,10 @@ export const intentOf = (
     const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
-  // Its own ssh already runs it there: this Mac's checks on the line don't apply.
-  if (entry.ssh === true) return { intent: "linux", reason: "" };
+  // Its own ssh or `remoto` already sends it there: this Mac's checks on the line don't apply.
+  if (entry.ssh === true || (sentToLinux(entry) && entry.route !== "mac")) {
+    return { intent: "linux", reason: "" };
+  }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
     const reason = verdict.reason!;
@@ -2010,15 +2029,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           busy !== null && !startsOnLinux(entry, busy) && macWaiters.length === 0 && macRoom(entry);
       } else {
         onMac = !macOver && (!past || health.overLimit);
-        // Under its count, a full Mac still yields to a Linux that can start it now.
-        if (onMac && busy === null && !macRoom(entry)) onMac = false;
+        // A full Mac yields to Linux whether Linux can start it now or not: deciding on Linux's
+        // passing state flipped the job between machines. Only Linux past its limits keeps it here.
+        if (onMac && !macRoom(entry) && !health.overLimit) onMac = false;
       }
       if (onMac) {
         toMac(
           entry,
           hybrid && busy !== null
             ? `This Mac took it: ${macTookWhy(busy)}`
-            : "Mac first: this Mac has room",
+            : macRoom(entry)
+              ? "Mac first: this Mac has room"
+              : "Mac first: Linux is at its limits",
         );
         continue;
       }

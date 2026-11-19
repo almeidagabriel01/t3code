@@ -611,6 +611,55 @@ describe("Mac first, Hybrid and Everything", () => {
     },
   );
 
+  // QA: a full Mac under its count flipped between machines as Linux's state changed.
+  it.each([
+    { name: "slots full", beside: linuxFull, health: READ, why: /all 2 Linux slots are busy/ },
+    {
+      name: "worktree already on Linux",
+      beside: [runningOn("l1", "linux", "/work/a")],
+      health: READ,
+      why: /^waiting for Linux: /,
+    },
+    {
+      name: "no fresh reading",
+      beside: [],
+      health: { ...READ, okAt: NOW - 3_600_000 },
+      why: /^waiting for Linux: /,
+    },
+    {
+      name: "Linux can start it",
+      beside: [],
+      health: READ,
+      why: /^Mac first: this Mac has no room$/,
+    },
+  ])(
+    "Mac first with this Mac full waits for Linux, not this Mac ($name)",
+    ({ beside, health, why }) => {
+      const entries = [runningOn("m0", "mac"), ...beside, job("a", "vp test run")];
+      const plan = () =>
+        planned(
+          entries,
+          { runnerWhere: "macFirst", runnerMacFirstAfter: 2 },
+          { health, maxRunning: 1 },
+        );
+      const first = plan();
+      expect(first.routes.a).toBe("linux");
+      expect(first.reasons.a).toMatch(why);
+      expect(first.reasons.a).not.toMatch(/has room/);
+      expect(plan().routes.a).toBe("linux");
+    },
+  );
+
+  it("Mac first with this Mac full stays here only while Linux is past its limits", () => {
+    const plan = planned(
+      [runningOn("m0", "mac"), job("a", "vp test run")],
+      { runnerWhere: "macFirst", runnerMacFirstAfter: 2 },
+      { health: OVERLOADED, maxRunning: 1 },
+    );
+    expect(plan.routes.a).toBe("mac");
+    expect(plan.reasons.a).toMatch(/^Mac first: Linux is at its limits/);
+  });
+
   interface ModeRow {
     readonly enabled: boolean;
     readonly name: string;
@@ -1986,6 +2035,37 @@ describe("patterns and eligibility", () => {
         reason,
       });
     }
+  });
+
+  // Linux's copy has only the synced tree: a source reading this Mac's home stays here.
+  const MIGRATE = "apps/server/scripts/migrate-dev-db.ts";
+  it.each([
+    ["vp run migrate-dev-db", MIGRATE, "const home = NodePath.join(NodeOS.homedir(), '.t3');"],
+    ["pnpm run seed", "scripts/seed.ts", "const dir = `${process.env.HOME}/.cache`;"],
+    [
+      "node scripts/seed.ts --fresh",
+      "scripts/seed.ts",
+      "import { homedir } from 'node:os';\nhomedir()",
+    ],
+    ["tsx scripts/a.mts", "scripts/a.mts", "readFileSync('~/.config/app.json')"],
+    ["python3 tools/x.py", "tools/x.py", "db = Path.home() / '.local'"],
+    ["python tools/x.py", "tools/x.py", "os.path.expanduser('~/.aws')"],
+    ["ruby tools/x.rb", "tools/x.rb", "File.read(ENV['HOME'] + '/.netrc')"],
+    ["deno run -A tools/x.ts", "tools/x.ts", "Deno.env.get('HOME')"],
+    ["node scripts/build.ts", "scripts/build.ts", "console.log('build')"],
+    ["node scripts/build.ts", "scripts/build.ts", null],
+  ] as const)("%s running %s reads this Mac's home: %j", (label, source, body) => {
+    const scripts = {
+      "package.json#migrate-dev-db": `node ${MIGRATE}`,
+      "package.json#seed": "node scripts/seed.ts",
+      [source]: body,
+    };
+    const local = body !== null && body !== "console.log('build')";
+    expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject(
+      local
+        ? { eligibility: "mac-only", reason: `Uses a file only this Mac has: ${source}` }
+        : { eligibility: "linux" },
+    );
   });
 
   // Route memory speaks for the whole job too, after every reason of the job's own.

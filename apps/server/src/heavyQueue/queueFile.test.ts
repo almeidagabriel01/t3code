@@ -1834,15 +1834,28 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Pinned to this Mac: integration" },
     },
     {
-      name: "an agent's remoto that needs this Mac runs here",
+      name: "an agent's remoto goes to Linux even with a file only this Mac has",
       line: "remoto vp test run /etc/hosts",
+      over: { runnerWhere: "mac" as const },
+      expected: { runsOn: "linux", canceled: false, startsNow: true },
+    },
+    {
+      name: "an agent's remoto of a script read from outside the project goes to Linux",
+      line: 'remoto bash -c "$(cat /tmp/steps.sh)"',
+      over: { runnerWhere: "mac" as const },
+      expected: { runsOn: "linux", canceled: false, startsNow: true },
+    },
+    {
+      name: "an agent's remoto of a line with a case goes to Linux",
+      line: "remoto sh -c 'case \"$1\" in a) vp test run ;; *) vp run build ;; esac' _ a",
+      over: { runnerWhere: "mac" as const },
+      expected: { runsOn: "linux", canceled: false, startsNow: true },
+    },
+    {
+      name: "a line with a case is judged by its arms, not kept here for the case",
+      line: 'case "$CI" in 1) vp test run ;; *) vp run build ;; esac',
       over: { runnerWhere: "linux" as const },
-      expected: {
-        runsOn: "mac",
-        canceled: false,
-        startsNow: true,
-        reason: "Uses a file only this Mac has: /etc/hosts",
-      },
+      expected: { runsOn: "linux", startsNow: true },
     },
     {
       name: "Runner off",

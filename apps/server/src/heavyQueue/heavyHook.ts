@@ -444,6 +444,8 @@ export interface Part {
     readonly body: string | null;
     readonly written?: boolean;
   } | null;
+  /** The source file an interpreter runs (`node x.ts`, `python3 y.py`) and its text, if read. */
+  readonly source: { readonly word: string; readonly body: string | null } | null;
 }
 
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
@@ -480,6 +482,26 @@ export const scriptOf = (
 };
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+
+const INTERPRETERS = new Set([
+  "node",
+  "tsx",
+  "ts-node",
+  "bun",
+  "deno",
+  "python",
+  "python3",
+  "ruby",
+  "perl",
+]);
+const SOURCE_FILE = /\.([cm]?[jt]sx?|py|rb|pl)$/;
+
+/** The source file an interpreter runs: its first argument that names one (`deno run x.ts`). */
+const sourceOf = (values: ReadonlyArray<string>, at: number, read: ReadScript | undefined) => {
+  if (read === undefined || !INTERPRETERS.has(base(values[at] ?? ""))) return null;
+  const word = values.slice(at + 1).find((value) => !value.startsWith("-") && value !== "run");
+  return word === undefined || !SOURCE_FILE.test(word) ? null : { word, body: read(word) };
+};
 
 /** The `ReadScript` word of a `package.json` script's body: `package.json#ci`. */
 export const PACKAGE_SCRIPT = "package.json#";
@@ -580,7 +602,25 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
     queued: isHeavyCall(values.slice(at)),
     nested,
     script,
+    source: sourceOf(values, at, read),
   };
+};
+
+/**
+ * The files a line runs, read by their word: its scripts and sources, and those of the
+ * `package.json` scripts it names (one level), so the Runner judges them by their text.
+ */
+export const scriptsOf = (line: string, read: ReadScript) => {
+  const scripts: Record<string, string | null> = {};
+  const take: ReadScript = (word) =>
+    Object.hasOwn(scripts, word) ? scripts[word]! : (scripts[word] = read(word));
+  readLine(line, take);
+  for (const [word, body] of Object.entries(scripts)) {
+    if (word.startsWith(PACKAGE_SCRIPT) && body !== null) {
+      readLine(body, (inner) => (inner.startsWith(PACKAGE_SCRIPT) ? null : take(inner)));
+    }
+  }
+  return scripts;
 };
 
 /** Every simple command of a line in source order, and why it cannot be followed exactly. */

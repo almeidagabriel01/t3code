@@ -334,9 +334,10 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       ...entries.filter((entry) => entry.startedAt === null && !queued.has(entry.id)),
     ];
     return {
-      // A job's full line stays in the file; the row shows its label.
-      entries: listed.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
-        entry.runner === "linux" ? withoutUsage(entry) : entry,
+      // A job's full line and the texts of the files it runs stay in the file; the row shows its label.
+      entries: listed.map(
+        ({ line: _line, routeReason: _reason, scripts: _scripts, ...entry }: QueuedEntry) =>
+          entry.runner === "linux" ? withoutUsage(entry) : entry,
       ),
       estimates,
       enabled,

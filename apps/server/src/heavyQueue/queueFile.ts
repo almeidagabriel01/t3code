@@ -57,7 +57,6 @@ import {
   isQueued,
   lineParts,
   PACKAGE_SCRIPT,
-  readLine,
   SCRIPT_MAX_BYTES,
   type ReadScript,
 } from "./heavyHook.ts";
@@ -92,6 +91,7 @@ import {
   runnerConfigFor,
   runnerCopyId,
   startFolder,
+  sentToLinux,
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
@@ -1700,6 +1700,7 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
 export const staysOnMac = (contexts: (cwd: string) => WorkContext, entry: HeavyQueueEntry) => {
   const context = contexts(entry.cwd);
   if (!context.config.runnerEnabled) return true;
+  if (sentToLinux(entry)) return false;
   const { eligibility } = eligibilityOf(entry, context);
   return eligibility === "exclusive" || eligibility === "mac-only";
 };
@@ -2064,14 +2065,6 @@ export const scriptReader =
       return null;
     }
   };
-
-/** The scripts a line runs, read from `cwd` by their word: they travel with its job. */
-export const scriptsOf = (line: string, cwd: string) => {
-  const scripts: Record<string, string | null> = {};
-  const read = scriptReader(cwd);
-  readLine(line, (word) => (scripts[word] = read(word)));
-  return scripts;
-};
 
 /**
  * The one gate every Bash hook goes through (the `t3 heavy hook` CLI and the in-process Claude
