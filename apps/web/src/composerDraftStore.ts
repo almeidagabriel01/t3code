@@ -27,6 +27,7 @@ import {
   ThreadId,
   SnapShotSource,
 } from "@t3tools/contracts";
+import { draftHasUserContent } from "@t3tools/client-runtime/composerDraft";
 import {
   parseScopedProjectKey,
   parseScopedThreadKey,
@@ -385,17 +386,16 @@ export function composerDraftHasUserContent(
   if (!draft) {
     return false;
   }
-  return (
-    draft.prompt.trim().length > 0 ||
-    draft.images.length > 0 ||
-    draft.files.length > 0 ||
-    draft.persistedAttachments.length > 0 ||
-    draft.terminalContexts.length > 0 ||
-    draft.previewAnnotations.length > 0 ||
-    draft.reviewComments.length > 0 ||
-    draft.threadContexts.length > 0 ||
-    draft.environmentContexts.length > 0
-  );
+  return draftHasUserContent({
+    prompt: draft.prompt,
+    attachmentCount: draft.images.length + draft.files.length + draft.persistedAttachments.length,
+    contextCount:
+      draft.terminalContexts.length +
+      draft.previewAnnotations.length +
+      draft.reviewComments.length +
+      draft.threadContexts.length +
+      draft.environmentContexts.length,
+  });
 }
 
 export interface DraftSessionState {
@@ -4417,9 +4417,11 @@ export function useComposerThreadDraft(threadRef: ComposerThreadTarget): Compose
   });
 }
 
-export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
-  return useComposerDraftStore((state) =>
-    composerDraftHasUserContent(getComposerDraftState(state, threadRef)),
+/** Threads, assistant chats and groups (`assistantGroupDraftThreadId`) all read their draft here. */
+export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef | null): boolean {
+  return useComposerDraftStore(
+    (state) =>
+      threadRef !== null && composerDraftHasUserContent(getComposerDraftState(state, threadRef)),
   );
 }
 

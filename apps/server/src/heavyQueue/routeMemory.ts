@@ -6,10 +6,11 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import type { HeavyLearnedRoute } from "@t3tools/contracts";
+import type { HeavyLearnedRoute, RunnerProjectConfig } from "@t3tools/contracts";
 
 import type { EnvironmentFault, EnvironmentFaultKind } from "./heavyNotices.ts";
 import { configFor, readDoc, withLock } from "./queueFile.ts";
+import type { MacReason } from "./runner.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -179,6 +180,20 @@ const liveOf = (routes: Record<string, Route>, now: number, days: number) =>
 export const listRoutes = (dir: string, now: number, days: number, warn: Warn = toStderr) =>
   liveOf(readUnlocked(dir, warn), now, days);
 
+/** Among `routes`, the learned one in force for this command and package folder. */
+const findLearned = (
+  routes: ReadonlyArray<[string, Route]>,
+  command: ReadonlyArray<string>,
+  folder: string,
+  now: number,
+  days: number,
+  learnAfter: number,
+) =>
+  routes.find(
+    ([key, route]) =>
+      isFor(key, command, folder) && route.faults >= learnAfter && live(route, now, days),
+  );
+
 /** A learned route for this command and package folder, if one is in force. */
 export const learnedRoute = (
   dir: string,
@@ -188,10 +203,53 @@ export const learnedRoute = (
   days: number,
   learnAfter: number,
 ) => {
-  const found = listRoutes(dir, now, days).find(
-    ([key, route]) => isFor(key, command, folder) && route.faults >= learnAfter,
-  );
+  const found = findLearned(listRoutes(dir, now, days), command, folder, now, days, learnAfter);
   return found === undefined ? null : { key: found[0], route: found[1] };
+};
+
+/**
+ * Route memory's reason to keep calls (program first) in a package on this Mac, if it learned so.
+ * `routes.json` is read on the first ask only and without the lock, which a plan already holds: a
+ * corrupt file reads as empty here, and the next write moves it aside.
+ */
+export const learnedOf = (dir: string, now: number) => {
+  let routes: ReadonlyArray<[string, Route]> | undefined;
+  const folders = new Map<string, string>();
+  return (
+    command: ReadonlyArray<string>,
+    cwd: string,
+    root: string,
+    config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
+  ): MacReason | null => {
+    if (routes === undefined) {
+      const read = parse(dir);
+      routes = "routes" in read ? Object.entries(read.routes) : [];
+    }
+    const prefix = `${routeCommand(command)}@`;
+    const learned = routes.filter(([key]) => key.startsWith(prefix));
+    // Its folder costs disk reads: only a command route memory knows pays them.
+    if (learned.length === 0) return null;
+    const folderKey = `${cwd}\0${root}`;
+    let folder = folders.get(folderKey);
+    if (folder === undefined) {
+      folder = routeFolder(cwd, root);
+      folders.set(folderKey, folder);
+    }
+    const found = findLearned(
+      learned,
+      command,
+      folder,
+      now,
+      config.runnerRouteMemoryDays,
+      config.runnerRouteLearnAfter,
+    );
+    return found === undefined
+      ? null
+      : {
+          code: "learned",
+          subject: `${found[1].line}, ${new Date(found[1].at).toISOString().slice(0, 10)}`,
+        };
+  };
 };
 
 /** Whether `key` is this command and folder's, whole: a folder `/a` never takes `/a#b`'s. */

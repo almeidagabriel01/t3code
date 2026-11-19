@@ -768,12 +768,12 @@ describe("ServerSettings project overrides across versions", () => {
     [
       "an older file reads the new defaults",
       {},
-      ["mac", "agent", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
+      ["automatic", "agent", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
     ],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, false, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
+      ["automatic", "ask", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
     ],
     [
       "the new values",
@@ -814,6 +814,28 @@ describe("ServerSettings project overrides across versions", () => {
     const project = settings.projectSettingsOverrides[projectId] ?? {};
     expect(RUNNER_MODE_KEYS.map((key) => project[key] ?? settings[key])).toEqual(read);
     expect(decodeServerSettingsPatch(stored)).toEqual(stored);
+  });
+
+  // Case 27: the retired Linux allowlist and Everything read, patch and persist, with no default.
+  it("keeps the retired Linux allowlist and Everything as saved, with no default", () => {
+    const projectId = ProjectId.make("project-a");
+    const saved = {
+      runnerLinuxEverything: true,
+      runnerLinuxCommands: ["rspec"],
+      runnerMacOnly: ["fastlane"],
+    };
+    const settings = decodeServerSettings({
+      ...saved,
+      projectSettingsOverrides: { [projectId]: saved },
+    });
+    expect(settings).toMatchObject(saved);
+    expect(settings.projectSettingsOverrides[projectId]).toEqual(saved);
+    expect(decodeServerSettingsPatch(saved)).toEqual(saved);
+    const fresh = decodeServerSettings({});
+    expect([fresh.runnerLinuxEverything, fresh.runnerLinuxCommands]).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it.each([0, 33, 2.5])("Send to Linux after refuses %s", (value) => {

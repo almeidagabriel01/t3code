@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
-import { RUNNER_DEFAULTS, type HeavyQueueState, type ServerSettings } from "@t3tools/contracts";
+import {
+  RUNNER_SETTING_DEFAULTS,
+  type RunnerSettingKey,
+} from "@t3tools/client-runtime/state/runnerModel";
+import type { HeavyQueueState, ServerSettings } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
 
-type Settings = Pick<ServerSettings, keyof typeof RUNNER_DEFAULTS>;
+type Settings = Pick<ServerSettings, RunnerSettingKey>;
 
 const mocks = vi.hoisted(() => ({
   scope: { kind: "environment", environmentIds: ["env"] } as {
@@ -92,7 +96,7 @@ function setup(
     environmentIds: over.environmentIds ?? ["env"],
   };
   mocks.state = { enabled: true, paused: false, linux: null, ...over.state };
-  mocks.settings = { ...RUNNER_DEFAULTS, ...settings };
+  mocks.settings = { ...RUNNER_SETTING_DEFAULTS, ...settings };
   mocks.mixed = over.mixed ?? [];
   mocks.target = over.target ?? null;
   return render(<RunnerSettingsSection />, { router: false }); // rows are mocked
@@ -102,7 +106,7 @@ const patches = () => mocks.update.mock.calls.map(([patch]) => patch);
 const ON = { runnerEnabled: true } as const;
 
 it("writes each Runner control to its own setting", async () => {
-  await using screen = await setup(ON);
+  await using screen = await setup({ ...ON, runnerWhere: "mac" });
   await userEvent.click(screen.getByRole("switch", { name: "Use the Runner" }));
   const where = screen.getByRole("group", { name: "Where heavy work runs" });
   await expect
@@ -178,7 +182,7 @@ it("clamps numbers to their range and rejects a bad host inline", async () => {
   await host.fill("pc");
   await host.element().blur();
   mocks.update.mock.calls[1]![1].onFailed();
-  await expect.element(host).toHaveValue(RUNNER_DEFAULTS.runnerHost);
+  await expect.element(host).toHaveValue(RUNNER_SETTING_DEFAULTS.runnerHost);
 });
 
 it("edits a command list as chips: remove, add on Enter, skip repeats, cap the length", async () => {
@@ -193,8 +197,12 @@ it("edits a command list as chips: remove, add on Enter, skip repeats, cap the l
   await userEvent.click(screen.getByRole("button", { name: "Add to Can run on Linux" }));
   await expect.element(add).toHaveValue("");
   expect(patches()).toEqual([
-    { runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands.filter((c) => c !== "vitest") },
-    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "rspec"] },
+    {
+      runnerLinuxCommands: RUNNER_SETTING_DEFAULTS.runnerLinuxCommands.filter(
+        (c) => c !== "vitest",
+      ),
+    },
+    { runnerLinuxCommands: [...RUNNER_SETTING_DEFAULTS.runnerLinuxCommands, "rspec"] },
   ]);
 
   await using full = await setup({
@@ -214,7 +222,12 @@ it("shows only the fields the current choices use", async () => {
   expect(off.container.textContent).not.toContain("Where heavy work runs");
   expect(off.container.textContent).not.toContain("Linux host");
 
-  await using mac = await setup({ ...ON, runnerUnavailable: "mac", runnerDropped: "wait" });
+  await using mac = await setup({
+    ...ON,
+    runnerWhere: "mac",
+    runnerUnavailable: "mac",
+    runnerDropped: "wait",
+  });
   for (const hidden of ["Can run on Linux", "Wait for an answer", "If nobody answers"]) {
     expect(mac.container.textContent).not.toContain(hidden);
   }
@@ -288,7 +301,7 @@ it("resets to the built-in value, but leaves machine rows alone in a project", a
   await using env = await setup({ ...ON, runnerWhere: "linux", runnerLinuxSlots: 4 });
   await userEvent.click(env.getByRole("button", { name: "Reset Where heavy work runs" }));
   await userEvent.click(env.getByRole("button", { name: "Reset Jobs at once on Linux" }));
-  expect(patches()).toEqual([{ runnerWhere: "mac" }, { runnerLinuxSlots: 2 }]);
+  expect(patches()).toEqual([{ runnerWhere: "automatic" }, { runnerLinuxSlots: 2 }]);
 
   await using project = await setup(
     { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },

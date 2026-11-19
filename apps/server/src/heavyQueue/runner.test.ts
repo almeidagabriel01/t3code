@@ -15,11 +15,13 @@ import {
 
 import { signatureOf } from "./admission.ts";
 import {
+  ASKED_MAC_NEEDLESSLY,
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   foldMarker,
   installFailure,
+  intentOf,
   linkMachine,
   LINUX_EVICT_SHARE,
   LINUX_FULL_SHORTER,
@@ -160,7 +162,6 @@ describe("routing matrix", () => {
     exclusive: "xcrun simctl boot iPhone",
     "mac-only": "vp test run --project ios -- xcodebuild",
   } as const;
-  const linuxRunningIn = { full: 2, "same-worktree": 1, stale: 1 } as Record<string, number>;
 
   /** The spec's routing rules, written out case by case. */
   const expected = (
@@ -197,17 +198,10 @@ describe("routing matrix", () => {
       if (mac !== "over" && (mac !== "full" || linux === "overloaded")) return onMac;
       return queue === "paused" ? "linux-wait" : linuxStart;
     }
-    // Hybrid: the smaller backlog per slot (3 here, 2 there), the Mac on a tie.
-    const macLine = (mac === "full" ? 3 : 1) / 3;
-    const linuxLine = (linuxRunningIn[linux] ?? 0) / 2;
-    let here = macLine <= linuxLine;
-    if (here && mac === "over") here = false;
-    else if (!here && linux === "overloaded") here = true;
-    // A machine that can start it now takes it from one that can't.
+    // Automatic: Linux first; this Mac takes only what Linux can't start now, if it has room.
+    if (linuxRoom) return linuxStart;
     const macRoom = off ? mac !== "over" : mac === "room" || mac === "spike" || mac === "holding";
-    if (here && linuxRoom && !macRoom) here = false;
-    else if (!here && !linuxRoom && macRoom) here = true;
-    return here ? onMac : linuxStart;
+    return macRoom ? onMac : linuxStart;
   };
 
   const cases = queues.flatMap((queue) =>
@@ -264,6 +258,14 @@ describe("routing matrix", () => {
         ),
       );
       expect(outcomeOf(plan, "w")).toBe(expected(queue, runner, where, linux, mac, kind));
+      // R4.6: every job routed to Linux says why, the ones it starts now included.
+      if (plan.routes.w === "linux" && plan.cancels.w === undefined) {
+        expect(plan.reasons.w).toBeDefined();
+      }
+      // R4.4: in Automatic, no waiter stays on this Mac in a tick Linux could start it.
+      if (runner && where === "automatic" && kind === "eligible" && linux === "online") {
+        if (queue !== "paused") expect(plan.routes.w).toBe("linux");
+      }
     },
   );
 
@@ -310,32 +312,33 @@ describe("routing matrix", () => {
     ]);
   });
 
-  it("Hybrid with three Mac slots and five agents splits them by backlog per slot", () => {
+  it("Automatic with five agents starts one on Linux, gives this Mac one it can't", () => {
     const entries = ["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run"));
-    const plan = planRoutes(input(entries, { runnerWhere: "automatic" }, { health: READ }));
-    // 0/3 vs 0/2 ties to the Mac; then 1/3 vs 0/2, 1/3 vs 1/2, 2/3 vs 1/2, 3/3 vs 2/2.
-    expect(plan.routes).toEqual({ a: "mac", b: "linux", c: "mac", d: "linux", e: "mac" });
-    // The second Linux job waits for a reading that shows the first one's load.
-    expect(plan.admits).toEqual({
-      a: { runner: "mac", ungated: false },
-      b: { runner: "linux", ungated: false },
-    });
-    expect(plan.reasons.d).toBe(
-      "waiting for Linux: a reading a minute after the last job started there",
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "automatic" }, { health: READ, runnerOn: true }),
     );
+    // b waits on a reading that shows a's load; the rest queue for Linux behind this Mac's waiter.
+    expect(plan.routes).toEqual({ a: "linux", b: "mac", c: "linux", d: "linux", e: "linux" });
+    expect(plan.admits).toEqual({
+      a: { runner: "linux", ungated: false },
+      b: { runner: "mac", ungated: false },
+    });
+    expect([plan.reasons.b, plan.reasons.d]).toEqual([
+      "This Mac took it: no fresh reading of Linux's load",
+      "Linux can't start it yet: no fresh reading of its load",
+    ]);
   });
 
-  it("Hybrid sends the waiters past a full Mac to the shorter line, the Mac on a tie", () => {
+  it("Automatic keeps the waiters past a full Mac on Linux", () => {
     const entries = [
       ...["m1", "m2", "m3"].map((id) => runningOn(id, "mac")),
       runningOn("l1", "linux"),
       ...["a", "b", "c"].map((id) => job(id, "vp test run")),
     ];
-    // Mac 3 of 3 against Linux 1 of 2 sends a; then 3/3 against 2/2 is a tie, so b stays here.
     const plan = planRoutes(
       input(entries, { runnerWhere: "automatic" }, { health: { ...READ, okAt: NOW - 1000 } }),
     );
-    expect(plan.routes).toMatchObject({ a: "linux", b: "mac", c: "linux" });
+    expect(plan.routes).toMatchObject({ a: "linux", b: "linux", c: "linux" });
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
     // Recomputed from the same state, the answer is the same: rows never flap.
     expect(
@@ -343,7 +346,7 @@ describe("routing matrix", () => {
     ).toEqual(plan.routes);
   });
 
-  it("Hybrid treats a job that runs alone on the Mac as no room, and never asks for Linux", () => {
+  it("Automatic treats a job alone on the Mac as no room, never asking for Linux", () => {
     const entries = [runningOn("sim", "mac"), job("a", "vp test run")];
     entries[0] = { ...entries[0]!, label: "xcrun simctl boot iPhone" };
     const plan = planRoutes(input(entries, { runnerWhere: "automatic" }, { health: READ }));
@@ -353,7 +356,7 @@ describe("routing matrix", () => {
     expect(offline.routes.a).toBe("mac");
   });
 
-  it("with the queue off, Hybrid sends work to Linux while the Mac stays over its limits, and holds past both", () => {
+  it("with the queue off, Automatic sends work to Linux first, and holds past both limits", () => {
     const entries = [job("a", "vp test run")];
     const off = (overLimit: boolean, health: LinuxHealth) =>
       planRoutes(
@@ -368,7 +371,8 @@ describe("routing matrix", () => {
         ),
       ).admits.a;
     expect(off(true, READ)).toEqual({ runner: "linux", ungated: true });
-    expect(off(false, READ)).toEqual({ runner: "mac", ungated: true });
+    expect(off(false, READ)).toEqual({ runner: "linux", ungated: true });
+    expect(off(false, OVERLOADED)).toEqual({ runner: "mac", ungated: true });
     expect(off(true, OVERLOADED)).toBeUndefined();
     // A stale Mac reading says nothing about its limits now.
     expect(
@@ -378,6 +382,7 @@ describe("routing matrix", () => {
           { runnerWhere: "automatic" },
           {
             enabled: false,
+            health: OVERLOADED,
             sample: { ...CALM, at: NOW - 60_000, overLimit: true },
           },
         ),
@@ -514,6 +519,14 @@ describe("routing matrix", () => {
   it("the job's own --runner wins over the project and takes unlisted work", () => {
     const plan = planRoutes(input([job("a", "just deploy", { where: "linux" })]));
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
+    const asked = planRoutes(
+      input([job("a", "just deploy", { where: "linux", linuxOnly: true } as never)]),
+    );
+    // An agent's `remoto` did not ask for Linux; `--runner linux` did.
+    expect([plan.reasons.a, asked.reasons.a]).toEqual([
+      "Sent to Linux with remoto",
+      "Asked for Linux",
+    ]);
   });
 
   it("the user's route wins, but never sends Mac-only work to Linux", () => {
@@ -624,6 +637,7 @@ describe("Mac first, Hybrid and Everything", () => {
         config: { runnerWhere: "macFirst" as const },
         over: MAC_OVER,
         route: "linux",
+        reason: /^Mac first: this Mac has no room$/,
         admit: "linux",
       },
       {
@@ -637,28 +651,61 @@ describe("Mac first, Hybrid and Everything", () => {
       },
       {
         enabled,
-        name: "Hybrid, Linux full",
+        name: "Mac first, below its count (case 25b)",
+        config: { runnerWhere: "macFirst" as const, runnerMacFirstAfter: 2 },
+        entries: [runningOn("m0", "mac")],
+        route: "mac",
+        reason: /^Mac first: this Mac has room/,
+      },
+      {
+        enabled,
+        name: "Automatic, both machines free (case 21)",
+        config: { runnerWhere: "automatic" as const },
+        route: "linux",
+        reason: /^Linux first: the PC can start it now$/,
+        admit: "linux",
+      },
+      {
+        enabled,
+        name: "Automatic, Linux full and this Mac under its limits (case 22)",
         config: { runnerWhere: "automatic" as const },
         entries: linuxFull,
         route: "mac",
-        reason: /^Hybrid: shorter queue here/,
+        reason: /^This Mac took it: Linux is full/,
       },
       {
         enabled,
-        name: "Hybrid, Linux offline",
+        name: "Automatic, Linux free and this Mac over its limits (case 23)",
+        config: { runnerWhere: "automatic" as const },
+        over: MAC_OVER,
+        route: "linux",
+        reason: /^Linux first: the PC can start it now$/,
+        admit: "linux",
+      },
+      {
+        enabled,
+        name: "Automatic, Linux offline",
         config: { runnerWhere: "automatic" as const },
         over: { health: OFFLINE },
         route: "mac",
-        reason: /^Hybrid: Linux is unavailable/,
+        reason: /^Automatic: Linux is unavailable/,
       },
       {
         enabled,
-        name: "Hybrid, this Mac over its limits and Linux full",
+        name: "Automatic, this Mac over its limits and Linux full (case 24)",
         config: { runnerWhere: "automatic" as const },
         entries: linuxFull,
         over: MAC_OVER,
         route: "linux",
-        reason: /^Hybrid: this Mac is over its limits$/,
+        reason: /^Linux can't start it yet: all 2 Linux slots are busy$/,
+      },
+      {
+        enabled,
+        name: "Runner set to Linux",
+        config: { runnerWhere: "linux" as const },
+        route: "linux",
+        reason: /^Runner set to Linux$/,
+        admit: "linux",
       },
       ...(["automatic", "macFirst"] as const).map((runnerWhere): ModeRow => ({
         enabled,
@@ -681,16 +728,28 @@ describe("Mac first, Hybrid and Everything", () => {
   });
 
   // RUN-12: Linux can't start it (its worktree runs there), the Mac has a free slot and no waiter.
-  it.each(QUEUE)("Hybrid lets the Mac take a job Linux can't start (queue on: %s)", (enabled) => {
+  it.each(QUEUE)("Automatic gives the Mac a job Linux can't start (queue on: %s)", (enabled) => {
     const entries = [
       runningOn("m0", "mac"),
       runningOn("m1", "mac"),
       runningOn("l1", "linux", "/work/a"),
       job("a", "vp test run"),
     ];
-    // 2 of 3 here against 1 of 2 there sends it to Linux, which can't start it.
     const plan = planned(entries, { runnerWhere: "automatic" }, { enabled });
     expect(plan.admits.a).toEqual({ runner: "mac", ungated: !enabled });
+    expect(plan.reasons.a).toBe("This Mac took it: this worktree is already running on Linux");
+  });
+
+  // Case 25: a job held on this Mac goes to Linux in the first tick Linux can start it.
+  it("Automatic moves a job waiting on this Mac to Linux once Linux frees up", () => {
+    const tick = (entries: ReadonlyArray<HeavyQueueEntry>) =>
+      planned(
+        [runningOn("m0", "mac"), ...entries, job("a", "vp test run")],
+        { runnerWhere: "automatic" },
+        { holding: true, sample: { ...CALM, busyCores: 9, headroomSince: null } },
+      );
+    expect(outcomeOf(tick(linuxFull), "a")).toBe("mac-wait");
+    expect(outcomeOf(tick([]), "a")).toBe("linux-start");
   });
 
   // ROUTE-051: each machine has its own line. A Mac-only waiter on a full Mac never holds back
@@ -809,7 +868,7 @@ describe("Mac first, Hybrid and Everything", () => {
     };
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
-    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 13 });
+    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 12 });
   });
 });
 
@@ -1086,7 +1145,7 @@ describe("the Mac↔Linux link", () => {
       "retrying on Linux (attempt 1 of 3): connection lost",
     ],
     // The first heartbeat through after the failure makes it eligible, with no restart.
-    [{ route: "linux" }, { okAt: NOW }, "linux-start", undefined],
+    [{ route: "linux" }, { okAt: NOW }, "linux-start", "Moved to Linux"],
   ] as const)("a lost link, %j, Linux %j: %s, %j", (extra, linux, outcome, reason) => {
     const plan = planRoutes(
       input(
@@ -1133,11 +1192,11 @@ describe("the Mac↔Linux link", () => {
       "Linux is unavailable and nobody answered: running here",
     ],
     [
-      "Hybrid with Linux offline",
+      "Automatic with Linux offline",
       {},
       { runnerWhere: "automatic" },
       OFFLINE,
-      "Hybrid: Linux is unavailable",
+      "Automatic: Linux is unavailable",
     ],
     ["Linux offline, Ask me", {}, { runnerUnavailable: "ask" }, OFFLINE, "ask"],
     [
@@ -1703,6 +1762,7 @@ describe("runtime toggles", () => {
       install: "Changes this Mac's checkout: pnpm install · the one slot is busy",
       moved: "Moved to this Mac · the one slot is busy",
       back: "Uses a file only this Mac has: /x · the one slot is busy",
+      forced: "Runner set to Linux",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(
       /^Changes this Mac's checkout/,
@@ -1735,6 +1795,9 @@ describe("patterns and eligibility", () => {
     ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
     ["vue-tsc --noEmit", "tsc", true],
     ["tsgo --noEmit", "test", false],
+    // A pattern named like an object's own key matches as written.
+    ["vp test run", "constructor", false],
+    ["toString x", "toString", true],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
@@ -1780,6 +1843,22 @@ describe("patterns and eligibility", () => {
           "Uses a file only this Mac has: /Users/me/other/a.test.ts",
         ],
         ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
+        // A script's install and container commands are its copy's own, unlike the line's.
+        [
+          "bash s.sh x",
+          "linux",
+          null,
+          { "s.sh": 'f() { npm ci; }\narr=(a b)\ncase "$1" in x) f ;; esac\n' },
+        ],
+        ["npm ci", "mac-only", "Changes this Mac's checkout: npm ci"],
+        ["./s.sh", "linux", null, { "./s.sh": "docker ps\n" }],
+        ["docker ps", "mac-only", "Uses this Mac's Docker: docker ps"],
+        [
+          "./s.sh",
+          "mac-only",
+          "Serves a port used here: docker compose",
+          { "./s.sh": "docker compose up\n" },
+        ],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >
@@ -1826,8 +1905,20 @@ describe("patterns and eligibility", () => {
     ["jest --watch", "watches", "jest --watch"],
     ["pnpm exec vitest -w", "watches", "vitest -w"],
     ["vitest watch", "watches", "vitest watch"],
-    ["docker build -t app .", "mac-docker", "docker build"],
     ["docker compose exec db psql", "mac-docker", "docker compose"],
+    ["docker exec db psql", "mac-docker", "docker exec"],
+    ["podman logs -f web", "mac-docker", "podman logs"],
+    ["docker compose down", "mac-docker", "docker compose"],
+    ["docker run -p 5432:5432 postgres", "serves-port", "docker run"],
+    ["docker run -dp 80:80 nginx", "serves-port", "docker run"],
+    ["docker run -p5432:5432 postgres", "serves-port", "docker run"],
+    ["nerdctl run --publish=80:80 nginx", "serves-port", "nerdctl run"],
+    ["docker run -itP nginx", "serves-port", "docker run"],
+    ["docker run --publish-all nginx", "serves-port", "docker run"],
+    ["docker run --network host nginx", "serves-port", "docker run"],
+    ["podman run --net=host nginx", "serves-port", "podman run"],
+    ["docker compose run --service-ports web", "serves-port", "docker compose"],
+    ["docker-compose up -d", "serves-port", "docker-compose up"],
     ["T3CODE_HOME=/home/me/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
     ["T3CODE_HOME=~/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
     ["env CLAUDE_CONFIG_DIR=/home/me/.claude vp test run", "mac-env", "/home/me/.claude"],
@@ -1863,6 +1954,13 @@ describe("patterns and eligibility", () => {
     "pnpm -w exec vitest run",
     "turbo run build --filter web",
     "docker --version",
+    "docker build -t app .",
+    "docker buildx build --platform linux/amd64 .",
+    "docker run --rm -e CI=1 app pnpm test",
+    "podman run --rm app",
+    "docker compose run --rm web pytest",
+    "docker compose -p ci build",
+    "docker-compose build",
     "CI=1 NODE_OPTIONS=--max-old-space-size=8192 vp test run",
     "S=/tmp/x; vp test run",
     "DATABASE_URL=postgres://localhost:5432/db vp test run",
@@ -1888,6 +1986,45 @@ describe("patterns and eligibility", () => {
         reason,
       });
     }
+  });
+
+  // Route memory speaks for the whole job too, after every reason of the job's own.
+  it.each([
+    ["vp test run", null, { intent: "linux", reason: "" }],
+    [
+      "vp test run",
+      "vp test",
+      { intent: "mac", reason: "Linux couldn't run this before: vp: not found, 2026-11-18" },
+    ],
+    [
+      "vp test run && vp test run /etc/hosts",
+      "vp test",
+      { intent: "mac", reason: "Uses a file only this Mac has: /etc/hosts" },
+    ],
+  ] as const)("%s with %j learned goes where route memory says", (label, learned, expected) => {
+    const context = {
+      ...input([], { runnerWhere: "linux" }).contextOf("/work/a"),
+      learned: (values: ReadonlyArray<string>) =>
+        values.slice(0, 2).join(" ") === learned
+          ? { code: "learned" as const, subject: "vp: not found, 2026-11-18" }
+          : null,
+    };
+    expect(intentOf(job("a", label), context)).toEqual(expected);
+  });
+
+  // `--runner mac` is kept; with nothing here needing it, the row says so and how to undo it.
+  it.each([
+    ["vp test run src/heavyQueue", undefined, ASKED_MAC_NEEDLESSLY],
+    ["vp test run src/heavyQueue", "needs the Mac's keychain", "needs the Mac's keychain"],
+    ["xcodebuild -scheme App test", undefined, "Mac-only tool: xcodebuild"],
+  ] as const)("%s with --runner mac and reason %j stays here", (label, routeReason, reason) => {
+    const context = input([], { runnerWhere: "automatic" }).contextOf("/work/a");
+    const entry = {
+      ...job("a", label),
+      where: "mac" as const,
+      ...(routeReason && { routeReason }),
+    };
+    expect(intentOf(entry, context)).toEqual({ intent: "mac", reason });
   });
 
   // Shapes of the eight jobs a strained Mac held while Linux idled, and their counter-cases.
@@ -1957,6 +2094,7 @@ describe("patterns and eligibility", () => {
     ["mac-tool", "xcodebuild", "Mac-only tool: xcodebuild"],
     ["mac-env", "~/.t3/userdata", "Uses a file only this Mac has: ~/.t3/userdata"],
     ["mac-state", "git commit", "Changes this Mac's checkout: git commit"],
+    ["mac-repo", "git push", "Uses this Mac's git repository: git push"],
     ["pinned", "--runner mac", "Pinned to this Mac: --runner mac"],
     ["serves-port", "vite", "Serves a port used here: vite"],
     [
@@ -2559,7 +2697,7 @@ describe("Linux copy of a removed worktree", () => {
   });
 });
 
-describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", () => {
+describe("Automatic gives the Mac a job Linux can't start only if the Mac has room", () => {
   /** 4.2 of 16 GiB free with 20% kept: a 1.5 GiB job does not fit, a 0.5 GiB one does. */
   const TIGHT = { ...CALM, availableMemoryBytes: 4.2 * GIB, totalMemoryBytes: 16 * GIB };
   it.each([
@@ -2577,7 +2715,7 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
       macJobs: 1,
       label: "vp test run",
       queue: true,
-      out: "linux-start",
+      out: "linux-wait",
     },
     {
       name: "too many cores",
@@ -2585,7 +2723,7 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
       macJobs: 1,
       label: "vp test run",
       queue: true,
-      out: "linux-start",
+      out: "linux-wait",
     },
     {
       name: "a smaller job fits",
@@ -2631,10 +2769,11 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
       out: "mac-start",
     },
   ] as const)("$name: $out", ({ sample, macJobs, label, queue, out }) => {
-    // Linux runs one of its two: the backlog picks the Mac, and Linux takes what the Mac can't.
+    // Linux is full, so only the Mac's own verdict decides whether it takes the job now.
     const entries = [
       ...Array.from({ length: macJobs }, (_, i) => runningOn(`m${i}`, "mac")),
       runningOn("l1", "linux"),
+      runningOn("l2", "linux"),
       job("a", label),
     ];
     const plan = planRoutes(
@@ -2643,7 +2782,7 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     expect(outcomeOf(plan, "a")).toBe(out);
   });
 
-  it("names why the Mac has no room in the waiting reason when Linux is busy too", () => {
+  it("keeps a job the Mac has no room for waiting on a busy Linux, and says why", () => {
     const entries = [
       runningOn("m0", "mac"),
       runningOn("l1", "linux"),
@@ -2653,10 +2792,8 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     const plan = planRoutes(
       input(entries, { runnerWhere: "automatic" }, { health: READ, sample: TIGHT, runnerOn: true }),
     );
-    expect(plan.routes.a).toBe("mac");
-    expect(plan.reasons.a).toBe(
-      "Hybrid: shorter queue here · memory floor: 1.0 GB room, needs 1.5 GB",
-    );
+    expect(plan.routes.a).toBe("linux");
+    expect(plan.reasons.a).toBe("Linux can't start it yet: all 2 Linux slots are busy");
   });
 });
 
@@ -2674,7 +2811,7 @@ describe("quick work never waits for Linux", () => {
       over: { health: READ },
       config: {},
       runner: "linux",
-      why: undefined,
+      why: "Runner set to Linux",
     },
     // Only "unavailable" changes for quick work: a run Linux dropped follows its own policy.
     ...(["agent", "mac"] as const).map((policy) => ({
@@ -2750,20 +2887,19 @@ describe("Start now keeps a job on the machine it was headed for", () => {
       linux: "offline-wait",
       out: "linux-wait",
     },
-    { name: "Hybrid, Mac has room", where: "automatic", linux: "full", out: "mac-start" },
-    // Linux waits for a fresh reading, and its line is shorter than the full Mac's.
+    { name: "Automatic, Linux full", where: "automatic", linux: "full", out: "linux-start" },
     {
-      name: "Hybrid, Mac full, Linux line shorter",
+      name: "Automatic, Mac full, no fresh Linux reading yet",
       where: "automatic",
       linux: "stale",
       macFull: true,
       out: "linux-start",
     },
+    // Start now never skips `remoto`'s one-run-per-worktree, so this Mac takes it.
     {
-      name: "Hybrid, Mac full, Mac line shorter",
+      name: "Automatic, same worktree on Linux",
       where: "automatic",
-      linux: "full",
-      macFull: true,
+      linux: "same-worktree",
       out: "mac-start",
     },
     { name: "This Mac, Mac full", where: "mac", linux: "online", macFull: true, out: "mac-start" },
@@ -2797,7 +2933,7 @@ describe("Start now keeps a job on the machine it was headed for", () => {
     expect(outcomeOf(plan, "f")).toBe(row.out);
   });
 
-  it("a forced Linux start gives its row no Mac reason", () => {
+  it("a forced Linux start gives its row its Linux reason, not a Mac one", () => {
     const plan = planRoutes(
       input(
         [runningOn("l1", "linux"), runningOn("l2", "linux"), forced()],
@@ -2808,7 +2944,7 @@ describe("Start now keeps a job on the machine it was headed for", () => {
       ),
     );
     expect(plan.admits.f).toEqual({ runner: "linux", ungated: false });
-    expect(plan.reasons.f).toBeUndefined();
+    expect(plan.reasons.f).toBe("Runner set to Linux");
   });
 });
 
@@ -2878,8 +3014,8 @@ describe("Linux limits as a waiting reason", () => {
           },
         ),
       );
-      // Hybrid sends it to the Mac, which is under its own limits, instead of holding it.
-      expect(plan.linuxOver.a).toBe(where === "linux" ? over : undefined);
+      // A full Mac leaves Automatic waiting on Linux too, so it carries the same reason.
+      expect(plan.linuxOver.a).toBe(over);
     }
   });
 });

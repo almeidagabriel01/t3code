@@ -19,6 +19,7 @@ import {
   heavyRoute,
   heavySegment,
   isQueued,
+  PACKAGE_SCRIPT,
   readLine,
   scriptOf,
   SHIMMED,
@@ -27,7 +28,7 @@ import {
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import { costOf } from "./costClass.ts";
-import { isShellLine, jobEntryOf, jobLine, jobOf, labelOf } from "./jobEntry.ts";
+import { jobEntryOf, jobLine, jobOf, labelOf, lineAt, lineOf } from "./jobEntry.ts";
 import {
   appendTail,
   environmentFaultOf,
@@ -46,6 +47,7 @@ import {
   answerBashCall,
   claimHealthCheck,
   configFor,
+  contextOf,
   defaultQueueDir,
   enqueue,
   orphan,
@@ -91,10 +93,10 @@ import {
   stopRemote,
 } from "./runnerExec.ts";
 import { listensHere } from "./localPorts.ts";
-import type { MacReason, QueuedEntry, RemoteOutcome } from "./runner.ts";
+import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
 import {
   forgetRoutes,
-  learnedRoute,
+  learnedOf,
   learnedRoutes,
   recordRouteFault,
   resetRoutes,
@@ -138,6 +140,39 @@ const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGTERM: 143,
   SIGHUP: 129,
 };
+const HELP = new Set(["--help", "-h"]);
+const USAGE =
+  "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n";
+const REMOTO_USAGE = "Usage: remoto <command> [args...]\n";
+const ROUTES_USAGE = "Usage: t3 heavy routes [--forget <key|all>]\n";
+
+/**
+ * What to tell the caller when a command cannot be queued, or null. No program starts with `-`,
+ * so a first word that does is an option that missed its place; a shell line is judged by its first
+ * word. An agent that typed `remoto` never called `t3 heavy`, so that answer speaks of `remoto`.
+ */
+const commandRefusal = (
+  program: string | undefined,
+  args: ReadonlyArray<string>,
+  remoto = false,
+) => {
+  const line = program === undefined ? null : lineOf(program, args);
+  const first =
+    program === undefined
+      ? ""
+      : line !== null
+        ? (line.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
+        : program;
+  if (first !== "" && !first.startsWith("-")) return null;
+  if (remoto) {
+    return `remoto runs a command; ${first === "" ? "none was given" : `\`${first}\` is not one`}.\n${REMOTO_USAGE}`;
+  }
+  return `[t3 heavy] ${
+    first === ""
+      ? "no command given: use `--` before the command."
+      : `\`${first}\` is not a command or a t3 heavy option: use \`--\` before the command.`
+  }\n${USAGE}`;
+};
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
@@ -148,6 +183,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let requestId: string | undefined;
   let routeReason: string | undefined;
   let now = false;
+  let help: string | undefined;
   const options = [
     "--queue-dir",
     "--name",
@@ -161,9 +197,15 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     flag !== undefined && flag !== "--" && flag.startsWith("--") && args.includes("--");
   while (
     rest[0] === "--now" ||
+    HELP.has(rest[0]!) ||
     (rest[1] !== undefined && options.includes(rest[0]!)) ||
     foreign(rest[0])
   ) {
+    if (HELP.has(rest[0]!)) {
+      help = rest[0];
+      rest = rest.slice(1);
+      continue;
+    }
     if (rest[0] !== "--now" && !options.includes(rest[0]!)) {
       rest = rest.slice(rest[1]!.startsWith("-") ? 1 : 2);
       continue;
@@ -184,8 +226,11 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
+  // `<command> --help`, the prefix the agent tools hand out, asks for help after the separator.
+  if (rest.length === 1 && HELP.has(rest[0]!)) [help, rest] = [rest[0], []];
   return {
     dir,
+    help,
     name,
     priority,
     where,
@@ -214,7 +259,9 @@ export type HeavyLaunch =
       readonly program: string;
       readonly args: ReadonlyArray<string>;
       readonly where: RunnerWhere | undefined;
-    };
+    }
+  /** The caller's mistake, such as `remoto --help` with `remoto` taken out: never queued. */
+  | { readonly kind: "refused"; readonly reason: string };
 
 /**
  * Run the command as written, or queue it. An agent's own `remoto` call never holds a Mac slot:
@@ -260,6 +307,8 @@ export const heavyLaunch = (
   ) {
     return { kind: "direct" };
   }
+  const reason = commandRefusal(job.program, job.args, job.remoto);
+  if (reason !== null) return { kind: "refused", reason };
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
   if (!job.remoto && isQueued(line, readAt?.(job.cwd))) return { kind: "direct" };
   if (!job.remoto && commitRoute(line) === "direct") return { kind: "direct" };
@@ -388,13 +437,15 @@ const cargoJobs = (text: string) => {
 };
 
 /** The program name and words after it of each command a job runs, its shell line's included. */
-const commandsOf = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args)
-    ? readLine(args[1]!).parts.map((part) => ({
+const commandsOf = (program: string, args: ReadonlyArray<string>) => {
+  const line = lineOf(program, args);
+  return line !== null
+    ? readLine(line).parts.map((part) => ({
         name: NodePath.basename(part.values[part.programAt] ?? ""),
         rest: part.values.slice(part.programAt + 1),
       }))
     : [{ name: NodePath.basename(program), rest: args }];
+};
 
 /**
  * The cap is a ceiling: a tool keeps a lower count its own config sets, and CMake's level only
@@ -510,11 +561,13 @@ export const withWorkers = (
   const own = ownCounts(program, args, environment, project);
   const keep = new Set(own.gradle < workers ? ["gradle", "gradlew"] : []);
   const direct = flagIndex(program, args, workers, keep);
-  const capped = isShellLine(program, args)
-    ? [args[0]!, lineWithWorkers(args[1]!, workers, keep), ...args.slice(2)]
-    : direct === null
-      ? args
-      : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
+  const at = lineAt(program, args);
+  const capped =
+    at !== null
+      ? args.with(at, lineWithWorkers(args[at]!, workers, keep))
+      : direct === null
+        ? args
+        : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
   return {
     args: capped,
     env: {
@@ -655,14 +708,25 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     runCall(part.dir, part.program, part.args, argv[0] === "call");
     return;
   }
-  const { dir, name, priority, where, now, requestId, routeReason, program, args } =
+  const { dir, name, priority, where, now, help, requestId, routeReason, program, args } =
     parseHeavyArgs(argv);
-  if (program === undefined) {
-    process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n",
-    );
-    process.exit(2);
+  // A usage error exits before the queue sees it, so it never becomes a job or a problem card.
+  const refuse = (reason: string): never => {
+    process.stderr.write(reason);
+    return process.exit(2);
+  };
+  if (help !== undefined && program === undefined) {
+    process.stdout.write(USAGE);
+    process.exit(0);
   }
+  // Help with a command would run nothing yet exit 0, which a script reads as the command passing.
+  if (help !== undefined) {
+    return refuse(
+      `[t3 heavy] \`${help}\` shows this usage and runs nothing; to pass it to the command, put it after \`--\`: t3 heavy -- ${program} ${help}\n${USAGE}`,
+    );
+  }
+  const refusal = commandRefusal(program, args);
+  if (refusal !== null || program === undefined) return refuse(refusal ?? "");
   const launch = heavyLaunch(
     { program, args, where },
     process.cwd(),
@@ -676,6 +740,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       `[t3 heavy] keeps running (${name ?? labelOf(program, args)}): runs outside the queue; its load counts in this Mac's reading.\n`,
     );
   }
+  if (launch.kind === "refused") return refuse(launch.reason);
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
     const { run } = launch.kind === "direct" ? launch : {};
     // The shell reports a folder it cannot enter itself, as it would without T3.
@@ -739,7 +804,12 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       id,
       code,
       Date.now(),
-      startFailureOf(launch.program, Object.keys(entry.scripts ?? {}), entry.cwd, code),
+      startFailureOf(
+        launch.program,
+        Object.keys(entry.scripts ?? {}).filter((word) => !word.startsWith(PACKAGE_SCRIPT)),
+        entry.cwd,
+        code,
+      ),
       commandFailure,
     );
   });
@@ -794,7 +864,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
               workers: start.workers,
               lane: self?.priority,
               environment,
-              shims: !queuedCall && self !== undefined && reasonedMac(doc, self),
+              shims: !queuedCall && self !== undefined && reasonedMac(dir, doc, self),
             },
             (handler) => (onSignal = handler),
           );
@@ -804,15 +874,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 };
 
 /** On this Mac for a closed-list reason: its other heavy calls may still go to Linux (D3). */
-const reasonedMac = (doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
-  const config = configFor(doc, entry.cwd);
-  if (!config.runnerEnabled) return false;
-  const { mac } = eligibilityOf(entry, {
-    config,
-    home: NodeOS.homedir(),
-    rootOf: gitRootOf,
-    listening: listensHere,
-  });
+const reasonedMac = (dir: string, doc: ReturnType<typeof readDoc>, entry: QueuedEntry) => {
+  const context = contextOf(dir, doc, Date.now())(entry.cwd);
+  if (!context.config.runnerEnabled) return false;
+  const { mac } = eligibilityOf(entry, context);
   return mac !== undefined && mac.code !== "pinned";
 };
 
@@ -1034,11 +1099,12 @@ const withShims = (
   environment: NodeJS.ProcessEnv,
 ) => {
   const call = selfPrefix(dir, environment, "call");
+  const at = lineAt(program, args);
   const env = {
     ...environment,
     PATH: `${ensureShims(dir, call)}:${environment.PATH ?? ""}`,
     [idEnv]: id,
-    ...(isShellLine(program, args) && READS_STDIN.test(args[1]!) ? { [LINE_READS_ENV]: "1" } : {}),
+    ...(at !== null && READS_STDIN.test(args[at]!) ? { [LINE_READS_ENV]: "1" } : {}),
   };
   NodeFS.writeFileSync(
     envFile(dir, id),
@@ -1048,9 +1114,7 @@ const withShims = (
     { mode: 0o600 },
   );
   return {
-    args: isShellLine(program, args)
-      ? [args[0]!, callingBins(args[1]!, call), ...args.slice(2)]
-      : args,
+    args: at === null ? args : args.with(at, callingBins(args[at]!, call)),
     env,
   };
 };
@@ -1148,9 +1212,8 @@ const runLinuxAttempt = async (
   takeOutcome(dir, id);
   // A shell line runs here as written, its heavy calls through the shims. A program alone, or a
   // line read in full with no heavy call to pick out, is itself the work.
-  const read = isShellLine(job.program, job.args)
-    ? readLine(job.args[1]!, scriptReader(process.cwd()))
-    : null;
+  const text = lineOf(job.program, job.args);
+  const read = text === null ? null : readLine(text, scriptReader(process.cwd()));
   const line = read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy));
   const shell = line ? job.program : "/bin/sh";
   const run = withShims(
@@ -1325,30 +1388,6 @@ const runLinuxAttempt = async (
   return { kind: "requeued" };
 };
 
-/** The route memory's reason to keep this program's calls in this package here, if learned. */
-const learnedOf = (
-  dir: string,
-  command: ReadonlyArray<string>,
-  cwd: string,
-  root: string,
-  config: Pick<RunnerProjectConfig, "runnerRouteMemoryDays" | "runnerRouteLearnAfter">,
-): MacReason | null => {
-  const found = learnedRoute(
-    dir,
-    command,
-    routeFolder(cwd, root),
-    Date.now(),
-    config.runnerRouteMemoryDays,
-    config.runnerRouteLearnAfter,
-  );
-  return found === null
-    ? null
-    : {
-        code: "learned",
-        subject: `${found.route.line}, ${new Date(found.route.at).toISOString().slice(0, 10)}`,
-      };
-};
-
 /**
  * Why a call (program first) runs on this Mac: a reason of its own, or a learned route. The
  * variables its line set (`NAME=value`) are judged like its arguments.
@@ -1357,19 +1396,33 @@ const callMacReason = (
   dir: string,
   values: ReadonlyArray<string>,
   cwd: string,
-  root: string,
   config: RunnerProjectConfig,
   env: ReadonlyArray<string>,
-) =>
-  macReasonOf(
+) => {
+  const learned = learnedOf(dir, Date.now());
+  return macReasonOf(
     env.length === 0 ? values : ["env", ...env, ...values],
     cwd,
-    { config, home: NodeOS.homedir(), rootOf: gitRootOf, listening: listensHere },
+    {
+      config,
+      home: NodeOS.homedir(),
+      rootOf: gitRootOf,
+      listening: listensHere,
+      learned: (command, at) => {
+        const root = gitRootOf(at);
+        return root === null ? null : learned(command, at, root, config);
+      },
+    },
     scriptReader(cwd),
-  ) ?? learnedOf(dir, values, cwd, root, config);
+  );
+};
 
 /** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
 const runRoutes = (args: ReadonlyArray<string>) => {
+  if (args.some((arg) => HELP.has(arg))) {
+    process.stdout.write(ROUTES_USAGE);
+    return;
+  }
   const valueOf = (flag: string) => {
     const at = args.indexOf(flag);
     return at === -1 ? undefined : (args[at + 1] ?? "");
@@ -1377,7 +1430,7 @@ const runRoutes = (args: ReadonlyArray<string>) => {
   const dir = valueOf("--queue-dir") || defaultQueueDir();
   const forget = valueOf("--forget");
   if (forget === "") {
-    process.stderr.write("Usage: t3 heavy routes [--forget <key|all>]\n");
+    process.stderr.write(ROUTES_USAGE);
     process.exit(2);
   }
   if (forget !== undefined) {
@@ -1475,7 +1528,7 @@ const runCall = (
   const root = gitRootOf(cwd);
   const mac =
     root === null ||
-    callMacReason(dir, [given, ...args], cwd, root, config, lineEnv(dir, macJob!)) !== null;
+    callMacReason(dir, [given, ...args], cwd, config, lineEnv(dir, macJob!)) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1539,7 +1592,7 @@ const runLinuxPart = async (
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
   const days = config.runnerRouteMemoryDays;
-  const here = callMacReason(dir, [program, ...args], cwd, root, config, lineEnv(dir, id));
+  const here = callMacReason(dir, [program, ...args], cwd, config, lineEnv(dir, id));
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),

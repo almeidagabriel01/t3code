@@ -16,6 +16,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import { jobEntryOf, jobOf } from "./jobEntry.ts";
 import * as Queue from "./queueFile.ts";
+import { recordRouteFault, routeFolder, routeKey } from "./routeMemory.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
@@ -1073,7 +1074,7 @@ describe("Runner in the queue file", () => {
     NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
     return root;
   };
-  const test = (id: string, extra: Partial<HeavyQueueEntry> = {}) => ({
+  const test = (id: string, extra: Partial<QueuedEntry> = {}) => ({
     ...entry(id),
     label: "vp test run",
     cwd: checkout(id),
@@ -1447,15 +1448,25 @@ describe("Runner in the queue file", () => {
       test("u", { unconfirmed: true }),
       // Asked for this Mac with `--runner mac`.
       test("m", { where: "mac" }),
+      // Docker in a script's body is Linux's own.
+      test("d", { label: "./s.sh", scripts: { "./s.sh": "docker ps\n" }, route: "mac" }),
     ];
     for (const waiter of waiters) Queue.enqueue(dir, waiter);
     const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null });
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null, d: "mac" });
     expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
-    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null, m: null });
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b", "d"]);
+    expect(routes()).toEqual({
+      r: null,
+      a: "linux",
+      b: "linux",
+      x: null,
+      u: null,
+      m: null,
+      d: "linux",
+    });
     expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
     // With the Runner off for the project, nothing can go to Linux, so nothing claims to.
     const off = queueWith(block(config({ runnerEnabled: false })));
@@ -1668,11 +1679,8 @@ describe("Runner in the queue file", () => {
       });
     }
     Queue.enqueue(dir, test("a"));
-    // Hybrid with room on the Mac keeps it here, however low the old overflow was.
-    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
-      status: "started",
-      workers: expect.any(Number),
-    });
+    // Automatic sends it to Linux first, however low the old overflow was.
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
     expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).runner.global.runnerOverflow).toBe(0);
   });
 
@@ -1750,7 +1758,22 @@ describe("Runner in the queue file", () => {
       name: "Linux-bound with room starts on Linux",
       line: "vp test run",
       over: { runnerWhere: "linux" as const },
-      expected: { runsOn: "linux", startsNow: true, linuxFull: false, reason: null },
+      expected: {
+        runsOn: "linux",
+        startsNow: true,
+        linuxFull: false,
+        reason: "Runner set to Linux",
+      },
+    },
+    {
+      name: "Automatic with room starts on Linux first",
+      line: "vp test run",
+      over: { runnerWhere: "automatic" as const },
+      expected: {
+        runsOn: "linux",
+        startsNow: true,
+        reason: "Linux first: the PC can start it now",
+      },
     },
     {
       name: "a leading cd decides the folder and its settings",
@@ -1808,14 +1831,39 @@ describe("Runner in the queue file", () => {
       expected: { runsOn: "mac", reason: "Linux is unavailable: running here" },
     },
     {
+      name: "a package.json script is judged by its body",
+      line: "pnpm run ci",
+      files: { "package.json": JSON.stringify({ scripts: { ci: "xcodebuild -scheme App" } }) },
+      over: { runnerWhere: "linux" as const },
+      expected: { runsOn: "mac", reason: "Mac-only tool: xcodebuild" },
+    },
+    {
+      name: "a route Linux learned keeps the whole job here",
+      line: "vp test run",
+      learned: true,
+      over: { runnerWhere: "linux" as const },
+      expected: {
+        runsOn: "mac",
+        reason: "Linux couldn't run this before: vp: not found, 2026-01-01",
+      },
+    },
+    {
       name: "its heavy work already goes to remoto inside: runs as written",
       line: "sh -c 'remoto vp test run'",
       over: { runnerWhere: "linux" as const },
       expected: { runsOn: "direct", reason: Queue.HANDED_OFF_RUNS_DIRECT, startsNow: true },
     },
-  ])("probe: $name, queuing nothing", ({ line, from, online, over, expected }) => {
+  ])("probe: $name, queuing nothing", ({ line, from, online, over, files, learned, expected }) => {
     const dir = queueWith(block(config(over)), online ?? true);
     const root = checkout("probe");
+    const key = routeKey(line.split(" "), routeFolder(root, root), "missing-program");
+    for (let fault = 0; learned === true && fault < config().runnerRouteLearnAfter; fault++) {
+      const lacked = { kind: "missing-program" as const, subject: "vp", line: "vp: not found" };
+      recordRouteFault(dir, key, lacked, NOW, 7, config().runnerRouteLearnAfter);
+    }
+    for (const [name, text] of Object.entries(files ?? {})) {
+      NodeFS.writeFileSync(NodePath.join(root, name), text);
+    }
     const probe = Queue.probe(dir, line.replace("{root}", root), from ?? root, NOW);
     expect(probe).toMatchObject(expected);
     expect(Queue.read(dir)).toEqual([]);

@@ -14,7 +14,7 @@ import {
   type HeavyQueueOrderCode,
 } from "@t3tools/contracts";
 
-import { kindOf, runTarget } from "./commandShapes.ts";
+import { kindOf, pickedOf, runTarget } from "./commandShapes.ts";
 import { costOf, filesOf, workPartsOf, type Cost as JobCost } from "./costClass.ts";
 import { heavyRoute, localGitOnly } from "./heavyHook.ts";
 
@@ -161,7 +161,8 @@ const COMMAND_WORD = /^[a-z@][\w:.@+-]*$/i;
 /** One work part's key: its program (past `exec`/`dlx`), subcommand words and file scope. */
 const partSignature = (part: ReturnType<typeof workPartsOf>[number]) => {
   const { program, words } = runTarget(part.program, part.words);
-  const command: string[] = [program];
+  // The package a pick option names keys the run too: `pnpm -F web build` is not `-F api`'s.
+  const command: string[] = [program, ...pickedOf(part.program, part.values)];
   for (const word of words) {
     if (command.length > (program === "git" ? 1 : 3) || !COMMAND_WORD.test(word)) break;
     if (/\.\w{1,5}$/.test(word)) break;

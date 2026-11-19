@@ -10,8 +10,11 @@ import {
   type ServerSettingsPatch,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
-  RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
+import {
+  RUNNER_SETTING_DEFAULTS,
+  RUNNER_SETTING_PROJECT_KEYS,
+} from "@t3tools/client-runtime/state/runnerModel";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -107,7 +110,11 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  maintenance: ["continueThreadsAfterServerUpdate", "detectProblems", ...RUNNER_PROJECT_KEYS],
+  maintenance: [
+    "continueThreadsAfterServerUpdate",
+    "detectProblems",
+    ...RUNNER_SETTING_PROJECT_KEYS,
+  ],
 };
 
 // Only servers with thread auto-settlement store these, so other targets get the rest of a patch.
@@ -621,7 +628,9 @@ function ServerSettingsDetail(props: {
                           runner={{
                             enabled: target.settings.runnerEnabled,
                             where: target.settings.runnerWhere,
-                            everything: target.settings.runnerLinuxEverything,
+                            everything:
+                              target.settings.runnerLinuxEverything ??
+                              RUNNER_SETTING_DEFAULTS.runnerLinuxEverything,
                           }}
                           slowAgentJobs={{
                             value: target.settings.heavySlowAgentJobs,

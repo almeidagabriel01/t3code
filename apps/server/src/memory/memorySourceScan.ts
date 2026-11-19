@@ -2,6 +2,7 @@ import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { parseTaskMessageId, resolveGroupRelaySources } from "../assistants/groupRelaySource.ts";
 import { MemoryWorkerError } from "./MemoryWorkerError.ts";
 import { scanMemoryValue } from "./MemorySecretScanner.ts";
 
@@ -15,6 +16,10 @@ const encodeSequences = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Sch
  */
 export const delegatedChildThreadSql = (threadColumn: string) =>
   `EXISTS (SELECT 1 FROM orchestration_events c WHERE c.application_event_version=2 AND c.aggregate_kind='thread' AND c.stream_id=${threadColumn} AND c.event_type='thread.created' AND json_extract(c.payload_json,'$.lineage.relationshipToParent')='subagent')`;
+
+/** A message version a summary can read: settled, non-blank, from the user or assistant. */
+export const usableMessageSql = (payloadColumn: string) =>
+  `coalesce(json_extract(${payloadColumn},'$.streaming'),0)=0 AND trim(json_extract(${payloadColumn},'$.text'))!='' AND json_extract(${payloadColumn},'$.role') IN ('user','assistant')`;
 
 export const isDelegatedChildThread = (sql: SqlClient.SqlClient, threadId: string) =>
   sql<{
@@ -33,6 +38,8 @@ export interface SourceMessageRow {
   readonly usable: boolean;
   /** Typed by the person in a client: the only messages a standing rule may be drawn from. */
   readonly userTyped: boolean;
+  /** Written by the server itself; group task packets are, so an agent cannot forge one. */
+  readonly serverWritten: boolean;
 }
 
 export interface SourceScan {
@@ -89,7 +96,7 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
     }>`SELECT sequence,event_id,event_type,json_extract(payload_json,'$.id') AS id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.runId') END AS run_id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.role') END AS role,
-      CASE WHEN event_type='message.updated' THEN coalesce(json_extract(payload_json,'$.streaming'),0)=0 AND trim(json_extract(payload_json,'$.text'))!='' AND json_extract(payload_json,'$.role') IN ('user','assistant') END AS usable,
+      CASE WHEN event_type='message.updated' THEN ${sql.unsafe(usableMessageSql("payload_json"))} END AS usable,
       CASE WHEN event_type!='message.updated' THEN json_extract(payload_json,'$.status') END AS status,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.createdBy') END AS created_by,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.creationSource') END AS creation_source,
@@ -119,6 +126,7 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
             row.created_by === "user" &&
             (row.creation_source === "web" || row.creation_source === "mobile") &&
             row.automated !== 1,
+          serverWritten: row.created_by === "system",
         });
     }
     if (!bound.length) break;
@@ -168,14 +176,44 @@ export const readEligibleSourceRows = Effect.fn("MemoryWorker.readEligibleSource
   const scan = yield* scanSourceStream(sql, input);
   const picked = eligibleSourceMessages(scan, { excluded: new Set(input.excluded) });
   if (!picked.length) return [];
-  const sequences = encodeSequences(picked.slice(0, input.limit).map((row) => row.sequence));
+  const page = picked.slice(0, input.limit);
+  const sequences = encodeSequences(page.map((row) => row.sequence));
   const typed = new Set(picked.filter((row) => row.userTyped).map((row) => row.sequence));
+  // A group reaches its members as server-written task packets; only the user's own words in one
+  // count as typed, and the packet's other text stays out of the rule source.
+  const relayed = page.filter(
+    (row) =>
+      row.serverWritten && row.role === "user" && row.id !== null && parseTaskMessageId(row.id),
+  );
+  const relays = relayed.length
+    ? yield* resolveGroupRelaySources(
+        sql,
+        input.threadId,
+        relayed.map((row) => row.id!),
+      )
+    : new Map<string, never>();
+  const typedText = new Map<number, string>();
+  for (const row of relayed) {
+    const source = relays.get(row.id!);
+    if (source?.kind === "typed") typedText.set(row.sequence, source.text);
+    else if (source)
+      yield* Effect.logWarning("memory: group relay not counted as typed", {
+        threadId: input.threadId,
+        messageId: row.id,
+        reason: source.reason,
+      });
+  }
   const read = yield* sql<{
     payload_json: string;
     sequence: number;
     event_id: string;
   }>`SELECT payload_json,sequence,event_id FROM orchestration_events WHERE sequence IN (SELECT value FROM json_each(${sequences})) ORDER BY sequence`;
-  return read.map((row) => ({ ...row, userTyped: typed.has(row.sequence) }));
+  return read.map((row) => {
+    const text = typedText.get(row.sequence);
+    return text === undefined
+      ? { ...row, userTyped: typed.has(row.sequence) }
+      : { ...row, userTyped: true, typedText: text };
+  });
 });
 
 const decodeMessage = Schema.decodeUnknownEffect(
@@ -197,6 +235,8 @@ export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(functio
     readonly sequence: number;
     readonly event_id: string;
     readonly userTyped?: boolean;
+    /** The user's own words standing in for a relayed packet's text. */
+    readonly typedText?: string;
   }>,
   sourceWatermark: M.MemorySourceWatermark,
 ) {
@@ -210,7 +250,7 @@ export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(functio
     const message = yield* decodeMessage(row.payload_json);
     // Native history imports can contain the provider-only WP4 frame. It is
     // reference data, not a new transcript fact (including an unfinished frame).
-    const text = message.text
+    const text = (row.typedText ?? message.text)
       .replace(/<external_goat_memory>[\s\S]*?(?:<\/external_goat_memory>|$)/g, "")
       .trim();
     if (!text) {

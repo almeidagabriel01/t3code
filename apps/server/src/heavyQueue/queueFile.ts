@@ -56,6 +56,8 @@ import {
   interceptBashCall,
   isQueued,
   lineParts,
+  PACKAGE_SCRIPT,
+  readLine,
   SCRIPT_MAX_BYTES,
   type ReadScript,
 } from "./heavyHook.ts";
@@ -73,6 +75,7 @@ import {
   withRecord,
 } from "./heavyNotices.ts";
 import { listensHere } from "./localPorts.ts";
+import { learnedOf } from "./routeMemory.ts";
 import {
   beforeBoot,
   bootAtOf,
@@ -763,15 +766,21 @@ const listening = (port: number) => {
   return answer;
 };
 
-const contextOf =
-  (doc: QueueDoc) =>
-  (cwd: string): WorkContext => ({
+/** Each folder's work context for one plan: `routes.json` is read once for all of them. */
+export const contextOf = (dir: string, doc: QueueDoc, now: number) => {
+  const learned = learnedOf(dir, now);
+  return (cwd: string): WorkContext => ({
     config: configFor(doc, cwd),
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
     listening,
+    learned: (values, at) => {
+      const root = gitRootOf(at);
+      return root === null ? null : learned(values, at, root, configFor(doc, at));
+    },
   });
+};
 
 /** Some project uses the Runner, so jobs can wait on either machine. */
 const runnerOn = (doc: QueueDoc) =>
@@ -779,7 +788,12 @@ const runnerOn = (doc: QueueDoc) =>
   (doc.runner.global.runnerEnabled ||
     doc.runner.projects.some((project) => project.config.runnerEnabled));
 
-const planOf = (doc: QueueDoc, now: number): RoutePlan =>
+const planOf = (
+  dir: string,
+  doc: QueueDoc,
+  now: number,
+  contexts = contextOf(dir, doc, now),
+): RoutePlan =>
   planRoutes({
     entries: doc.entries.filter((entry) => !isOrphan(entry)),
     maxRunning: doc.maxRunning,
@@ -800,7 +814,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     quickSlots: doc.quickSlots,
     serviceIdleMinutes: doc.serviceIdleMinutes,
     now,
-    contextOf: contextOf(doc),
+    contextOf: contexts,
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
@@ -831,7 +845,7 @@ const withoutAttempt = ({
 }: QueuedEntry) => ({ ...rest, startedAt: null });
 
 /** Starts `id` when the admission plan picks it; running entries stay in front, so index order is wait order. */
-const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
+const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
   const { entries } = doc;
   const index = entries.findIndex((entry) => entry.id === id);
   if (index < 0) return { doc, result: { status: "removed" } };
@@ -852,7 +866,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       },
     };
   }
-  const decision = planOf(doc, now);
+  const contexts = contextOf(dir, doc, now);
+  const decision = planOf(dir, doc, now, contexts);
   const active = runningOf(entries);
   const canceled = decision.cancels[id];
   if (canceled !== undefined) {
@@ -883,7 +898,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     }: QueuedEntry = entry;
     const record = startRecord(
       entry,
-      intentOf(entry, contextOf(doc)(entry.cwd)).intent,
+      intentOf(entry, contexts(entry.cwd)).intent,
       admit.runner,
       now,
     );
@@ -1011,6 +1026,7 @@ const refuseOrphan = (entry: HeavyQueueEntry | undefined) => {
 
 /** Puts waiter `id` before waiter `beforeId`, or last when null; the running entry never moves or gets passed. */
 const decideMove = (
+  dir: string,
   doc: QueueDoc,
   id: string,
   beforeId: string | null,
@@ -1018,7 +1034,7 @@ const decideMove = (
   now: number,
 ): Decided<MoveResult> => {
   // The line people see is admission's order, so a move lands among that order, not the file's.
-  const shown = planOf(doc, now).ordered;
+  const shown = planOf(dir, doc, now).ordered;
   const planned = new Set(shown);
   const byId = new Map(doc.entries.map((entry) => [entry.id, entry]));
   let next = 0;
@@ -1196,12 +1212,13 @@ export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
   );
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
-  mutate(dir, (doc) => decideStart(doc, id, now), now);
+  mutate(dir, (doc) => decideStart(dir, doc, id, now), now);
 
 /** What the admission rules say right now, without starting anyone. */
 export const readPlan = (dir: string, now = Date.now()) => {
   const doc = readDoc(dir);
-  return { doc, plan: planOf(doc, now) };
+  const contexts = contextOf(dir, doc, now);
+  return { doc, plan: planOf(dir, doc, now, contexts), contexts };
 };
 
 export const HANDED_OFF_RUNS_DIRECT =
@@ -1251,7 +1268,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     scriptReader(job.cwd),
   );
   const withProbe = insertNew(doc, probed);
-  const plan = planOf(withProbe, now);
+  const plan = planOf(dir, withProbe, now);
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
   const ahead =
@@ -1429,7 +1446,7 @@ export const orphan = (dir: string, id: string, now = Date.now()) =>
   mutate(
     dir,
     (doc) => {
-      const position = waitPosition(planOf(doc, now), id);
+      const position = waitPosition(planOf(dir, doc, now), id);
       return position === 0
         ? { doc, result: null }
         : {
@@ -1540,11 +1557,11 @@ export const move = (
   beforeId: string | null,
   note?: string,
   now = Date.now(),
-) => mutate(dir, (doc) => decideMove(doc, id, beforeId, note, now));
+) => mutate(dir, (doc) => decideMove(dir, doc, id, beforeId, note, now));
 
 /** Moves a waiter to the front of the waiters, right behind the running entry. */
 export const promote = (dir: string, id: string, note?: string, now = Date.now()) =>
-  mutate(dir, (doc) => decideMove(doc, id, planOf(doc, now).ordered[0] ?? id, note, now));
+  mutate(dir, (doc) => decideMove(dir, doc, id, planOf(dir, doc, now).ordered[0] ?? id, note, now));
 
 /** The user override: the waiter starts at once, past the pause, the slots and the load check. */
 export const startNow = (dir: string, id: string) =>
@@ -1663,8 +1680,8 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
   });
 
 /** Exclusive work, its project's Mac-only list and projects with the Runner off never leave this Mac. */
-export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
-  const context = contextOf(doc)(entry.cwd);
+export const staysOnMac = (contexts: (cwd: string) => WorkContext, entry: HeavyQueueEntry) => {
+  const context = contexts(entry.cwd);
   if (!context.config.runnerEnabled) return true;
   const { eligibility } = eligibilityOf(entry, context);
   return eligibility === "exclusive" || eligibility === "mac-only";
@@ -1739,7 +1756,9 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: "not-found" };
-    if (runner === "linux" && staysOnMac(doc, target)) return { doc, result: "not-allowed" };
+    if (runner === "linux" && staysOnMac(contextOf(dir, doc, Date.now()), target)) {
+      return { doc, result: "not-allowed" };
+    }
     const update = (patch: (entry: HeavyQueueEntry) => HeavyQueueEntry) => ({
       doc: { ...doc, entries: doc.entries.map((e) => (e.id === id ? patch(e) : e)) },
       result: "ok" as const,
@@ -1783,14 +1802,15 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
     dir,
     (doc): Decided<ReadonlyArray<string>> => {
       if (runner === "linux" && doc.linux.online !== true) return { doc, result: [] };
-      const { routes } = planOf(doc, now);
+      const contexts = contextOf(dir, doc, now);
+      const { routes } = planOf(dir, doc, now, contexts);
       const moves = doc.entries.filter(
         (entry) =>
           entry.startedAt === null &&
           !isOrphan(entry) &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
-          !(runner === "linux" && (entry.where === "mac" || staysOnMac(doc, entry))),
+          !(runner === "linux" && (entry.where === "mac" || staysOnMac(contexts, entry))),
       );
       const moved = new Set(moves.map((entry) => entry.id));
       return {
@@ -1973,19 +1993,41 @@ export const settleLostRun = (
     };
   });
 
-/** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
+/**
+ * Reads the script a word names from `cwd`, or a `package.json#X` script's body from `cwd`'s own
+ * `package.json`; null when missing, unreadable or too big to read.
+ */
 export const scriptReader =
   (cwd: string, home = NodeOS.homedir()): ReadScript =>
   (word) => {
-    const path = NodePath.resolve(cwd, word.replace(/^~(?=\/|$)/, home));
+    const packaged = word.startsWith(PACKAGE_SCRIPT);
+    const path = NodePath.resolve(
+      cwd,
+      packaged ? "package.json" : word.replace(/^~(?=\/|$)/, home),
+    );
     try {
       const stat = NodeFS.statSync(path);
       if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) return null;
-      return NodeFS.readFileSync(path, "utf8");
+      const text = NodeFS.readFileSync(path, "utf8");
+      if (!packaged) return text;
+      const scripts: unknown = (JSON.parse(text) as { scripts?: unknown } | null)?.scripts;
+      const body =
+        typeof scripts === "object" && scripts !== null && !Array.isArray(scripts)
+          ? Object.getOwnPropertyDescriptor(scripts, word.slice(PACKAGE_SCRIPT.length))?.value
+          : undefined;
+      return typeof body === "string" ? body : null;
     } catch {
       return null;
     }
   };
+
+/** The scripts a line runs, read from `cwd` by their word: they travel with its job. */
+export const scriptsOf = (line: string, cwd: string) => {
+  const scripts: Record<string, string | null> = {};
+  const read = scriptReader(cwd);
+  readLine(line, (word) => (scripts[word] = read(word)));
+  return scripts;
+};
 
 /**
  * The one gate every Bash hook goes through (the `t3 heavy hook` CLI and the in-process Claude

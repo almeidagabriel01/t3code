@@ -84,7 +84,7 @@ export type HeavyEvent =
       readonly kind: "displaced";
       readonly cause: "unavailable" | "dropped" | "deadline";
     }
-  /** Hybrid placed it on Linux: planned, shown only for every machine change. */
+  /** Automatic placed it on Linux: planned, shown only for every machine change. */
   | { readonly kind: "hybrid" }
   /** Linux couldn't run it for a reason of T3's or the PC's own; the problem detector files it and tells. */
   | ({ readonly kind: "t3-fault"; readonly count?: number } & Fault);
@@ -603,7 +603,7 @@ export const startRecord = (
   runner: HeavyRunner,
   now: number,
 ): HeavyEventRecord | null => {
-  if (intent === "automatic" && runner === "linux") return recordOf(entry, { kind: "hybrid" }, now);
+  if (intent === "automatic" && runner === "mac") return recordOf(entry, { kind: "hybrid" }, now);
   if (intent !== "linux" || runner !== "mac") return null;
   const cause =
     entry.dropped === true
@@ -895,10 +895,10 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         group: "hybrid",
         category: "planned",
         tone: "info",
-        machine: "linux",
-        one: `${name} went to Linux`,
-        many: (n) => `${jobs(n)} went to Linux`,
-        description: "Each job goes to the machine with the shorter queue.",
+        machine: "mac",
+        one: `${name} went to this Mac`,
+        many: (n) => `${jobs(n)} went to this Mac`,
+        description: "Linux was full, so this Mac took it.",
       });
   }
 };

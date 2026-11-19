@@ -3,7 +3,7 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
-import { EXECUTORS, keepsRunning, PACKAGE_MANAGERS } from "./commandShapes.ts";
+import { EXECUTORS, keepsRunning, PACKAGE_MANAGERS, PICK_FLAGS } from "./commandShapes.ts";
 import { parseLine, type Command, type ParsedLine, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
@@ -92,6 +92,24 @@ const SCRIPT_NAMES = [
 const FORMAT_NAMES = ["fmt", "format", "lint"];
 const LINTERS = new Set(["oxlint", "eslint"]);
 const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
+/** A table's own entry for a program name: `constructor` must not find Object's. */
+export const entryOf = <T>(table: Readonly<Record<string, T>>, name: string): T | undefined =>
+  Object.hasOwn(table, name) ? table[name] : undefined;
+
+/** pnpm, yarn and bun run a bin by name (`pnpm vitest`) when the word is none of their own commands. */
+const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
+const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
+
+/**
+ * Where a package manager call names the bin it runs among its words: 1 for `pnpm exec vitest`,
+ * 0 for `pnpm vitest`, which runs it the same when no script has that name; null for neither.
+ */
+export const pmBinAt = (program: string, words: ReadonlyArray<string>) => {
+  const [first] = words;
+  if (!PACKAGE_MANAGERS.has(program) || first === undefined) return null;
+  if (/^(exec|dlx|x)$/.test(first)) return 1;
+  return BIN_RUNNERS.has(program) && !OWN_COMMANDS.test(first) ? 0 : null;
+};
 const SCRIPT_RUNNERS = ["vpr", "make", "just"];
 
 /** Every program `heavyWords` can call heavy but `node` and `git`: a queue job's PATH shims. */
@@ -226,7 +244,10 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
-  const folderFlags = FOLDER_FLAGS[program] ?? [];
+  const folderFlags = [
+    ...(entryOf(FOLDER_FLAGS, program) ?? []),
+    ...(entryOf(PICK_FLAGS, program) ?? []),
+  ];
   return {
     at,
     program,
@@ -305,7 +326,7 @@ const heavyWords = (
   // A dev server or a watcher never ends: it is load on this Mac, never a job that holds a slot.
   if (keepsRunning(program, words, flags)) return false;
   if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
-  const sub = SUBCOMMANDS[program];
+  const sub = entryOf(SUBCOMMANDS, program);
   if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {
     return first !== undefined && heavyWords(base(first), words.slice(1), flags, lists);
@@ -315,12 +336,14 @@ const heavyWords = (
     return heavyScript(words, 0, flags, lists);
   }
   if (!PACKAGE_MANAGERS.has(program) || first === undefined) return false;
-  if (first === "exec" || first === "dlx" || first === "x") {
+  const binAt = pmBinAt(program, words);
+  if (binAt === 1) {
     return second !== undefined && heavyWords(base(second), words.slice(2), flags, lists);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
   if (first === "t" || heavyScript(words, 0, flags, lists)) return true;
-  // `pnpm --filter web run build`: a flag's value can sit before `run`.
+  if (binAt === 0 && heavyWords(base(first), words.slice(1), flags, lists)) return true;
+  // `npm --prefix x run build`: a flag's value can sit before `run`.
   const runAt = words.findIndex((word) => word === "run" || word === "run-script");
   return runAt >= 0 && heavyScript(words, runAt + 1, flags, lists);
 };
@@ -410,8 +433,15 @@ export interface Part {
   readonly queued: boolean;
   /** The heavy part inside a nested `sh -c '<line>'`, which makes this part heavy too. */
   readonly nested: Part | null;
-  /** The shell script it runs, by its path word, and its text (null when it couldn't be read). */
-  readonly script: { readonly word: string; readonly body: string | null } | null;
+  /**
+   * The shell script it runs, by its path word, and its text (null when it couldn't be read).
+   * `written`: the line itself writes it from a heredoc, so no copy of it exists when it is queued.
+   */
+  readonly script: {
+    readonly word: string;
+    readonly body: string | null;
+    readonly written?: boolean;
+  } | null;
 }
 
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
@@ -449,6 +479,42 @@ export const scriptOf = (
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
+/** The `ReadScript` word of a `package.json` script's body: `package.json#ci`. */
+export const PACKAGE_SCRIPT = "package.json#";
+const RUNS_SCRIPTS = new Set(["npm", "pnpm", "yarn", "bun", "vp"]);
+const MOVES_PACKAGE =
+  /^(-C|--dir|--prefix|--cwd|-w|-ws|--workspaces?|-F|--filter|-r|--recursive)(=|$)/;
+
+/**
+ * The `package.json` script a command names explicitly (`npm run X`, `npm test`), read from the
+ * folder it runs in; null when a flag may run another package's (`--filter`, `-C`, `-w`).
+ * `pnpm X` alone is left out: it collides with pnpm's own subcommands.
+ */
+const packageScriptOf = (
+  values: ReadonlyArray<string>,
+  at: number,
+  read: ReadScript | undefined,
+) => {
+  const program = base(values[at] ?? "");
+  const sub = values[at + 1];
+  const nameAt =
+    (sub === "run" && RUNS_SCRIPTS.has(program)) || (sub === "run-script" && program === "npm")
+      ? at + 2
+      : program === "npm" && (sub === "test" || sub === "start")
+        ? at + 1
+        : -1;
+  const name = values[nameAt];
+  if (read === undefined || name === undefined || name.startsWith("-")) return null;
+  const rest = values.slice(nameAt + 1);
+  const end = rest.indexOf("--");
+  if ((end < 0 ? rest : rest.slice(0, end)).some((value) => MOVES_PACKAGE.test(value))) {
+    return null;
+  }
+  const word = `${PACKAGE_SCRIPT}${name}`;
+  const body = read(word);
+  return body === null ? null : { word, body };
+};
+
 /** `bash -c '<line>'`: the line's parts, its scripts read like the line's own. */
 const nestedParts = (
   program: string,
@@ -485,10 +551,12 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
   const { at, program, words, flags } = wordsAt(values, remoteAt);
   const inner = nestedParts(program, values, at, read);
   const nested = inner.find((part) => part.heavy) ?? null;
-  const script = scriptOf(values, at, read);
+  const shellScript = scriptOf(values, at, read);
+  const script = shellScript ?? packageScriptOf(values, at, read);
   // A script's own scripts are not followed: one level is what an agent's scratch script needs.
-  const unreadable = script !== null && script.body === null;
-  const scriptParts = script?.body == null ? [] : readLine(script.body).parts;
+  const unreadable = shellScript !== null && shellScript.body === null;
+  // Only the Runner reads a package script's body: what the hook queues stays as before.
+  const scriptParts = shellScript?.body == null ? [] : readLine(shellScript.body).parts;
   const scriptHeavy = scriptParts.some((part) => part.heavy);
   const insideParts = [...inner, ...scriptParts];
   const handsOffInside = insideParts.some(handsOff);
@@ -514,16 +582,39 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
 };
 
 /** Every simple command of a line in source order, and why it cannot be followed exactly. */
+const scriptKey = (word: string) => word.replace(/^(\.\/)+/, "");
+
+/** Files the line writes from a heredoc (`cat > f <<EOF`): running one runs that text. */
+const writtenScripts = (commands: ReadonlyArray<Command>) => {
+  const written = new Map<string, string>();
+  for (const { redirects } of commands) {
+    const body = redirects.find((redirect) => redirect.body !== undefined)?.body;
+    const target = redirects.find((redirect) => /^\d*(>|>\|)$/.test(redirect.op))?.target;
+    if (body !== undefined && target != null && target.vars.length === 0) {
+      written.set(scriptKey(target.value), body);
+    }
+  }
+  return written;
+};
+
 export const readLine = (
   line: string,
   read?: ReadScript,
 ): { readonly unsafe: string | null; readonly parts: Part[] } => {
   const parsed = parseLine(line);
   const lists = fileListsOf(parsed);
+  const written = writtenScripts(parsed.commands);
+  const readAll: ReadScript | undefined =
+    written.size === 0 ? read : (word) => written.get(scriptKey(word)) ?? read?.(word) ?? null;
   return {
     unsafe: parsed.unsafe,
     parts: parsed.commands
-      .map((command) => partOf(command, lists, read))
+      .map((command) => partOf(command, lists, readAll))
+      .map((part) =>
+        part.script !== null && written.has(scriptKey(part.script.word))
+          ? { ...part, script: { ...part.script, written: true } }
+          : part,
+      )
       .toSorted((a, b) => a.command.start - b.command.start),
   };
 };

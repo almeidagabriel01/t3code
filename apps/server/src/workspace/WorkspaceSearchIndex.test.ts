@@ -6,9 +6,13 @@ import {
   type GrepResult,
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 afterEach(() => {
@@ -51,7 +55,9 @@ it.effect("filters image searches before applying the result limit", () =>
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer))),
+      );
       const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
       const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
@@ -114,7 +120,9 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        Effect.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer))),
+      );
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
@@ -136,6 +144,102 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       });
       expect(grep).toHaveBeenCalledTimes(2);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
+    }),
+  ),
+);
+
+/** A git that answers only once `gate` opens, listing `ignored` as untracked ignored files. */
+function gatedGit(gate: Deferred.Deferred<void>, ignored: ReadonlyArray<string>) {
+  const calls = { count: 0, started: Deferred.makeUnsafe<void>() };
+  const layer = Layer.succeed(
+    VcsProcess.VcsProcess,
+    VcsProcess.VcsProcess.of({
+      run: (input) =>
+        Effect.gen(function* () {
+          calls.count += 1;
+          yield* Deferred.succeed(calls.started, undefined);
+          yield* Deferred.await(gate);
+          return {
+            exitCode: 0 as VcsProcess.VcsProcessOutput["exitCode"],
+            stdout: input.args.includes("--others") ? ignored.map((p) => `${p}\0`).join("") : "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
+        }),
+    }),
+  );
+  return { calls, layer };
+}
+
+function pathFinder(indexed: ReadonlyArray<string>) {
+  const items = indexed.map((path) => ({ type: "file" as const, item: fileItem(path) }));
+  const page = <A>(found: ReadonlyArray<A>) => ({
+    ok: true as const,
+    value: { items: found, scores: [], totalMatched: found.length, totalFiles: found.length },
+  });
+  return {
+    destroy: vi.fn(),
+    isScanning: () => false,
+    scanFiles: () => ({ ok: true as const, value: undefined }),
+    waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    fileSearch: () => page(items.map((entry) => entry.item)),
+    mixedSearch: () => page(items),
+  } as unknown as FileFinder;
+}
+
+it.effect("scans hidden entries in the background and coalesces refreshes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const git = gatedGit(gate, [".env"]);
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: pathFinder([]) });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(git.layer),
+      );
+      expect(yield* searchIndex.search("env", 10, "file")).toMatchObject({
+        entries: [],
+        incomplete: true,
+      });
+      expect((yield* searchIndex.list()).incomplete).toBe(true);
+      yield* Deferred.await(git.calls.started);
+      yield* searchIndex.refresh();
+      yield* searchIndex.refresh();
+      yield* Deferred.succeed(gate, undefined);
+      yield* searchIndex.awaitHiddenScan();
+
+      const settled = yield* searchIndex.search("env", 10, "file");
+      expect(settled.entries).toEqual([{ path: ".env", kind: "file", ignored: true }]);
+      expect(settled.incomplete).toBeUndefined();
+      expect((yield* searchIndex.list()).incomplete).toBeUndefined();
+      // The first scan plus one rerun for both refreshes, two `git ls-files` each.
+      expect(git.calls.count).toBe(4);
+    }),
+  ),
+);
+
+it.effect("lists indexed entries first and fills the rest with hidden ones", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      yield* Deferred.succeed(gate, undefined);
+      const hidden = Array.from({ length: 25_000 }, (_, index) => `a-${index}.log`);
+      const git = gatedGit(gate, hidden);
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({
+        ok: true,
+        value: pathFinder(["z.ts"]),
+      });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(git.layer),
+      );
+      yield* searchIndex.awaitHiddenScan();
+      const result = yield* searchIndex.list();
+
+      expect(result.entries).toHaveLength(25_000);
+      expect(result.entries.map((entry) => entry.path)).toContain("z.ts");
+      expect(result.truncated).toBe(true);
     }),
   ),
 );

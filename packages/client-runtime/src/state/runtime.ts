@@ -542,19 +542,26 @@ const refreshOnSignalWhileRead =
     );
   };
 
+// The next refresh is armed only once an answer settles, so a slow request is never restarted.
+// A failure ends polling that waits for a final value; plain intervals keep their schedule.
 const refreshEveryUntilFinal =
-  <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
-  <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
+  <A, E>(intervalMs: number, isFinal: ((value: A) => boolean) | undefined) =>
+  (self: Atom.Atom<AsyncResult.AsyncResult<A, E>>): Atom.Atom<AsyncResult.AsyncResult<A, E>> =>
     Atom.transform(
       self,
       (get) => {
-        const value = get(self);
-        if (!isFinal(value)) {
+        const result = get(self);
+        const pollAgain =
+          !result.waiting &&
+          (AsyncResult.isSuccess(result)
+            ? isFinal === undefined || !isFinal(result.value)
+            : AsyncResult.isFailure(result) && isFinal === undefined);
+        if (pollAgain) {
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
           const handle = setTimeout(() => get.refresh(self), intervalMs);
           get.addFinalizer(() => clearTimeout(handle));
         }
-        return value;
+        return result;
       },
       { initialValueTarget: self },
     );
@@ -808,7 +815,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const intervalQuery =
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
+        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, options.isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
     return (
       refreshTrigger === undefined

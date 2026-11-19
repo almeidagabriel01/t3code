@@ -72,6 +72,8 @@ queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
 commands (tests, builds, type checks, simulators) go through the queue on their
 own, even when the agent forgets. Local git writes (`git commit`, `merge`,
 `rebase`) never queue, even with commit hooks: they run at once on this Mac.
+A heavy pre-commit hook (a full test run, say) therefore runs outside the
+queue; move that work to a pre-push hook.
 Open the **Resource Manager** in the status bar:
 its top bar shows each machine's CPU, free memory and slots, and a gauge turns
 amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
@@ -186,14 +188,15 @@ work queue, and each section says what the two do together.
   - **Mac first** fills this Mac, then sends the rest to Linux: a job goes to
     Linux once this Mac has **Send to Linux after** jobs running or waiting
     (default 4), or sooner when this Mac is full and Linux can start it now.
-  - **Hybrid** splits jobs between both: each goes to the machine with the
-    shorter queue per slot (this Mac on a tie), and neither starts a job past
-    its own limits. While Linux is offline everything stays here.
+  - **Automatic** (the default) sends each job to Linux whenever Linux can
+    start it now. This Mac takes a job only when Linux can't start it yet and
+    this Mac is under its own limits; past both, the job waits for Linux. While
+    Linux is offline everything stays here.
   - **Linux** sends every heavy command there, except work with one of the
     reasons below to stay on this Mac.
 
-  With the queue off, work starts here at once and Hybrid or Mac first send it
-  to Linux only while this Mac is over its limits. All of these, and the
+  With the queue off, work starts at once: Automatic still sends it to Linux
+  first, and Mac first sends it there only while this Mac is over its limits. All of these, and the
   policies below, can be set per project; the PC's SSH host, slots, limits and
   checks apply to the whole machine.
 
@@ -202,7 +205,7 @@ work queue, and each section says what the two do together.
   (default 20%) and **CPU limit** (default 70%). It starts at most one new job
   per heartbeat, and waits about a minute after each start so that job's load
   shows first. A busy Linux is not offline: jobs wait for it and say why
-  ("waiting for Linux: 1.8 GB free, keeping 20%").
+  ("Linux can't start it yet: 1.8 GB free, keeping 20%").
 - **Over the limit for.** Either machine counts as over its limits, or back
   under them, only once its readings stay there this long (default 20
   seconds), so a short spike never moves work.
@@ -212,8 +215,10 @@ work queue, and each section says what the two do together.
   the like, even inside scripts and git hooks) go to Linux, each from the folder
   the line is in at that point and with its paths and variables already
   expanded; redirects, pipes, `cd`, read-only git and everything else run here.
-  On Linux, the project's own tools (`vp`, `vitest`) come first, from
-  `node_modules/.bin` between the command's folder and the checkout.
+  A `package.json` script the line runs (`pnpm test`, `npm run lint`) is
+  judged by what its body runs, not by its name. On Linux, the project's own
+  tools (`vp`, `vitest`) come first, from `node_modules/.bin` between the
+  command's folder and the checkout.
 - **Why work stays on this Mac.** A heavy command stays here only for one of
   these reasons, which its row, its card and the agent's output show with what
   caused it:
@@ -229,6 +234,8 @@ work queue, and each section says what the two do together.
     path outside the project, such as `~/.t3`, `~/Library` or another checkout.
   - **Changes this Mac's checkout**: installs, and git commands that write
     when Linux would run them (with `remoto`, for example).
+  - **Uses this Mac's git repository**: `git push`, which needs this Mac's
+    repository and credentials; Linux's copy has neither.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
@@ -240,8 +247,13 @@ work queue, and each section says what the two do together.
 
   A server or watcher runs until you stop it, so it starts here at once and
   never takes a slot in the queue.
-  - **Uses this Mac's Docker**: `docker` and `podman` commands, whose images
-    and containers live in this Mac's daemon.
+  - **Uses this Mac's Docker**: `docker` and `podman` commands that act on the
+    images and containers in this Mac's daemon, such as `ps`, `exec`, `logs`
+    or `compose down`. A fresh `docker build` or `docker run` goes to Linux,
+    unless it publishes a port (`-p`, `--network host`); `docker compose up`
+    serves ports here unless it ends with its containers
+    (`--abort-on-container-exit`, `--exit-code-from`). In a script's body,
+    Docker and package installs belong to the Linux copy.
   - **Talks to a port open here**: an argument or variable names `localhost`,
     `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
     `--base-url http://localhost:5733`.
@@ -250,7 +262,7 @@ work queue, and each section says what the two do together.
     whole (one with no heavy call, or one sent with `remoto`). Beside a heavy
     call the edit runs here and only the heavy call goes to Linux.
 
-  An eleventh reason is learned: **Linux couldn't run this before** (see **If a
+  A twelfth reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.
@@ -286,8 +298,10 @@ work queue, and each section says what the two do together.
   for runs again on this Mac by itself, whatever this setting says, unless its
   job asked for Linux (see **Asking for Linux**). Two such
   failures (by default) whose rerun here passed teach the route for that command
-  and package (`pnpm exec playwright`, not every `pnpm`) for a while; `t3 heavy routes` lists what it
-  learned and `t3 heavy routes --forget <key|all>` clears it. When Linux runs
+  and package (`pnpm exec playwright`, not every `pnpm`) for a while, and a job
+  that runs it then stays on this Mac as a whole. `t3 heavy routes` lists what
+  it learned and `t3 heavy routes --forget <key|all>` clears it; an agent can
+  do the same when you ask it to. When Linux runs
   very short of memory with several jobs, it stops the newest one and queues it
   again; that is not a failure. A command that fails on Linux for its own
   reasons, such as a failing test, returns its exit code and output unchanged
@@ -323,7 +337,7 @@ work queue, and each section says what the two do together.
   with the reason. Several jobs at once share one toast; tap it to open the
   job's thread or the Resource Manager. Choose which ones show in Settings →
   Maintenance → **Heavy job notices**: **Problems and unexpected moves** (the
-  default), **Every machine change** (adds Hybrid sending a job to Linux),
+  default), **Every machine change** (adds Automatic sending a job to Linux),
   **Problems only** or **Off**.
 
 ## Local network access

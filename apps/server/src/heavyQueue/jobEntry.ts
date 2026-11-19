@@ -25,17 +25,17 @@ export const jobOf = (
   readonly args: ReadonlyArray<string>;
   readonly remoto: boolean;
 } => {
-  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
-    return { cwd, program: args[0], args: args.slice(1), remoto: true };
+  if (NodePath.basename(program) === "remoto") {
+    // `remoto` alone has no command: an empty one, which the queue refuses as `remoto`'s misuse.
+    return { cwd, program: args[0] ?? "", args: args.slice(1), remoto: true };
   }
-  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
-    return { cwd, program, args, remoto: false };
-  }
-  const parts = lineParts(args[1]);
+  const at = lineAt(program, args);
+  if (at === null) return { cwd, program, args, remoto: false };
+  const parts = lineParts(args[at]!);
   return {
     cwd: startFolder(parts.dirs, cwd, home),
     program,
-    args: ["-c", parts.command, ...args.slice(2)],
+    args: args.with(at, parts.command),
     remoto: parts.remoto,
   };
 };
@@ -45,17 +45,28 @@ export const jobOf = (
  * Any other program by its name, as Linux runs it (`remoteCommand`).
  */
 export const labelOf = (program: string, args: ReadonlyArray<string>) =>
-  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
-    0,
-    LABEL_CHARS,
-  );
+  (lineOf(program, args) ?? [NodePath.basename(program), ...args].join(" ")).slice(0, LABEL_CHARS);
 
-export const isShellLine = (program: string, args: ReadonlyArray<string>) =>
-  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
+/**
+ * Where a shell's `-c` line sits among its words: `sh -c`, `bash -lc`, `bash -ec`, `bash --login -c`.
+ * Null for any other program, or a shell option that takes a value (`-o pipefail`) before `-c`.
+ */
+export const lineAt = (program: string, args: ReadonlyArray<string>) => {
+  if (!SHELLS.has(NodePath.basename(program))) return null;
+  for (let at = 0; at + 1 < args.length && args[at]!.startsWith("-") && args[at] !== "--"; at++) {
+    if (/^-[a-z]*c[a-z]*$/i.test(args[at]!)) return at + 1;
+  }
+  return null;
+};
+
+export const lineOf = (program: string, args: ReadonlyArray<string>) => {
+  const at = lineAt(program, args);
+  return at === null ? null : args[at]!;
+};
 
 /** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
 export const jobLine = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
+  lineOf(program, args) ?? [program, ...args].map(shellQuote).join(" ");
 
 /**
  * The queue entry a `t3 heavy` job is, built one way for the real job and for a probe of it, so

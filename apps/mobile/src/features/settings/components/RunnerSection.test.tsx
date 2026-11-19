@@ -1,13 +1,13 @@
 import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
+  type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
   DEFAULT_SERVER_SETTINGS,
   RUNNER_DEFAULTS,
   type EnvironmentId,
   type HeavyQueueState,
-  type RunnerKey,
   type ServerSettings,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -150,8 +150,8 @@ async function mount(
     settings?: Partial<ServerSettings>;
     projectSelected?: boolean;
     overridden?: ReadonlyArray<RunnerProjectKey>;
-    mixed?: ReadonlyArray<RunnerKey>;
-    disabled?: ReadonlyArray<RunnerKey>;
+    mixed?: ReadonlyArray<RunnerSettingKey>;
+    disabled?: ReadonlyArray<RunnerSettingKey>;
     linux?: HeavyQueueState["linux"];
     severalMachines?: boolean;
   } = {},
@@ -205,7 +205,7 @@ async function mount(
 
 describe("RunnerSection", () => {
   it("writes each environment setting from its control", async () => {
-    const view = await mount();
+    const view = await mount({ settings: { runnerWhere: "mac" } });
     await act(async () =>
       view.host.querySelector<HTMLInputElement>('input[aria-label="Use the Runner"]')!.click(),
     );
@@ -334,7 +334,11 @@ describe("RunnerSection", () => {
   });
 
   it("shows which project fields inherit and resets an overridden one", async () => {
-    const view = await mount({ projectSelected: true, overridden: ["runnerWhere"] });
+    const view = await mount({
+      projectSelected: true,
+      overridden: ["runnerWhere"],
+      settings: { runnerWhere: "mac" },
+    });
     expect(view.host.textContent).toContain(
       "Everything runs on this Mac. A job's menu can still send it to Linux. Set for this project.",
     );

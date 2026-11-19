@@ -479,8 +479,8 @@ describe("SettingsServerControlsRouteScreen", () => {
     const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
     expect(JSON.parse(queue.dataset.runner!)).toEqual({
       enabled: false,
-      where: "mac",
-      everything: DEFAULT_SERVER_SETTINGS.runnerLinuxEverything,
+      where: "automatic",
+      everything: false,
     });
     act(() => queue.click());
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({

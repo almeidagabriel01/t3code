@@ -134,8 +134,8 @@ describe("what an admission records", () => {
   it.each([
     ["Linux-bound on Linux", "linux", "linux", null],
     ["Mac-bound on the Mac", "mac", "mac", null],
-    ["Hybrid on the Mac", "automatic", "mac", null],
-    ["Hybrid on Linux", "automatic", "linux", "hybrid"],
+    ["Automatic on Linux", "automatic", "linux", null],
+    ["Automatic overflow on the Mac", "automatic", "mac", "hybrid"],
     ["Mac first on the Mac", "macFirst", "mac", null],
     ["Mac first on Linux", "macFirst", "linux", null],
     ["Linux-bound on the Mac", "linux", "mac", "displaced"],
@@ -857,13 +857,13 @@ describe("notices for machine changes", () => {
     ]);
   });
 
-  it("Hybrid sending a job to Linux is planned", () => {
-    expect(titles({ records: [record(startRecord(waiter, "automatic", "linux", NOW))] })).toEqual([
+  it("Automatic sending a job to this Mac is planned", () => {
+    expect(titles({ records: [record(startRecord(waiter, "automatic", "mac", NOW))] })).toEqual([
       {
-        one: "pnpm test went to Linux",
-        description: "Each job goes to the machine with the shorter queue.",
+        one: "pnpm test went to this Mac",
+        description: "Linux was full, so this Mac took it.",
         category: "planned",
-        machine: "linux",
+        machine: "mac",
       },
     ]);
   });
@@ -890,7 +890,7 @@ describe("which notices each setting shows", () => {
       records: [
         record(endedRecord(mac, 1, NOW)),
         record(startRecord(entry({ startedAt: null }), "linux", "mac", NOW)),
-        record(startRecord(entry({ startedAt: null }), "automatic", "linux", NOW)),
+        record(startRecord(entry({ startedAt: null }), "automatic", "mac", NOW)),
       ],
     }),
   );
@@ -1083,7 +1083,10 @@ describe("grouping", () => {
       },
       "3 jobs moved to this Mac",
     ],
-    [{ records: [record(startRecord(waiter, "automatic", "linux", NOW))] }, "3 jobs went to Linux"],
+    [
+      { records: [record(startRecord(waiter, "automatic", "mac", NOW))] },
+      "3 jobs went to this Mac",
+    ],
     [{ linuxBefore: lost(true), linuxAfter: lost(false) }, "Linux went offline"],
     [{ linuxBefore: lost(false), linuxAfter: lost(true) }, "Linux is back online"],
     [{ queueFileError: "EACCES" }, "The heavy queue file is not usable"],

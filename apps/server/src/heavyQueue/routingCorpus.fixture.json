@@ -2,8 +2,8 @@
   "rules": [
     "Verdicts are decided by hand from context.md and design.md; never regenerate them by running the code.",
     "exclusive: the queue kind (admission's EXCLUSIVE words anywhere in the line) stays on this Mac as before.",
-    "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs is judged the same way, one level down. A -c text made by $(...) is judged only when it runs.",
-    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview/storybook script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc, or a watch segment in a script or task name), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
+    "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs, or the package.json script it names explicitly (npm|pnpm|yarn|bun|vp run X, npm run-script X, npm test|start, without a flag that picks another package, read as package.json#X when it runs from the line's own folder), is judged the same way, one level down. A script the line itself writes from a heredoc (cat > f <<EOF, then runs f) is judged by that text, and its path like an unreadable script's. A -c text made by $(...) is judged only when it runs.",
+    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview/storybook script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc, or a watch segment in a script or task name), mac-docker (a docker, podman, nerdctl or docker-compose subcommand other than build, buildx, run, compose build and compose run: it acts on containers this Mac's daemon already has; run or compose run publishing a port (-p, --publish, -P, --publish-all, --service-ports, --network host) and a compose up that does not end with its containers (--abort-on-container-exit, --exit-code-from) are serves-port; in a script's body, a docker command and a package install are the Linux copy's own, no reason), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
     "The first part in source order with a reason decides; otherwise linux. Never a reason: redirects, cd targets, glue, read-only git, Python, sourced files, pipes, stdin, &, syntax the parser cannot follow, an unreadable script inside the checkout, the retired Can-run-on-Linux list.",
     "Subjects: the program (plus the subcommand that decides), the pattern, or the resolved path.",
     "Sanitized: home is /Users/dev, session and scratch ids are ID (a literal <id> would parse as a redirect), commit messages are msg, Python heredoc bodies are pass, company projects are left out."
@@ -1127,6 +1127,32 @@
       "expect": "serves-port:pnpm dev"
     },
     {
+      "line": "pnpm vitest run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "pnpm runs the vitest bin: a test run Linux takes"
+    },
+    {
+      "line": "yarn vitest run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "bun vitest run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "test is pnpm's own command for the test script"
+    },
+    {
       "line": "npx next dev",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
@@ -1366,14 +1392,14 @@
       "line": "docker build -t app .",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "mac-docker:docker build",
-      "why": "the image lands in the daemon that builds it"
+      "expect": "linux",
+      "why": "a fresh build needs nothing of this Mac's daemon"
     },
     {
       "line": "docker run -p 5432:5432 postgres",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "mac-docker:docker run"
+      "expect": "serves-port:docker run"
     },
     {
       "line": "T3CODE_HOME=/Users/dev/.t3/dev pnpm exec vp test run",
@@ -1891,6 +1917,320 @@
       "observed": "synthetic",
       "expect": "mac-state:pnpm add",
       "why": "pnpm's -w is the workspace root and takes no value"
+    },
+    {
+      "line": "constructor -i x",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "valueOf dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "hasOwnProperty build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "toString x",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "git push",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-repo:git push",
+      "why": "a push changes no checkout: it needs this Mac's repository and its credentials"
+    },
+    {
+      "line": "git push origin HEAD",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-repo:git push",
+      "why": "a push changes no checkout: it needs this Mac's repository and its credentials"
+    },
+    {
+      "line": "git pull --rebase",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-state:git pull",
+      "why": "a pull changes this Mac's checkout"
+    },
+    {
+      "line": "docker exec db psql",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-docker:docker exec",
+      "why": "acts on a container this Mac's daemon runs"
+    },
+    {
+      "line": "docker compose -f ci.yml run --rm web pytest",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm run ci",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#ci": "xcodebuild -scheme App test"
+      },
+      "observed": "synthetic",
+      "expect": "mac-tool:xcodebuild",
+      "why": "a package.json script is judged by its body"
+    },
+    {
+      "line": "npm run ci:local",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#ci:local": "node scripts/ci-local/run.mjs"
+      },
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "npm test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#test": "vp test run"
+      },
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "npm run ci",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#ci": "npm run native",
+        "package.json#native": "xcodebuild build"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a script's own scripts are not followed"
+    },
+    {
+      "line": "pnpm --filter web run ci",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#ci": "xcodebuild build"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "another package's script: unread"
+    },
+    {
+      "line": "cd apps/web && npm run ci",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "package.json#ci": "xcodebuild build"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "read from the line's folder, not the one it runs in"
+    },
+    {
+      "line": "./scripts/sql-tests-ci.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./scripts/sql-tests-ci.sh": "#!/bin/bash\nset -e\ncase \"${1:-all}\" in\n  all) pnpm test ;;\n  sql) psql -f tests/schema.sql ;;\nesac\n"
+      },
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux",
+      "why": "case 31: a script the parser cannot follow goes to Linux; a missing tool there falls back and is learned"
+    },
+    {
+      "line": "run() { pnpm exec vp test run \"$@\"; }; run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 31: a function is no reason"
+    },
+    {
+      "line": "diff <(vp lint src) expected.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 31: process substitution is no reason"
+    },
+    {
+      "line": "pnpm exec vp test run src/a.test.ts src/b.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux",
+      "why": "case 32: pnpm exec is judged by its bin"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux",
+      "why": "case 32: input from a file in the checkout travels with it"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < /tmp/x.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 32: this Mac's shell opens the file and its bytes reach Linux on stdin, wherever it lives"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < ~/notes/x.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 32: this Mac's shell opens the file and its bytes reach Linux on stdin, wherever it lives"
+    },
+    {
+      "line": "./portao.sh sql",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./portao.sh": "f() { psql -f \"$1\"; }\narr=(a b)\ncase \"$1\" in\n  sql) f schema.sql ;;\n  agente) (cd agente && uv run pytest -q) ;;\nesac\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a function, an array and a case in the body are no reason"
+    },
+    {
+      "line": "./portao.sh agente",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./portao.sh": "f() { psql -f \"$1\"; }\narr=(a b)\ncase \"$1\" in\n  sql) f schema.sql ;;\n  agente) (cd agente && uv run pytest -q) ;;\nesac\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a function, an array and a case in the body are no reason"
+    },
+    {
+      "line": "./sql-em-etapas.sh 1 2",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./sql-em-etapas.sh": "etapa() { echo \"$1\"; }\npassos=(1 2 3)\nfor p in \"${passos[@]}\"; do etapa \"$p\"; done\ndocker compose run --rm db psql -f etapas.sql\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "the body decides: a compose run in a script is the Linux copy's own"
+    },
+    {
+      "line": "./sql-em-etapas.sh 1 2",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./sql-em-etapas.sh": "etapa() { echo \"$1\"; }\npassos=(1 2 3)\nfor p in \"${passos[@]}\"; do etapa \"$p\"; done\ndocker compose up db\n"
+      },
+      "observed": "synthetic",
+      "expect": "serves-port:docker compose",
+      "why": "the body decides: compose up serves a port"
+    },
+    {
+      "line": "./scripts/verify.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./scripts/verify.sh": "eval \"$(direnv export bash)\"\nvp test run\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "eval in a body is no reason"
+    },
+    {
+      "line": "AG=/Users/dev/.t3/worktrees/t3code/t3-example/agente; . $AG/.env && docker compose -f e2e.yml run --rm e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a compose run; the sourced .env is this shell's"
+    },
+    {
+      "line": "AG=/Users/dev/agente; . $AG/.env && docker compose -f e2e.yml run --rm e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "sourced files are never a reason: this Mac's shell reads the .env and passes the call its variables"
+    },
+    {
+      "line": "cd agente && uv run pytest -q",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "Python is no reason"
+    },
+    {
+      "line": ".venv/bin/pytest -q tests",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a venv the copy lacks fails there and is learned"
+    },
+    {
+      "line": "cat > scripts/check.sh <<'EOF'\nxcodebuild -scheme App test\nEOF\nbash scripts/check.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:xcodebuild",
+      "why": "a heredoc the line writes and runs is judged by its text"
+    },
+    {
+      "line": "cat > scripts/check.sh <<'EOF'\nset -e\nvp test run\nEOF\nbash scripts/check.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a heredoc the line writes and runs is judged by its text"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=a.ts < a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "input in the checkout"
+    },
+    {
+      "line": "vp fmt a.ts b.ts && vp lint a.ts b.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "formatter and linter"
+    },
+    {
+      "line": "docker compose -f e2e.yml up --abort-on-container-exit",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an up that ends by itself serves nothing here"
+    },
+    {
+      "line": "docker compose -f e2e.yml up --exit-code-from e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an up that ends by itself serves nothing here"
+    },
+    {
+      "line": "docker compose -f e2e.yml up",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:docker compose",
+      "why": "an up that keeps running serves its ports"
+    },
+    {
+      "line": "../../node_modules/.bin/effect-tsgo tsrs --noEmit",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a shim in the checkout travels with it"
+    },
+    {
+      "line": "cat > /private/tmp/claude-501/ID/ID/scratchpad/x.sh <<'EOF'\nvp test run\nEOF\nbash /private/tmp/claude-501/ID/ID/scratchpad/x.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/x.sh",
+      "why": "a script the line writes outside the checkout exists only here, whatever its text (#164 would carry it)"
     }
   ]
 }

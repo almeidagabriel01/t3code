@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  AssistantTeamId,
   CommandId,
   ComposerContextId,
   EnvironmentId,
@@ -142,6 +143,7 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
   removePersistedComposerAttachmentFile: composerAttachmentCleanupMocks.remove,
 }));
 
+vi.mock("../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
@@ -170,6 +172,8 @@ import {
   collectComposerContextReferences,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
+import * as Dialog from "../components/ui/Dialog";
+import { readThreadUndoNotice } from "../features/home/thread-undo-notice";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
@@ -181,6 +185,8 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  discardComposerDraft,
+  composerDraftHasUserContent,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -217,6 +223,10 @@ import {
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
+import {
+  assistantGroupDraftKey,
+  assistantGroupOutgoingDraftKey,
+} from "./assistant-group-draft-key";
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -2281,6 +2291,115 @@ describe("mobile composer drafts", () => {
     ).toEqual({});
   });
 
+  it.each([
+    ["a thread", "environment-1:thread-1"],
+    ["an assistant's conversation", "environment-1:assistant:a1:1"],
+    ["a group, a reply to a request included", "group"],
+  ])("tells when %s holds an unsent draft, until it is sent or emptied", async (_, rawKey) => {
+    const key =
+      rawKey === "group"
+        ? assistantGroupDraftKey(EnvironmentId.make("environment-1"), AssistantTeamId.make("t1"))
+        : rawKey;
+    const has = () => composerDraftHasUserContent(getComposerDraftSnapshot(key));
+    appAtomRegistry.set(composerDraftsAtom, {});
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "   ");
+    expect(has()).toBe(false);
+    // The text of a group message on its way is not the group's draft.
+    setComposerDraftText(assistantGroupOutgoingDraftKey(key, null), "on its way");
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "half a thought");
+    expect(has()).toBe(true);
+    // Sending clears the content and keeps the settings, which alone are no draft.
+    updateComposerDraftSettings(key, { runtimeMode: "full-access" });
+    clearComposerDraftContent(key);
+    expect(has()).toBe(false);
+    setComposerDraftText(key, "again");
+    setComposerDraftText(key, "");
+    expect(has()).toBe(false);
+    appAtomRegistry.set(composerDraftsAtom, {
+      [key]: {
+        text: "",
+        attachments: [
+          {
+            id: "image-1",
+            type: "image",
+            name: "photo.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            fileUri: "file:///photo.png",
+            previewUri: "file:///photo.png",
+          },
+        ],
+      },
+    });
+    expect(has()).toBe(true);
+    // Discard, then Undo, puts back the same draft: text, caret, attachments and settings.
+    const kept = {
+      ...getComposerDraftSnapshot(key),
+      text: "keep this",
+      runtimeMode: "full-access" as const,
+    };
+    appAtomRegistry.set(composerDraftsAtom, { [key]: kept });
+    rememberComposerDraftSelection(key, "keep this", { start: 2, end: 4 });
+    discardComposerDraft(key);
+    expect(has()).toBe(false);
+    await readThreadUndoNotice()?.undo();
+    expect(getComposerDraftSnapshot(key)).toEqual(kept);
+    expect(captureComposerDraftInsertion(key)).toEqual({ text: "keep this", start: 2, end: 4 });
+    // A draft written after the discard wins over the Undo.
+    discardComposerDraft(key);
+    setComposerDraftText(key, "newer");
+    await readThreadUndoNotice()?.undo();
+    expect(getComposerDraftSnapshot(key).text).toBe("newer");
+    expect(Dialog.alert).toHaveBeenLastCalledWith(
+      "Failed to restore draft",
+      "The draft has new content.",
+    );
+    appAtomRegistry.set(composerDraftsAtom, {});
+  });
+
+  it("moves group drafts saved under the old key and drops text of sends that were on their way", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const groupKey = assistantGroupDraftKey(environmentId, AssistantTeamId.make("team-1"));
+    const decoded = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        "assistant-group:environment-1:team-1": { text: "keep me", attachments: [] },
+        "assistant-group:environment-1:team-1:outgoing:": { text: "was sending", attachments: [] },
+        [assistantGroupOutgoingDraftKey(groupKey, "project:p1")]: {
+          text: "was sending too",
+          attachments: [],
+        },
+        "environment-1:thread-1": DRAFT,
+      },
+    }).drafts;
+    expect(decoded).toEqual({
+      [groupKey]: { text: "keep me", attachments: [] },
+      "environment-1:thread-1": DRAFT,
+    });
+    expect(groupKey).toBe("environment-1:assistant-group:team-1");
+
+    const decodeBoth = (entries: Array<[string, ComposerDraft]>) =>
+      decodePersistedComposerState({ schemaVersion: 1, drafts: Object.fromEntries(entries) })
+        .drafts[groupKey];
+    const legacy: [string, ComposerDraft] = [
+      "assistant-group:environment-1:team-1",
+      { text: "old text", attachments: [] },
+    ];
+    // The draft under the current key wins whatever order the file lists them in.
+    const current: [string, ComposerDraft] = [groupKey, { text: "new text", attachments: [] }];
+    expect(decodeBoth([legacy, current])?.text).toBe("new text");
+    expect(decodeBoth([current, legacy])?.text).toBe("new text");
+    // A current key holding only settings takes the old key's text.
+    const settingsOnly: [string, ComposerDraft] = [
+      groupKey,
+      { text: "  ", attachments: [], runtimeMode: "full-access" },
+    ];
+    expect(decodeBoth([settingsOnly, legacy])?.text).toBe("old text");
+    expect(decodeBoth([legacy, settingsOnly])?.text).toBe("old text");
+  });
+
   it("removes only drafts owned by the selected environment", () => {
     const environmentId = EnvironmentId.make("environment-cloud");
     const retainedEnvironmentId = EnvironmentId.make("environment-local");
@@ -2306,6 +2425,7 @@ describe("mobile composer drafts", () => {
       removeComposerDraftsForEnvironment(
         {
           [`${environmentId}:thread-cloud`]: DRAFT,
+          [assistantGroupDraftKey(environmentId, AssistantTeamId.make("team-cloud"))]: DRAFT,
           "new-task:cloud-draft": cloudDraft,
           [`${retainedEnvironmentId}:thread-local`]: DRAFT,
           "new-task:local-draft": localDraft,

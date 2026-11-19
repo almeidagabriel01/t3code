@@ -7,6 +7,24 @@ import type { HeavyQueueEntry } from "@t3tools/contracts";
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 /** Options that pick a workspace package (`pnpm --filter web dev`): their value is no script. */
 const SELECTOR_FLAGS = new Set(["--filter", "-F", "--workspace"]);
+/** Options whose value picks the packages a call runs in (`pnpm -F web vitest`), never a word. */
+export const PICK_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  pnpm: ["-F", "--filter", "--filter-prod"],
+};
+/** The packages a call's pick options name, from its raw words (`pnpm -F web`, `--filter=web`). */
+export const pickedOf = (program: string, values: ReadonlyArray<string>) => {
+  const flags = Object.hasOwn(PICK_FLAGS, program) ? PICK_FLAGS[program]! : [];
+  return values.flatMap((value, at) => {
+    const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
+    const picked =
+      flag === undefined
+        ? undefined
+        : value === flag
+          ? values[at + 1]
+          : value.slice(flag.length + 1);
+    return picked === undefined || picked === "" ? [] : [picked];
+  });
+};
 const RUN = /^(run|run-script)$/;
 const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
 /** A finite step a script's name may also name: `serve-static-build` builds and ends. */
@@ -53,7 +71,11 @@ const isDevServer = (
   flags: ReadonlyArray<string> = [],
 ) => {
   const target = runTarget(program, words);
-  const selected = PACKAGE_MANAGERS.has(target.program) && flags.some((f) => SELECTOR_FLAGS.has(f));
+  // A pick option's value already left the words (`PICK_FLAGS`); any other selector's is still there.
+  const picks = Object.hasOwn(PICK_FLAGS, target.program) ? PICK_FLAGS[target.program]! : [];
+  const selected =
+    PACKAGE_MANAGERS.has(target.program) &&
+    flags.some((f) => SELECTOR_FLAGS.has(f) && !picks.includes(f));
   // The selector's value is the first word that is not `run`, wherever the selector sits.
   const value = selected ? target.words.findIndex((word) => !RUN.test(word)) : -1;
   const [first = "", second = ""] = target.words.filter((_, index) => index !== value);

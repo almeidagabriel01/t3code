@@ -32,9 +32,12 @@ import {
 } from "./admission.ts";
 import { DEV_PROGRAMS, EXECUTORS, kindOf, PACKAGE_MANAGERS, scriptCode } from "./commandShapes.ts";
 import {
+  entryOf,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
+  PACKAGE_SCRIPT,
+  pmBinAt,
   readLine,
   shellQuote,
   TYPE_CHECKERS,
@@ -154,7 +157,7 @@ const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
 
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
   patterns
-    .flatMap((pattern) => [pattern, ...(KIND_TOOLS[pattern.trim().toLowerCase()] ?? [])])
+    .flatMap((pattern) => [pattern, ...(entryOf(KIND_TOOLS, pattern.trim().toLowerCase()) ?? [])])
     .some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
 
 export type Eligibility = "linux" | "exclusive" | "mac-only";
@@ -169,6 +172,7 @@ export interface MacReason {
     | "native-build"
     | "mac-env"
     | "mac-state"
+    | "mac-repo"
     | "pinned"
     | "serves-port"
     | "watches"
@@ -192,6 +196,7 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   "native-build": "Builds native code for this Mac",
   "mac-env": "Uses a file only this Mac has",
   "mac-state": "Changes this Mac's checkout",
+  "mac-repo": "Uses this Mac's git repository",
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
   watches: "Watches this Mac's files",
@@ -292,11 +297,7 @@ export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
-  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
-const EXEC = /^(exec|dlx|x)$/;
-/** pnpm, yarn and bun run a bin by name (`pnpm tsc`); these words are their own commands instead. */
-const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
-const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
+  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|pull|fetch)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
@@ -304,6 +305,48 @@ const WATCH = /^--watch(All|-path(=.*)?)?(=true)?$/;
 /** Runners that restart on file changes: watching is what they are for. */
 const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
+const COMPOSE_SUBCOMMAND =
+  /^(attach|build|commit|config|cp|create|down|events|exec|export|images|kill|logs|ls|pause|port|ps|pull|push|restart|rm|run|scale|start|stats|stop|top|unpause|up|version|wait|watch)$/;
+// `-dp 80:80` and `-itP` end a short cluster with a publish flag; `-ePATH=…` does not.
+const PUBLISHES = /^(-[dit]*[pP]|--publish(-all)?(=|$)|--service-ports$|--net(work)?=host$)/;
+
+/**
+ * A container tool's reason: a fresh build or run needs nothing of this Mac's daemon, unless it
+ * publishes a port here; any other subcommand acts on containers or images that daemon has.
+ */
+const dockerReason = (
+  program: string,
+  first: string,
+  after: ReadonlyArray<string>,
+): MacReason | null => {
+  const named = { subject: `${program} ${first}` };
+  const compose =
+    program === "docker-compose"
+      ? after
+      : first === "compose"
+        ? after.slice(after.indexOf("compose") + 1)
+        : null;
+  const args = compose ?? after;
+  // In compose, `-p` before the subcommand names the project.
+  const at =
+    compose === null
+      ? args.indexOf(first)
+      : args.findIndex((word) => COMPOSE_SUBCOMMAND.test(word));
+  const sub = args[at] ?? "";
+  const rest = args.slice(at + 1);
+  const publishes = rest.some(
+    (word, index) =>
+      PUBLISHES.test(word) || (/^--net(work)?$/.test(word) && rest[index + 1] === "host"),
+  );
+  // An `up` that ends with its containers is a run: it serves nothing here.
+  const ends = rest.some((word) => /^--(abort-on-container-exit|exit-code-from)(=|$)/.test(word));
+  if ((compose !== null && sub === "up" && !ends) || (sub === "run" && publishes)) {
+    return { code: "serves-port", ...named };
+  }
+  return (compose === null ? /^(build|buildx|run)$/ : /^(build|run|up)$/).test(sub)
+    ? null
+    : { code: "mac-docker", ...named };
+};
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
   "rustc",
@@ -335,7 +378,7 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
   if (NATIVE_TOOLS.has(program)) return program;
   // `cargo +nightly build`: a toolchain pick comes before the subcommand.
   const sub = words.find((word) => !word.startsWith("+")) ?? "";
-  return NATIVE_SUBCOMMANDS[program]?.test(sub) === true ? `${program} ${sub}` : null;
+  return entryOf(NATIVE_SUBCOMMANDS, program)?.test(sub) === true ? `${program} ${sub}` : null;
 };
 
 /**
@@ -380,23 +423,24 @@ const subcommandWords = (program: string, after: ReadonlyArray<string>) => {
 /**
  * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a native
  * build, a change to this checkout (a git write; an install, whose `node_modules` never comes
- * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs.
+ * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs. In a
+ * script's body, an install or a container command is the copy's own: Linux needs the tool.
  */
-const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
+const programReason = (
+  part: Part,
+  macTools: ReadonlyArray<string>,
+  inScript: boolean,
+): MacReason | null => {
   let { program } = part;
   let after = part.values.slice(part.programAt + 1);
   let words = subcommandWords(program, after);
-  const execAt = EXECUTORS.has(program)
-    ? -1
-    : PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? "")
-      ? 0
-      : null;
-  const head = words[0] ?? "";
+  const binAt = pmBinAt(program, words);
+  const execAt = EXECUTORS.has(program) ? -1 : binAt === 1 ? 0 : null;
   // `pnpm tsc --watch` is `pnpm exec tsc --watch` when no script is named tsc: judge the bin first.
-  if (execAt === null && BIN_RUNNERS.has(program) && head !== "" && !OWN_COMMANDS.test(head)) {
+  if (binAt === 0) {
     const at = part.programAt + 1;
     const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
-    const bin = programReason({ ...part, values }, macTools);
+    const bin = programReason({ ...part, values }, macTools, inScript);
     if (bin !== null) return bin;
   }
   if (execAt !== null) {
@@ -414,7 +458,9 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     return { code: "mac-tool", subject: named };
   }
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
-  if (Object.hasOwn(DEV_PROGRAMS, program) && DEV_PROGRAMS[program]!.test(first)) {
+  // A push changes no checkout, but Linux's copy has no `.git` and none of this Mac's credentials.
+  if (named === "git push") return { code: "mac-repo", subject: named };
+  if (entryOf(DEV_PROGRAMS, program)?.test(first) === true) {
     return { code: "serves-port", subject: named };
   }
   if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
@@ -433,14 +479,17 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     return { code: "watches", subject: named };
   }
   if (DOCKERS.has(program) && first !== "") {
-    return first === "compose" && words.includes("up")
-      ? { code: "serves-port", subject: named }
-      : { code: "mac-docker", subject: named };
+    const docker = dockerReason(program, first, after);
+    return inScript && docker?.code === "mac-docker" ? null : docker;
   }
   if (!PACKAGE_MANAGERS.has(program)) return null;
-  const install = [first, second].find((word) => INSTALLS.test(word));
-  if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
-  const script = first === "run" || first === "run-script" ? second : first;
+  const runs = first === "run" || first === "run-script";
+  // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
+  const install = runs ? undefined : [first, second].find((word) => INSTALLS.test(word));
+  if (install !== undefined && !inScript) {
+    return { code: "mac-state", subject: `${program} ${install}` };
+  }
+  const script = runs ? second : first;
   const code = scriptCode(script);
   return code === null ? null : { code, subject: `${program} ${script}` };
 };
@@ -451,7 +500,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
  */
 export const neverEnds = (line: string, read?: ReadScript) =>
   readLine(line, read).parts.some((part) => {
-    const code = part.handsOffInside ? undefined : programReason(part, [])?.code;
+    const code = part.handsOffInside ? undefined : programReason(part, [], false)?.code;
     return code === "serves-port" || code === "watches";
   });
 
@@ -528,8 +577,9 @@ const tieOf = (
   config: RunnerProjectConfig,
   listening: (port: number) => boolean,
   env: ReadonlyArray<string>,
+  inScript: boolean,
 ): MacReason | null => {
-  const own = programReason(part, config.runnerMacTools);
+  const own = programReason(part, config.runnerMacTools, inScript);
   if (own !== null) return own;
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
@@ -546,10 +596,10 @@ const tieOf = (
     return port === undefined ? null : { code: "mac-port", subject: `localhost:${port}` };
   };
   for (const word of part.command.words.slice(part.programAt)) {
-    // A script read with the job travels as its text; one that couldn't be read is only here.
+    // A script read with the job travels as its text; one unread or written by the line is here.
     if (
       word.value === script?.word
-        ? script.body !== null
+        ? script.body !== null && script.written !== true
         : word === part.command.words[part.programAt]
     ) {
       continue;
@@ -605,7 +655,7 @@ export const movedPart = (
     }
   } else {
     // ponytail: read before the subcommand only, as these tools take them.
-    const flags = FOLDER_FLAGS[programName(values[0])] ?? [];
+    const flags = entryOf(FOLDER_FLAGS, programName(values[0])) ?? [];
     for (let at = 1; at < values.length; at++) {
       const value = values[at]!;
       const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
@@ -660,8 +710,8 @@ const editReason = (
   const { program } = part;
   const args = part.values.slice(part.programAt + 1);
   // An editor's files are relative to its folder: outside any checkout it edits nothing of one.
-  const flag =
-    root !== null && IN_PLACE[program] && args.find((word) => IN_PLACE[program]!.test(word));
+  const inPlace = root === null ? undefined : entryOf(IN_PLACE, program);
+  const flag = inPlace && args.find((word) => inPlace.test(word));
   if (flag) return { code: "edits-in-place", subject: `${program} ${flag}` };
   if (program === "tee") {
     const file = part.command.words
@@ -686,11 +736,14 @@ const editReason = (
 const lineReason = (
   line: string,
   start: string | null,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript | undefined,
   nested = false,
+  inScript = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
+  // Route memory's reason waits for the line's own: any of them wins over it.
+  let learned: MacReason | null = null;
   const parsed = readLine(line, read);
   // The parser keeps a `case` arm's pattern as the command's first word: `a) xcodebuild` runs it.
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
@@ -744,16 +797,24 @@ const lineReason = (
         config,
         listening,
         env.filter((value) => value !== null),
+        inScript,
       );
       // A pattern matches the text a shell runs too: what that text runs says why first.
       if (mac !== null && mac.code !== "pinned") return mac;
+      if (mac === null && at !== null) {
+        learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
+      }
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
         (word) => word.value === given && word.vars.includes(""),
       );
+      // A package.json script was read from the line's own folder: elsewhere it is another's.
+      const elsewhere =
+        part.script?.word.startsWith(PACKAGE_SCRIPT) === true && (moved !== null || cwd !== start);
+      const scriptBody = elsewhere ? undefined : (part.script?.body ?? undefined);
       const body =
-        part.script?.body ??
+        scriptBody ??
         (built ? undefined : shellTextOf(moved?.values ?? part.values.slice(part.programAt)));
       if (body !== undefined) {
         const root = at === null ? null : rootOf(at);
@@ -765,8 +826,10 @@ const lineReason = (
           part.script === null ? read : undefined,
           // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
           whole || part.remoto !== null,
+          inScript || scriptBody !== undefined,
         );
-        if (inner !== null) return inner;
+        if (inner?.code === "learned") learned ??= inner;
+        else if (inner !== null) return inner;
       }
       if (mac !== null) return mac;
     }
@@ -801,7 +864,7 @@ const lineReason = (
       }
     }
   }
-  return null;
+  return learned;
 };
 
 /**
@@ -810,7 +873,7 @@ const lineReason = (
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -830,7 +893,7 @@ export const eligibilityOf = (
 export const macReasonOf = (
   values: ReadonlyArray<string>,
   cwd: string,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript,
 ) => lineReason(values.map(shellQuote).join(" "), cwd, context, read);
 
@@ -1109,6 +1172,8 @@ export interface WorkContext {
   readonly rootOf: (cwd: string) => string | null;
   /** Whether something on this Mac listens on a TCP port; nothing does when absent. */
   readonly listening?: (port: number) => boolean;
+  /** Route memory's reason to keep a call (program first) in `cwd` here; none when absent. */
+  readonly learned?: (values: ReadonlyArray<string>, cwd: string) => MacReason | null;
 }
 
 export interface RoutePlanInput extends PlanInput {
@@ -1189,6 +1254,10 @@ const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
 export const askedLinux = (entry: HeavyQueueEntry) =>
   entry.where === "linux" && !isCall(entry) && (entry as QueuedEntry).linuxOnly === true;
 
+/** `--runner mac` with no reason given, on work Linux could run: kept here, and said so. */
+export const ASKED_MAC_NEEDLESSLY =
+  "Asked for this Mac, but nothing here needs it: drop --runner mac so the PC can take it";
+
 const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
 
 /**
@@ -1219,17 +1288,26 @@ export const intentOf = (
   return mac(
     verdict.reason ??
       (entry.where === "mac"
-        ? ((entry as QueuedEntry).routeReason ??
-          macReasonText({ code: "pinned", subject: "--runner mac" }))
+        ? ((entry as QueuedEntry).routeReason ?? ASKED_MAC_NEEDLESSLY)
         : "Runner set to this Mac"),
   );
 };
 
+/** Why this Mac took a job Linux couldn't start now, worded for the Mac's row. */
+const macTookWhy = (busy: LinuxBusy) =>
+  busy.kind === "slots"
+    ? "Linux is full"
+    : busy.kind === "limits"
+      ? "Linux is at its limits"
+      : busy.kind === "reading"
+        ? "no fresh reading of Linux's load"
+        : busy.why;
+
 /**
- * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie).
- * Mac first: this Mac up to `runnerMacFirstAfter` jobs, then Linux. In both, a machine that can
- * start it now takes it from one that can't, and one over its sustained limits takes nothing new;
- * past both, the job holds. Neither asks: Linux offline or unknown keeps the job on the Mac.
+ * Decides every waiter in queue order. Automatic: Linux whenever it can start the job now; else
+ * this Mac, if it has room and no waiter; else the job waits for Linux. Mac first: this Mac up to
+ * `runnerMacFirstAfter` jobs, then Linux, a full Mac yielding to a Linux that can start it now.
+ * Past both sustained limits, the job holds. Neither asks: Linux offline or unknown keeps it here.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const { entries, now, health, machine, sample } = input;
@@ -1386,9 +1464,6 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     const busy = linuxBusy(entry, worktree);
     return busy !== null && busy.kind === "reading" && isQuick(entry) ? null : busy;
   };
-  /** Hybrid's balance: this Mac's backlog per slot is no longer than Linux's (the Mac on a tie). */
-  const macShorter = () =>
-    macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
   /** Each machine's wait for `entry` in rounds of its slots; one that can't start it now counts one. */
   /**
    * Nothing but its slots keeps this Mac from starting `entry`: no sustained or instant limit, no
@@ -1493,9 +1568,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     cancel(`${what} and nobody answered in time: canceled`);
   };
-  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string, reason: string) => {
     alone.delete(entry.id);
     routes[entry.id] = "linux";
+    reasons[entry.id] = reason;
     linuxCount += 1;
     linuxFree -= 1;
     busyWorktrees.add(worktree);
@@ -1552,9 +1628,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       (up || !droppedFinal(entry, machine))
     ) {
       const hybrid = intent === "automatic";
-      const mode = hybrid ? "Hybrid" : "Mac first";
+      const mode = hybrid ? "Automatic" : "Mac first";
       if (hybrid && paused) {
-        toMac(entry, "Hybrid: queue paused");
+        toMac(entry, "Automatic: queue paused");
         continue;
       }
       if (!up) {
@@ -1571,36 +1647,34 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       const past = macCount >= config.runnerMacFirstAfter;
       let onMac: boolean;
       if (hybrid) {
-        onMac = macShorter();
-        if (onMac && macOver) onMac = false;
-        else if (!onMac && health.overLimit) onMac = true;
-        // A machine that can start it now takes it from the other one, which can't.
-        if (onMac && busy === null && !macRoom(entry)) onMac = false;
-        else if (
-          !onMac &&
-          busy !== null &&
-          !startsOnLinux(entry, busy) &&
-          macWaiters.length === 0 &&
-          macRoom(entry)
-        )
-          onMac = true;
+        onMac =
+          busy !== null && !startsOnLinux(entry, busy) && macWaiters.length === 0 && macRoom(entry);
       } else {
         onMac = !macOver && (!past || health.overLimit);
         // Under its count, a full Mac still yields to a Linux that can start it now.
         if (onMac && busy === null && !macRoom(entry)) onMac = false;
       }
       if (onMac) {
-        toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
+        toMac(
+          entry,
+          hybrid && busy !== null
+            ? `This Mac took it: ${macTookWhy(busy)}`
+            : "Mac first: this Mac has room",
+        );
         continue;
       }
+      const macFirstWhy = past
+        ? `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`
+        : "Mac first: this Mac has no room";
       if (paused && entry.forced !== true) toLinux(entry, "paused");
-      else if (busy === null || startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
-      else {
+      else if (busy === null || startsOnLinux(entry, busy)) {
+        toLinuxNow(entry, worktree, hybrid ? "Linux first: the PC can start it now" : macFirstWhy);
+      } else {
         toLinux(entry, busy);
-        if (hybrid && macOver) reasons[entry.id] = "Hybrid: this Mac is over its limits";
-        if (!hybrid && past) {
-          reasons[entry.id] = `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`;
-        }
+        if (hybrid) {
+          const why = busy.kind === "reading" ? "no fresh reading of its load" : busy.why;
+          reasons[entry.id] = `Linux can't start it yet: ${why}`;
+        } else if (past) reasons[entry.id] = macFirstWhy;
       }
       continue;
     }
@@ -1612,7 +1686,19 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (up) {
       const busy = busyFor(entry, worktree);
       if (busy !== null && !startsOnLinux(entry, busy)) linuxFullRoute(entry, config, busy);
-      else toLinuxNow(entry, worktree);
+      else {
+        toLinuxNow(
+          entry,
+          worktree,
+          entry.route === "linux"
+            ? "Moved to Linux"
+            : askedLinux(entry)
+              ? "Asked for Linux"
+              : entry.where === "linux"
+                ? "Sent to Linux with remoto"
+                : "Runner set to Linux",
+        );
+      }
       continue;
     }
     if (health.online === null && entry.linuxFailedAt === undefined) {

@@ -9,12 +9,13 @@ import {
   runnerFieldIdle,
   runnerModeFieldApplies,
   runnerWhereLine,
+  RUNNER_SETTING_DEFAULTS,
+  RUNNER_SETTING_PROJECT_KEYS,
   type RunnerChoices,
+  type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
-  RUNNER_DEFAULTS,
   RUNNER_LIMITS,
-  RUNNER_PROJECT_KEYS,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
   RunnerUnavailablePolicy,
@@ -23,7 +24,6 @@ import {
   runnerPatterns,
   runnerPatternsError,
   type EnvironmentId,
-  type RunnerKey,
   type RunnerNumberKey,
   type RunnerWhere,
   type ServerSettings,
@@ -45,13 +45,14 @@ import { SettingsSection } from "./SettingsSection";
 import { RUNNER_SECTION_COPY } from "./runnerSectionCopy";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
-export type RunnerProjectKey = (typeof RUNNER_PROJECT_KEYS)[number];
+export type RunnerProjectKey = (typeof RUNNER_SETTING_PROJECT_KEYS)[number];
 type Check = { readonly error: string } | { readonly patch: ServerSettingsPatch | null };
 type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 
-const patchOf = (key: RunnerKey, value: unknown) => ({ [key]: value }) as ServerSettingsPatch;
-const isProjectKey = (key: RunnerKey): key is RunnerProjectKey =>
-  RUNNER_PROJECT_KEYS.includes(key as RunnerProjectKey);
+const patchOf = (key: RunnerSettingKey, value: unknown) =>
+  ({ [key]: value }) as ServerSettingsPatch;
+const isProjectKey = (key: RunnerSettingKey): key is RunnerProjectKey =>
+  RUNNER_SETTING_PROJECT_KEYS.includes(key as RunnerProjectKey);
 const UNIT: Record<(typeof RUNNER_LIMITS)[RunnerNumberKey]["unit"], string> = {
   minutes: "min",
   jobs: "jobs",
@@ -232,13 +233,13 @@ const hostCheck =
 export function RunnerSection(props: {
   readonly environmentId: EnvironmentId;
   /** Effective values: the project's in project scope, the environment's otherwise. */
-  readonly settings: Pick<ServerSettings, RunnerKey>;
+  readonly settings: Pick<ServerSettings, RunnerSettingKey>;
   readonly projectSelected: boolean;
   /** True when the selected project sets `key` itself instead of inheriting it. */
   readonly overridden: (key: RunnerProjectKey) => boolean;
   /** True when the selected targets hold different values for `key`. */
-  readonly mixed: (key: RunnerKey) => boolean;
-  readonly disabledFor: (key: RunnerKey) => boolean;
+  readonly mixed: (key: RunnerSettingKey) => boolean;
+  readonly disabledFor: (key: RunnerSettingKey) => boolean;
   readonly write: (patch: ServerSettingsPatch) => void;
   /** Drops the project's own value so it inherits the environment's again. */
   readonly reset: (key: RunnerProjectKey) => void;
@@ -256,14 +257,16 @@ export function RunnerSection(props: {
     runnerUnavailable: choice("runnerUnavailable"),
     runnerDropped: choice("runnerDropped"),
   };
-  const everything = props.mixed("runnerLinuxEverything") ? null : settings.runnerLinuxEverything;
-  const shown = (...keys: ReadonlyArray<RunnerKey>) =>
+  const everything = props.mixed("runnerLinuxEverything")
+    ? null
+    : (settings.runnerLinuxEverything ?? RUNNER_SETTING_DEFAULTS.runnerLinuxEverything);
+  const shown = (...keys: ReadonlyArray<RunnerSettingKey>) =>
     keys.some(
       (key) =>
         runnerFieldIdle(key, choices) === null &&
         runnerModeFieldApplies(key, choices.runnerWhere, everything),
     );
-  const scoped = (key: RunnerKey, text: string) => {
+  const scoped = (key: RunnerSettingKey, text: string) => {
     if (!projectSelected) return text;
     if (!isProjectKey(key))
       return `${text} Environment-wide setting. Select All projects to change it.`.trim();
@@ -328,7 +331,7 @@ export function RunnerSection(props: {
             ? `${RUNNER_SETTING_COPY[key].description} Differs across the selected targets.`
             : RUNNER_SETTING_COPY[key].description,
         )}
-        value={settings[key]}
+        value={settings[key] ?? RUNNER_SETTING_DEFAULTS[key]}
         disabled={props.disabledFor(key)}
         mixed={props.mixed(key)}
         onSave={(next) => props.write(patchOf(key, next))}
@@ -338,7 +341,7 @@ export function RunnerSection(props: {
           icon="arrow.counterclockwise"
           label="Use the defaults everywhere"
           disabled={props.disabledFor(key)}
-          onPress={() => props.write(patchOf(key, RUNNER_DEFAULTS[key]))}
+          onPress={() => props.write(patchOf(key, RUNNER_SETTING_DEFAULTS[key]))}
         />
       ) : null}
       {resetRow(key)}
@@ -358,7 +361,7 @@ export function RunnerSection(props: {
               : RUNNER_SETTING_COPY[key].description,
           ) || undefined
         }
-        value={props.mixed(key) ? null : settings[key]}
+        value={props.mixed(key) ? null : (settings[key] ?? RUNNER_SETTING_DEFAULTS[key])}
         disabled={props.disabledFor(key)}
         onValueChange={(value) => props.write(patchOf(key, value))}
       />

@@ -37,6 +37,8 @@ export const wordFrom = (word: Word, from: number): Word => ({
 export interface Redirect {
   readonly op: string;
   readonly target: Word | null;
+  /** A heredoc's text, once its delimiter closed it. */
+  readonly body?: string;
 }
 
 export interface Command {
@@ -91,19 +93,27 @@ export const parseLine = (source: string): ParsedLine => {
   };
   let at = 0;
   let scopes = 0;
-  const heredocs: Array<{ readonly delimiter: string; readonly strip: boolean }> = [];
+  const heredocs: Array<{
+    readonly delimiter: string;
+    readonly strip: boolean;
+    readonly redirect: { op: string; target: Word | null; body?: string };
+  }> = [];
 
   /** A heredoc's body is text a program reads, never commands. */
   const skipHeredocBodies = () => {
-    for (const { delimiter, strip } of heredocs.splice(0)) {
+    for (const { delimiter, strip, redirect } of heredocs.splice(0)) {
       let found = false;
+      const lines: string[] = [];
       while (!found && at < source.length) {
         const newline = source.indexOf("\n", at);
-        const text = source.slice(at, newline < 0 ? source.length : newline);
+        const raw = source.slice(at, newline < 0 ? source.length : newline);
+        const text = strip ? raw.replace(/^\t+/, "") : raw;
         at = newline < 0 ? source.length : newline + 1;
-        found = (strip ? text.replace(/^\t+/, "") : text) === delimiter;
+        found = text === delimiter;
+        if (!found) lines.push(text);
       }
-      if (!found) flag("unterminated heredoc");
+      if (found) redirect.body = lines.map((text) => `${text}\n`).join("");
+      else flag("unterminated heredoc");
     }
   };
 
@@ -328,11 +338,15 @@ export const parseLine = (source: string): ParsedLine => {
         at += text.length;
         while (source[at] === " " || source[at] === "\t") at++;
         const target = at < source.length && !META.has(source[at]!) ? readWord(context) : null;
+        const redirect: { op: string; target: Word | null; body?: string } = {
+          op: `${fd}${op}`,
+          target,
+        };
         if (op === "<<" || op === "<<-") {
           if (target === null) flag("heredoc");
-          else heredocs.push({ delimiter: target.value, strip: op === "<<-" });
+          else heredocs.push({ delimiter: target.value, strip: op === "<<-", redirect });
         }
-        redirects.push({ op: `${fd}${op}`, target });
+        redirects.push(redirect);
         mark(from);
       } else if (c === "(") {
         if (words.length > 0 || assigns.length > 0) flag("function or array");
