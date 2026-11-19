@@ -132,9 +132,7 @@ function DraftField(props: {
         </Text>
       )}
       {error !== null || props.status === undefined ? null : (
-        <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-          {props.status}
-        </Text>
+        <Text className="text-sm text-foreground-muted">{props.status}</Text>
       )}
     </View>
   );
