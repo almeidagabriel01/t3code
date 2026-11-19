@@ -757,6 +757,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("settles the thread before it reports the turn's end", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = Array.from(yield* Fiber.join(collected));
+      const ended = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+      );
+      const settled = seen.findLastIndex(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      assert.isAtLeast(ended, 0);
+      assert.isAtLeast(settled, 0);
+      // The next turn starts on the end, so a later idle write would land on top of it.
+      assert.isBelow(settled, ended);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn running through a start event this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
