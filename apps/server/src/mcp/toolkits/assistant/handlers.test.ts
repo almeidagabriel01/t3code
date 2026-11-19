@@ -22,6 +22,7 @@ import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantSandboxControl from "../../../assistants/AssistantSandboxControl.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import { PROVIDER_UNAUTHENTICATED } from "../../OrchestratorMcpService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
@@ -232,6 +233,13 @@ const harness = (
     const notified: Array<Parameters<AutonomyService.AutonomyService["Service"]["notifyUser"]>[0]> =
       [];
     const resent: string[] = [];
+    const peers = {
+      enabled: true,
+      links: [{ environmentId: EnvironmentId.make("env-devbox"), label: "devbox" }] as Array<{
+        environmentId: EnvironmentId;
+        label: string;
+      }>,
+    };
     const deps = Layer.succeedContext(
       yield* Layer.build(
         Layer.mergeAll(
@@ -267,6 +275,10 @@ const harness = (
               tool.name === "orchestrator_capabilities" && environmentId === sandboxId
                 ? Effect.sync(() => ({ providers: container.providers }) as never)
                 : Effect.die(`unexpected ${tool.name}`),
+          }),
+          Layer.mock(PeerLinks.PeerLinks)({
+            enabled: Effect.sync(() => peers.enabled),
+            stored: Effect.sync(() => peers.links as never),
           }),
           Layer.mock(RemoteDelegation.RemoteDelegation)({
             delegate: (_scope, input, options) =>
@@ -384,7 +396,7 @@ const harness = (
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts, announced, container, notified, resent };
+    return { call, writes, decisions, posts, announced, container, notified, resent, peers };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -768,6 +780,7 @@ it.effect("a group change is refused unless the turn came from the user", () =>
       for (const input of [
         { action: "group_create", name: "Ops" },
         { action: "group_update", group: "Core", name: "New" },
+        { action: "update", handle: "eng", defaultEnvironment: "devbox" },
       ] as const) {
         expect(yield* call(input)).toMatchObject({
           code: "capability_denied",
@@ -779,6 +792,72 @@ it.effect("a group change is refused unless the turn came from the user", () =>
       expect(writes).toEqual([]);
       expect(announced).toEqual([]);
     }
+  }),
+);
+
+it.effect("a default environment is set by label or id, read with its state, and checked", () =>
+  Effect.gen(function* () {
+    const { call, writes, announced, peers } = yield* harness("full-access");
+    expect((yield* call({ action: "read", handle: "eng" })).defaultEnvironment).toBeNull();
+    const set = yield* call({ action: "update", handle: "eng", defaultEnvironment: "DevBox" });
+    expect(set.assistant.defaultEnvironment).toEqual({
+      value: "env-devbox",
+      label: "devbox",
+      state: "ok",
+    });
+    expect(writes.at(-1)).toEqual({
+      update: expect.objectContaining({ defaultEnvironment: "env-devbox" }),
+    });
+    // This server's own id is stored as given and reads as Local.
+    expect(
+      (yield* call({ action: "update", handle: "eng", defaultEnvironment: "environment" }))
+        .assistant.defaultEnvironment,
+    ).toEqual({ value: "environment", label: "Local", state: "ok" });
+    expect(yield* call({ action: "update", handle: "eng", defaultEnvironment: "laptop" })).toEqual(
+      expect.objectContaining({
+        code: "invalid_request",
+        message: expect.stringContaining(
+          'Use one of: Local ("local"), devbox ("env-devbox"), Auto ("auto").',
+        ),
+      }),
+    );
+    yield* call({ action: "update", handle: "eng", defaultEnvironment: "env-devbox" });
+    // An unlinked id stays stored and reads as unavailable; with the beta off it runs here.
+    peers.links = [];
+    expect((yield* call({ action: "read", handle: "eng" })).defaultEnvironment).toEqual({
+      value: "env-devbox",
+      label: "env-devbox",
+      state: "unavailable",
+    });
+    peers.enabled = false;
+    expect((yield* call({ action: "list" })).assistants[1].defaultEnvironment).toMatchObject({
+      state: "linked_environments_off",
+    });
+    expect(
+      (yield* call({ action: "update", handle: "eng", defaultEnvironment: null })).assistant
+        .defaultEnvironment,
+    ).toBeNull();
+
+    // A group's default: a repeat of the same value leaves no second chat line.
+    for (const clientRequestId of ["e1", "e2"]) {
+      const group = yield* call({
+        action: "group_update",
+        group: "Core",
+        defaultEnvironment: "auto",
+        clientRequestId,
+      });
+      expect(group.group.defaultEnvironment).toEqual({
+        value: "auto",
+        label: "Auto",
+        state: "linked_environments_off",
+      });
+    }
+    yield* call({ action: "group_update", group: "Core", defaultEnvironment: null });
+    expect(announced.map((line) => line.text)).toEqual([
+      "set the group's default environment to Auto",
+      "cleared the group's default environment",
+    ]);
+    expect((yield* call({ action: "read", handle: "eng" })).teams[0].defaultEnvironment).toBeNull();
   }),
 );
 

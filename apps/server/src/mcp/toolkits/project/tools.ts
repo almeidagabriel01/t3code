@@ -3,10 +3,7 @@ import {
   NonNegativeInt,
   ModelSelection,
   TrimmedNonEmptyString,
-  ThreadId,
-  RunId,
   OrchestrationV2DelegatedFrom,
-  OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
   ProviderInteractionMode,
@@ -17,6 +14,7 @@ import {
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadLaunchResult,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
@@ -156,14 +154,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     /** Set by a linked environment launching its agent's delegated task here; ignored otherwise. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   }),
-  success: Schema.Struct({
-    threadId: ThreadId,
-    link: Schema.optional(Schema.String),
-    projectId: ProjectId,
-    modelSelection: ModelSelection,
-    runId: Schema.NullOr(RunId),
-    status: Schema.NullOr(OrchestrationV2RunStatus),
-  }),
+  success: OrchestratorMcpThreadLaunchResult,
   dependencies: [
     ...shared.dependencies,
     ThreadLaunchService.ThreadLaunchService,

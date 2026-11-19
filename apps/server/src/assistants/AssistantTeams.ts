@@ -1,5 +1,6 @@
 import {
   ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS,
+  AssistantEnvironmentPreference,
   AssistantId,
   type AssistantTeam,
   type AssistantTeamId,
@@ -22,6 +23,7 @@ export interface AssistantTeamRow {
   readonly instructions?: string;
   readonly memories_json?: string;
   readonly default_model_selection?: string | null;
+  readonly default_environment?: string | null;
   readonly project_ids_json?: string;
   /** Chat counters, present when the row comes from `assistant_team_state`. */
   readonly read_seq?: number;
@@ -110,6 +112,11 @@ const encodeModelSelection = Schema.encodeSync(ModelSelectionJson);
 export const encodeModelSelectionJson = (selection: ModelSelection | null) =>
   selection === null ? null : encodeModelSelection(selection);
 
+const decodeEnvironmentOption = Schema.decodeUnknownOption(AssistantEnvironmentPreference);
+/** A stored default that no longer decodes reads as none: inherit. */
+export const decodeEnvironmentPreference = (value: string | null | undefined) =>
+  value == null ? null : Option.getOrNull(decodeEnvironmentOption(value));
+
 // A row that no longer decodes has no members rather than hiding every team.
 export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   id: row.team_id as AssistantTeamId,
@@ -120,6 +127,7 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   instructions: row.instructions ?? "",
   memories: Option.getOrElse(decodeStrings(row.memories_json ?? "[]"), () => []),
   defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
+  defaultEnvironment: decodeEnvironmentPreference(row.default_environment),
   projectIds: Option.getOrElse(
     decodeStrings(row.project_ids_json ?? "[]"),
     () => [],

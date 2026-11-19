@@ -78,6 +78,7 @@ import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
 const boxProject = ProjectId.make("project:box");
+const boxScratch = ProjectId.make("project:box-scratch");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.4" };
@@ -92,6 +93,8 @@ type LaunchedWith = Pick<
 /** The thread the box launches for the task, which the test finishes. */
 interface BoxThread {
   readonly launched: Ref.Ref<ThreadId | null>;
+  /** The project there it launched in. */
+  readonly launchedProject: Ref.Ref<ProjectId | null>;
   /** The link session that launched it, as the box stamps it. */
   readonly linkOrigin: Ref.Ref<{ readonly sessionId: string; readonly label: string } | null>;
   /** The parent the launch names, so the thread there can link back to it. */
@@ -148,6 +151,7 @@ interface BoxThread {
 const makeBoxThread = Effect.gen(function* () {
   return {
     launched: yield* Ref.make<ThreadId | null>(null),
+    launchedProject: yield* Ref.make<ProjectId | null>(null),
     linkOrigin: yield* Ref.make<{ readonly sessionId: string; readonly label: string } | null>(
       null,
     ),
@@ -454,6 +458,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
             Effect.andThen(Ref.set(thread.linkOrigin, input.linkOrigin ?? null)),
             Effect.andThen(Ref.set(thread.delegatedFrom, input.delegatedFrom ?? null)),
             Effect.andThen(Ref.set(thread.message, input.initialMessage?.text ?? null)),
+            Effect.andThen(Ref.set(thread.launchedProject, input.projectId ?? null)),
             Effect.andThen(
               Ref.set(thread.launchedWith, {
                 modelSelection: input.modelSelection,
@@ -501,7 +506,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     Layer.provide(
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/p",
+        ensureScratchProject: Effect.succeed({ projectId: boxScratch } as never),
+      }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(
@@ -644,9 +652,10 @@ const makeLaptop = (
           Layer.provide(
             Layer.mock(ProjectService.ProjectService)({
               // A cold enrichment cache: the project itself reports no identity yet.
-              getById: () =>
+              getById: (projectId) =>
                 Effect.succeedSome({
-                  workspaceRoot: "/home/me/app",
+                  // An assistant's home folder, which has no repository.
+                  workspaceRoot: projectId === "project:home" ? "/home/me/jarvis" : "/home/me/app",
                   repositoryIdentity: null,
                 } as never),
             }),
@@ -725,7 +734,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  options: { readonly projectId?: ProjectId } = {},
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -735,7 +747,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       creationSource: "web",
       commandId: CommandId.make("command:create:laptop-parent"),
       threadId: parentThreadId,
-      projectId: ProjectId.make("project:laptop"),
+      projectId: options.projectId ?? ProjectId.make("project:laptop"),
       title: "Laptop parent",
       modelSelection,
       runtimeMode: "full-access",
@@ -2079,6 +2091,62 @@ it.effect(
         expect(yield* Ref.get(thread.launched)).not.toBeNull();
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("maps a project here to the box's project with its repository, never cloning", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const scope = parentScope as McpInvocationContext.McpThreadInvocationScope;
+      const map = (projectId: ProjectId | undefined) =>
+        a.remote.remoteProject(scope, box.environmentId, projectId);
+
+      expect(yield* map(ProjectId.make("project:app"))).toBe(boxProject);
+      // No project, or one with no repository, runs in Scratch there.
+      expect(yield* map(undefined)).toBeUndefined();
+      expect(yield* map(ProjectId.make("project:home"))).toBeUndefined();
+      yield* Ref.set(thread.noProject, true);
+      const refused = yield* Effect.flip(map(ProjectId.make("project:app")));
+      expect(refused.code).toBe("invalid_request");
+      expect(refused.message).toContain("No project there has this repository");
+      expect(yield* Ref.get(thread.cloned)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task a default sent there from a project with no repository runs in Scratch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a, { projectId: ProjectId.make("project:home") });
+      const scope = parentScope as McpInvocationContext.McpThreadInvocationScope;
+      const input = {
+        task: "Look around.",
+        target: { environmentId: box.environmentId },
+        mode: "async",
+      } as const;
+
+      const refused = yield* Effect.flip(a.remote.delegate(scope, input));
+      expect(refused.code).toBe("target_required");
+      yield* a.remote.delegate(scope, input, { implicit: true });
+      expect(yield* Ref.get(thread.launchedProject)).toBe(boxScratch);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("tells the sandbox when a task starts in it and when that task ends", () =>

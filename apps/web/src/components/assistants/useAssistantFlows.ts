@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANTS_RESTORE_DEFAULT_INPUT,
   type Assistant,
+  type AssistantEnvironmentPreference,
   type AssistantTeam,
   type EnvironmentId,
   type ScopedThreadRef,
@@ -86,6 +87,15 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
         await actions.update({ assistantId: assistant.id, archived: false }),
       );
     },
+    async setDefaultEnvironment(
+      assistant: Pick<Assistant, "id">,
+      defaultEnvironment: AssistantEnvironmentPreference | null,
+    ) {
+      failed(
+        "Could not change the default environment",
+        await actions.update({ assistantId: assistant.id, defaultEnvironment }),
+      );
+    },
     dismissTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, true),
     restoreTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, false),
     async restoreDefault() {
@@ -124,6 +134,15 @@ export function useAssistantTeamFlows(environmentId: EnvironmentId) {
       failed(
         "Could not archive the group",
         await actions.update({ teamId: team.id, archived: true }),
+      );
+    },
+    async setDefaultEnvironment(
+      team: Pick<AssistantTeam, "id">,
+      defaultEnvironment: AssistantEnvironmentPreference | null,
+    ) {
+      failed(
+        "Could not change the default environment",
+        await actions.update({ teamId: team.id, defaultEnvironment }),
       );
     },
     async restore(team: Pick<AssistantTeam, "id">) {

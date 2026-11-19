@@ -155,7 +155,10 @@ import {
   threadNotFound,
 } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import {
+  resolveLaunchEnvironment,
+  routingDeps,
+} from "../assistants/AssistantEnvironmentRouting.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -1086,6 +1089,7 @@ const make = Effect.gen(function* () {
   const projectModelSelection = yield* ProjectModelSelectionService.ProjectModelSelectionService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+  const routing = yield* routingDeps;
   const assistantRequests = yield* Effect.serviceOption(AssistantRequests);
   const serverConfig = yield* Effect.serviceOption(ServerConfig);
   // Without it, thread statuses come from runs alone.
@@ -2547,26 +2551,39 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
-      const environmentId =
-        input.target === undefined
-          ? undefined
-          : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
+      const { environmentId, implicit } = yield* resolveLaunchEnvironment(routing, {
+        scope: callerScope,
+        threads: threadManagement,
+        explicit: input.target?.environmentId,
+        clientRequestId: input.clientRequestId,
+      });
       yield* refuseOutsideSandbox(callerScope, environmentId);
       yield* refuseOutsideProject(callerScope, {
         elsewhere: environmentId !== undefined,
         delegate: true,
       });
-      if (input.target !== undefined && environmentId !== undefined) {
+      if (environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.
-        const { taskId } = yield* remoteDelegation.delegate(scope, {
-          ...input,
-          target: { ...input.target, environmentId },
-        });
-        return yield* input.mode === "wait"
+        const { taskId } = yield* remoteDelegation.delegate(
+          scope,
+          {
+            ...input,
+            target: {
+              ...input.target,
+              environmentId,
+              ...(implicit?.projectId === undefined ? {} : { projectId: implicit.projectId }),
+            },
+          },
+          implicit === undefined ? undefined : { implicit: true },
+        );
+        const result = yield* input.mode === "wait"
           ? awaitTask(scope, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
+        return implicit === undefined
+          ? result
+          : { ...result, environmentId, environmentLabel: implicit.label };
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
       if (

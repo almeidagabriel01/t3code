@@ -78,6 +78,8 @@ import {
   openAssistantTeamDialog,
 } from "./assistantTeamState";
 import { openAssistantWork } from "./assistantWorkState";
+import { ASSISTANT_DEFAULT_ENVIRONMENT_LABEL } from "@t3tools/client-runtime/assistantEnvironment";
+import { AssistantEnvironmentField } from "./AssistantEnvironmentField";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 const ROW =
@@ -109,13 +111,22 @@ function ActionRow(props: {
   );
 }
 
-function Section(props: { readonly title: string; readonly children: ReactNode }) {
+function Section(props: {
+  readonly title: string;
+  readonly children: ReactNode;
+  /** A single field instead of rows. */
+  readonly field?: boolean;
+}) {
   return (
     <section aria-label={props.title} className="flex min-w-0 flex-col gap-1">
       <h3 className="px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {props.title}
       </h3>
-      <ul className="m-0 flex min-w-0 flex-col p-0">{props.children}</ul>
+      {props.field === true ? (
+        <div className="min-w-0 px-2">{props.children}</div>
+      ) : (
+        <ul className="m-0 flex min-w-0 flex-col p-0">{props.children}</ul>
+      )}
     </section>
   );
 }
@@ -370,6 +381,17 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
           <InfoField icon={GaugeIcon} label="Spending limit" value={spendLine(spend)} />
         ) : null}
       </Section>
+      <Section title={ASSISTANT_DEFAULT_ENVIRONMENT_LABEL} field>
+        <AssistantEnvironmentField
+          bare
+          environmentId={environmentId}
+          value={assistant.defaultEnvironment}
+          workspace={assistant.workspace}
+          scope={assistant.scope}
+          disabled={archived || !flows.canAct}
+          onChange={(next) => void flows.setDefaultEnvironment(assistant, next)}
+        />
+      </Section>
       {archived ? (
         <ActionRow
           icon={ArchiveRestoreIcon}
@@ -563,6 +585,16 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
             </li>
           );
         })}
+      </Section>
+      <Section title={ASSISTANT_DEFAULT_ENVIRONMENT_LABEL} field>
+        <AssistantEnvironmentField
+          bare
+          environmentId={environmentId}
+          value={team.defaultEnvironment}
+          group
+          disabled={archived || !flows.canAct}
+          onChange={(next) => void flows.setDefaultEnvironment(team, next)}
+        />
       </Section>
       <ul className="m-0 flex flex-col p-0">
         {(

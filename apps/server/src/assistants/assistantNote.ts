@@ -1,15 +1,24 @@
-import type { Assistant, AssistantTeam, OrchestrationV2Run, ThreadId } from "@t3tools/contracts";
+import type {
+  Assistant,
+  AssistantEnvironmentPreference,
+  AssistantTeam,
+  OrchestrationV2Run,
+  ThreadId,
+} from "@t3tools/contracts";
 import { QUIET_REPLY } from "@t3tools/shared/assistantTaskEvents";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { settledWaitsNote, waitKeyOfWake } from "../autonomy/needsYou.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
 import {
   effectiveProjectIdsOf,
-  HOST_CONTAINER_NOTE_LINE,
+  hostContainerNoteLine,
   projectLabel,
   projectScopeNoteLine,
   sandboxNoteLine,
@@ -80,6 +89,8 @@ export function assistantNoteFor(
     readonly workspace?: Assistant["workspace"] | undefined;
     readonly scope?: Assistant["scope"] | undefined;
     readonly projectIds?: ReadonlyArray<string> | undefined;
+    /** Where its launches run by default when not here; see `launchesOn`. */
+    readonly launchesOn?: string | null | undefined;
   },
   userText: string,
   teams: ReadonlyArray<TeamMembership> = [],
@@ -100,7 +111,7 @@ export function assistantNoteFor(
     teamsLines(assistant, teams, projectTitles),
     assistant.workspace === "sandbox"
       ? sandboxNoteLine(sandboxEnvironmentId)
-      : HOST_CONTAINER_NOTE_LINE,
+      : escapeBody(hostContainerNoteLine(assistant.launchesOn ?? null)),
     assistant.scope === "project"
       ? escapeBody(projectScopeNoteLine(assistant.projectIds ?? [], projectTitles))
       : "",
@@ -129,6 +140,36 @@ function assistantTaskNoteFor(
     .join("\n");
   return `${open}\n${body}\n</t3_assistant_task>`;
 }
+
+/**
+ * Where a default sends launches, named for the note: a link's label (its id once unlinked) or
+ * "the least loaded environment"; null when they run here. Read from the turn's services, which
+ * the server runtime has; without settings the default counts as off, so here.
+ */
+const launchesOn = Effect.fn("AssistantNote.launchesOn")(function* (
+  preference: AssistantEnvironmentPreference,
+) {
+  if (preference === "local") return null;
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settings)) return null;
+  const enabled = yield* settings.value.getSettings.pipe(
+    Effect.map((current) => current.linkedEnvironmentsEnabled),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!enabled) return null;
+  if (preference === "auto") return "the least loaded environment";
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  if (Option.isSome(environment) && preference === (yield* environment.value.getEnvironmentId))
+    return null;
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+  const rows = Option.isNone(sql)
+    ? []
+    : yield* sql.value<{ readonly label: string }>`
+        SELECT label FROM peer_environment_links WHERE environment_id = ${preference}`.pipe(
+        Effect.orElseSucceed(() => []),
+      );
+  return rows[0]?.label ?? preference;
+});
 
 /**
  * Sent ahead of every turn of an assistant thread, not once: the instructions then survive
@@ -160,7 +201,20 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
     named.length > 0 && directory.value.projectTitles !== undefined
       ? yield* directory.value.projectTitles(named)
       : {};
-  return assistantNoteFor({ ...assistant, projectIds }, userText, teams, sandbox, titles);
+  // The same rule launches follow: a group's default first in its threads; sandboxed and project
+  // assistants keep theirs here.
+  const preference = found.value.team?.defaultEnvironment ?? assistant.defaultEnvironment;
+  const target =
+    preference == null || assistant.workspace === "sandbox" || assistant.scope === "project"
+      ? null
+      : yield* launchesOn(preference);
+  return assistantNoteFor(
+    { ...assistant, projectIds, launchesOn: target },
+    userText,
+    teams,
+    sandbox,
+    titles,
+  );
 });
 
 // Every turn start delivers the note for waits settled before it, so only a wait told in a

@@ -165,6 +165,12 @@ export const projectScopeNoteLine = (
     : `You work in: ${list}. If the request does not make clear which one, ask before changing anything. Always pass the id as projectId to t3_thread_launch, and to memory_remember for a fact about one project; delegate_task runs only in this conversation's project, so it is refused for you. Other projects are out of reach.`;
 };
 
+const HOST_CONTAINER_NOTE =
+  "You work on this Mac. Only when the user asks for the container, send that one task there with t3_assistant container_task";
 /** The note line for an assistant that works on this Mac, which may send one task to the container. */
-export const HOST_CONTAINER_NOTE_LINE =
-  "You work on this Mac. Only when the user asks for the container, send that one task there with t3_assistant container_task; everything else runs here.";
+export const HOST_CONTAINER_NOTE_LINE = `${HOST_CONTAINER_NOTE}; everything else runs here.`;
+/** With a default elsewhere, the work it launches leaves this Mac, so the line says where it goes. */
+export const hostContainerNoteLine = (launchesOn: string | null) =>
+  launchesOn === null
+    ? HOST_CONTAINER_NOTE_LINE
+    : `${HOST_CONTAINER_NOTE}. Work you launch runs on ${launchesOn} by default.`;

@@ -86,8 +86,19 @@ export class RemoteDelegation extends Context.Service<
       options?: {
         /** With no project there for this repository, clone it there and register it. */
         readonly cloneMissingProject?: boolean;
+        /** A default chose the environment: a project with no repository runs in Scratch there. */
+        readonly implicit?: boolean;
       },
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
+    /**
+     * The project there with the same repository as `projectId` here, or undefined for its
+     * Scratch when `projectId` is undefined or has no repository. Never clones.
+     */
+    readonly remoteProject: (
+      scope: McpInvocationContext.McpInvocationScope,
+      environmentId: EnvironmentId,
+      projectId: ProjectId | undefined,
+    ) => Effect.Effect<ProjectId | undefined, OrchestratorMcpFailure>;
     /**
      * Stops the task's thread there, then completes it here as cancelled. A
      * task that already has its result keeps it; its thread there is still
@@ -152,11 +163,12 @@ const make = Effect.gen(function* () {
 
   /** The peer's project with this thread's repository, or the one the caller named. */
   const resolveRemoteProject = Effect.fn("RemoteDelegation.resolveRemoteProject")(function* (
-    scope: ThreadScope,
+    scope: McpInvocationContext.McpInvocationScope,
     environmentId: EnvironmentId,
     parentProjectId: ProjectId,
     requested: ProjectId | undefined,
     cloneMissing = false,
+    scratchWithoutRepository = false,
   ) {
     if (requested !== undefined) return requested;
     const here = yield* projects.getById(parentProjectId).pipe(
@@ -168,6 +180,7 @@ const make = Effect.gen(function* () {
     const identity =
       here === undefined ? undefined : yield* repositoryIdentities.resolve(here.workspaceRoot);
     const key = identity?.canonicalKey;
+    if (key === undefined && scratchWithoutRepository) return undefined;
     if (key === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
@@ -304,6 +317,7 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
         delegateOptions?.cloneMissingProject === true,
+        delegateOptions?.implicit === true,
       );
       // One key for the launch there and the record here, so a retry finds both.
       // Both are scoped to the provider session, as every key a caller passes is:
@@ -316,7 +330,7 @@ const make = Effect.gen(function* () {
         ProjectToolkit.tools.t3_thread_launch,
         target.environmentId,
         {
-          projectId,
+          ...(projectId === undefined ? { scratch: true } : { projectId }),
           title,
           ...(modelSelection === undefined ? {} : { modelSelection }),
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
@@ -851,7 +865,16 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ignoreCause({ log: true })),
     );
 
-  return RemoteDelegation.of({ delegate, cancel, start });
+  const remoteProject: RemoteDelegation["Service"]["remoteProject"] = (
+    scope,
+    environmentId,
+    projectId,
+  ) =>
+    projectId === undefined
+      ? Effect.undefined
+      : resolveRemoteProject(scope, environmentId, projectId, undefined, false, true);
+
+  return RemoteDelegation.of({ delegate, cancel, start, remoteProject });
 });
 
 const isTerminal = (status: string) =>

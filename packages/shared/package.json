@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./loadBalancing": {
+      "types": "./src/loadBalancing.ts",
+      "import": "./src/loadBalancing.ts"
+    },
     "./projectNotice": {
       "types": "./src/projectNotice.ts",
       "import": "./src/projectNotice.ts"

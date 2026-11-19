@@ -4,6 +4,7 @@ import {
   ASSISTANT_TEAM_INSTRUCTIONS_MAX_CHARS,
   ASSISTANT_TEAM_MEMORIES_MAX,
   ASSISTANT_TEAM_MEMORY_MAX_CHARS,
+  type AssistantEnvironmentPreference,
   type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
@@ -51,6 +52,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { AssistantEnvironmentField } from "./AssistantEnvironmentField";
 import { GroupProjectsSection } from "./GroupProjectsSection";
 import {
   assistantGroupSettingsAtom,
@@ -192,6 +194,9 @@ function SettingsForm(props: {
   const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>(team.projectIds);
   // Undefined until touched, so a save leaves the group's default alone.
   const [defaultModel, setDefaultModel] = useState<ModelSelection | null | undefined>(undefined);
+  const [defaultEnvironment, setDefaultEnvironment] = useState<
+    AssistantEnvironmentPreference | null | undefined
+  >(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -208,7 +213,8 @@ function SettingsForm(props: {
     instructions.trim() !== (team.instructions ?? "") ||
     JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
     !sameProjects(projectIds, team.projectIds) ||
-    defaultModel !== undefined;
+    defaultModel !== undefined ||
+    defaultEnvironment !== undefined;
 
   const save = async () => {
     setBusy(true);
@@ -219,6 +225,7 @@ function SettingsForm(props: {
       memories: kept,
       ...(sameProjects(projectIds, team.projectIds) ? {} : { projectIds }),
       ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
+      ...(defaultEnvironment === undefined ? {} : { defaultEnvironment }),
     });
     setBusy(false);
     if (!reply.ok) return setError(reply.message);
@@ -335,6 +342,15 @@ function SettingsForm(props: {
                 onChange={setDefaultModel}
               />
             )}
+            <AssistantEnvironmentField
+              environmentId={environmentId}
+              value={
+                defaultEnvironment === undefined ? team.defaultEnvironment : defaultEnvironment
+              }
+              group
+              disabled={busy || !teamActions.canAct}
+              onChange={setDefaultEnvironment}
+            />
             <section className="flex flex-col gap-1">
               <h3 className="text-sm font-medium">Conversation</h3>
               <p className="text-xs text-muted-foreground">

@@ -95,10 +95,6 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
-    "./load-balancing": {
-      "types": "./src/load-balancing.ts",
-      "default": "./src/load-balancing.ts"
-    },
     "./project-favicon-cache": {
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
@@ -386,6 +382,10 @@
     "./assistantCluster": {
       "types": "./src/assistantCluster.ts",
       "default": "./src/assistantCluster.ts"
+    },
+    "./assistantEnvironment": {
+      "types": "./src/assistantEnvironment.ts",
+      "default": "./src/assistantEnvironment.ts"
     },
     "./assistantInfo": {
       "types": "./src/assistantInfo.ts",
