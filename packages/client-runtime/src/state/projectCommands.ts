@@ -123,7 +123,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,
       staleTimeMs: 30_000,
-      refreshIntervalMs: 1_000,
+      refreshIntervalMs: 3_000,
       isFinal: (result) => result.incomplete !== true,
       idleTtlMs: 5 * 60_000,
       execute: (input) =>
