@@ -79,6 +79,14 @@ describe("cost class", () => {
     ["watch", "pnpm build:watch", null, "service", "keeps running"],
     ["watch", "pnpm --filter web dev", null, "service", "keeps running"],
     ["watch", "vp run -F web dev", null, "service", "keeps running"],
+    ["watch", "pnpm dev --filter web", null, "service", "keeps running"],
+    ["watch", "vitest watch", null, "service", "keeps running"],
+    ["watch", "vp test watch", null, "service", "keeps running"],
+    ["watch", "docker compose watch", null, "service", "keeps running"],
+    // Past the subcommand, `watch` is an argument: a test filter runs and ends.
+    ["watch", "vp test run watch", null, "standard", "first run"],
+    ["watch", "vitest run watch", null, "standard", "first run"],
+    ["watch", "pnpm -F web -F api dev", null, "service", "keeps running"],
   ])("row %s: %s", (_row, line, durationMs, kind, why) => {
     expect(cost(line, durationMs)).toEqual({ class: kind, why });
   });

@@ -20,7 +20,7 @@ import {
   sshWork,
   workParts,
 } from "./heavyHook.ts";
-import { sshHostname } from "./sshHost.ts";
+import { cacheHostnames, FAILED_LOOKUP_RETRY_MS, sshHostname } from "./sshHost.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
 const bash = (toolInput: Record<string, unknown>) => ({
@@ -49,6 +49,13 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["yarn vitest run src/a.test.ts", "yarn vitest run src/a.test.ts"],
   ["bun vitest run", "bun vitest run"],
   ["pnpm -F web vitest run", "pnpm -F web vitest run"],
+  // A package pick names a package wherever it sits, and it may repeat.
+  ["pnpm test --filter web", "pnpm test --filter web"],
+  ["pnpm test -F web", "pnpm test -F web"],
+  ["pnpm build --filter web", "pnpm build --filter web"],
+  ["pnpm -F web -F api test", "pnpm -F web -F api test"],
+  ["pnpm --filter web --filter api build", "pnpm --filter web --filter api build"],
+  ["vp test run watch", "vp test run watch"],
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
@@ -551,6 +558,26 @@ describe("an agent's own ssh to the Runner's host", () => {
     expect(sshHostname("pc", env)).toBe("10.0.0.5");
     expect(sshHostname("nowhere", env)).toBeNull();
     expect(sshHostname("pc", { PATH: "/nonexistent" })).toBeNull();
+  });
+
+  // An answer is kept for good; a failure only for a while, so a passing one heals by itself.
+  it("asks ssh again for a host whose lookup failed, once its retry time passes", () => {
+    let now = 0;
+    const answers = ["", "10.0.0.5"];
+    const asked: string[] = [];
+    const lookup = (host: string) => {
+      asked.push(host);
+      return answers.shift() || null;
+    };
+    const resolve = cacheHostnames(lookup, () => now);
+    expect(resolve("pc")).toBeNull();
+    now = FAILED_LOOKUP_RETRY_MS - 1;
+    expect(resolve("pc")).toBeNull();
+    now = FAILED_LOOKUP_RETRY_MS;
+    expect(resolve("pc")).toBe("10.0.0.5");
+    now = 10 * FAILED_LOOKUP_RETRY_MS;
+    expect(resolve("pc")).toBe("10.0.0.5");
+    expect(asked).toEqual(["pc", "pc"]);
   });
 
   it("queues heavy ssh for Linux itself, named by its remote work, and leaves light ssh alone", () => {

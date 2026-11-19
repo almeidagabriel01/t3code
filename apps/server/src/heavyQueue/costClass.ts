@@ -98,7 +98,7 @@ export const workPartsOf = (line: string): ReadonlyArray<Part> => {
     .filter(
       (part) =>
         work.has(part) ||
-        (!part.handsOffInside && keepsRunning(part.program, part.words, part.flags)),
+        (!part.handsOffInside && keepsRunning(part.program, part.runs, part.flags)),
     )
     .flatMap(workOf);
 };
@@ -106,7 +106,7 @@ export const workPartsOf = (line: string): ReadonlyArray<Part> => {
 const classOf = (line: string, durationMs: number | null, quickSeconds: number): Cost => {
   if (localGitOnly(line)) return { class: "quick", why: "staged files" };
   const parts = workPartsOf(line);
-  const service = parts.filter((part) => keepsRunning(part.program, part.words, part.flags));
+  const service = parts.filter((part) => keepsRunning(part.program, part.runs, part.flags));
   if (parts.length > 0 && service.length === parts.length) {
     return { class: "service", why: "keeps running" };
   }

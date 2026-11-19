@@ -46,28 +46,17 @@ export const runTarget = (
   return { program: words[at]?.split("/").pop() ?? "", words: words.slice(at + 1) };
 };
 
-/** A package manager's words without its package pick (`pnpm -F web vitest` runs `vitest`). */
-export const withoutPick = (
-  program: string,
-  words: ReadonlyArray<string>,
-  flags: ReadonlyArray<string>,
-) => {
-  if (!PACKAGE_MANAGERS.has(program) || !flags.some((flag) => SELECTOR_FLAGS.has(flag))) {
-    return words;
-  }
-  // The selector's value is the first word that is not `run`, wherever the selector sits.
-  const value = words.findIndex((word) => !RUN.test(word));
-  return words.filter((_, index) => index !== value);
-};
+/**
+ * Whether `rest[index]` is the value of a package pick (`pnpm test --filter web`, `-F a -F b`):
+ * it names a package, never the script, wherever the selector sits.
+ */
+export const isPickValue = (program: string, rest: ReadonlyArray<string>, index: number) =>
+  PACKAGE_MANAGERS.has(program) && SELECTOR_FLAGS.has(rest[index - 1] ?? "");
 
 /** A dev server by its script or program (`vp run dev`, `next dev`, `expo start`). */
-const isDevServer = (
-  program: string,
-  words: ReadonlyArray<string>,
-  flags: ReadonlyArray<string> = [],
-) => {
+const isDevServer = (program: string, words: ReadonlyArray<string>) => {
   const target = runTarget(program, words);
-  const [first = "", second = ""] = withoutPick(target.program, target.words, flags);
+  const [first = "", second = ""] = target.words;
   // A program can be named like an object key (`__proto__`): only the table's own entries count.
   if (Object.hasOwn(DEV_PROGRAMS, target.program) && DEV_PROGRAMS[target.program]!.test(first)) {
     return true;
@@ -76,15 +65,22 @@ const isDevServer = (
   return scriptCode(RUN.test(first) ? second : first) !== null;
 };
 
+/**
+ * `vitest watch`, `vp test watch`, `docker compose watch`: `watch` as the subcommand. Later it is
+ * an argument, such as a test filter (`vitest run watch`).
+ */
+const watchesBySubcommand = ([first, second]: ReadonlyArray<string>) =>
+  first === "watch" || (second === "watch" && (first === "test" || first === "compose"));
+
 /** Never finishes by itself: a dev server or a watcher (`--watch`, `vitest watch`). */
 export const keepsRunning = (
   program: string,
   words: ReadonlyArray<string>,
   flags: ReadonlyArray<string>,
 ) =>
-  isDevServer(program, words, flags) ||
+  isDevServer(program, words) ||
   flags.some((flag) => /^--watch(=(?!false$|0$)|$)/.test(flag)) ||
-  runTarget(program, words).words.includes("watch");
+  watchesBySubcommand(runTarget(program, words).words);
 
 export type Kind = "exclusive" | "heavy" | "medium";
 

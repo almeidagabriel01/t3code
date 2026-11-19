@@ -3,7 +3,7 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
-import { EXECUTORS, keepsRunning, PACKAGE_MANAGERS, withoutPick } from "./commandShapes.ts";
+import { EXECUTORS, isPickValue, keepsRunning, PACKAGE_MANAGERS } from "./commandShapes.ts";
 import { parseLine, type Command, type ParsedLine, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
@@ -245,12 +245,16 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
   const folderFlags = entryOf(FOLDER_FLAGS, program) ?? [];
+  const positional = rest.flatMap((value, index) =>
+    value.startsWith("-") || folderFlags.includes(rest[index - 1] ?? "")
+      ? []
+      : [{ value, picked: isPickValue(program, rest, index) }],
+  );
   return {
     at,
     program,
-    words: rest.filter(
-      (value, index) => !value.startsWith("-") && !folderFlags.includes(rest[index - 1] ?? ""),
-    ),
+    words: positional.map(({ value }) => value),
+    runs: positional.flatMap(({ value, picked }) => (picked ? [] : [value])),
     flags: rest.filter((value) => value.startsWith("-")),
   };
 };
@@ -333,19 +337,18 @@ const heavyWords = (
     return heavyScript(words, 0, flags, lists);
   }
   if (!PACKAGE_MANAGERS.has(program)) return false;
-  const own = withoutPick(program, words, flags);
-  const [script, bin] = own;
+  const [script, bin] = words;
   if (script === undefined) return false;
-  const binAt = pmBinAt(program, own);
+  const binAt = pmBinAt(program, words);
   if (binAt === 1) {
-    return bin !== undefined && heavyWords(base(bin), own.slice(2), flags, lists);
+    return bin !== undefined && heavyWords(base(bin), words.slice(2), flags, lists);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
-  if (script === "t" || heavyScript(own, 0, flags, lists)) return true;
-  if (binAt === 0 && heavyWords(base(script), own.slice(1), flags, lists)) return true;
+  if (script === "t" || heavyScript(words, 0, flags, lists)) return true;
+  if (binAt === 0 && heavyWords(base(script), words.slice(1), flags, lists)) return true;
   // `npm --prefix x run build`: a flag's value can sit before `run`.
-  const runAt = own.findIndex((word) => word === "run" || word === "run-script");
-  return runAt >= 0 && heavyScript(own, runAt + 1, flags, lists);
+  const runAt = words.findIndex((word) => word === "run" || word === "run-script");
+  return runAt >= 0 && heavyScript(words, runAt + 1, flags, lists);
 };
 
 // `case` patterns, so the filter runs on shell builtins alone. A word starts after a non-name
@@ -416,7 +419,10 @@ export interface Part {
   /** The program's word, past `env` and its assignments. */
   readonly programAt: number;
   readonly program: string;
+  /** Its words past flags and folder values; a package pick's value stays, keying its history. */
   readonly words: ReadonlyArray<string>;
+  /** `words` without a package pick's values: what decides what it runs. */
+  readonly runs: ReadonlyArray<string>;
   readonly flags: ReadonlyArray<string>;
   readonly heavy: boolean;
   /** The agent's own `remoto` in front of it. */
@@ -572,7 +578,7 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
     remoto = command.words[remoteAt]!;
     remoteAt = programAt(values, remoteAt + 1, true);
   }
-  const { at, program, words, flags } = wordsAt(values, remoteAt);
+  const { at, program, words, runs, flags } = wordsAt(values, remoteAt);
   const inner = nestedParts(program, values, at, read);
   const nested = inner.find((part) => part.heavy) ?? null;
   const shellScript = scriptOf(values, at, read);
@@ -584,7 +590,7 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
   const scriptHeavy = scriptParts.some((part) => part.heavy);
   const insideParts = [...inner, ...scriptParts];
   const handsOffInside = insideParts.some(handsOff);
-  const ownHeavy = unreadable || (program !== "" && heavyWords(program, words, flags, lists));
+  const ownHeavy = unreadable || (program !== "" && heavyWords(program, runs, flags, lists));
   return {
     command,
     values,
@@ -592,6 +598,7 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
     programAt: at,
     program,
     words,
+    runs,
     flags,
     heavy: nested !== null || scriptHeavy || ownHeavy,
     remoto,
@@ -623,7 +630,6 @@ export const scriptsOf = (line: string, read: ReadScript) => {
   return scripts;
 };
 
-/** Every simple command of a line in source order, and why it cannot be followed exactly. */
 const scriptKey = (word: string) => word.replace(/^(\.\/)+/, "");
 
 /** Files the line writes from a heredoc (`cat > f <<EOF`): running one runs that text. */
@@ -639,6 +645,7 @@ const writtenScripts = (commands: ReadonlyArray<Command>) => {
   return written;
 };
 
+/** Every simple command of a line in source order, and why it cannot be followed exactly. */
 export const readLine = (
   line: string,
   read?: ReadScript,
