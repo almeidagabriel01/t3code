@@ -165,6 +165,11 @@ export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
 }
 
+/** `useQuietThreadShells` with tag-hidden threads, for what counts work in progress. */
+export function useQuietAllThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.quietAllThreadShellsAtom);
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef | null) {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELLS_ATOM : environmentThreadShells.childThreadInputsAtom(ref),

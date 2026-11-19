@@ -15,8 +15,8 @@ import {
   useAssistantLiveWork,
   useAssistantTasksByAssistant,
 } from "../../state/assistants";
-import { useDecisionEntries } from "../../state/decisions";
-import { useQuietThreadShells } from "../../state/entities";
+import { useDecisionEntries, useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useProjects, useQuietAllThreadShells, useQuietThreadShells } from "../../state/entities";
 import { environmentPresentations } from "../../state/presentation";
 
 /**
@@ -26,6 +26,8 @@ import { environmentPresentations } from "../../state/presentation";
  */
 export function useAssistantStatus() {
   const shells = useQuietThreadShells();
+  const allShells = useQuietAllThreadShells();
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const { active, activeTeams } = useAssistantEntries();
   const tasksByAssistant = useAssistantTasksByAssistant();
   const decisions = useDecisionEntries().open;
@@ -46,7 +48,7 @@ export function useAssistantStatus() {
     }
   }
   const ownerOf = threadOwnerResolver({
-    shells,
+    shells: allShells,
     taskAssistantByThreadKey,
     teamKeyByThreadKey,
     activeAssistantKeys: new Set(
@@ -62,18 +64,24 @@ export function useAssistantStatus() {
       environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
     teams: activeTeams,
   });
-  const working = workingItems({ shells, ownerOf, teams: activeTeams });
-  return { shells, active, activeTeams, ownerOf, working, ...status };
+  const working = workingItems({
+    shells: allShells,
+    ownerOf,
+    teams: activeTeams,
+    openDecisionThreadKeys,
+  });
+  return { shells, allShells, active, activeTeams, ownerOf, working, ...status };
 }
 
 /**
- * Assistants, group members and subagents working now, with who and on which machine, for the
- * sidebar's Working zone and Activity's Working section.
+ * Everything working now, with who and on which machine, for the sidebar's Working zone and
+ * Activity's Working section.
  */
 export function useWorkingRows() {
   return toWorkingRows(
     useAssistantStatus(),
     useAtomValue(environmentPresentations.presentationsAtom),
+    useProjects(),
   );
 }
 
@@ -83,14 +91,20 @@ function toWorkingRows(
     EnvironmentId,
     { readonly entry: { readonly target: { readonly label: string } } }
   >,
+  projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: string;
+    readonly title: string;
+  }>,
 ) {
-  const { shells, active, activeTeams, working } = status;
+  const { allShells, active, activeTeams, working } = status;
   if (working.length === 0) return [];
   const byKey = <T>(entries: ReadonlyArray<T>, key: (entry: T) => string) =>
     new Map(entries.map((entry) => [key(entry), entry] as const));
   const assistants = byKey(active, (entry) => `${entry.environmentId}:${entry.assistant.id}`);
   const teams = byKey(activeTeams, (entry) => `${entry.environmentId}:${entry.team.id}`);
-  const threads = byKey(shells, (shell) => `${shell.environmentId}:${shell.id}`);
+  const threads = byKey(allShells, (shell) => `${shell.environmentId}:${shell.id}`);
+  const projectTitles = byKey(projects, (project) => `${project.environmentId}:${project.id}`);
   return workingRows(working, {
     // Work routed to a linked machine names an assistant that lives on another environment.
     assistant: (environmentId, id) =>
@@ -102,6 +116,7 @@ function toWorkingRows(
       (teams.get(`${environmentId}:${id}`) ?? activeTeams.find((entry) => entry.team.id === id))
         ?.team.name,
     thread: (environmentId, id) => threads.get(`${environmentId}:${id}`)?.title,
+    project: (environmentId, id) => projectTitles.get(`${environmentId}:${id}`)?.title,
     environment: (environmentId) =>
       presentations.get(environmentId as EnvironmentId)?.entry.target.label,
   });
@@ -113,7 +128,11 @@ function toWorkingRows(
  */
 export function useSidebarZones() {
   const status = useAssistantStatus();
-  const working = toWorkingRows(status, useAtomValue(environmentPresentations.presentationsAtom));
+  const working = toWorkingRows(
+    status,
+    useAtomValue(environmentPresentations.presentationsAtom),
+    useProjects(),
+  );
   const { shells, active, activeTeams, ownerOf, items, read, indicator: indicatorOf } = status;
   const ranked = rankAssistants(active, shells, (entry, presence) =>
     read(entry.environmentId, entry.assistant.id, presence),

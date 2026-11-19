@@ -3,6 +3,7 @@ import { formatResetLabel, shortLimitName } from "@t3tools/client-runtime/state/
 import {
   groupSessionsByProject,
   splitSessions,
+  usageSessionsHeading,
   type UsageSession,
   type UsageSessionState,
 } from "@t3tools/client-runtime/state/usageSessions";
@@ -147,7 +148,7 @@ function Disclosure({
   );
 }
 
-/** "Sessions · 2 running"; opened, running threads lead and finished ones sit in their own collapsed list. */
+/** "Sessions · 2 working · 1 need you"; open threads lead and finished ones sit in their own collapsed list. */
 export function UsageSessionsList({
   sessions,
   titles,
@@ -158,15 +159,15 @@ export function UsageSessionsList({
   const [open, setOpen] = useState(false);
   const [finishedOpen, setFinishedOpen] = useState(false);
   if (sessions.length === 0) return null;
-  const { running, finished } = splitSessions(sessions);
+  const { open: live, finished } = splitSessions(sessions);
   return (
     <div className="flex flex-col gap-0.5 pl-7.5">
       <Disclosure open={open} onToggle={() => setOpen(!open)}>
-        {running.length > 0 ? `Sessions · ${running.length} running` : "Sessions"}
+        {usageSessionsHeading(sessions)}
       </Disclosure>
       {open ? (
         <div className="flex flex-col gap-1">
-          {running.length > 0 ? <SessionGroups sessions={running} titles={titles} /> : null}
+          {live.length > 0 ? <SessionGroups sessions={live} titles={titles} /> : null}
           {finished.length > 0 ? (
             <>
               <Disclosure open={finishedOpen} onToggle={() => setFinishedOpen(!finishedOpen)}>

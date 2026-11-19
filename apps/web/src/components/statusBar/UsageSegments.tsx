@@ -31,6 +31,7 @@ import {
   windowBand,
   paceTextClass,
 } from "@t3tools/shared/usagePace";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -52,6 +53,7 @@ import {
 import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
 import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
 import { useUsageItems } from "./useUsageItems";
 import { ResetCreditDialog, useResetCredit } from "../usage/UsageLimits";
@@ -162,11 +164,13 @@ export function ItemIcon({ item }: { readonly item: UsageItem }) {
 /** Thin arc around the icon while any thread on this instance is working. */
 function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
   const threads = useThreadShells();
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const now = useMinuteNow();
   const working = collectUsageSessions({
     threads,
     instanceId: item.entry.instanceId,
     environmentIds: item.environmentIds,
+    isWorking: (thread) => isWorkingShell(thread, openDecisionThreadKeys),
     now,
   }).filter((session) => session.state === "working").length;
   if (working === 0) return <ItemIcon item={item} />;
@@ -409,10 +413,12 @@ function RosterMetric({
 function RosterSessions({ item, now }: { readonly item: UsageItem; readonly now: number }) {
   const threads = useThreadShells();
   const projects = useProjects();
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const sessions = collectUsageSessions({
     threads,
     instanceId: item.entry.instanceId,
     environmentIds: item.environmentIds,
+    isWorking: (thread) => isWorkingShell(thread, openDecisionThreadKeys),
     now,
   });
   const titles = new Map(projects.map((p) => [`${p.environmentId}:${p.id}`, p.title]));

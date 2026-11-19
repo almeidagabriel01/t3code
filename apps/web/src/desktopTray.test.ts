@@ -30,7 +30,7 @@ vi.mock("./hooks/useSettings", () => ({
 vi.mock("./state/threads", async () => {
   const { Atom } = await import("effect/reactivity");
   atoms.shells = Atom.make<ReadonlyArray<unknown>>([]);
-  return { environmentThreadShells: { quietThreadShellsAtom: atoms.shells } };
+  return { environmentThreadShells: { quietAllThreadShellsAtom: atoms.shells } };
 });
 vi.mock("./state/projects", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -109,14 +109,16 @@ describe("deriveTrayMenu", () => {
       expected: { attention: ["a"], running: [], pinned: [] },
     },
     {
-      name: "drops archived, side chat and assistant threads",
+      // An assistant's turn is in the working set every surface counts; its requests are not.
+      name: "drops archived and side chat threads, and assistants except their work",
       threads: [
         shell("gone", { archivedAt: "x", hasPendingApprovals: true }),
-        shell("side", { sideChatOf: "parent", hasPendingApprovals: true }),
+        shell("side", { sideChatOf: "parent", ...running }),
         shell("assistant:one", { hasPendingApprovals: true, pinnedAt: "x" }),
+        shell("assistant:two", running),
         shell("kept", { hasPendingApprovals: true }),
       ],
-      expected: { attention: ["kept"], running: [], pinned: [] },
+      expected: { attention: ["kept"], running: ["assistant:two"], pinned: [] },
     },
     {
       name: "newest first for attention and running",

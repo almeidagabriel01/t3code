@@ -8,6 +8,9 @@ import {
   groupSessionsByProject,
   splitSessions,
 } from "@t3tools/client-runtime/state/usageSessions";
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
+
+const isWorking = (shell: Parameters<typeof isWorkingShell>[0]) => isWorkingShell(shell, new Set());
 
 const env = EnvironmentId.make("env-a");
 const instanceId = ProviderInstanceId.make("codex");
@@ -54,6 +57,7 @@ describe("collectAccountSessions", () => {
         { environmentId: env, instanceId },
         { environmentId: envB, instanceId: other },
       ],
+      isWorking,
       now,
     });
     expect(sessions.map((s) => s.title)).toEqual(["a", "b"]);
@@ -70,6 +74,7 @@ describe("collectUsageSessions", () => {
       ],
       instanceId,
       environmentIds: [env],
+      isWorking,
       now,
     });
     expect(sessions.map((s) => [s.title, s.state, s.elapsed])).toEqual([
@@ -77,7 +82,7 @@ describe("collectUsageSessions", () => {
       ["working", "working", "12m"],
       ["recent", "recent", "20m ago"],
     ]);
-    const { running: live, finished } = splitSessions(sessions);
+    const { open: live, finished } = splitSessions(sessions);
     expect(live.map((s) => s.title)).toEqual(["waiting", "working"]);
     expect(finished.map((s) => s.title)).toEqual(["recent"]);
   });
@@ -97,6 +102,7 @@ describe("collectUsageSessions", () => {
       ],
       instanceId,
       environmentIds: [env],
+      isWorking,
       now,
     });
     expect(sessions.map((s) => s.title)).toEqual(["kept"]);
@@ -113,6 +119,7 @@ describe("groupSessionsByProject", () => {
       ],
       instanceId,
       environmentIds: [env],
+      isWorking,
       now,
     });
     expect(groupSessionsByProject(sessions).map((g) => g.sessions.map((s) => s.title))).toEqual([

@@ -73,8 +73,15 @@ const workingRow = (thread: typeof task, line: string) => ({
 });
 
 describe("ActivityPage", () => {
-  it("lists working assistants with who and where, once each, in the count", async () => {
-    mocks.shells = [needsYou, task];
+  it("draws exactly the working set, with who and where, once each, in the count", async () => {
+    // Running, but not in `workingItems`: Activity counts the selector's set, not its own.
+    const loose = makeThreadFixture({
+      id: ThreadId.make("thread-loose"),
+      environmentId: env,
+      title: "Loose",
+      runtime: task.runtime,
+    });
+    mocks.shells = [needsYou, task, loose];
     const helper = makeThreadFixture({
       id: ThreadId.make("assistant:ada:1"),
       environmentId: env,
@@ -88,6 +95,7 @@ describe("ActivityPage", () => {
       .toBeVisible();
     await expect.element(screen.getByRole("button", { name: /^Ada\s*Ada · Mac/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /Ada's task/ }).elements()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Loose/ }).elements()).toHaveLength(0);
     await expect.element(screen.getByText("1 need you · 2 working")).toBeVisible();
   });
 

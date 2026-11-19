@@ -51,7 +51,7 @@ export function WorkingRowButton(props: {
   );
 }
 
-/** Assistants, group members and subagents working now, below Needs you. Absent while none work. */
+/** Everything working now (`workingItems`), below Needs you. Absent while none work. */
 export const WorkingSection = memo(function WorkingSection(props: {
   readonly rows: ReadonlyArray<WorkingRow<EnvironmentThreadShell>>;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;

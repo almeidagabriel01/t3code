@@ -126,12 +126,10 @@ export function ActivityPage() {
       }),
   });
 
-  // Assistants, group members and subagents stay off the thread rows; they work in this section.
+  // Working is the one working set every surface counts; its rows say who works and where.
   const working = useWorkingRows();
-  // An assistant's task is also a project thread; its working row says who and where.
-  const workingKeys = new Set(working.map((row) => row.item.key));
   const rankedRows = (rank: ActivityRank) =>
-    entries.filter((entry) => entry.rank === rank && !(rank === 1 && workingKeys.has(entry.key)));
+    rank === 1 ? [] : entries.filter((entry) => entry.rank === rank);
   const workingEntries = working.flatMap((row): ActivityEntry[] =>
     row.item.shell === null ? [] : [{ key: row.item.key, thread: row.item.shell, rank: 1 }],
   );
@@ -208,7 +206,8 @@ export function ActivityPage() {
           className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-2 [overflow-anchor:none]"
         >
           <DecisionsSection />
-          {entries.length === 0 && working.length === 0 && !hasOpenDecisions ? (
+          {rankedRows(0).length + rankedRows(2).length + working.length === 0 &&
+          !hasOpenDecisions ? (
             <p className="px-2 py-6 text-center text-sm text-muted-foreground" role="status">
               Nothing needs you right now.
             </p>

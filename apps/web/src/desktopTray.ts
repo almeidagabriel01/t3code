@@ -10,11 +10,9 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import {
-  resolveSidebarThreadStatus,
-  sidebarStatusIsRunning,
-} from "@t3tools/client-runtime/state/thread-attention";
+import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -32,6 +30,8 @@ import { environmentThreadShells } from "./state/threads";
 // Main shows a handful per section; the cap keeps the IPC payload small however many threads exist.
 const SECTION_LIMIT = 20;
 const TEXT_LIMIT = 200;
+
+const NO_DECISIONS: ReadonlySet<string> = new Set();
 
 const bounded = (text: string) => Array.from(text).slice(0, TEXT_LIMIT).join("");
 
@@ -59,9 +59,9 @@ const newestFirst = (left: TrayShell, right: TrayShell) =>
   right.updatedAt.localeCompare(left.updatedAt);
 
 /**
- * Needs-you and running follow the sidebar status (running includes its "Waiting"), and only for
- * environments whose shells are live (a cached shell may describe a run that already ended).
- * A thread lands in one section.
+ * Needs-you follows the sidebar status and running is `isWorkingShell`, assistants' threads
+ * included, and only for environments whose shells are live (a cached shell may describe a run
+ * that already ended). A thread lands in one section.
  * `environmentLabels` is null when only one environment exists, so labels stay out of the rows.
  */
 export function deriveTrayMenu(
@@ -85,16 +85,17 @@ export function deriveTrayMenu(
   const running: TrayShell[] = [];
   const pinned: TrayShell[] = [];
   for (const thread of threads) {
-    if (thread.archivedAt !== null || thread.sideChatOf != null || isAssistantThreadId(thread.id)) {
+    if (thread.archivedAt !== null || thread.sideChatOf != null) continue;
+    const live = liveEnvironmentIds.has(thread.environmentId);
+    // The tray reads no decisions; a thread waiting on one stays among the running.
+    if (live && isWorkingShell(thread, NO_DECISIONS)) {
+      running.push(thread);
       continue;
     }
-    const status = liveEnvironmentIds.has(thread.environmentId)
-      ? resolveSidebarThreadStatus(thread)
-      : null;
+    if (isAssistantThreadId(thread.id)) continue;
+    const status = live ? resolveSidebarThreadStatus(thread) : null;
     if (status === "approval" || status === "input" || status === "request") {
       attention.push(thread);
-    } else if (status !== null && sidebarStatusIsRunning(status)) {
-      running.push(thread);
     } else if (thread.pinnedAt !== null) {
       pinned.push(thread);
     }
@@ -153,7 +154,7 @@ export function startDesktopTray(
   const currentMenu = () => {
     const identities = registry.get(environmentSummaries.identitiesAtom);
     return deriveTrayMenu(
-      registry.get(environmentThreadShells.quietThreadShellsAtom),
+      registry.get(environmentThreadShells.quietAllThreadShellsAtom),
       registry.get(environmentProjects.projectsAtom),
       registry.get(liveShellEnvironmentIdsAtom),
       identities.length > 1
@@ -168,7 +169,7 @@ export function startDesktopTray(
   };
 
   const unsubscribes = [
-    registry.subscribe(environmentThreadShells.quietThreadShellsAtom, schedule),
+    registry.subscribe(environmentThreadShells.quietAllThreadShellsAtom, schedule),
     registry.subscribe(environmentProjects.projectsAtom, schedule),
     registry.subscribe(liveShellEnvironmentIdsAtom, schedule),
     registry.subscribe(environmentSummaries.identitiesAtom, schedule),
