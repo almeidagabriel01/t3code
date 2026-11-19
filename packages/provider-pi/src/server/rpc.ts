@@ -1,4 +1,5 @@
 // Pi frames are LF-delimited with trailing CR stripped; readline also splits U+2028/U+2029 and corrupts them.
+import { registerOwner } from "@t3tools/shared/ProcessOwners";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -90,6 +91,8 @@ export interface PiRpcSpawnOptions {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string | undefined;
   readonly env: NodeJS.ProcessEnv;
+  /** The thread this process works for, so resource telemetry can name it. */
+  readonly ownerThreadId?: string;
 }
 
 export interface PiRpcConnection {
@@ -225,6 +228,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
+  if (options.ownerThreadId !== undefined) {
+    yield* registerOwner({
+      kind: "agent",
+      pid: Number(child.pid),
+      threadId: options.ownerThreadId,
+    });
+  }
 
   let childExited = false;
   let diagnosingStdoutClose = false;

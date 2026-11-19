@@ -110,6 +110,7 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ResourceConsumers from "./resourceTelemetry/ResourceConsumers.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
@@ -869,6 +870,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(RelayClient.RelayClient)({}),
   Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
+  Layer.mock(ResourceConsumers.ResourceConsumers)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Layer.mock(Kanban.KanbanService)({}),

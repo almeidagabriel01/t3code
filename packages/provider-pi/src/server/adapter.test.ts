@@ -39,6 +39,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { type ProcessOwner, ProcessOwners } from "@t3tools/shared/ProcessOwners";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { PI_PROVIDER } from "./adapter.ts";
 import { makePiRpcConnection } from "./rpc.ts";
@@ -5036,5 +5037,45 @@ process.stdout.write('{"type":"ready"}\\n');
         const cues = (yield* fileSystem.readFileString(cuesPath)).split("\n").filter(Boolean);
         assert.deepEqual(cues, ["SIGTERM"]);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("PiRpc process owner", () => {
+  it.effect("registers the spawned process under its thread", () =>
+    Effect.gen(function* () {
+      const registered: ProcessOwner[] = [];
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.never,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+        ownerThreadId: "thread-1",
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(ProcessOwners, {
+          register: (owner) => Effect.sync(() => void registered.push(owner)),
+          list: Effect.succeed([]),
+          retain: () => Effect.void,
+        }),
+      );
+      assert.deepEqual(registered, [{ kind: "agent", pid: FAKE_PID, threadId: "thread-1" }]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

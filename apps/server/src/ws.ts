@@ -271,6 +271,7 @@ import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
+import * as ResourceConsumers from "./resourceTelemetry/ResourceConsumers.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -1664,6 +1665,7 @@ export const layerWsRpc = (
         yield* LinkedEnvironmentResources.LinkedEnvironmentResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const resourceConsumers = yield* ResourceConsumers.ResourceConsumers;
       const relayClient = yield* RelayClient.RelayClient;
       // Webhook URLs start agents; expose them only to operate-scoped sessions while keeping tasks readable.
       const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
@@ -3993,7 +3995,9 @@ export const layerWsRpc = (
         [WS_METHODS.subscribeResourceTelemetry]: (_input) =>
           Stream.unwrap(
             Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
-              Stream.concat(Stream.make(latest), changes),
+              Stream.concat(Stream.make(latest), changes).pipe(
+                Stream.mapEffect(resourceConsumers.annotate),
+              ),
             ),
           ),
       });

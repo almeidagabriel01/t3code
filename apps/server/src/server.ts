@@ -217,6 +217,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ProcessGroupMetrics from "./resourceTelemetry/ProcessGroupMetrics.ts";
+import * as ResourceConsumers from "./resourceTelemetry/ResourceConsumers.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
@@ -893,6 +894,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ModelSelectionSeeds.start),
 ).pipe(
   Layer.provideMerge(layerChannels),
+  // Names the thread, assistant, member or subagent behind each agent process in resource telemetry.
+  Layer.provideMerge(ResourceConsumers.layer),
   Layer.provideMerge(layerOrchestrationApplication),
   // Provider turns read the snapshot; it sits below the orchestration runtime that consumes it.
   Layer.provideMerge(layerMemorySnapshot),
