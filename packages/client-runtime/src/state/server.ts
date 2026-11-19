@@ -1360,6 +1360,19 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    linkedEnvironmentResources: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:linked-environment-resources",
+      idleTtlMs: 0,
+      staleTimeMs: 10_000,
+      // The server answers from its cache and refreshes a peer at most every 15 s.
+      refreshIntervalMs: 15_000,
+      execute: (
+        input: EnvironmentRpcInput<typeof WS_METHODS.serverGetLinkedEnvironmentResources>,
+      ) =>
+        request(WS_METHODS.serverGetLinkedEnvironmentResources, input).pipe(
+          Effect.timeout("5 seconds"),
+        ),
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

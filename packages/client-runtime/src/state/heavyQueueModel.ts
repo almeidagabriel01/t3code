@@ -7,7 +7,10 @@ import {
   type HeavyQueueState,
   type HeavyRunner,
   type HostResourcesSnapshot,
+  type LinkedEnvironmentReading,
+  type LinkedEnvironmentResources,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { linuxLine, runnerBadge } from "./runnerModel.ts";
 
@@ -421,7 +424,7 @@ export interface MachineBarRow {
   readonly cpu: MachineGauge | null;
   readonly memory: MachineGauge | null;
   readonly offline: { readonly text: string; readonly hint: string } | null;
-  /** Null on the Mac while the queue is off; `queueOff` then holds its note. */
+  /** Null on the Mac while the queue is off, `queueOff` then holding its note; null on a linked row without a queue reading. */
   readonly slots: {
     readonly running: number;
     readonly slots: number;
@@ -573,6 +576,121 @@ export function machineBar(
       },
       queueOff: null,
     },
+  };
+}
+
+/** A linked reading older than this is never shown as live, whatever its status says. */
+export const LINKED_READING_STALE_MS = 60_000;
+
+/** One linked environment in the machine bar, built from the reading its own link brought back. */
+export interface LinkedMachineRow extends Omit<MachineBarRow, "runner"> {
+  readonly environmentId: LinkedEnvironmentResources["environmentId"];
+  readonly name: string;
+  /** What runs there now; null when nothing does or the reading is not live. */
+  readonly activity: string | null;
+}
+
+const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+const agoText = (ms: number, now: number) => `${formatDuration(isoAt(ms), now)} ago`;
+
+function readingLine(reading: LinkedEnvironmentReading): string {
+  const cpu =
+    reading.cpuUtilization === null ? null : `CPU ${Math.round(reading.cpuUtilization * 100)}%`;
+  const memory =
+    reading.totalMemoryBytes <= 0
+      ? null
+      : `${gb(reading.availableMemoryBytes)} free of ${gb(reading.totalMemoryBytes)}`;
+  return [cpu, memory].filter((part) => part !== null).join(" · ");
+}
+
+function activityLine(reading: LinkedEnvironmentReading): string | null {
+  const parts = [
+    reading.threadsRunning === 0 ? null : `${reading.threadsRunning} running`,
+    reading.threadsWaiting === 0
+      ? null
+      : reading.threadsWaiting === 1
+        ? "Needs you"
+        : `${reading.threadsWaiting} need you`,
+    reading.subagentsRunning === 0 ? null : `${reading.subagentsRunning} subagents`,
+  ].filter((part) => part !== null);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
+/**
+ * A linked environment's row. Gauges, slots and activity show only while the reading is live: an
+ * offline, expired or aged reading moves to the hint, with its age, and the row says why.
+ */
+export function linkedMachineRow(entry: LinkedEnvironmentResources, now: number): LinkedMachineRow {
+  const { reading, label } = entry;
+  const readAt = reading === null ? null : DateTime.toEpochMillis(reading.readAt);
+  const since = entry.since === null ? null : DateTime.toEpochMillis(entry.since);
+  const live =
+    entry.status === "online" &&
+    reading !== null &&
+    readAt !== null &&
+    now - readAt < LINKED_READING_STALE_MS;
+  const old =
+    reading === null || readAt === null
+      ? null
+      : [readingLine(reading), agoText(readAt, now)].filter((part) => part !== "").join(" · ");
+  const base = { environmentId: entry.environmentId, name: label, queueOff: null };
+  if (!live) {
+    const hints = (...parts: ReadonlyArray<string | null>) =>
+      parts.filter((part) => part !== null).join(" · ");
+    const offline =
+      entry.status === "expired"
+        ? { text: "Expired", hint: hints("Expired. Link it again with a new pairing code.", old) }
+        : entry.status === "offline"
+          ? {
+              text: since === null ? "Offline" : `Offline · ${agoText(since, now)}`,
+              hint: hints("Not answering right now.", old),
+            }
+          : { text: "Checking…", hint: hints(old) };
+    return {
+      ...base,
+      online: entry.status === "offline" || entry.status === "expired" ? false : null,
+      statusHint: offline.hint,
+      cpu: null,
+      memory: null,
+      offline,
+      slots: null,
+      activity: null,
+    };
+  }
+  const cpuPercent = reading.cpuUtilization === null ? null : reading.cpuUtilization * 100;
+  const { heavy } = reading;
+  return {
+    ...base,
+    online: true,
+    statusHint: `${label} · online${since === null ? "" : ` for ${formatDuration(isoAt(since), now)}`}`,
+    cpu:
+      cpuPercent === null
+        ? NO_GAUGE("No CPU reading yet")
+        : {
+            share: cpuPercent / 100,
+            value: `${Math.round(cpuPercent)}%`,
+            warn: false,
+            hint: `CPU ${Math.round(cpuPercent)}% · ${reading.cpuCount} cores`,
+          },
+    memory:
+      reading.totalMemoryBytes <= 0
+        ? NO_GAUGE("No memory reading yet")
+        : {
+            share: 1 - reading.availableMemoryBytes / reading.totalMemoryBytes,
+            value: gb(reading.availableMemoryBytes),
+            warn: false,
+            hint: `${gb(reading.availableMemoryBytes)} free of ${gb(reading.totalMemoryBytes)}`,
+          },
+    offline: null,
+    slots:
+      heavy === null
+        ? null
+        : {
+            running: heavy.running,
+            slots: heavy.slots,
+            hint: `${heavy.running} of ${heavy.slots} running on ${label}${heavy.waiting === 0 ? "" : ` · ${heavy.waiting} waiting`}`,
+          },
+    activity: activityLine(reading),
   };
 }
 

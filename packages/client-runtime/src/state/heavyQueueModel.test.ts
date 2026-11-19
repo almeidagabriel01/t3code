@@ -1,10 +1,12 @@
 import {
+  EnvironmentId,
   HEAVY_QUEUE_DEFAULTS,
   type HeavyCommand,
   type HeavyQueueEntry,
   type HeavyQueueState,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 
 import {
   dropTarget,
@@ -13,6 +15,7 @@ import {
   heavyCommandKey,
   heavyWork,
   jobPriority,
+  linkedMachineRow,
   macNoteGauge,
   machineBar,
   macReading,
@@ -772,6 +775,126 @@ describe("machineBar", () => {
     // A server from before the CPU reading sends none: never a load passed off as CPU.
     const { cpuPercent: _cpu, ...older } = LINUX;
     expect(machineBar(state({ linux: older }), null).linux!.cpu?.hint).toBe("No CPU reading yet");
+  });
+});
+
+describe("linkedMachineRow", () => {
+  const NOW = Date.parse("2026-01-01T12:00:00.000Z");
+  const at = (msAgo: number) => DateTime.makeUnsafe(NOW - msAgo);
+  const reading = (
+    msAgo: number,
+    heavy: { running: number; slots: number; waiting: number } | null = {
+      running: 1,
+      slots: 3,
+      waiting: 2,
+    },
+  ) => ({
+    readAt: at(msAgo),
+    cpuUtilization: 0.25,
+    cpuCount: 4,
+    availableMemoryBytes: 3 * 1024 ** 3,
+    totalMemoryBytes: 8 * 1024 ** 3,
+    threadsRunning: 2,
+    threadsWaiting: 1,
+    subagentsRunning: 3,
+    heavy,
+  });
+  const row = (
+    status: "checking" | "online" | "offline" | "expired",
+    since: number | null,
+    r: ReturnType<typeof reading> | null,
+  ) =>
+    linkedMachineRow(
+      {
+        environmentId: EnvironmentId.make("env-vps"),
+        label: "VPS",
+        status,
+        since: since === null ? null : at(since),
+        reading: r,
+      },
+      NOW,
+    );
+  const OLD = "CPU 25% · 3.0 GB free of 8.0 GB · 5m ago";
+
+  it.each([
+    ["checking, nothing read yet", row("checking", null, null), null, "Checking…", ""],
+    [
+      "offline since its last answer, old reading only in the hint",
+      row("offline", 5 * 60_000, reading(5 * 60_000)),
+      false,
+      "Offline · 5m ago",
+      `Not answering right now. · ${OLD}`,
+    ],
+    [
+      "offline, never reached",
+      row("offline", null, null),
+      false,
+      "Offline",
+      "Not answering right now.",
+    ],
+    [
+      "expired keeps the reading as old",
+      row("expired", 0, reading(5 * 60_000)),
+      false,
+      "Expired",
+      `Expired. Link it again with a new pairing code. · ${OLD}`,
+    ],
+    [
+      "online but the reading aged out is not live",
+      row("online", 10 * 60_000, reading(5 * 60_000)),
+      null,
+      "Checking…",
+      OLD,
+    ],
+  ])("%s", (_name, result, online, text, hint) => {
+    expect(result.online).toBe(online);
+    expect(result.offline).toEqual({ text, hint });
+    expect(result.cpu).toBeNull();
+    expect(result.memory).toBeNull();
+    expect(result.slots).toBeNull();
+    expect(result.activity).toBeNull();
+  });
+
+  it("shows a live reading with its gauges, slots and what runs there", () => {
+    const live = row("online", 2 * 3_600_000 + 5 * 60_000, reading(10_000));
+    expect(live).toMatchObject({
+      name: "VPS",
+      online: true,
+      statusHint: "VPS · online for 2h 5m",
+      offline: null,
+      cpu: { share: 0.25, value: "25%", hint: "CPU 25% · 4 cores" },
+      memory: { value: "3.0 GB", hint: "3.0 GB free of 8.0 GB" },
+      slots: { running: 1, slots: 3, hint: "1 of 3 running on VPS · 2 waiting" },
+      activity: "2 running · Needs you · 3 subagents",
+      queueOff: null,
+    });
+  });
+
+  it("leaves slots empty without a queue reading and activity null when nothing runs", () => {
+    const quiet = linkedMachineRow(
+      {
+        environmentId: EnvironmentId.make("env-vps"),
+        label: "VPS",
+        status: "online",
+        since: null,
+        reading: {
+          ...reading(0, null),
+          cpuUtilization: null,
+          totalMemoryBytes: 0,
+          threadsRunning: 0,
+          threadsWaiting: 2,
+          subagentsRunning: 0,
+        },
+      },
+      NOW,
+    );
+    expect(quiet).toMatchObject({
+      statusHint: "VPS · online",
+      slots: null,
+      activity: "2 need you",
+      cpu: { value: "--", hint: "No CPU reading yet" },
+      memory: { value: "--", hint: "No memory reading yet" },
+    });
   });
 });
 
