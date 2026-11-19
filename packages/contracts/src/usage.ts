@@ -198,19 +198,6 @@ export const InstanceBudgetStatus = Schema.Struct({
 });
 export type InstanceBudgetStatus = typeof InstanceBudgetStatus.Type;
 
-/** Money spent through one provider instance, priced from T3's own turns; for API-key billing. */
-export const InstanceSpend = Schema.Struct({
-  providerInstanceId: ProviderInstanceId,
-  todayUsd: Schema.Number,
-  /** Rolling last 30 days, including today. */
-  periodUsd: Schema.Number,
-  /** Some turns in the period had no usage or no known rate, so the totals are a floor. */
-  partial: Schema.Boolean,
-  budget: Schema.optionalKey(InstanceBudgetStatus),
-});
-export const InstanceSpendResult = Schema.Struct({ instances: Schema.Array(InstanceSpend) });
-export type InstanceSpendResult = typeof InstanceSpendResult.Type;
-
 /** Remaining percent of a usage window at or below which the user is told once; `"off"` silences a default. */
 export const UsageLimitAlertThreshold = Schema.Union([
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 99 })),

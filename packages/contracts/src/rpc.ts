@@ -405,9 +405,9 @@ import {
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
+import { InstanceSpendResult } from "./instanceSpend.ts";
 import {
   InstanceSpendInput,
-  InstanceSpendResult,
   UsagePricing,
   UsageReadError,
   UsageSummary,

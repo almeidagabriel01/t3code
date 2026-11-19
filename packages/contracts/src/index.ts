@@ -100,3 +100,4 @@ export * from "./clientRpcPermissions.ts";
 export * from "./forkUpdates.ts";
 export * from "./claudeChrome.ts";
 export * from "./consumer.ts";
+export * from "./instanceSpend.ts";
