@@ -318,7 +318,9 @@ const EXEC = /^(exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
-const WATCH = /^--watch(All)?(=true)?$/;
+const WATCH = /^--watch(All|-path(=.*)?)?(=true)?$/;
+/** Runners that restart on file changes: watching is what they are for. */
+const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
@@ -434,7 +436,8 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     (word) => WATCH.test(word) || (word === "-w" && SHORT_WATCH.has(program)),
   );
   if (watch !== undefined) return { code: "watches", subject: `${program} ${watch}` };
-  if (program === "vitest" && /^(watch|dev)$/.test(first)) {
+  if (WATCHERS.has(program)) return { code: "watches", subject: program };
+  if ((program === "vitest" && /^(watch|dev)$/.test(first)) || named === "tsx watch") {
     return { code: "watches", subject: named };
   }
   if (DOCKERS.has(program) && first !== "") {

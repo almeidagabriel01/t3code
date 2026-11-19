@@ -1617,6 +1617,56 @@
       "why": "a build ends"
     },
     {
+      "line": "nodemon src/index.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:nodemon",
+      "why": "a runner that restarts on file changes watches this Mac's files"
+    },
+    {
+      "line": "npx nodemon --exec 'node a.js'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "ts-node-dev --respawn src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:ts-node-dev"
+    },
+    {
+      "line": "tsx watch src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:tsx watch"
+    },
+    {
+      "line": "node --watch src/a.js",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:node --watch"
+    },
+    {
+      "line": "node --watch-path=src src/a.js",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:node --watch-path=src"
+    },
+    {
+      "line": "tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:tsc --watch"
+    },
+    {
+      "line": "tsx src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "tsx without watch runs once"
+    },
+    {
       "line": "bash -lc 'xcodebuild test'",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "QA 2026-11-18",
