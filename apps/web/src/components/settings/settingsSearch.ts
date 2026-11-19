@@ -1694,6 +1694,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["runner linux all every heavy command except stay on mac"],
   },
   {
+    id: "runner-linux-full",
+    title: RUNNER_SETTING_COPY.runnerLinuxFull.title,
+    description: RUNNER_SETTING_COPY.runnerLinuxFull.description,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux full busy slots taken limits wait use this mac balance load"],
+  },
+  {
     id: "runner-bring-back",
     title: RUNNER_SETTING_COPY.runnerBringBack.title,
     description: RUNNER_SETTING_COPY.runnerBringBack.description,
