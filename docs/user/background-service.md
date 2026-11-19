@@ -245,8 +245,12 @@ work queue, and each section says what the two do together.
   - **Talks to a port open here**: an argument or variable names `localhost`,
     `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
     `--base-url http://localhost:5733`.
+  - **Edits this Mac's files in place**: `sed -i`, `perl -pi`, `ruby -pi`,
+    `tee` or a `>`/`>>` redirect into the project, in a command Linux runs
+    whole (one with no heavy call, or one sent with `remoto`). Beside a heavy
+    call the edit runs here and only the heavy call goes to Linux.
 
-  A tenth reason is learned: **Linux couldn't run this before** (see **If a
+  An eleventh reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.

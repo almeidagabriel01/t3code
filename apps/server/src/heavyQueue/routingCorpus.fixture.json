@@ -1667,6 +1667,149 @@
       "why": "tsx without watch runs once"
     },
     {
+      "line": "sed -i '' -e '600,1000s/vp lint/vp check/g' -e '600,1000s/vp|lint|/vp|check|/g' -e '1584s/vp lint/vp check/g' heavyCli.test.ts && grep -n \"lint\" heavyCli.test.ts | sed -n 1,40p",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i",
+      "why": "with no heavy call the whole line is the work: an edit there would land on Linux"
+    },
+    {
+      "line": "perl -pi -e 's/a/b/' src/f.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:perl -pi"
+    },
+    {
+      "line": "ruby -pi -e 'gsub(/a/, \"b\")' src/f.rb",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:ruby -pi"
+    },
+    {
+      "line": "sed -i 's/a/b/' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i"
+    },
+    {
+      "line": "echo x > apps/server/src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:> apps/server/src/a.ts"
+    },
+    {
+      "line": "echo x >> notes.md",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:>> notes.md"
+    },
+    {
+      "line": "printf x | tee -a notes.md",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:tee notes.md"
+    },
+    {
+      "line": "grep 'vp test run' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a quoted pattern is an argument, never a command"
+    },
+    {
+      "line": "echo x > /dev/null 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "/dev/null and 2>&1 write nothing in the checkout"
+    },
+    {
+      "line": "echo x > /tmp/claude-501/out.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a file outside the checkout is no checkout edit"
+    },
+    {
+      "line": "sed -i '' -e 's/a/b/' src/a.ts && vp test run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "beside a heavy call the edit is glue: it runs in this Mac's shell, and only the test goes to Linux"
+    },
+    {
+      "line": "vp test run src/a.test.ts | tee out.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "tee is glue in this Mac's shell"
+    },
+    {
+      "line": "vp test run src/a.test.ts > out.txt 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "this Mac's shell opens a heavy call's redirect"
+    },
+    {
+      "line": "vp test run src/a.test.ts > /dev/null 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "bash ./fix.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./fix.sh": "sed -i '' 's/a/b/' src/a.ts\nvp test run src/a.test.ts\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "bash ./gen.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./gen.sh": "vp test run src/a.test.ts > report.txt\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "bash ./log.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./log.sh": "vp test run src/a.test.ts > /tmp/claude-501/t.log 2>&1\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "sh -c \"perl -pi -e 's/a/b/' src/a.ts && vp test run\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "remoto sed -i 's/a/b/' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i"
+    },
+    {
+      "line": "remoto bash ./fix.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./fix.sh": "sed -i '' 's/a/b/' src/a.ts\nvp test run src/a.test.ts\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i",
+      "why": "remoto runs the script whole on Linux: its edit would land there"
+    },
+    {
       "line": "bash -lc 'xcodebuild test'",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "QA 2026-11-18",

@@ -157,6 +157,12 @@ const LIGHT = [
   "pnpm exec vp lint src/x.ts",
   "oxlint src/a.ts",
   "npx eslint --fix src/a.ts",
+  // An in-place edit with nothing heavy beside it runs here, outside the queue.
+  `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
+  "perl -pi -e 's/vp test/x/' src/a.ts",
+  "echo 'vp test run' > notes.md",
+  "printf x | tee -a notes.md",
+  "grep 'pnpm exec vp test run' src/a.ts",
   'for f in $(git diff --name-only t3/fork2...HEAD); do command vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f || echo "fmt diff $f"; done; echo fmt-done',
 ];
 

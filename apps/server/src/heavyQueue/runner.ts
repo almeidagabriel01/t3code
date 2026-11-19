@@ -169,6 +169,7 @@ export interface MacReason {
     | "pinned"
     | "serves-port"
     | "watches"
+    | "edits-in-place"
     | "mac-docker"
     | "mac-port"
     | "learned";
@@ -191,6 +192,7 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
   watches: "Watches this Mac's files",
+  "edits-in-place": "Edits this Mac's files in place",
   "mac-docker": "Uses this Mac's Docker",
   "mac-port": "Talks to a port open here",
   learned: "Linux couldn't run this before",
@@ -643,6 +645,48 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 
+const IN_PLACE: Readonly<Record<string, RegExp>> = {
+  sed: /^(-[^-]*i|--in-place)/,
+  perl: /^-\w*i/,
+  ruby: /^-\w*i/,
+};
+
+/**
+ * An edit into the checkout a text makes when Linux runs it whole: Linux's copy never comes back.
+ * Redirects count only there; beside a heavy call this Mac's shell opens them.
+ */
+const editReason = (
+  part: Part,
+  cwd: string | null,
+  vars: ReadonlyMap<string, string | null>,
+  rootOf: (cwd: string) => string | null,
+  redirects: boolean,
+): MacReason | null => {
+  const root = cwd === null ? null : rootOf(cwd);
+  const intoCheckout = (word: Word) => {
+    const value = cwd === null ? null : literalValue(word, vars, cwd);
+    return root !== null && value !== null && inside(resolvePath(cwd!, value), root);
+  };
+  const { program } = part;
+  const args = part.values.slice(part.programAt + 1);
+  // An editor's files are relative to its folder: outside any checkout it edits nothing of one.
+  const flag =
+    root !== null && IN_PLACE[program] && args.find((word) => IN_PLACE[program]!.test(word));
+  if (flag) return { code: "edits-in-place", subject: `${program} ${flag}` };
+  if (program === "tee") {
+    const file = part.command.words
+      .slice(part.programAt + 1)
+      .find((word) => !word.value.startsWith("-") && intoCheckout(word));
+    if (file !== undefined) return { code: "edits-in-place", subject: `tee ${file.value}` };
+  }
+  if (!redirects) return null;
+  for (const { op, target } of part.command.redirects) {
+    if (target === null || op.includes("<") || op.endsWith("&") || !intoCheckout(target)) continue;
+    return { code: "edits-in-place", subject: `${op.replace(/^\d+/, "")} ${target.value}` };
+  }
+  return null;
+};
+
 /**
  * The first reason a line's work must stay on this Mac. Only the work parts leave (heavy commands
  * and `remoto` calls; with none, every program the job runs), so only they are judged, each from
@@ -654,6 +698,7 @@ const lineReason = (
   start: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
   read: ReadScript | undefined,
+  nested = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
   const parsed = readLine(line, read);
@@ -661,6 +706,8 @@ const lineReason = (
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
   const { parts } = source === line ? parsed : readLine(source, read);
   const work = new Set(workParts(parts));
+  // A text sent whole, or a line with no heavy or `remoto` part, runs whole where it is sent.
+  const whole = nested || !parts.some((part) => part.heavy || part.remoto !== null);
   const cwds = new Map<string, string | null>([["", start]]);
   const vars = new Map<string, string | null>([["HOME", home]]);
   // What reaches a command's environment from earlier in the line; plain `K=V;` does not.
@@ -685,6 +732,10 @@ const lineReason = (
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
+    if (whole || part.remoto !== null) {
+      const edit = editReason(part, cwd, vars, rootOf, whole);
+      if (edit !== null) return edit;
+    }
     if (work.has(part)) {
       // A part naming a folder in another checkout runs from there (`linux-part` does the same).
       const moved =
@@ -731,6 +782,8 @@ const lineReason = (
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
+          // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
+          whole || part.remoto !== null,
         );
         if (inner !== null) return inner;
       }
