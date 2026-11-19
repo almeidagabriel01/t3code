@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -92,6 +93,13 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const ExtendAuthSessionExpiryInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  now: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+});
+export type ExtendAuthSessionExpiryInput = typeof ExtendAuthSessionExpiryInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -119,6 +127,10 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    /** Moves a live session's expiry later; never revives a revoked or expired one. */
+    readonly extendExpiry: (
+      input: ExtendAuthSessionExpiryInput,
+    ) => Effect.Effect<Option.Option<DateTime.DateTime>, AuthSessionRepositoryError>;
     /** Changes only when another connection (another process) commits to the database. */
     readonly readExternalWriteVersion: () => Effect.Effect<number, AuthSessionRepositoryError>;
   }
@@ -323,6 +335,21 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const extendExpiryRows = SqlSchema.findAll({
+    Request: ExtendAuthSessionExpiryInput,
+    Result: Schema.Struct({ expiresAt: Schema.DateTimeUtcFromString }),
+    execute: ({ sessionId, now, expiresAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET expires_at = ${expiresAt}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
+          AND expires_at < ${expiresAt}
+        RETURNING expires_at AS "expiresAt"
+      `,
+  });
+
   const revokeSessionRows = SqlSchema.findAll({
     Request: RevokeAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -482,6 +509,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const extendExpiry: AuthSessionRepository["Service"]["extendExpiry"] = (input) =>
+    extendExpiryRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.extendExpiry:query",
+          "AuthSessionRepository.extendExpiry:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => Option.map(Option.fromNullishOr(rows[0]), (row) => row.expiresAt)),
+    );
+
   // Runs on the writer connection: data_version is per connection and ignores its own commits.
   const readExternalWriteVersion: AuthSessionRepository["Service"]["readExternalWriteVersion"] =
     () =>
@@ -505,6 +544,7 @@ export const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    extendExpiry,
     readExternalWriteVersion,
   } satisfies AuthSessionRepository["Service"];
 });

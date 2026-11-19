@@ -45,12 +45,16 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
   };
 }
 
-const EXPIRY_WARNING_DAYS = 5;
+// Links renew themselves while the peer answers, so one this close to lapsing is not renewing.
+const EXPIRY_WARNING_DAYS = 7;
+
+/** Days left when the link is close to lapsing, otherwise null. */
+type ExpiryWarning = { readonly expiresInDays: number | null };
 
 export type PeerLinkHealth =
-  | { readonly kind: "reachable"; readonly expiresInDays: number | null }
-  | { readonly kind: "unreachable"; readonly detail: string | null }
-  | { readonly kind: "failing"; readonly detail: string }
+  | ({ readonly kind: "reachable" } & ExpiryWarning)
+  | ({ readonly kind: "unreachable"; readonly detail: string | null } & ExpiryWarning)
+  | ({ readonly kind: "failing"; readonly detail: string } & ExpiryWarning)
   | { readonly kind: "expired" };
 
 /**
@@ -62,8 +66,27 @@ export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLi
   if (link.status === "expired" || DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
     return { kind: "expired" };
   }
-  if (link.status === "unreachable") return { kind: "unreachable", detail: link.lastError };
-  if (link.lastError !== null) return { kind: "failing", detail: link.lastError };
   const days = Math.ceil(Duration.toDays(DateTime.distance(now, link.expiresAt)));
-  return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
+  const expiresInDays = days <= EXPIRY_WARNING_DAYS ? days : null;
+  if (link.status === "unreachable") {
+    return { kind: "unreachable", detail: link.lastError, expiresInDays };
+  }
+  if (link.lastError !== null) return { kind: "failing", detail: link.lastError, expiresInDays };
+  return { kind: "reachable", expiresInDays };
+}
+
+/** The line a client shows under a linked environment. */
+export function peerLinkStatusText(health: PeerLinkHealth): string {
+  if (health.kind === "expired") return "Expired. Link it again with a new pairing code.";
+  const expiry =
+    health.expiresInDays === null
+      ? null
+      : `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"} unless it renews.`;
+  const lead =
+    health.kind === "reachable"
+      ? null
+      : health.kind === "unreachable"
+        ? (health.detail ?? "Not answering right now.")
+        : health.detail;
+  return [lead, expiry].filter((part) => part !== null).join(" ") || "Reachable";
 }

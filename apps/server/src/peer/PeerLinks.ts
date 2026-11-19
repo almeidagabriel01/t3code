@@ -105,6 +105,11 @@ export class PeerLinks extends Context.Service<
     readonly resolve: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<ResolvedPeerLink, PeerLinkError>;
+    /**
+     * Renews every link at its peer and keeps the expiry the peer answers. Only the server
+     * runs this, on a schedule: a link used through the CLI alone still lapses.
+     */
+    readonly renewAll: Effect.Effect<ReadonlyArray<PeerLinkRenewal>, PeerLinkError>;
     /** Records the outcome of a call, so listing shows whether the peer answered last time. */
     readonly recordOutcome: (
       environmentId: EnvironmentId,
@@ -112,6 +117,12 @@ export class PeerLinks extends Context.Service<
     ) => Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
+
+/** What renewing one link found: the peer renewed it, refused it, or could not be asked. */
+export interface PeerLinkRenewal {
+  readonly link: PeerLink;
+  readonly outcome: "renewed" | "rejected" | "lost" | "incompatible" | "unreachable" | "skipped";
+}
 
 interface PeerLinkRow {
   readonly environment_id: string;
@@ -618,6 +629,50 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** An address that still answers as the link's peer, with its token; ignores local expiry. */
+  const locate = Effect.fn("PeerLinks.locate")(function* (row: PeerLinkRow, link: PeerLink) {
+    const stored = yield* secrets.get(row.secret_name).pipe(Effect.catch(failStorage));
+    if (Option.isNone(stored)) {
+      return yield* new PeerLinkError({
+        reason: "unknown_link",
+        message: `The link to ${link.label} lost its credential. Link it again.`,
+      });
+    }
+    // The token goes only to an address that still answers as this peer,
+    // so one that now answers as another machine never receives it.
+    let fenced = true;
+    let label = link.label;
+    const url = yield* Effect.findFirst(link.urls, (candidate) =>
+      answersAs(candidate, link.environmentId).pipe(
+        Effect.map((found) => {
+          if (Option.isNone(found)) return false;
+          fenced = linkLimitsHold(found.value);
+          label = found.value.label;
+          return true;
+        }),
+      ),
+    );
+    if (Option.isNone(url)) {
+      return yield* new PeerLinkError({
+        reason: "unreachable",
+        message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
+      });
+    }
+    // A link made before the peer had to fence linked work, or a peer moved
+    // back to such a version, would carry work past those limits.
+    if (!fenced) {
+      return yield* new PeerLinkError({
+        reason: "incompatible",
+        message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
+      });
+    }
+    return {
+      link: yield* withLabel(link, label),
+      url: url.value,
+      token: new TextDecoder().decode(stored.value),
+    };
+  });
+
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
       const row = yield* readRow(environmentId);
@@ -634,48 +689,90 @@ const make = Effect.gen(function* () {
           message: `The link to ${link.label} expired. Link it again with a new pairing code from ${link.label}.`,
         });
       }
-      const stored = yield* secrets.get(row.value.secret_name).pipe(Effect.catch(failStorage));
-      if (Option.isNone(stored)) {
-        return yield* new PeerLinkError({
-          reason: "unknown_link",
-          message: `The link to ${link.label} lost its credential. Link it again.`,
-        });
-      }
-      // The token goes only to an address that still answers as this peer,
-      // so one that now answers as another machine never receives it.
-      let fenced = true;
-      let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        answersAs(candidate, environmentId).pipe(
-          Effect.map((found) => {
-            if (Option.isNone(found)) return false;
-            fenced = linkLimitsHold(found.value);
-            label = found.value.label;
-            return true;
-          }),
-        ),
-      );
-      if (Option.isNone(url)) {
-        return yield* new PeerLinkError({
-          reason: "unreachable",
-          message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
-        });
-      }
-      // A link made before the peer had to fence linked work, or a peer moved
-      // back to such a version, would carry work past those limits.
-      if (!fenced) {
-        return yield* new PeerLinkError({
-          reason: "incompatible",
-          message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
-        });
-      }
-      return {
-        link: yield* withLabel(link, label),
-        url: url.value,
-        token: new TextDecoder().decode(stored.value),
-      };
+      return yield* locate(row.value, link);
     },
   );
+
+  /**
+   * Asks the peer for the link's session, which renews it there, and keeps the
+   * expiry it answers. Skips the local expiry check: the peer decides.
+   */
+  const renew = Effect.fn("PeerLinks.renew")(function* (
+    row: PeerLinkRow,
+  ): Effect.fn.Return<PeerLinkRenewal, PeerLinkError> {
+    const link = yield* toLink(row);
+    if (row.fenced !== 1) return { link, outcome: "skipped" };
+    const located = yield* locate(row, link).pipe(Effect.result);
+    if (Result.isFailure(located)) {
+      const { reason, message } = located.failure;
+      if (reason === "storage") return yield* located.failure;
+      if (reason === "unreachable") return { link, outcome: "unreachable" };
+      yield* recordOutcome(link.environmentId, { error: message });
+      return { link, outcome: reason === "incompatible" ? "incompatible" : "lost" };
+    }
+    const { url, token } = located.success;
+    const answered = yield* clientFor(url).pipe(
+      Effect.flatMap((client) =>
+        client.mcpOAuth.peerLinkSession({ headers: { authorization: `Bearer ${token}` } }),
+      ),
+      Effect.timeout(probeTimeout(url)),
+      Effect.result,
+    );
+    if (Result.isSuccess(answered)) {
+      const now = yield* DateTime.now;
+      yield* sql`
+        UPDATE peer_environment_links
+        SET expires_at = ${DateTime.formatIso(answered.success.expiresAt)},
+            last_reached_at = ${DateTime.formatIso(now)}, last_error = NULL
+        WHERE environment_id = ${link.environmentId}
+      `.pipe(Effect.catch(failStorage));
+      return {
+        link: { ...located.success.link, expiresAt: answered.success.expiresAt },
+        outcome: "renewed",
+      };
+    }
+    const failure = answered.failure;
+    // A refusal whose body this version cannot read is still a refusal.
+    if (
+      failure._tag === "EnvironmentAuthInvalidError" ||
+      (failure._tag === "HttpClientError" && failure.response?.status === 401)
+    ) {
+      yield* recordOutcome(link.environmentId, {
+        error: `${link.label} no longer accepts this link. It may have been revoked there; link it again.`,
+      });
+      return { link, outcome: "rejected" };
+    }
+    // Answered, but not with this route: a peer from before links renewed themselves.
+    if (
+      failure._tag === "SchemaError" ||
+      (failure._tag === "HttpClientError" && failure.response?.status === 404)
+    ) {
+      yield* recordOutcome(link.environmentId, {
+        error: `${link.label} runs a T3 Code version that cannot renew links. Update it before ${DateTime.formatIso(link.expiresAt)}.`,
+      });
+      return { link, outcome: "incompatible" };
+    }
+    return { link, outcome: "unreachable" };
+  });
+
+  const renewAll: PeerLinks["Service"]["renewAll"] = Effect.gen(function* () {
+    if (!(yield* enabled)) return [];
+    // One link's storage failure must not stop the others from renewing.
+    return yield* Effect.forEach(
+      yield* readRows,
+      (row) =>
+        renew(row).pipe(
+          Effect.catchTags({
+            PeerLinkError: (error) =>
+              Effect.logWarning("Could not renew a linked environment.", { cause: error }).pipe(
+                Effect.andThen(toLink(row)),
+                Effect.map((link): PeerLinkRenewal => ({ link, outcome: "unreachable" })),
+              ),
+          }),
+        ),
+      { concurrency: 4 },
+    );
+  }).pipe(Effect.withSpan("PeerLinks.renewAll"));
 
   const recordOutcome: PeerLinks["Service"]["recordOutcome"] = (environmentId, outcome) =>
     DateTime.now.pipe(
@@ -704,6 +801,7 @@ const make = Effect.gen(function* () {
     unlink,
     resolve,
     recordOutcome,
+    renewAll,
   });
 });
 

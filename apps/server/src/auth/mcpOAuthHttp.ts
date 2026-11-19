@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
   mcpClientScopes,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -18,6 +19,8 @@ import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import * as CloudLink from "../cloud/CloudLink.ts";
 import { agentApprovalAppUrlConfig } from "../cloud/publicConfig.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { failEnvironmentAuthInvalid } from "./http.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -69,6 +72,7 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const cloudLink = yield* CloudLink.CloudLink;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const hostedAppUrl = yield* agentApprovalAppUrlConfig.pipe(
@@ -94,101 +98,117 @@ export const layer = HttpApiBuilder.group(
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
-    return handlers
-      .handle("protectedResource", protectedResource)
-      .handle("mcpProtectedResource", protectedResource)
-      .handle("authorizationServer", () =>
-        requestUrls.pipe(Effect.map(McpOAuth.authorizationServerMetadata)),
-      )
-      .handle("register", ({ payload }) =>
-        oauth.register(payload).pipe(
-          Effect.map((client) => ({
-            client_id: client.clientId,
-            client_name: client.name,
-            redirect_uris: client.redirectUris,
-            grant_types: ["authorization_code" as const],
-            response_types: ["code" as const],
-            token_endpoint_auth_method: "none" as const,
-          })),
-          Effect.tap(() => noStore),
-        ),
-      )
-      .handleRaw("authorize", ({ request }) =>
-        Effect.gen(function* () {
-          const urls = yield* requestUrls;
-          const url = new URL(request.url, urls.issuer);
-          const authorizationRequest = yield* decodeAuthorizationRequest(
-            Object.fromEntries(url.searchParams),
-          ).pipe(Effect.orDie);
-          const authorization = yield* oauth
-            .validateAuthorization({ urls, request: authorizationRequest })
-            .pipe(Effect.result);
-          const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
-          if (Result.isSuccess(authorization)) {
-            // A link needs a plain pairing code, so it stays on this environment's own page.
-            const hosted = authorization.success.client.peerLink
-              ? Option.none()
-              : yield* hostedApprovalUrl(urls.issuer, url.search);
-            return HttpServerResponse.redirect(
-              Option.getOrElse(hosted, () => `${APPROVAL_PAGE_PATH}${url.search}`),
-              { headers },
+    return (
+      handlers
+        .handle("protectedResource", protectedResource)
+        .handle("mcpProtectedResource", protectedResource)
+        .handle("authorizationServer", () =>
+          requestUrls.pipe(Effect.map(McpOAuth.authorizationServerMetadata)),
+        )
+        .handle("register", ({ payload }) =>
+          oauth.register(payload).pipe(
+            Effect.map((client) => ({
+              client_id: client.clientId,
+              client_name: client.name,
+              redirect_uris: client.redirectUris,
+              grant_types: ["authorization_code" as const],
+              response_types: ["code" as const],
+              token_endpoint_auth_method: "none" as const,
+            })),
+            Effect.tap(() => noStore),
+          ),
+        )
+        .handleRaw("authorize", ({ request }) =>
+          Effect.gen(function* () {
+            const urls = yield* requestUrls;
+            const url = new URL(request.url, urls.issuer);
+            const authorizationRequest = yield* decodeAuthorizationRequest(
+              Object.fromEntries(url.searchParams),
+            ).pipe(Effect.orDie);
+            const authorization = yield* oauth
+              .validateAuthorization({ urls, request: authorizationRequest })
+              .pipe(Effect.result);
+            const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
+            if (Result.isSuccess(authorization)) {
+              // A link needs a plain pairing code, so it stays on this environment's own page.
+              const hosted = authorization.success.client.peerLink
+                ? Option.none()
+                : yield* hostedApprovalUrl(urls.issuer, url.search);
+              return HttpServerResponse.redirect(
+                Option.getOrElse(hosted, () => `${APPROVAL_PAGE_PATH}${url.search}`),
+                { headers },
+              );
+            }
+            const error = authorization.failure;
+            return error._tag === "McpOAuthPageError"
+              ? HttpServerResponse.text(renderErrorPage(error.description), {
+                  status: 400,
+                  contentType: "text/html; charset=utf-8",
+                  headers: PAGE_HEADERS,
+                })
+              : HttpServerResponse.redirect(McpOAuth.redirectForError(error, urls.issuer), {
+                  headers,
+                });
+          }),
+        )
+        .handle("approval", ({ payload, request }) =>
+          Effect.gen(function* () {
+            const resolved = yield* forwardedAuthorization(oauth, payload);
+            if ("redirectTo" in resolved) return resolved;
+            const urls = yield* requestUrls;
+            const session = yield* oauth.approvingSession(request, resolved);
+            yield* noStore;
+            return {
+              clientName: resolved.client.name,
+              redirectHost: new URL(resolved.redirectUri).host,
+              environmentHost: new URL(urls.issuer).host,
+              ...(oauth.runtimeModeCeiling === undefined
+                ? {}
+                : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+              ...(session === undefined
+                ? {}
+                : {
+                    csrfToken: session.csrfToken,
+                    oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
+                      mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
+                    ),
+                  }),
+            };
+          }),
+        )
+        .handle("decision", ({ payload, request }) =>
+          Effect.gen(function* () {
+            const resolved = yield* forwardedAuthorization(oauth, payload.authorization);
+            if ("redirectTo" in resolved) return resolved;
+            yield* noStore;
+            const { decision } = payload;
+            if (decision._tag === "deny") return { redirectTo: oauth.deny(resolved) };
+            return yield* oauth.approve({ request, authorization: resolved, decision }).pipe(
+              Effect.map((redirectTo) => ({ redirectTo })),
+              Effect.mapError((error) => new AuthMcpApprovalError({ message: error.message })),
             );
-          }
-          const error = authorization.failure;
-          return error._tag === "McpOAuthPageError"
-            ? HttpServerResponse.text(renderErrorPage(error.description), {
-                status: 400,
-                contentType: "text/html; charset=utf-8",
-                headers: PAGE_HEADERS,
-              })
-            : HttpServerResponse.redirect(McpOAuth.redirectForError(error, urls.issuer), {
-                headers,
-              });
-        }),
-      )
-      .handle("approval", ({ payload, request }) =>
-        Effect.gen(function* () {
-          const resolved = yield* forwardedAuthorization(oauth, payload);
-          if ("redirectTo" in resolved) return resolved;
-          const urls = yield* requestUrls;
-          const session = yield* oauth.approvingSession(request, resolved);
-          yield* noStore;
-          return {
-            clientName: resolved.client.name,
-            redirectHost: new URL(resolved.redirectUri).host,
-            environmentHost: new URL(urls.issuer).host,
-            ...(oauth.runtimeModeCeiling === undefined
-              ? {}
-              : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
-            ...(session === undefined
-              ? {}
-              : {
-                  csrfToken: session.csrfToken,
-                  oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
-                  ),
-                }),
-          };
-        }),
-      )
-      .handle("decision", ({ payload, request }) =>
-        Effect.gen(function* () {
-          const resolved = yield* forwardedAuthorization(oauth, payload.authorization);
-          if ("redirectTo" in resolved) return resolved;
-          yield* noStore;
-          const { decision } = payload;
-          if (decision._tag === "deny") return { redirectTo: oauth.deny(resolved) };
-          return yield* oauth.approve({ request, authorization: resolved, decision }).pipe(
-            Effect.map((redirectTo) => ({ redirectTo })),
-            Effect.mapError((error) => new AuthMcpApprovalError({ message: error.message })),
-          );
-        }),
-      )
-      .handle("token", ({ payload, request }) =>
-        Effect.gen(function* () {
-          yield* noStore;
-          return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
-        }),
-      );
+          }),
+        )
+        .handle("token", ({ payload, request }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
+          }),
+        )
+        // Authenticating renews the link's session, so its origin calls this to keep the link alive.
+        .handle("peerLinkSession", ({ request }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const client = yield* environmentAuth.authenticateMcpClient(request).pipe(
+              Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+                failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+              ),
+              Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, Effect.die),
+            );
+            if (!client.peerLink) return yield* failEnvironmentAuthInvalid("invalid_credential");
+            return { expiresAt: DateTime.toUtc(client.expiresAt) };
+          }),
+        )
+    );
   }),
 );

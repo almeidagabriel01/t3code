@@ -37,6 +37,7 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
+import { PeerLinkSessionState } from "./peerLink.ts";
 import {
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -676,6 +677,13 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
       payload: AuthMcpTokenRequest,
       success: AuthMcpTokenResult,
       error: AuthMcpTokenError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("peerLinkSession", "/api/peer-link/session", {
+      headers: OptionalBearerHeaders,
+      success: PeerLinkSessionState,
+      error: EnvironmentAuthInvalidError,
     }),
   ) {}
 
