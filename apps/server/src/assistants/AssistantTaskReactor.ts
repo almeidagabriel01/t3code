@@ -13,10 +13,13 @@ import {
 import {
   backgroundWorkHoldsCompletion,
   isPullRequestWatchTask,
+  turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
@@ -33,7 +36,9 @@ import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { AssistantTasks } from "./AssistantTasks.ts";
+import { AssistantGroups } from "./AssistantGroups.ts";
+import { deliveredRunOf } from "./AssistantService.ts";
+import { AssistantTasks, taskStatusOf } from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
 
 const TERMINAL = new Set<string>([
@@ -44,6 +49,8 @@ const TERMINAL = new Set<string>([
 ] satisfies ReadonlyArray<TaskEventStatus>);
 const LIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const LAST_MESSAGE_CHARS = 1_500;
+/** Approvals a policy or the agent itself settles within seconds never reach an assistant. */
+export const REQUEST_WAKE_GRACE = Duration.seconds(10);
 
 export function taskWakeText(input: {
   readonly title: string;
@@ -79,6 +86,7 @@ export function waitWakeText(input: {
  * Wakes the assistant when a thread it launched ends a run or starts waiting on the user, so it
  * follows its tasks without waiting on them. `TaskEventNotices` decides whether a run is news and
  * keeps one per run; a wait's message id derives from the wait, so a replayed event wakes once.
+ * A thread launched for a group request reports to that request instead (`AssistantGroups`).
  */
 export class AssistantTaskReactor extends Context.Service<
   AssistantTaskReactor,
@@ -96,6 +104,13 @@ const make = Effect.gen(function* () {
   const tasks = yield* AssistantTasks;
   const needsUser = yield* NeedsUser;
   const notices = yield* TaskEventNotices;
+  const groups = yield* AssistantGroups;
+
+  /** The group request a task thread was launched for takes its events; false when there is none. */
+  const forRequest = (
+    task: Option.Option<{ readonly sourceThreadId?: ThreadId | null | undefined }>,
+    report: Effect.Effect<boolean>,
+  ) => (Option.isSome(task) && task.value.sourceThreadId != null ? report : Effect.succeed(false));
 
   /**
    * A completed run whose thread goes on by itself: a newer run is lined up, or it parked on work
@@ -114,15 +129,77 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Leaves the assistant's list once the task is done and its result reached the assistant: its
+   * last run completed, nothing waits on the user, and the assistant's turn that read the notice
+   * of that run (or of one that already said the same) completed.
+   */
+  const dismissIfDelivered = Effect.fn("AssistantTaskReactor.dismissIfDelivered")(
+    function* (threadId: ThreadId) {
+      const task = yield* tasks.forThread(threadId);
+      if (Option.isNone(task) || task.value.dismissedAt !== null) return;
+      const owner = yield* needsUser.conversation(task.value.assistantId);
+      if (Option.isNone(owner)) return;
+      const shell = yield* engine.getThreadShell(threadId);
+      if (shell == null || shell.activeRunId !== null || taskStatusOf(shell) !== "done") return;
+      const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
+      const last = deliveredRunOf(runs);
+      if (last?.status !== "completed" || (yield* resumesOnItsOwn(last))) return;
+      const notice = yield* notices.told({ threadId: owner.value.threadId, run: last });
+      if (Option.isNone(notice)) return;
+      const { runs: ownerRuns } = yield* threads.getThreadRecords(owner.value.threadId, ["runs"]);
+      const read = ownerRuns.find((run) => run.userMessageId === notice.value);
+      if (read?.status !== "completed") return;
+      yield* tasks.autoDismiss(threadId, last.id);
+    },
+    Effect.catchCause((cause) => Effect.logWarning("assistant task dismissal skipped", { cause })),
+  );
+
+  /** The task an assistant's run read the notice of, when that notice is still the latest. */
+  const noticedTask = Effect.fn("AssistantTaskReactor.noticedTask")(function* (run: {
+    readonly threadId: ThreadId;
+    readonly userMessageId: string;
+  }) {
+    if (!run.userMessageId.startsWith(TASK_EVENT_MESSAGE_PREFIX)) return Option.none<ThreadId>();
+    const rows = yield* sql<{ readonly subject_thread_id: string }>`
+      SELECT subject_thread_id FROM assistant_task_notices
+      WHERE thread_id = ${run.threadId} AND message_id = ${run.userMessageId}`;
+    return Option.fromNullishOr(rows[0]?.subject_thread_id as ThreadId | undefined);
+  });
+
   const handle: AssistantTaskReactor["Service"]["handle"] = Effect.fn(
     "AssistantTaskReactor.handle",
   )(
     function* (event) {
+      if (event.type === "thread.deleted" || event.type === "thread.archived") {
+        const task = yield* tasks.forThread(event.threadId);
+        yield* forRequest(task, groups.settleLaunch(event.threadId));
+        return;
+      }
+      // Background work ending, with no run after it, is the only sign a launched thread is done.
+      if (
+        (event.type === "provider-thread.updated" &&
+          !backgroundWorkHoldsCompletion(
+            (event.payload.pendingBackgroundTasks ?? []).filter(
+              (task) => !isPullRequestWatchTask(task),
+            ),
+          )) ||
+        (event.type === "turn-item.updated" && turnItemUpdateCanEndBackgroundWork(event.payload))
+      ) {
+        const task = yield* tasks.forThread(event.threadId);
+        yield* forRequest(task, groups.settleLaunch(event.threadId));
+        return;
+      }
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       const run = event.payload;
       if (!TERMINAL.has(run.status)) return;
+      if (run.status === "completed") {
+        const noticed = yield* noticedTask(run);
+        if (Option.isSome(noticed)) yield* dismissIfDelivered(noticed.value);
+      }
       const task = yield* tasks.forThread(run.threadId);
       if (Option.isNone(task)) return;
+      if (yield* forRequest(task, groups.settleLaunch(run.threadId))) return;
       // Failures always report; a wrong read reports rather than staying silent.
       if (
         run.status === "completed" &&
@@ -162,6 +239,8 @@ const make = Effect.gen(function* () {
         createdBy: "agent",
         senderThreadId: run.threadId,
       });
+      // A notice the assistant already read can cover this run too.
+      if (run.status === "completed") yield* dismissIfDelivered(run.threadId);
     },
     (effect, event) =>
       effect.pipe(
@@ -175,6 +254,9 @@ const make = Effect.gen(function* () {
     "AssistantTaskReactor.handleWait",
   )(
     function* ({ type, wait }) {
+      const task = yield* tasks.forThread(wait.threadId);
+      const toGroup = yield* forRequest(task, groups.syncWaitingThread(wait.threadId));
+      // The default assistant hears of a group's waits too, so a settled one is taken back from it.
       if (type === "resolved") {
         // Answered before the assistants got to it: take back the wakes still queued.
         // Each conversation on its own: one failing read or cancel never keeps the other's wake.
@@ -195,6 +277,7 @@ const make = Effect.gen(function* () {
         }
         return;
       }
+      if (toGroup) return;
       const owner = yield* needsUser.owner(wait.threadId);
       if (Option.isNone(owner)) return;
       // DelegatedTaskQuestionReactor already brings a delegated task's question to its parent.
@@ -252,6 +335,17 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  /** Tasks whose delivery completed while the server was down leave the list on start. */
+  const dismissDelivered = tasks.list.pipe(
+    Effect.flatMap((all) =>
+      Effect.forEach(
+        all.filter((task) => task.dismissedAt === null),
+        (task) => dismissIfDelivered(task.threadId),
+        { discard: true },
+      ),
+    ),
+  );
+
   /** Each loop restarts on its own failure, so one broken stream never stops the other. */
   const keepRunning = <E>(name: string, loop: Effect.Effect<void, E>) =>
     loop.pipe(
@@ -265,15 +359,48 @@ const make = Effect.gen(function* () {
       // Folding beside the streams, not before them, so no run that ends meanwhile is missed;
       // once per start, outside the retry, so a resubscribe never folds again.
       yield* forkParked(foldBacklogs);
+      yield* forkParked(dismissDelivered);
       yield* forkParked(
         keepRunning(
           "assistant task run stream",
-          Stream.runForEach(engine.streamDomainEvents, handle),
+          // Subscribed before the waiting tasks are checked, so work that ended while no stream
+          // listened is caught up and an end seen both ways settles once.
+          Stream.runForEach(
+            Stream.unwrap(
+              engine.subscribeDomainEvents.pipe(Effect.tap(() => groups.settleWaiting)),
+            ),
+            handle,
+          ),
         ),
       );
+      // A request waits a short grace before it wakes anyone, keyed by wait so its resolution
+      // cancels the wake; the wake still checks the request is open when the grace ends.
+      const graces = yield* FiberMap.make<string>();
+      const onWait = (change: UserWaitChange) =>
+        change.wait.source === "decision"
+          ? handleWait(change)
+          : change.type === "opened"
+            ? FiberMap.run(
+                graces,
+                change.wait.key,
+                Effect.sleep(REQUEST_WAKE_GRACE).pipe(Effect.andThen(handleWait(change))),
+                { onlyIfMissing: true },
+              ).pipe(Effect.asVoid)
+            : FiberMap.remove(graces, change.wait.key).pipe(Effect.andThen(handleWait(change)));
       // `changes` opens with what already waits, so a start also catches up.
       yield* forkParked(
-        keepRunning("assistant task wait stream", Stream.runForEach(needsUser.changes, handleWait)),
+        keepRunning("assistant task wait stream", Stream.runForEach(needsUser.changes, onWait)),
+      );
+      // A dismissed thread stops holding the group request it was launched for.
+      yield* forkParked(
+        keepRunning(
+          "assistant task dismissal stream",
+          Stream.runForEach(Stream.fromPubSub(tasks.changes), (task) =>
+            task.dismissedAt == null
+              ? Effect.void
+              : forRequest(Option.some(task), groups.settleLaunch(task.threadId)),
+          ),
+        ),
       );
     },
   );

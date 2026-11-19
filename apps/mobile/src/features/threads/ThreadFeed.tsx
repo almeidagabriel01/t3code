@@ -229,7 +229,12 @@ import { useThreadMarkdownLinks } from "./useThreadMarkdownLinks";
 import { ASSISTANT_FOLDED_HEIGHT, isAssistantMessageFoldable } from "./assistantMessageFold";
 import { FoldableContent } from "../../components/FoldableContent";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
-import { assistantSenders, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import {
+  assistantFeedBlocks,
+  assistantFeedIndex,
+  type AssistantFeedIndex,
+} from "./assistantFeedBlocks";
 import { AssistantFeedMessage } from "../assistants/AssistantPresence";
 import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
@@ -553,7 +558,7 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
   return attachment.type === "file";
 }
 
-function isMediaAttachment(attachment: ChatAttachment): boolean {
+export function isMediaAttachment(attachment: ChatAttachment): boolean {
   return (
     isImageAttachment(attachment) ||
     (isFileAttachment(attachment) && videoMimeType(attachment) !== null)
@@ -772,7 +777,7 @@ function MessageAttachmentFile(props: {
   );
 }
 
-function UserMessageMedia(props: {
+export function UserMessageMedia(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
@@ -958,7 +963,7 @@ function PendingMessageMedia(props: {
 }
 
 /** A message's files as its bubble shows them; a guest's waiting message uses it too. */
-function MessageAttachmentList(props: {
+export function MessageAttachmentList(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly environmentId: EnvironmentId;
   readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -1396,7 +1401,7 @@ function renderFeedEntry(
     readonly onSendToMainChat?: ((text: string) => void) | undefined;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly assistantFirstMessageIds: ReadonlySet<string>;
+    readonly assistantFeed: AssistantFeedIndex;
   },
 ) {
   const entry = info.item;
@@ -1666,24 +1671,42 @@ function renderFeedEntry(
       );
     }
     const presenceAssistantId = isUser ? messageAssistantId(message) : null;
-    if (presenceAssistantId !== null) {
+    const blocks = assistantFeedBlocks({
+      message,
+      parts: isUser ? presentation.teammate : undefined,
+      presenceAssistantId,
+      renderedText,
+      index: props.assistantFeed,
+    });
+    if (blocks !== null) {
       return (
-        <AssistantFeedMessage
-          environmentId={props.environmentId}
-          assistantId={presenceAssistantId}
-          joinedAtLabel={props.assistantFirstMessageIds.has(message.id) ? timestampLabel : null}
-        >
-          <UserMessageContent
-            text={renderedText}
-            environmentId={props.environmentId}
-            context={message.context}
-            markdownStyles={markdownStyles.assistant}
-            reviewCommentColors={props.reviewCommentColors}
-            skills={props.skills}
-            linkHandlers={props.markdownLinkHandlers}
-            renderImage={props.renderMarkdownImage}
-          />
-        </AssistantFeedMessage>
+        <View>
+          {blocks.map((block) => (
+            <AssistantFeedMessage
+              key={block.key}
+              environmentId={props.environmentId}
+              assistantId={block.assistantId}
+              fallbackName={block.fallbackName}
+              joinedAtLabel={block.joined ? timestampLabel : null}
+              status={block.status}
+              threadId={block.threadId}
+              timestampLabel={timestampLabel}
+              continues={block.continues}
+              long={block.long}
+            >
+              <UserMessageContent
+                text={block.text}
+                environmentId={props.environmentId}
+                context={message.context}
+                markdownStyles={markdownStyles.assistant}
+                reviewCommentColors={props.reviewCommentColors}
+                skills={props.skills}
+                linkHandlers={props.markdownLinkHandlers}
+                renderImage={props.renderMarkdownImage}
+              />
+            </AssistantFeedMessage>
+          ))}
+        </View>
       );
     }
     if (isUser) {
@@ -2748,16 +2771,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const assistantFirstMessageIds = useMemo(
-    () =>
-      new Set(
-        assistantSenders(
-          props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
-          [],
-        ).map((sender) => sender.firstMessageId),
-      ),
-    [props.feed],
-  );
+  const assistantFeed = useMemo(() => assistantFeedIndex(props.feed), [props.feed]);
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {
@@ -3031,7 +3045,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : null}
           {renderFeedEntry(info, {
-            assistantFirstMessageIds,
+            assistantFeed,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,

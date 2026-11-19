@@ -13,9 +13,8 @@ import { Button } from "../../components/ui/Button";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { IPHONE_SIGNING_COPY } from "./devicesCopy";
 
-export const IPHONE_SIGNING_INTRO =
-  "Agents need your Apple Team ID to sign the on-device runner that drives a USB iPhone. The first run asks you to trust the developer profile on the phone (Settings > General > VPN & Device Management) and to turn on Developer Mode.";
 const TEAM_ID_ERROR = "A Team ID is 10 uppercase letters and digits, such as ABCDE12345.";
 const BUNDLE_ID_ERROR = "A bundle id is reverse-DNS, such as com.yourname.agentdevice.runner.";
 
@@ -82,12 +81,12 @@ function SigningForm(props: {
     );
   };
   return (
-    <SettingsSection title={`iPhone signing${props.suffix}`}>
+    <SettingsSection title={`${IPHONE_SIGNING_COPY.title}${props.suffix}`}>
       <Text textRole="footnote" className="px-4 pt-3 text-foreground-muted">
-        {IPHONE_SIGNING_INTRO}
+        {IPHONE_SIGNING_COPY.intro}
       </Text>
       <Field
-        label="Apple Team ID"
+        label={IPHONE_SIGNING_COPY.teamId}
         value={draft.teamId}
         placeholder="ABCDE12345"
         error={teamError}
@@ -96,7 +95,7 @@ function SigningForm(props: {
         onChangeText={(teamId) => setDraft({ ...draft, teamId })}
       />
       <Field
-        label="Runner bundle id (optional)"
+        label={IPHONE_SIGNING_COPY.bundleId}
         value={draft.bundleId}
         placeholder="com.yourname.agentdevice.runner"
         error={bundleError}

@@ -14,6 +14,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 export function MemoryGenerationSettings({
   environmentId,
@@ -55,10 +56,9 @@ export function MemoryGenerationSettings({
     });
   }
   return (
-    <SettingsSection title="Memory">
+    <SettingsSection {...searchableSetting("memory-generation")}>
       <SettingsRow
-        title="Remember conversations"
-        description="Finished conversations are summarized into memory. Turning this off stops new summaries and keeps saved memories."
+        {...searchableSetting("memory-remember-conversations")}
         control={
           <Switch
             aria-label="Remember conversations"
@@ -70,8 +70,7 @@ export function MemoryGenerationSettings({
       />
       {(!hideModelWhenDisabled || settings.memoryEnabled) && (
         <SettingsRow
-          title="Memory model"
-          description="Automatic follows the text generation model. Choose a separate model for memory summaries."
+          {...settingCopy("memory-model")}
           control={
             <div className="flex flex-wrap items-end justify-end gap-3">
               {!separate ? (

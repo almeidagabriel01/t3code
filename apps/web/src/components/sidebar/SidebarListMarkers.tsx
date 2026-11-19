@@ -1,3 +1,4 @@
+import { useDndContext, type ClientRect } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode, useLayoutEffect } from "react";
@@ -7,6 +8,7 @@ import {
   sidebarMarkerId,
   type SidebarListMarker,
 } from "../Sidebar.logic";
+import type { SidebarSortingStrategy } from "../Sidebar.drag";
 import { SIDEBAR_SORTABLE_DRAG_DISABLED } from "./SidebarThreadRow";
 
 export function SortableSidebarMarker(props: {
@@ -113,4 +115,28 @@ export function SidebarDragBoundary(props: {
       ) : null}
     </SortableSidebarMarker>
   );
+}
+
+/**
+ * Room below a dragging group for what its preview pushes past the last row, so drag labels and
+ * shifted rows never cover the next project.
+ */
+export function SidebarDragReserve(props: {
+  ids: readonly string[];
+  strategy: SidebarSortingStrategy;
+}) {
+  const { active, over, droppableRects } = useDndContext();
+  if (active === null) return null;
+  // The same rects, in item order, that SortableContext hands the strategy.
+  const rects: ClientRect[] = [];
+  for (const [index, id] of props.ids.entries()) {
+    const rect = droppableRects.get(id);
+    if (rect) rects[index] = rect;
+  }
+  const height = props.strategy.overflow({
+    rects,
+    activeIndex: props.ids.indexOf(String(active.id)),
+    overIndex: over === null ? -1 : props.ids.indexOf(String(over.id)),
+  });
+  return height > 0 ? <div aria-hidden style={{ height }} /> : null;
 }

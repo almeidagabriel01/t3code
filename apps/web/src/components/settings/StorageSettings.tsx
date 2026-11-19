@@ -3,13 +3,15 @@ import {
   MIN_TOOL_OUTPUT_HISTORY_DAYS,
   SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS,
 } from "@t3tools/contracts/settings";
-import type {
-  StorageCleanupReport,
-  StorageCleanupSettings,
-  WorktreeCleanupRules,
+import {
+  MERGED_WORKTREE_DAYS,
+  type StorageCleanupReport,
+  type StorageCleanupSettings,
+  type WorktreeCleanupRules,
+  type WorktreeMergedCleanup,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { resolveWorktreeCleanup, worktreeCleanupDeletes } from "@t3tools/shared/projectSettings";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -28,6 +30,7 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
 import { Input } from "../ui/input";
+import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -45,7 +48,8 @@ import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import {
   useClearScopedSettings,
   useScopedSettings,
@@ -73,9 +77,6 @@ export function WorktreesDirectoryRow() {
   return (
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
-      }
       serverScoped
       settingKeys={["worktreesDirectory"]}
       resetAction={
@@ -181,6 +182,97 @@ function RetentionControl({
   );
 }
 
+const MERGED_LABELS: Record<WorktreeMergedCleanup, string> = {
+  off: "Off",
+  "right-away": "Right away",
+  "after-days": "After",
+};
+
+/** Off, right away, or after a number of days unused; the days field shows only for the last. */
+function MergedWorktreesControl({
+  value,
+  days,
+  mixed,
+  onChange,
+}: {
+  value: WorktreeMergedCleanup;
+  days: number;
+  mixed: boolean;
+  onChange: (patch: Partial<WorktreeCleanupRules>) => void;
+}) {
+  const [draft, setDraft] = useState<number | null>(days);
+  const [savedDays, setSavedDays] = useState(days);
+  if (savedDays !== days) {
+    setSavedDays(days);
+    setDraft(days);
+  }
+  const valid =
+    draft !== null &&
+    Number.isInteger(draft) &&
+    draft >= MERGED_WORKTREE_DAYS.minimum &&
+    draft <= MERGED_WORKTREE_DAYS.maximum;
+  return (
+    <div className="space-y-2 pt-2 pb-2">
+      <RadioGroup
+        aria-label="Delete merged worktrees"
+        value={mixed ? null : value}
+        onValueChange={(next) => {
+          if (next === "off" || next === "right-away" || next === "after-days")
+            onChange({ worktreeMerged: next });
+        }}
+      >
+        {(["off", "right-away", "after-days"] as const).map((option) => (
+          <div key={option} className="flex min-h-7 items-center gap-2 text-sm">
+            <label className="flex w-fit cursor-pointer items-center gap-2">
+              <Radio value={option} aria-label={MERGED_LABELS[option]} />
+              {MERGED_LABELS[option]}
+              {option === "after-days" && value !== "after-days" && ` ${days} days`}
+            </label>
+            {option === "after-days" && value === "after-days" && !mixed && (
+              <>
+                <NumberField
+                  value={draft}
+                  step={1}
+                  size="sm"
+                  className="w-auto"
+                  onValueChange={setDraft}
+                  onValueCommitted={(next) => {
+                    if (
+                      next !== null &&
+                      Number.isInteger(next) &&
+                      next >= MERGED_WORKTREE_DAYS.minimum &&
+                      next <= MERGED_WORKTREE_DAYS.maximum
+                    )
+                      onChange({ worktreeMergedAfterDays: next });
+                  }}
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Fewer days" />
+                    <NumberFieldInput
+                      aria-label="Days unused before deleting a merged worktree"
+                      aria-invalid={!valid}
+                      size={4}
+                      className="w-auto grow-0 text-right"
+                    />
+                    <NumberFieldIncrement aria-label="More days" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span>days unused</span>
+              </>
+            )}
+          </div>
+        ))}
+      </RadioGroup>
+      {value === "after-days" && !mixed && !valid && (
+        <p role="alert" className="text-xs text-destructive">
+          Enter a whole number of days from {MERGED_WORKTREE_DAYS.minimum} to{" "}
+          {MERGED_WORKTREE_DAYS.maximum}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const KEEP_WHEN_LABELS = {
   "any-local-files": "Any local files",
   "uncommitted-changes": "Uncommitted changes",
@@ -222,6 +314,7 @@ function CleanupResults({
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
             title={<span className="wrap-anywhere select-text">{name}</span>}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- cleanup report details, not a setting
             description={
               <span className="block space-y-2 wrap-anywhere select-text">
                 <span className={`block ${entry.outcome === "failed" ? "text-destructive" : ""}`}>
@@ -317,19 +410,14 @@ function CleanupSection() {
   const hasRules = supported.some((environment) => {
     const settings = environment.serverConfig?.settings;
     if (!settings) return false;
-    const enabled = (rules: WorktreeCleanupRules) =>
-      rules.worktreeAfterDays !== null ||
-      rules.worktreeSettledAfterDays !== null ||
-      rules.worktreeOnMerge ||
-      rules.worktreeOnDelete ||
-      rules.worktreeUnchanged;
     return (
       settings.storageCleanup.browserArtifactsAfterDays !== null ||
       settings.storageCleanup.logsAfterDays !== null ||
-      enabled(resolveWorktreeCleanup(settings, null)) ||
+      worktreeCleanupDeletes(resolveWorktreeCleanup(settings, null)) ||
       Object.values(settings.projectSettingsOverrides).some(
         (override) =>
-          override.worktreeCleanup?.mode === "custom" && enabled(override.worktreeCleanup.rules),
+          override.worktreeCleanup?.mode === "custom" &&
+          worktreeCleanupDeletes(override.worktreeCleanup.rules),
       )
     );
   });
@@ -382,14 +470,14 @@ function CleanupSection() {
     ).finally(() => setPending(false));
   };
   return (
-    <SettingsSection id="storage-cleanup" title="Cleanup" variant="plain">
+    <SettingsSection {...searchableSetting("storage-cleanup")} variant="plain">
       <SettingsGroup>
         <SettingsRow
           {...searchableSetting("storage-delete-now")}
           description={
             <span>
               {!hasRules
-                ? "Turn on a cleanup rule to use this."
+                ? settingCopy("storage-delete-now").description
                 : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
                       {supported.length > 1 ? `${label}: ` : ""}
@@ -413,7 +501,7 @@ function CleanupSection() {
       {summaries.some(({ report }) => report !== null) && (
         <FoldedSettingsSection
           id="storage-cleanup-last-run"
-          title="Last run"
+          title={settingCopy("storage-cleanup-last-run").title}
           headerPlacement="inside"
           summary={lastRunSummary(
             summaries.filter(({ report }) => report !== null),
@@ -495,6 +583,13 @@ export function WorktreeCleanupSection() {
   // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
   const lockablePath = (key: keyof WorktreeCleanupRules) =>
     isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
+  const runnerCopyApplies =
+    worktreeCleanupDeletes(settings) ||
+    targets.some((entry) => worktreeCleanupDeletes(resolveWorktreeCleanup(entry.settings, null)));
+  const mergedSupported = connectedEnvironments.every(
+    (environment) =>
+      environment.serverConfig?.environment.capabilities.mergedWorktreeCleanup === true,
+  );
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
@@ -510,7 +605,7 @@ export function WorktreeCleanupSection() {
     )
   ) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection {...searchableSetting("storage-worktrees")} variant="plain">
         <SettingsScopeNotice inline target="all">
           Update the selected machines to configure project worktree cleanup.
         </SettingsScopeNotice>
@@ -519,24 +614,24 @@ export function WorktreeCleanupSection() {
   }
   if (!supportsStorageCleanup(connectedEnvironments)) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection {...searchableSetting("storage-worktrees")} variant="plain">
         <StorageCleanupScopeNotice />
       </SettingsSection>
     );
   }
 
   return (
-    <SettingsSection id="storage-worktrees" title="Cleanup">
+    <SettingsSection {...searchableSetting("storage-worktrees")}>
       <>
         {isProjectScope && (
           <SettingsRow
-            title="Automatic worktree cleanup"
+            {...settingCopy("storage-worktree-mode")}
             description={
               mode === "off"
-                ? "Keep this project's worktrees until you delete them manually."
+                ? MAINTENANCE_SETTINGS_COPY.worktreeCleanupOff
                 : mode === "custom"
-                  ? "Use these rules for this project."
-                  : "Use each machine's worktree cleanup settings."
+                  ? MAINTENANCE_SETTINGS_COPY.worktreeCleanupCustom
+                  : settingCopy("storage-worktree-mode").description
             }
             serverScoped
             settingKeys={["worktreeCleanup"]}
@@ -574,10 +669,9 @@ export function WorktreeCleanupSection() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
+              {...settingCopy("storage-worktree-on-delete")}
               status={ruleStatus("worktreeOnDelete")}
               managedPaths={lockablePath("worktreeOnDelete")}
-              description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -587,25 +681,29 @@ export function WorktreeCleanupSection() {
                 />
               }
             />
-            <SettingsRow
-              title="Delete merged worktrees"
-              status={ruleStatus("worktreeOnMerge")}
-              managedPaths={lockablePath("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
-              serverScoped={!isProjectScope}
-              control={
-                <Switch
-                  aria-label="Delete merged worktrees"
-                  checked={settings.worktreeOnMerge}
-                  onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
+            {mergedSupported ? (
+              <SettingsRow
+                {...settingCopy("storage-worktree-merged")}
+                status={ruleStatus("worktreeMerged") ?? ruleStatus("worktreeMergedAfterDays")}
+                managedPaths={lockablePath("worktreeMerged")}
+                serverScoped={!isProjectScope}
+              >
+                <MergedWorktreesControl
+                  value={settings.worktreeMerged}
+                  days={settings.worktreeMergedAfterDays}
+                  mixed={ruleStatus("worktreeMerged") !== undefined}
+                  onChange={updateWorktree}
                 />
-              }
-            />
+              </SettingsRow>
+            ) : (
+              <SettingsScopeNotice inline target="all">
+                Update the selected machines to change merged worktree cleanup.
+              </SettingsScopeNotice>
+            )}
             <SettingsRow
-              title="Delete inactive worktrees"
+              {...settingCopy("storage-worktree-inactive")}
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
@@ -615,6 +713,21 @@ export function WorktreeCleanupSection() {
                 />
               }
             />
+            {mergedSupported && runnerCopyApplies && (
+              <SettingsRow
+                {...settingCopy("storage-worktree-runner-copy")}
+                status={ruleStatus("worktreeRunnerCopy")}
+                managedPaths={lockablePath("worktreeRunnerCopy")}
+                serverScoped={!isProjectScope}
+                control={
+                  <Switch
+                    aria-label="Delete the Linux copy too"
+                    checked={settings.worktreeRunnerCopy}
+                    onCheckedChange={(worktreeRunnerCopy) => updateWorktree({ worktreeRunnerCopy })}
+                  />
+                }
+              />
+            )}
             <AdvancedSettings
               // The keep-when search result lands on this section, not its row.
               targetIds={["storage-worktrees", searchableSetting("storage-worktree-keep-when").id]}
@@ -626,7 +739,7 @@ export function WorktreeCleanupSection() {
                     true,
                 ) && (
                   <SettingsRow
-                    title="Delete settled worktrees"
+                    {...settingCopy("storage-worktree-settled")}
                     managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
@@ -636,7 +749,6 @@ export function WorktreeCleanupSection() {
                     ]
                       .filter(Boolean)
                       .join(". ")}
-                    description="Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept."
                     serverScoped={!isProjectScope}
                     control={
                       <RetentionControl
@@ -650,20 +762,6 @@ export function WorktreeCleanupSection() {
                     }
                   />
                 )}
-              <SettingsRow
-                title="Delete unchanged worktrees"
-                status={ruleStatus("worktreeUnchanged")}
-                managedPaths={lockablePath("worktreeUnchanged")}
-                description="Remove worktrees with no commits beyond the default branch."
-                serverScoped={!isProjectScope}
-                control={
-                  <Switch
-                    aria-label="Delete unchanged worktrees"
-                    checked={settings.worktreeUnchanged}
-                    onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
-                  />
-                }
-              />
               {connectedEnvironments.every(
                 (environment) =>
                   environment.serverConfig?.environment.capabilities.storageCleanupRun === true,
@@ -674,10 +772,10 @@ export function WorktreeCleanupSection() {
                   managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
-                      ? "Includes ignored files, except node_modules."
+                      ? settingCopy("storage-worktree-keep-when").description
                       : settings.worktreeKeepWhen === "tracked-changes"
-                        ? "Deletes untracked and ignored files, including .env."
-                        : "Keeps edits and untracked files. Deletes ignored files, including .env."
+                        ? MAINTENANCE_SETTINGS_COPY.keepWhenTracked
+                        : MAINTENANCE_SETTINGS_COPY.keepWhenUncommitted
                   }
                   serverScoped={!isProjectScope}
                   control={
@@ -772,7 +870,7 @@ export function StorageCleanupSections() {
     return (
       <>
         {databaseStorageNotice}
-        <SettingsSection id="storage-artifacts" title="Artifacts and logs" variant="plain">
+        <SettingsSection {...searchableSetting("storage-artifacts")} variant="plain">
           <StorageCleanupScopeNotice />
         </SettingsSection>
       </>
@@ -782,13 +880,12 @@ export function StorageCleanupSections() {
   return (
     <>
       {databaseStorageNotice}
-      <SettingsSection id="storage-artifacts" title="Artifacts and logs">
+      <SettingsSection {...searchableSetting("storage-artifacts")}>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old browser artifacts"
+            {...settingCopy("storage-browser-artifacts")}
             status={artifactsStatus}
             managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
-            description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
               <RetentionControl
@@ -801,10 +898,9 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old rotated logs"
+            {...settingCopy("storage-rotated-logs")}
             status={logsStatus}
             managedPaths={["storageCleanup.logsAfterDays"]}
-            description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={
               <RetentionControl
@@ -817,10 +913,9 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old worktree snapshots"
+            {...settingCopy("storage-worktree-snapshots")}
             status={snapshotsStatus}
             managedPaths={["storageCleanup.worktreeSnapshotsAfterDays"]}
-            description="Delete the changes saved before cleanup removed a worktree after this many days. Older ones can no longer be restored; the thread still recreates its worktree from the branch."
             serverScoped
             control={
               <RetentionControl
@@ -833,9 +928,8 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Summarize old tool output"
+            {...settingCopy("storage-tool-output")}
             settingKeys={["toolOutputHistoryDays"]}
-            description="Replace detailed tool output in thread history, such as screenshots, file contents and command output, with a short summary after this many days. Off keeps everything."
             serverScoped
             control={
               <RetentionControl

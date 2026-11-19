@@ -1,4 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import { assistantIdFromThreadId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
@@ -38,7 +39,7 @@ export function buildSnoozePresetActions(
 }
 
 /** Which of the list's menus a thread gets; the open thread uses the same rules. */
-export type ThreadMenuKind = "snoozed" | "legacy" | "slim" | "snoozableCard" | "card";
+export type ThreadMenuKind = "snoozed" | "legacy" | "slim" | "snoozableCard" | "card" | "subagent";
 
 export function resolveThreadMenuKind(input: {
   readonly snoozed: boolean;
@@ -80,18 +81,41 @@ export interface ThreadMenuInput {
   readonly assistant?: { readonly name: string; readonly resetDisabled?: boolean } | null;
   /** Set when an assistant launched this thread as a task. */
   readonly assistantTask?: { readonly dismissed: boolean; readonly canDismiss: boolean } | null;
+  /** An assistant's subagent: it lives under the assistant, in no project of its own. */
+  readonly outsideProjects?: boolean;
+  /** List only: the thread holds an unsent draft the row can throw away. */
+  readonly discardDraft?: boolean;
 }
 
+export const DISCARD_DRAFT_ACTION: MenuAction = {
+  id: "discard-draft",
+  title: "Discard draft",
+  image: "xmark",
+  attributes: { destructive: true },
+};
+
+const PROJECT_IDS = new Set(["new-thread-on-branch", "notes", "project", "turn-into-project"]);
 const ASSISTANT_HIDDEN_IDS = new Set([
+  ...PROJECT_IDS,
   "rename",
   "regenerate-title",
-  "turn-into-project",
   "archive",
   "delete",
 ]);
 
+/** A thread an assistant's chat delegated, listed under that assistant rather than a project. */
+export const isAssistantSubagent = (thread: {
+  readonly lineage: { readonly parentThreadId: string | null };
+}) =>
+  thread.lineage.parentThreadId !== null &&
+  assistantIdFromThreadId(thread.lineage.parentThreadId) !== null;
+
 export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
-  const actions = buildBaseThreadMenuActions(input);
+  const base = buildBaseThreadMenuActions(input);
+  const scoped = input.outsideProjects
+    ? base.filter((action) => !PROJECT_IDS.has(action.id ?? ""))
+    : base;
+  const actions = input.discardDraft === true ? [DISCARD_DRAFT_ACTION, ...scoped] : scoped;
   if (!input.assistant) return actions;
   return [
     ...actions.filter((action) => !ASSISTANT_HIDDEN_IDS.has(action.id ?? "")),
@@ -104,6 +128,23 @@ export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
     { id: "assistant-work", title: `${input.assistant.name} work`, image: "briefcase" },
     { id: "assistant-settings", title: `${input.assistant.name} settings`, image: "gearshape" },
   ];
+}
+
+/** A subagent working under an assistant: copy and pin, no project or lifecycle actions. */
+export function buildSubagentMenuActions(input: {
+  readonly pinned: boolean;
+  readonly pinningSupported: boolean;
+}): MenuAction[] {
+  return buildThreadMenuActions({
+    ...input,
+    kind: "subagent",
+    newThreadOnBranchTitle: null,
+    autoSettle: { supported: false, enabled: true },
+    titleRegeneration: { supported: false, regenerating: false },
+    canHandoff: false,
+    turnIntoProject: null,
+    snoozePresetActions: [],
+  });
 }
 
 function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
@@ -243,6 +284,8 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
         ];
       case "card":
         return [settle, ...arrangement, ...title, ...autoSettle, ARCHIVE, DELETE];
+      case "subagent":
+        return arrangement;
     }
   })();
   return [...head, ...body];
@@ -273,6 +316,7 @@ export interface ThreadMenuHandlers {
   readonly dismissTask?: () => void;
   readonly restoreTask?: () => void;
   readonly resetAssistant?: () => void;
+  readonly discardDraft?: () => void;
   readonly assistantWork?: () => void;
   readonly assistantSettings?: () => void;
   readonly delete: () => void;
@@ -340,6 +384,8 @@ export function runThreadMenuEvent(
       return handlers.dismissTask?.();
     case "restore-task":
       return handlers.restoreTask?.();
+    case "discard-draft":
+      return handlers.discardDraft?.();
     case "reset-assistant":
       return handlers.resetAssistant?.();
     case "assistant-work":

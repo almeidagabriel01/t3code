@@ -7,7 +7,7 @@ import {
   type TextProps as RNTextProps,
 } from "react-native";
 
-import { MOBILE_TEXT_CLASSES } from "../../lib/typography";
+import { MOBILE_TEXT_CLASSES, textSelectable } from "../../lib/typography";
 
 import { cn } from "../../lib/cn";
 
@@ -26,6 +26,7 @@ export function AppText({ className, textRole, ...props }: AppTextProps) {
       )}
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
       {...props}
+      selectable={textSelectable(Platform.OS, props)}
     />
   );
 }

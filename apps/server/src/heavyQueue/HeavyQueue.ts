@@ -2,10 +2,14 @@
  * The machine-wide heavy-work queue, shared with every T3 server and `t3 heavy` CLI on this
  * machine through one file. Agents and the server wait their turn here; only the user reorders.
  */
-// @effect-diagnostics nodeBuiltinImport:off - An entry id needs no Effect service.
+// @effect-diagnostics nodeBuiltinImport:off - An entry id and the home folder need no Effect service.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import {
   HeavyQueueError,
+  type HeavyQueueForgetRoutesResult,
+  type HeavyQueueListRoutesResult,
+  type HeavyQueueSetAdmissionLimitsInput,
   type HeavyQueueState,
   type HeavyRunner,
   type HeavyRunnerLinux,
@@ -21,10 +25,20 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
+import {
+  estimate,
+  hasHeadroom,
+  learnedCpu,
+  machineHold,
+  SAMPLE_FRESH_MS,
+  runsOf,
+} from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
+import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
+import * as RouteMemory from "./routeMemory.ts";
+import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
@@ -42,7 +56,7 @@ const moveFailure = (action: string, result: QueueFile.MoveResult) => {
       return Effect.fail(
         failure(
           "not-allowed",
-          "This job only runs on this Mac (exclusive or on the Mac-only list).",
+          "This job only runs on this Mac (exclusive, on the Mac-only list, or the Runner is off for its project).",
         ),
       );
     case "unconfirmed":
@@ -76,6 +90,15 @@ export class HeavyQueue extends Context.Service<
     readonly cancel: (id: string) => Effect.Effect<void, HeavyQueueError>;
     /** How many entries may run at once; 1 is strictly one at a time. */
     readonly setMaxRunning: (maxRunning: number) => Effect.Effect<void, HeavyQueueError>;
+    /** The Mac counts as over its limits below this share of free memory. */
+    readonly setMacMemoryFloorPercent: (percent: number) => Effect.Effect<void, HeavyQueueError>;
+    /** The Mac counts as over its limits above this CPU use. */
+    readonly setMacCpuCeilingPercent: (percent: number) => Effect.Effect<void, HeavyQueueError>;
+    /** How long readings must stay past a limit, or back under it, before routing follows. */
+    readonly setHeavyOverLimitSeconds: (seconds: number) => Effect.Effect<void, HeavyQueueError>;
+    readonly setAdmissionLimits: (
+      limits: HeavyQueueSetAdmissionLimitsInput,
+    ) => Effect.Effect<void, HeavyQueueError>;
     readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
     /** Off starts every heavy job at once, waiting ones included; on restores the rules for new arrivals. */
     readonly setEnabled: (enabled: boolean) => Effect.Effect<void, HeavyQueueError>;
@@ -96,6 +119,18 @@ export class HeavyQueue extends Context.Service<
       runner: HeavyRunner,
       force: boolean,
     ) => Effect.Effect<void, HeavyQueueError>;
+    /** Move all: routes every waiter that can run on `runner` there; returns the moved ids. */
+    readonly routeAll: (
+      runner: HeavyRunner,
+    ) => Effect.Effect<ReadonlyArray<string>, HeavyQueueError>;
+    /** What route memory learned, with the Runner settings for `cwd` (the home folder by default). */
+    readonly listRoutes: (
+      cwd?: string,
+    ) => Effect.Effect<HeavyQueueListRoutesResult, HeavyQueueError>;
+    /** Forgets one learned route by key, or every one with `all`; one already gone removes 0. */
+    readonly forgetRoutes: (
+      key: string,
+    ) => Effect.Effect<HeavyQueueForgetRoutesResult, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -109,6 +144,11 @@ export class HeavyQueue extends Context.Service<
     ) => Effect.Effect<A, E | HeavyQueueError, R>;
     /** The shell prefix agents put before a heavy command. */
     readonly command: Effect.Effect<string>;
+    /** Where `line`, started now from `cwd`, would run; nothing is queued. */
+    readonly probe: (
+      line: string,
+      cwd: string,
+    ) => Effect.Effect<ReturnType<typeof QueueFile.probe>, HeavyQueueError>;
   }
 >()("t3/heavyQueue/HeavyQueue") {}
 
@@ -162,6 +202,7 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     slots: block.machine.runnerLinuxSlots,
     running: doc.entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux")
       .length,
+    cpuPercent: linux.cpuPercent === null ? null : Math.round(linux.cpuPercent),
     load1: linux.load1 === null ? null : Math.round(linux.load1 * 10) / 10,
     cpuCount: linux.cpuCount,
     availableMemoryBytes: linux.availableMemoryBytes,
@@ -222,26 +263,52 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const { doc, plan } = QueueFile.readPlan(dir, now);
     const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
+    const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
+    const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = doc;
+    const { historyCommands, headPatienceMinutes } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
-    const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
+    const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
-      if (entry.startedAt !== null || (doc.history[signatureOf(entry.label)] ?? []).length === 0) {
+      // Usage is only known for this Mac's runs; a job headed for Linux shows none.
+      if (
+        entry.startedAt !== null ||
+        plan.routes[entry.id] === "linux" ||
+        runsOf(doc.history, entry).length === 0
+      ) {
         continue;
       }
-      const usual = estimate(doc.history, entry, 1);
-      if (usual.durationMs !== null)
-        estimates[entry.id] = { ...usual, durationMs: usual.durationMs };
+      const usual = estimate(doc.history, entry, 1, doc);
+      // A guessed CPU would read as learned, so a command whose CPU was never read shows none.
+      const cpu = learnedCpu(doc.history, entry);
+      if (usual.durationMs !== null) {
+        estimates[entry.id] = {
+          ...(cpu === undefined ? {} : { cpu }),
+          memoryBytes: usual.memoryBytes,
+          durationMs: usual.durationMs,
+        };
+      }
     }
     return {
-      entries,
+      // A job's full line stays in the file; the row shows its label.
+      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
+        entry.runner === "linux" ? withoutUsage(entry) : entry,
+      ),
       estimates,
       enabled,
       paused,
       rules,
       maxRunning,
+      macMemoryFloorPercent,
+      macCpuCeilingPercent,
+      heavyOverLimitSeconds,
+      lightJobMegabytes,
+      unseenHeavyMegabytes,
+      unseenMediumMegabytes,
+      historyCommands,
+      headPatienceMinutes,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
-      room: plan.room && (!fresh || hasHeadroom(sample)),
+      room: plan.room && (!fresh || hasHeadroom(sample, doc)),
       claudeHookInstalled: ClaudeSettingsHook.readHeavyHookInstalled(settingsPath),
       deviceIdleMinutes,
       machine: fresh
@@ -255,7 +322,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
         : null,
       // With nothing held back, the limit the same reading is past, so the summary never claims room.
-      hold: plan.mac?.hold ?? (fresh ? machineHold(sample) : null),
+      hold: plan.mac?.hold ?? (fresh ? machineHold(sample, doc) : null),
       linux: linuxState(doc),
       macOnly: entries.filter((entry) => QueueFile.staysOnMac(doc, entry)).map((entry) => entry.id),
       routes: plan.routes,
@@ -272,6 +339,25 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     );
   const change = (run: () => void) =>
     Effect.try({ try: run, catch: unavailable }).pipe(Effect.tap(() => announce));
+  /**
+   * Runs a route-memory call; a routes.json it had to move aside is logged and reported.
+   * Untraced: the calling method's span already covers it.
+   */
+  const withRoutes = Effect.fnUntraced(function* <A extends object>(
+    run: (warn: RouteMemory.Warn) => A,
+  ) {
+    let warning: string | undefined;
+    const result = yield* Effect.try({
+      try: () =>
+        run((message) => {
+          warning = message;
+        }),
+      catch: unavailable,
+    });
+    if (warning === undefined) return result;
+    yield* Effect.logWarning(`Heavy queue: ${warning}`);
+    return { ...result, warning };
+  });
 
   const withSlot = Effect.fnUntraced(function* <A, E, R>(
     label: string,
@@ -336,6 +422,18 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     setMaxRunning: Effect.fn("HeavyQueue.setMaxRunning")((maxRunning: number) =>
       change(() => QueueFile.setMaxRunning(dir, maxRunning)),
     ),
+    setMacMemoryFloorPercent: Effect.fn("HeavyQueue.setMacMemoryFloorPercent")((percent: number) =>
+      change(() => QueueFile.setLimit(dir, "macMemoryFloorPercent", percent)),
+    ),
+    setMacCpuCeilingPercent: Effect.fn("HeavyQueue.setMacCpuCeilingPercent")((percent: number) =>
+      change(() => QueueFile.setLimit(dir, "macCpuCeilingPercent", percent)),
+    ),
+    setHeavyOverLimitSeconds: Effect.fn("HeavyQueue.setHeavyOverLimitSeconds")((seconds: number) =>
+      change(() => QueueFile.setLimit(dir, "heavyOverLimitSeconds", seconds)),
+    ),
+    setAdmissionLimits: Effect.fn("HeavyQueue.setAdmissionLimits")(
+      (limits: HeavyQueueSetAdmissionLimitsInput) => change(() => QueueFile.setLimits(dir, limits)),
+    ),
     setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
       change(() => QueueFile.setPaused(dir, paused)),
     ),
@@ -375,11 +473,32 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     route: Effect.fn("HeavyQueue.route")((id: string, runner: HeavyRunner, force: boolean) =>
       act("moved", () => QueueFile.route(dir, id, runner, force)),
     ),
+    routeAll: Effect.fn("HeavyQueue.routeAll")((runner: HeavyRunner) =>
+      Effect.try({ try: () => QueueFile.routeAll(dir, runner), catch: unavailable }).pipe(
+        Effect.tap(() => announce),
+      ),
+    ),
+    listRoutes: Effect.fn("HeavyQueue.listRoutes")(function* (cwd?: string) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* withRoutes((warn) => ({
+        routes: RouteMemory.learnedRoutes(dir, cwd ?? NodeOS.homedir(), now, warn),
+      }));
+    }),
+    forgetRoutes: Effect.fn("HeavyQueue.forgetRoutes")((key: string) =>
+      withRoutes((warn) => ({ removed: RouteMemory.forgetRoutes(dir, key, warn) })),
+    ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),
     ),
     withSlot,
     command: Effect.succeed(command),
+    probe: Effect.fn("HeavyQueue.probe")(function* (line: string, cwd: string) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Effect.try({
+        try: () => QueueFile.probe(dir, line, cwd, now),
+        catch: unavailable,
+      });
+    }),
   });
 });
 

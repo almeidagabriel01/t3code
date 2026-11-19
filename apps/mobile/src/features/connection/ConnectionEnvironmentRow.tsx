@@ -42,6 +42,7 @@ export function ConnectionEnvironmentRow(props: {
   readonly opensDetails?: boolean;
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
+  readonly onPairAgain: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
   readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   readonly onUpdate: (
@@ -192,6 +193,30 @@ export function ConnectionEnvironmentRow(props: {
           />
         </Pressable>
       </View>
+
+      {diagnosis?.pairAgain ? (
+        // Retrying cannot fix a refused credential, so the way out stays outside the expander.
+        <View className="flex-row gap-2 px-4 pb-3.5">
+          <View className="flex-1">
+            <Button
+              label="Pair again"
+              icon="qrcode.viewfinder"
+              tone="primary"
+              fullWidth
+              onPress={() => props.onPairAgain(props.environment.environmentId)}
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              label="Remove"
+              icon="trash"
+              tone="danger"
+              fullWidth
+              onPress={() => props.onRemove(props.environment.environmentId)}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {props.expanded ? (
         <Animated.View

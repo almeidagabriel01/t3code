@@ -773,6 +773,7 @@ it.effect(
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
         "provider-turn.start",
         "provider-turn.interrupt",
+        "run-attempt.interrupt",
         "provider-turn.steer",
         "provider-turn.restart",
         "runtime-request.respond",

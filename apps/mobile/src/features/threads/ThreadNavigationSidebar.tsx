@@ -1,9 +1,13 @@
 import { useActiveNewTask } from "../../state/active-new-task";
-import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import {
+  HomeAssistantsSection,
+  teamsEnvironments,
+  useAssistantSectionJumpThreads,
+} from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
-import { HomeAgentsSection } from "../home/HomeAgentsSection";
-import { HomeNeedsYouSection } from "../home/HomeNeedsYouSection";
-import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
+import { NeedsYouZone } from "../home/NeedsYouZone";
+import { ProjectsZoneHeader } from "../home/ProjectsZoneHeader";
+import { useSidebarZones } from "../home/useSidebarZones";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
@@ -95,6 +99,7 @@ type SidebarListItem =
 interface ThreadNavigationSidebarProps {
   readonly width: number;
   readonly visible: boolean;
+  /** The draft key of the open conversation; a group chat's is thread-shaped and matches no row. */
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
@@ -197,6 +202,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    environmentIds: scope.projectRefs.map((ref) => ref.environmentId),
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -270,6 +276,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const zones = useSidebarZones();
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
@@ -372,7 +379,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     threadSearchMatchByKey,
     threadOrder,
   };
-  useThreadJumpShortcuts(listItems, handleSelectThread);
+  useThreadJumpShortcuts(
+    listItems,
+    handleSelectThread,
+    useAssistantSectionJumpThreads(props.searchQuery.trim().length === 0),
+  );
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
       return threadListV2ListItemsAreEqual(previous, item);
@@ -427,6 +438,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
             variant={item.item.variant}
+            compact={item.compact === true}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
             pinned={item.item.pinned}
@@ -542,14 +554,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const assistantsHeader =
     props.searchQuery.trim().length > 0 ? null : (
       <>
+        <NeedsYouZone gutter={4} sidebar />
         <HomeAssistantsSection
           sidebar
           gutter={4}
-          environmentLabelById={
-            new Map(
-              environments.map((environment) => [environment.environmentId, environment.label]),
-            )
-          }
+          renderThread={(item) => renderListItem({ item })}
+          environmentById={teamsEnvironments(savedConnectionsById)}
+          openConversationKey={props.selectedThreadKey ?? null}
         />
         {selectedProjectScope === null ? null : (
           <ProjectAssistantFaces
@@ -559,15 +570,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             sidebar
           />
         )}
-        <HomeAgentsSection threads={threads} now={now} gutter={4} sidebar />
-        <HomeNeedsYouSection
-          threads={threads}
-          now={now}
-          gutter={4}
-          sidebar
-          renderRow={(item) => renderListItem({ item })}
-        />
-        <HomeDecisionsSection gutter={4} />
+        <ProjectsZoneHeader threads={threads} now={now} gutter={4} sidebar />
       </>
     );
   const header = (
@@ -683,7 +686,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           overflow: "hidden",
         }}
       >
-        {listItems.length === 0 ? (
+        {listItems.length === 0 && (props.searchQuery.trim().length > 0 || zones.empty) ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>

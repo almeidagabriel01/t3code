@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, QrCodeIcon, Trash2Icon } from "lucide-react";
 
 import { APP_VERSION } from "~/branding";
 import { environmentCatalog } from "~/connection/catalog";
@@ -80,12 +80,18 @@ export function ConnectionDiagnosisSummary({
   attempt,
   expanded,
   onToggle,
+  onPairAgain,
+  removing,
+  onRemove,
 }: {
   readonly diagnosis: ConnectionDiagnosis;
   readonly retryAt: number | null;
   readonly attempt: number;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly onPairAgain: () => void;
+  readonly removing: boolean;
+  readonly onRemove: () => void;
 }) {
   return (
     <div className="text-xs">
@@ -111,6 +117,25 @@ export function ConnectionDiagnosisSummary({
           />
         </button>
       </p>
+      {diagnosis.pairAgain ? (
+        // Retrying cannot fix a refused credential, so both ways out sit outside the menu.
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <Button type="button" size="xs" variant="outline" onClick={onPairAgain}>
+            <QrCodeIcon aria-hidden />
+            Pair again
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="destructive-outline"
+            disabled={removing}
+            onClick={onRemove}
+          >
+            <Trash2Icon aria-hidden />
+            {removing ? "Removing…" : "Remove"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -9,32 +9,45 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
+  assistantGroupFailedSendRouting,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendRouting,
+  type AssistantGroupTabPick,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { getProviderSkillsForSlashMenu } from "@t3tools/client-runtime/providerSkills";
+import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
   type AssistantTeamId,
   type ChatAttachment,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { ComposerActionButton } from "../../components/ComposerToolbar";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { FAILED_ATTACHMENT_BLOCK_REASON } from "../../lib/composerAttachmentUploadQueue";
+import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
@@ -51,7 +64,12 @@ import {
 } from "../../state/use-composer-drafts";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
-import { ComposerPopoverSurface } from "../threads/ComposerCommandPopover";
+import {
+  ComposerCommandPopover,
+  ComposerPopoverSurface,
+  type ComposerCommandItem,
+} from "../threads/ComposerCommandPopover";
+import { composerSkillItems, composerSlashSkillItems } from "../threads/composerSkillItems";
 import { ComposerSurface } from "../threads/ThreadComposer";
 import {
   ComposerDictationCancelAction,
@@ -63,21 +81,34 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
-import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
+import {
+  assistantGroupDraftKey,
+  assistantGroupOutgoingDraftKey,
+} from "../../state/assistant-group-draft-key";
+import { clearGroupAttachments, useGroupAttachments } from "./GroupAttachments";
+import { GroupContextMeter } from "./GroupContextMeter";
 import { AssistantAvatar } from "./assistantPresentation";
+import { useGroupDraftSkills } from "./useGroupDraftSkills";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
 /** Its text waits in the draft store under its tab's `:outgoing:` key. */
 const outgoings = createAssistantGroupOutgoingStore<
-  AssistantGroupOutgoing & {
-    readonly projectId: ProjectId | null;
-    readonly error: string | null;
-    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
-    readonly requestId: string;
-    readonly sendKey: string;
-  }
+  AssistantGroupOutgoing &
+    GroupLandedSend & {
+      readonly error: string | null;
+      /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+      readonly requestId: string;
+      readonly sendKey: string;
+      /** The text it sent, trimmed; its draft key holds what the composer shows now. */
+      readonly text: string;
+    }
 >();
+/** For tests: each starts with no outgoing messages or files. */
+export const clearGroupOutgoings = () => {
+  outgoings.clear();
+  clearGroupAttachments();
+};
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
@@ -104,6 +135,20 @@ export type GroupReplyTarget = {
   readonly projectId: ProjectId | null;
   readonly excerpt: string;
 };
+
+/** A reply being written, with the message it answers. */
+export type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessageId };
+
+export type GroupSendRouting = AssistantGroupSendRouting<AssistantGroupTabPick<GroupReply>>;
+
+/** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
+export interface GroupLandedSend {
+  readonly tab: AssistantGroupTabKey | null;
+  /** The project it runs in; null lets the lead decide. */
+  readonly projectId: ProjectId | null;
+  /** What it went with; null once a landing let go of it. */
+  readonly routing: GroupSendRouting | null;
+}
 
 /** A labelled menu trigger in the composer's toolbar row. */
 function ToolbarChip(props: {
@@ -369,11 +414,18 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** The reply and picks the next send goes with, so a failed one keeps them for its resend. */
+  readonly routing: GroupSendRouting;
+  readonly onLanded: (sent: GroupLandedSend) => void;
+  /** A failed send came back into view: the chat takes back what it went with. */
+  readonly onRestore: (routing: GroupSendRouting) => void;
   /** The chat the recipients line reads what routes the draft from. */
   readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
+  /** The chat as loaded: a failed send whose post shows here landed. */
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -381,9 +433,10 @@ export function GroupComposer(props: {
     requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
-  const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  const groupKey = assistantGroupDraftKey(props.environmentId, props.teamId);
   // Sent text leaves the draft for its tab's key, so another tab never shows it beside its project.
-  const outgoingKey = (tab: AssistantGroupTabKey | null) => `${groupKey}:outgoing:${tab ?? ""}`;
+  const outgoingKey = (tab: AssistantGroupTabKey | null) =>
+    assistantGroupOutgoingDraftKey(groupKey, tab);
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(groupKey));
   const setOutgoing = (
     tab: AssistantGroupTabKey | null,
@@ -398,6 +451,8 @@ export function GroupComposer(props: {
   // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
   const sending = shown !== null && !shown.failed;
   const [error, setError] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once from that tab.
   const inFlight = useRef(new Set<AssistantGroupTabKey | null>());
@@ -442,9 +497,37 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
+  const skills = useGroupDraftSkills({
+    environmentId: props.environmentId,
+    text,
+    members: props.members,
+    lead,
+    replyTo: props.replyingTo?.to ?? null,
+    model: props.projectModel?.messageModel,
+  });
+  // `@` and `#` stay the group's; only the thread's skill triggers carry over.
+  // No context chips (file, thread, card): the group post has no `context` field yet (spec D3).
+  const detected =
+    collapsed && mention === null && projectMention === null && skills.length > 0
+      ? detectComposerTrigger(text, caret)
+      : null;
+  const skillAt =
+    detected?.kind === "skill" || detected?.kind === "slash-command" ? detected : null;
+  const skillOptions =
+    skillAt === null
+      ? []
+      : skillAt.kind === "skill"
+        ? composerSkillItems(skills, skillAt.query, false)
+        : composerSlashSkillItems(
+            getProviderSkillsForSlashMenu(skills, true),
+            skillAt.query.toLowerCase(),
+            false,
+          );
   const attached = useGroupAttachments(
+    groupKey,
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),
+    new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
   );
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
   const canSend =
@@ -480,6 +563,15 @@ export function GroupComposer(props: {
     write(next.text, next.caret);
   };
 
+  const pickSkill = (item: ComposerCommandItem) => {
+    if (skillAt === null || item.type !== "skill") return;
+    const replacement = `$${item.skill.name} `;
+    write(
+      text.slice(0, skillAt.rangeStart) + replacement + text.slice(skillAt.rangeEnd),
+      skillAt.rangeStart + replacement.length,
+    );
+  };
+
   const pickProject = (project: GroupComposerProjectOption) => {
     if (projectMention === null) return;
     const next = insertAssistantGroupProject(text, projectMention, project);
@@ -501,6 +593,40 @@ export function GroupComposer(props: {
     const start = caret + pad.length;
     insertMember({ start, end: start, query: "" }, option, base);
   };
+
+  /** A post the server took: only its text and files go, so what was written meanwhile stays. */
+  const settle = (sent: (typeof outgoing)[number]) => {
+    clearComposerDraftContent(outgoingKey(sent.tab));
+    setOutgoing(sent.tab, null);
+    attached.clear(sent.attachmentIds);
+    props.onLanded(sent);
+  };
+  const seenSend = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send trades its routing with the chat's; the outgoing store is outside React
+  useLayoutEffect(() => {
+    const routing = assistantGroupFailedSendRouting(
+      seenSend.current,
+      shown,
+      props.tab,
+      props.routing,
+    );
+    seenSend.current = routing.seen;
+    if (routing.restore !== null) props.onRestore(routing.restore);
+    else if (shown !== null && routing.keep !== null) {
+      setOutgoing(shown.tab, { ...shown, routing: routing.keep });
+    }
+    if (props.messages === undefined) return;
+    for (const entry of outgoing) {
+      const live = getComposerDraftSnapshot(outgoingKey(entry.tab)).text;
+      const landed = assistantGroupLandedSend(entry, live, props.messages.values());
+      if (landed === "settle") settle(entry);
+      else if (landed === "clear-warning") {
+        // The post landed: what it went with goes, and the user's edit is a new message.
+        setOutgoing(entry.tab, { ...entry, error: null, routing: null });
+        props.onLanded(entry);
+      }
+    }
+  });
 
   const post = async () => {
     // An edit iOS has not delivered yet (an accepted autocorrection) belongs to this message.
@@ -526,9 +652,11 @@ export function GroupComposer(props: {
       tab: props.tab,
       failed: false,
       requestId,
+      text: message,
       sendKey,
       attachmentIds,
       projectId: runProject,
+      routing: props.routing,
       error: null,
     };
     const sentKey = outgoingKey(sent.tab);
@@ -537,12 +665,12 @@ export function GroupComposer(props: {
     setOutgoing(sent.tab, sent);
     setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId, requestId);
-    if (result.ok) {
-      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      clearComposerDraftContent(sentKey);
-      setOutgoing(sent.tab, null);
-      attached.clear(sent.attachmentIds);
-    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    if (result.ok) settle(sent);
+    else {
+      // What the user changed while it was on its way is what its resend goes with.
+      const latest = outgoings.get(groupKey).find((entry) => entry.requestId === sent.requestId);
+      setOutgoing(sent.tab, { ...(latest ?? sent), failed: true, error: result.message });
+    }
   };
 
   const send = async () => {
@@ -555,7 +683,8 @@ export function GroupComposer(props: {
   };
 
   const showsProject = elsewhere || lockedProject !== null || props.projects.length > 1;
-  const shownError = shown?.error ?? error;
+  const shownError =
+    shown?.error ?? error ?? (attached.failed ? FAILED_ATTACHMENT_BLOCK_REASON : null);
   const lineHeight = bodyText.lineHeight;
   const editorHeight =
     Math.min(Math.max(contentHeight, lineHeight), lineHeight * EDITOR_MAX_LINES) + 2 * EDITOR_INSET;
@@ -574,6 +703,14 @@ export function GroupComposer(props: {
           onPickProject={pickProject}
         />
       )}
+      {skillOptions.length === 0 ? null : (
+        <ComposerCommandPopover
+          items={skillOptions}
+          triggerKind="skill"
+          isLoading={false}
+          onSelect={pickSkill}
+        />
+      )}
       <ComposerSurface style={{ borderRadius: 24, borderCurve: "continuous", paddingVertical: 4 }}>
         <ComposerDictationError
           error={voice.state.phase === "error" ? voice.state.error : null}
@@ -588,10 +725,30 @@ export function GroupComposer(props: {
         )}
         {attached.items.length === 0 ? null : (
           <View className="px-3 pt-2">
-            <GroupAttachmentChips
-              items={attached.items}
+            <ComposerAttachmentStrip
+              attachments={attached.items.map((item) => item.source)}
+              ownUploads={attached.uploads}
               onRemove={attached.remove}
-              onRetry={attached.retry}
+              onPressPreview={(source) => {
+                setPreviewVideo(null);
+                setPreviewFile(source);
+              }}
+              onPressVideo={(attachment, sourceIdentifier) => {
+                setPreviewFile(null);
+                setPreviewVideo({ type: "local", attachment, sourceIdentifier });
+              }}
+              // No thread to open it in: the system viewer shows the local file.
+              onPressDocument={(attachment) => {
+                if (!isFileBackedComposerAttachment(attachment)) return;
+                setPreviewVideo(null);
+                setPreviewFile({
+                  kind: "document",
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  attachment,
+                  sourceIdentifier: `draft-file:${attachment.id}`,
+                });
+              }}
             />
           </View>
         )}
@@ -601,6 +758,7 @@ export function GroupComposer(props: {
             draftKey={draftKey}
             environmentId={props.environmentId}
             groupMentions={composerGroupMentions(props.members, props.projects, faces)}
+            skills={skills}
             multiline
             value={text}
             selection={selection}
@@ -762,6 +920,13 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
+            <GroupContextMeter
+              environmentId={props.environmentId}
+              chat={props.chat}
+              text={text}
+              members={props.members}
+              leadId={props.leadId}
+            />
             <View className="flex-1" />
             <ComposerDictationStartAction
               state={voice.state}
@@ -796,6 +961,8 @@ export function GroupComposer(props: {
           {shownError}
         </Text>
       )}
+      <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
     </View>
   );
 }

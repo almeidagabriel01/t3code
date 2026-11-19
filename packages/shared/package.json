@@ -219,6 +219,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./assistantGroupThreads": {
+      "types": "./src/assistantGroupThreads.ts",
+      "import": "./src/assistantGroupThreads.ts"
+    },
     "./telemetryId": {
       "types": "./src/telemetryId.ts",
       "import": "./src/telemetryId.ts"
@@ -318,6 +322,10 @@
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
+    },
+    "./settingsLinks": {
+      "types": "./src/settingsLinks.ts",
+      "import": "./src/settingsLinks.ts"
     },
     "./assistantTaskEvents": {
       "types": "./src/assistantTaskEvents.ts",
@@ -494,6 +502,10 @@
     "./assistantTaskStatus": {
       "types": "./src/assistantTaskStatus.ts",
       "import": "./src/assistantTaskStatus.ts"
+    },
+    "./needsUser": {
+      "types": "./src/needsUser.ts",
+      "import": "./src/needsUser.ts"
     },
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",

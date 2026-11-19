@@ -65,6 +65,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { INTEGRATIONS_CALLBACK_PATH } from "./integrations.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellSnapshot,
@@ -1013,10 +1014,16 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+// Unauthenticated by design: it only completes a pending sign-in named by its single-use `state`.
+class EnvironmentIntegrationsHttpApi extends HttpApiGroup.make("integrations").add(
+  HttpApiEndpoint.get("callback", INTEGRATIONS_CALLBACK_PATH),
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentMcpOAuthHttpApi)
+  .add(EnvironmentIntegrationsHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)

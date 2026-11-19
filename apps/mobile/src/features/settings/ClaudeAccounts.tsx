@@ -26,6 +26,7 @@ import {
   type ClaudeAccountDraft,
 } from "./claude-accounts";
 import type { SettingsTarget } from "./settings-environment-filter";
+import { PROVIDER_ACCOUNTS_COPY } from "./providerAccountsCopy";
 
 function useProviderInstanceMutation(environment: SettingsTarget) {
   const mutate = useAtomCommand(serverEnvironment.mutateProviderInstance, {
@@ -175,7 +176,7 @@ export function AddClaudeAccount({ environment }: { readonly environment: Settin
         <ListActionRow
           icon="plus"
           label="Add Claude account"
-          description="Use a Claude config folder that is already signed in on this server."
+          description={PROVIDER_ACCOUNTS_COPY.addClaudeAccountDescription}
           onPress={() => setAdding(true)}
         />
       )}

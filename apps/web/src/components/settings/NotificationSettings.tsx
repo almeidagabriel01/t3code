@@ -21,10 +21,7 @@ export function NotificationSettings() {
   return (
     <SettingsRow
       {...searchableSetting("thread-notifications")}
-      description={
-        permissionMessage ??
-        "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open."
-      }
+      description={permissionMessage ?? searchableSetting("thread-notifications").description}
       control={
         <Select
           value={mode}

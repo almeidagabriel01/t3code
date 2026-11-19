@@ -23,6 +23,8 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
@@ -165,11 +167,11 @@ export function ProviderAuthenticationSection({
 
   return (
     <SettingsRow
-      title="Account"
+      title={settingCopy("provider-account").title}
       description={
         signedIn && !active && provider.auth.email?.trim() ? (
           <span>
-            Signed in as{" "}
+            {PROVIDER_SETTINGS_COPY.signedInAs}{" "}
             <RedactedSensitiveText
               key={provider.auth.email}
               value={provider.auth.email}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -103,11 +103,13 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     initialState,
     rpcSession,
     isFinal,
+    refreshIntervalMs,
     onAnswer,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
     readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
+    readonly refreshIntervalMs?: number;
     readonly idleTtlMs?: number;
     readonly persistence?: QueryPersistence<A>;
     readonly initialState?: SupervisorConnectionState;
@@ -155,6 +157,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
     ...(isFinal === undefined ? {} : { isFinal }),
+    ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
     ...(onAnswer === undefined ? {} : { onAnswer }),
   });
 
@@ -178,6 +181,12 @@ const readEnvironmentQuery = <A, E>(
   AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }).pipe(
     Effect.tap(() => Effect.yieldNow),
   );
+
+// Effect schedules on `setImmediate`, so faking only timeouts leaves fibers running.
+const fakeTimeouts = Effect.acquireRelease(
+  Effect.sync(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })),
+  () => Effect.sync(() => vi.useRealTimers()),
+);
 
 const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
@@ -1081,6 +1090,82 @@ describe("environment query lifecycle", () => {
     ),
   );
 
+  it.effect("polls on its interval until the value is final", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* fakeTimeouts;
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => (executions += 1)),
+          { refreshIntervalMs: 1_000, isFinal: (value) => value >= 2 },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        expect(yield* read).toBe(1);
+        vi.advanceTimersByTime(1_000);
+        expect(yield* read).toBe(2);
+        vi.advanceTimersByTime(10_000);
+        expect(yield* read).toBe(2);
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("lets a refresh slower than the interval finish instead of restarting it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* fakeTimeouts;
+        const refreshStarted = Latch.makeUnsafe();
+        const finishRefresh = Latch.makeUnsafe();
+        let executions = 0;
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          if (executions === 1) return Effect.succeed(executions);
+          refreshStarted.openUnsafe();
+          return finishRefresh.await.pipe(Effect.as(executions));
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute, {
+          refreshIntervalMs: 1_000,
+          isFinal: (value) => value >= 2,
+        });
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        const read = readEnvironmentQuery(registry, harness.atom);
+
+        expect(yield* read).toBe(1);
+        vi.advanceTimersByTime(1_000);
+        yield* refreshStarted.await;
+        vi.advanceTimersByTime(5_000);
+        finishRefresh.openUnsafe();
+        expect(yield* read).toBe(2);
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("stops polling after a failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* fakeTimeouts;
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            executions += 1;
+            return Effect.fail(new TestQueryError({ message: "Query failed." }));
+          }),
+          { refreshIntervalMs: 1_000, isFinal: () => false },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        const read = readEnvironmentQuery(registry, harness.atom).pipe(Effect.exit);
+
+        expect(Exit.isFailure(yield* read)).toBe(true);
+        vi.advanceTimersByTime(5_000);
+        expect(Exit.isFailure(yield* read)).toBe(true);
+        expect(executions).toBe(1);
+      }),
+    ),
+  );
+
   it.effect.each([true, false])("loads thread link metadata with server support %s", (supported) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1112,6 +1197,36 @@ describe("environment query lifecycle", () => {
         });
       }),
     ),
+  );
+
+  it.effect.each([true, false])(
+    "reads a thread's context usage with server support %s",
+    (supported) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const usage = {
+            latestTurnUsage: { usedTokens: 1_000, updatedAt: "2026-11-16T00:00:00.000Z" },
+            providerThread: null,
+          };
+          const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+            rpcSession: {
+              initialConfig: Effect.succeed({ threadContextUsage: supported }),
+              client: {
+                [ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage]: () => Effect.succeed(usage),
+              },
+            } as unknown as RpcSession.RpcSession,
+          });
+          const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+            EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+          >;
+          const atom = createOrchestrationEnvironmentAtoms(runtime).threadContextUsage({
+            environmentId: QUERY_ENVIRONMENT.environmentId,
+            input: { threadId: ThreadId.make("member") },
+          });
+          const registry = yield* mountEnvironmentQuery(atom);
+          expect(yield* readEnvironmentQuery(registry, atom)).toEqual(supported ? usage : null);
+        }),
+      ),
   );
 
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>

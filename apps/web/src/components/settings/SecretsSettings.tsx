@@ -1,3 +1,7 @@
+import {
+  CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS,
+  reconnectEnvironmentForSecretProviders,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -26,7 +30,12 @@ import {
 import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 
 const SECRET_PROVIDER_KINDS: Readonly<
   Record<string, { readonly name: string; readonly icon: Icon }>
@@ -54,11 +63,11 @@ export function SecretsSettingsPanel() {
           projectScoped={scope.kind === "project" || scope.kind === "checkout"}
         />
       ) : (
-        <SettingsSection {...searchableSetting("secret-providers")}>
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to manage the secret providers its provider variables read from.
-          </p>
-        </SettingsSection>
+        <SettingsServerEnvironmentNotice id={searchableSetting("secret-providers").id}>
+          {environment
+            ? reconnectEnvironmentForSecretProviders(environment.label)
+            : CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS}
+        </SettingsServerEnvironmentNotice>
       )}
     </SettingsPageContainer>
   );
@@ -111,7 +120,9 @@ function EnvironmentSecretProviders({
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No secret providers configured."
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="Add a 1Password account, then pick it as the source of a provider variable."
           />
         ) : (
@@ -132,6 +143,7 @@ function EnvironmentSecretProviders({
                     <span className="min-w-0 wrap-anywhere">{config.label}</span>
                   </span>
                 }
+                // oxlint-disable-next-line t3code/require-searchable-settings-copy -- provider account, not a setting
                 description={
                   classified.kind === "one_password" && kind ? (
                     <span className="flex min-w-0 items-center gap-1">

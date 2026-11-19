@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collaps
 import { ChevronRightIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 export function MemoryHubDiagnosticsSettings({
   environmentId,
@@ -139,17 +140,21 @@ function Diagnostics({
     onRefresh();
   }
   return (
-    <SettingsSection title="Hub diagnostics">
+    <SettingsSection {...searchableSetting("memory-hub-diagnostics")}>
       <SettingsRow title={view.label} description={view.publicationLabel ?? undefined} />
       {view.recoverableHolds.length ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sync hold state, not a setting
           title="Recoverable sync hold"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sync hold state, not a setting
           description="Compatibility or availability needs attention. Reconcile can rearm eligible work."
         />
       ) : null}
       {view.permanentHolds.length ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sync hold state, not a setting
           title="Device access needs attention"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sync hold state, not a setting
           description="Review device identity and authorization in Sharing settings."
         />
       ) : null}
@@ -170,12 +175,14 @@ function Diagnostics({
         </Collapsible>
       ) : null}
       {error ? (
-        <SettingsRow title={<span role="alert">Could not load hub diagnostics.</span>} />
+        <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
+          title={<span role="alert">Could not load hub diagnostics.</span>}
+        />
       ) : null}
       {message ? <SettingsRow title={<span role="status">{message}</span>} /> : null}
       <SettingsRow
-        title="Reconcile sync"
-        description="Rearm eligible held work on this device."
+        {...searchableSetting("memory-reconcile-sync")}
         control={
           <div className="flex flex-wrap gap-2">
             <Button

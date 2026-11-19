@@ -100,11 +100,18 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.heavyQueueSetEnabled,
       WS_METHODS.heavyQueueSetRule,
       WS_METHODS.heavyQueueRoute,
+      WS_METHODS.heavyQueueRouteAll,
+      WS_METHODS.heavyQueueForgetRoutes,
       WS_METHODS.heavyQueueSetMaxRunning,
+      WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
+      WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
+      WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+      WS_METHODS.heavyQueueSetAdmissionLimits,
       WS_METHODS.heavyQueueStopCommand,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+    expect(requiredScopeForRpcMethod(WS_METHODS.heavyQueueListRoutes)).toBe("orchestration:read");
   });
 
   it("declares a scope for every memory RPC and requires transcript and filesystem reads where needed", () => {

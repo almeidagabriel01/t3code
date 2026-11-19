@@ -1,5 +1,9 @@
 import * as Dialog from "../../components/ui/Dialog";
 import {
+  CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -37,10 +41,11 @@ import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { PROVIDER_ACCOUNTS_COPY, providerName } from "./providerAccountsCopy";
 
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const accessByEnvironment = useEnvironmentsScopeAccess(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
@@ -53,7 +58,12 @@ export function SettingsProviderAccountsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+              availableTargets.length > 0,
+            )}
+          </Text>
         ) : (
           selectedTargets.map((environment) => {
             const access = accessByEnvironment.get(environment.environmentId);
@@ -65,7 +75,9 @@ export function SettingsProviderAccountsRouteScreen() {
                   </Text>
                 ) : access === "missing" ? (
                   <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Limited permissions</Text>
+                    <Text className="text-base text-foreground">
+                      {PROVIDER_ACCOUNTS_COPY.limitedPermissions}
+                    </Text>
                     <Text className="text-sm text-foreground-muted">
                       {`This session can view ${environment.label}'s providers but can't change their settings.`}
                     </Text>
@@ -141,12 +153,12 @@ function ClaudeChromeRow({
   readonly provider: ServerProvider;
 }) {
   const navigation = useNavigation();
-  const name = provider.displayName ?? provider.driver;
+  const name = providerName(provider);
   return (
     <View className="border-t border-border-subtle">
       <ListRow
         icon="safari"
-        label="Claude in Chrome"
+        label={PROVIDER_ACCOUNTS_COPY.claudeChrome}
         description={name}
         onPress={() =>
           navigation.navigate("SettingsClaudeChrome", {
@@ -270,7 +282,7 @@ function ProviderAccount({
       />
     );
   }
-  const name = provider.displayName ?? provider.driver;
+  const name = providerName(provider);
   const email = signedIn && !active && provider.enabled ? provider.auth.email?.trim() : undefined;
   const methods = state?.methods ?? [];
   // The status line says why a provider that is missing or turned off can't sign in.
@@ -315,6 +327,7 @@ function ProviderAccount({
         {
           id: "remove",
           title: "Remove incomplete connection",
+          image: "trash",
           attributes: { disabled: disabled || active || !canRemoveMethod },
           subactions: removableMethods.map((method) => ({
             id: `remove:${method.id}`,

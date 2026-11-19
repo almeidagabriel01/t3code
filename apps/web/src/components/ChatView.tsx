@@ -118,7 +118,15 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -293,7 +301,7 @@ import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
-import { useSideChat } from "./chat/useSideChat";
+import { type SideChatMessage, useSideChat } from "./chat/useSideChat";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -420,6 +428,8 @@ type ChatViewProps =
        * parent's right panel passes that panel; a page embedding a thread passes true.
        */
       embedded?: SideChatParentPanel | boolean;
+      /** A tab group's strip; it shows this thread's file tabs, so the view adds no row of its own. */
+      renderGroupTabStrip?: (pendingFileIds: ReadonlySet<string>) => ReactNode;
       routeKind: "server";
       draftId?: never;
     }
@@ -430,6 +440,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       embedded?: never;
+      renderGroupTabStrip?: never;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -445,6 +456,7 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
     embedded: embeddedProp,
+    renderGroupTabStrip,
   } = props;
   const parentPanel = typeof embeddedProp === "object" ? embeddedProp : undefined;
   const embedded = embeddedProp !== undefined && embeddedProp !== false;
@@ -1131,6 +1143,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadRef,
     enabled: !embedded && routeKind === "server" && !rightPanelMaximized,
   });
+  const tabStrip = renderGroupTabStrip ?? threadTabs.routeStrip;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
@@ -2886,7 +2899,9 @@ export default function ChatView(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
-  const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const sendSideChatStable = useStableCallback((message: SideChatMessage) =>
+    sideChat.open(message),
+  );
   // The header button and its shortcut open a side chat, or close the one in view.
   const sideChatInView = activeRightPanelSurface?.kind === "side-chat" && rightPanelOpen;
   const sideChatToggleAvailable = sideChat.available && sideChatDisabledReason === null;
@@ -3268,7 +3283,13 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   if (!activeThread) {
-    return embedded ? null : <NoActiveThreadState />;
+    if (!embedded) return <NoActiveThreadState />;
+    // The strip stays, so a tab whose thread is gone can still be closed.
+    return renderGroupTabStrip ? (
+      <div className="flex min-w-0 flex-1 flex-col">
+        {renderGroupTabStrip(EMPTY_PENDING_FILE_SURFACE_IDS)}
+      </div>
+    ) : null;
   }
 
   const renderSurfaceContent = (
@@ -3335,6 +3356,7 @@ export default function ChatView(props: ChatViewProps) {
           workspaceRoot: activeWorkspaceRoot,
           availableEditors,
           pendingSurfaceIds: pendingFileSurfaceIds,
+          activeFile: activeMainFileSurface,
           onOpenFile: openFileSurfaceStable,
           onPendingChange: handleFilePendingChangeStable,
         }}
@@ -3476,10 +3498,11 @@ export default function ChatView(props: ChatViewProps) {
               />
             </header>
           )}
-          {threadTabs.routeStrip}
-
-          {activeThreadRef && mainFileSurfaces.length > 0 ? (
+          {tabStrip ? (
+            tabStrip(pendingFileSurfaceIds)
+          ) : activeThreadRef && mainFileSurfaces.length > 0 ? (
             <MainFileTabs
+              title={activeThread.title}
               files={mainFileSurfaces}
               activeFileId={activeMainFileSurface?.id ?? null}
               pendingIds={pendingFileSurfaceIds}
@@ -3821,6 +3844,7 @@ export default function ChatView(props: ChatViewProps) {
                                         : composerBannerItems
                                     }
                                     resumeCompactionTokens={resumeCompactionTokens}
+                                    contextWindow={activeContextWindow}
                                     keepFullHistory={keepFullHistory}
                                     onToggleKeepFullHistory={toggleKeepFullHistoryStable}
                                     sideChatAvailable={sideChat.available}
@@ -4121,6 +4145,8 @@ export default function ChatView(props: ChatViewProps) {
               return (
                 <div
                   key={surface.id}
+                  {...workspaceAreaProps("file", 1, "File")}
+                  data-workspace-focus-key={surface.id}
                   data-main-file-surface={surface.id}
                   inert={!active}
                   aria-hidden={!active || undefined}

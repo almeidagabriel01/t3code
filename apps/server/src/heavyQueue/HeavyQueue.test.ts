@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as HeavyQueue from "./HeavyQueue.ts";
 import * as Queue from "./queueFile.ts";
+import { recordRouteFault } from "./routeMemory.ts";
 import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, parseHeartbeat } from "./runner.ts";
 
 const holder: HeavyQueueEntry = {
@@ -26,6 +27,19 @@ const holder: HeavyQueueEntry = {
   cwd: "/",
   createdAt: "2026-01-01T00:00:00.000Z",
   startedAt: null,
+};
+
+const GIB = 1024 ** 3;
+/** After any real clock this suite runs on, so `holder`'s real start is long settled. */
+const LATER = Date.parse("2030-01-01T00:00:00.000Z");
+const ago = (ms: number) => new Date(LATER - ms).toISOString();
+/** The live Mac when the queue ran one at a time: 28% of 16 GB free, CPU quiet. */
+const MAC_28 = {
+  busyCores: 1,
+  cpuCount: 10,
+  availableMemoryBytes: 0.28 * 16 * GIB,
+  totalMemoryBytes: 16 * GIB,
+  pressureLevel: 1,
 };
 
 /** A queue directory with `holder` already running; removed when the test ends. */
@@ -199,6 +213,10 @@ describe("HeavyQueue", () => {
           publisher: { pid: process.pid, home: dir, primary: true },
         });
         expect(JSON.stringify(hook(call))).toContain("--name 'vp run build'");
+        // Builds never leave this Mac, and asking queues nothing.
+        const before = Queue.read(dir);
+        expect(yield* queue.probe("vp run build", dir)).toMatchObject({ runsOn: "mac" });
+        expect(Queue.read(dir)).toEqual(before);
       }),
     ),
   );
@@ -313,6 +331,57 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect("state shows usage for this Mac's jobs only, never a Linux job's wrapper", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const checkout = NodePath.join(dir, "repo");
+        NodeFS.mkdirSync(NodePath.join(checkout, ".git"), { recursive: true });
+        const job = (id: string, cwd = checkout): HeavyQueueEntry => ({
+          ...holder,
+          id,
+          label: "vp test run",
+          cwd,
+        });
+        Queue.remove(dir, "holder");
+        // One Mac run of the command teaches its usual cost.
+        Queue.enqueue(dir, job("past", "/"));
+        Queue.tryStart(dir, "past");
+        Queue.recordSample(
+          dir,
+          { at: 1, busyCores: 1, cpuCount: 8, availableMemoryBytes: 5, totalMemoryBytes: 10 },
+          { past: { cpu: 3, memoryBytes: 1000 } },
+        );
+        Queue.remove(dir, "past");
+        Queue.publishRunner(dir, {
+          global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux" },
+          machine: DEFAULT_MACHINE_CONFIG,
+          projects: [],
+          publisher: { pid: process.pid, home: dir, primary: true },
+        });
+        Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") });
+        Queue.enqueue(dir, job("linuxRun"));
+        expect(Queue.tryStart(dir, "linuxRun")).toMatchObject({ runner: "linux" });
+        // As a version that sampled the wrapper left it in the file.
+        const file = NodePath.join(dir, "queue.json");
+        const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+        doc.entries[0] = { ...doc.entries[0], cpu: 0.1, memory: 9, peakCpu: 0.2, peakMemory: 9 };
+        NodeFS.writeFileSync(file, JSON.stringify(doc));
+        Queue.enqueue(dir, job("macWaiter", "/"));
+        Queue.enqueue(dir, job("linuxWaiter"));
+        const state = yield* queue.state;
+        expect(state.routes).toMatchObject({ macWaiter: "mac", linuxWaiter: "linux" });
+        expect(Object.keys(state.estimates ?? {})).toEqual(["macWaiter"]);
+        const running = state.entries.find((entry) => entry.id === "linuxRun");
+        for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+          expect(running).not.toHaveProperty(key);
+        }
+        // Move all to this Mac takes the Linux waiter and leaves the running job.
+        expect(yield* queue.routeAll("mac")).toEqual(["linuxWaiter"]);
+        expect((yield* queue.state).routes).toMatchObject({ linuxWaiter: "mac" });
+      }),
+    ),
+  );
+
   it.effect("state gives a waiter its command's usual cost only when it has history", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -365,6 +434,108 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect("starts jobs side by side on a roomy 16 GB Mac, and one at a time under pressure", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(LATER);
+        Queue.remove(dir, holder.id);
+        for (const id of ["a", "b", "c", "d"]) {
+          Queue.enqueue(dir, {
+            ...holder,
+            id,
+            label: "vp test run src/a.test.ts",
+            createdAt: ago(1000),
+          });
+        }
+        // Headroom has held for eight seconds of unbroken readings: 28% of 16 GB free, CPU quiet.
+        Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
+        const started = () => Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
+        const step = (at: number, sample: Partial<typeof MAC_28> = {}) => {
+          // Readings come every few seconds; a longer gap would restart the headroom window.
+          Queue.recordSample(dir, { ...MAC_28, ...sample, at: at - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, ...sample, at }, {});
+          for (const id of ["a", "b", "c", "d"]) Queue.tryStart(dir, id, at);
+        };
+        step(LATER);
+        expect(started()).toEqual(["a"]);
+        // One start per settle window, each judged on a fresh reading.
+        step(LATER + 16_000);
+        step(LATER + 32_000);
+        expect(started()).toEqual(["a", "b", "c"]);
+        yield* TestClock.setTime(LATER + 32_000);
+        expect((yield* queue.state).reasons).toEqual({ d: "all 3 slots busy" });
+
+        Queue.remove(dir, "b");
+        Queue.remove(dir, "c");
+        step(LATER + 48_000, { pressureLevel: 2 });
+        expect(started()).toEqual(["a"]);
+        yield* TestClock.setTime(LATER + 48_000);
+        expect((yield* queue.state).reasons).toEqual({ d: "memory pressure high" });
+        Queue.remove(dir, "a");
+        step(LATER + 49_000, { pressureLevel: 2 });
+        expect(started()).toEqual(["d"]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a head that does not fit lets a small job pass, then gets its turn after its patience",
+    () =>
+      withQueue((dir, queue) =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(LATER);
+          const job = (id: string, label: string): HeavyQueueEntry => ({
+            ...holder,
+            id,
+            label,
+            createdAt: ago(1000),
+          });
+          Queue.enqueue(dir, job("big", "vp run build"));
+          Queue.enqueue(dir, job("small", "vp run typecheck"));
+          Queue.enqueue(dir, job("small2", "vp run lint"));
+          // The holder has run for a minute, so its usage is in the reading.
+          const file = NodePath.join(dir, "queue.json");
+          const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+          NodeFS.writeFileSync(
+            file,
+            JSON.stringify({
+              ...doc,
+              lastStartAt: LATER - 60_000,
+              entries: doc.entries.map((e: HeavyQueueEntry) =>
+                e.id === holder.id ? { ...e, startedAt: ago(60_000) } : e,
+              ),
+            }),
+          );
+          // 28% of 16 GB free: a never-seen build (1.5 GB) would cut into the 20% kept spare, a typecheck (0.5 GB) does not.
+          Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: LATER }, {});
+          const started = () =>
+            Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
+          for (const id of ["big", "small", "small2"]) Queue.tryStart(dir, id, LATER);
+          expect(started()).toEqual(["holder", "small"]);
+          // Once the start settles, the head says what it needs.
+          Queue.recordSample(dir, { ...MAC_28, at: LATER + 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: LATER + 16_000 }, {});
+          yield* TestClock.setTime(LATER + 16_000);
+          expect((yield* queue.state).reasons["big"]).toBe(
+            "needs ~1.5 GB; 4.5 GB free, 3.2 GB kept spare",
+          );
+
+          // Past its patience the head lets nothing by, and starts once the Mac frees up.
+          const patient = LATER + 5 * 60_000;
+          yield* TestClock.setTime(patient);
+          Queue.remove(dir, "small");
+          Queue.recordSample(dir, { ...MAC_28, at: patient - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: patient }, {});
+          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          expect(started()).toEqual(["holder"]);
+          Queue.remove(dir, holder.id);
+          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          expect(started()).toEqual(["big"]);
+        }),
+      ),
+  );
+
   it.effect("moves, pauses and sets priority rules through the shared file", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -383,9 +554,76 @@ describe("HeavyQueue", () => {
         yield* queue.setMaxRunning(1);
         expect((yield* queue.state).reasons["y"]).toBe("paused");
         expect((yield* queue.state).maxRunning).toBe(1);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 20,
+          macCpuCeilingPercent: 70,
+          heavyOverLimitSeconds: 20,
+        });
+        yield* queue.setMacMemoryFloorPercent(30);
+        yield* queue.setMacCpuCeilingPercent(90);
+        yield* queue.setHeavyOverLimitSeconds(60);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 30,
+          macCpuCeilingPercent: 90,
+          heavyOverLimitSeconds: 60,
+        });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 512,
+          headPatienceMinutes: 5,
+        });
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 256, headPatienceMinutes: 30 });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 256,
+          unseenHeavyMegabytes: 1536,
+          headPatienceMinutes: 30,
+        });
+        // Reset sends the default back.
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 512 });
+        expect((yield* queue.state).lightJobMegabytes).toBe(512);
+        const above = yield* Effect.flip(queue.setAdmissionLimits({ unseenMediumMegabytes: 4096 }));
+        expect([above.reason, above.message]).toEqual([
+          "not-allowed",
+          "A medium job's memory guess can't be more than a heavy job's (1536 MB).",
+        ]);
+        expect((yield* queue.state).unseenMediumMegabytes).toBe(512);
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("lists learned routes and forgets one or all, again harmlessly", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const fault = { kind: "missing-program", subject: "vp", line: "vp: not found" } as const;
+        recordRouteFault(dir, "vp@/a#missing-program", fault, 0, 7, 9);
+        recordRouteFault(dir, "vp@/a#missing-program", fault, 0, 7, 9);
+        recordRouteFault(dir, "cargo@/b#missing-program", fault, 0, 7, 9);
+        const { routes } = yield* queue.listRoutes();
+        const learnAfter = routes[0]!.learnAfter;
+        expect(routes).toEqual([
+          {
+            key: "vp@/a#missing-program",
+            kind: "missing-program",
+            faults: 2,
+            learnAfter,
+            learned: 2 >= learnAfter,
+            line: "vp: not found",
+            lastFaultAt: "1970-01-01T00:00:00.000Z",
+            expiresAt: expect.stringMatching(/^1970-01-/),
+          },
+          expect.objectContaining({ key: "cargo@/b#missing-program", faults: 1, learned: false }),
+        ]);
+        expect(yield* queue.forgetRoutes("vp@/a#missing-program")).toEqual({ removed: 1 });
+        expect(yield* queue.forgetRoutes("vp@/a#missing-program")).toEqual({ removed: 0 });
+        expect(yield* queue.forgetRoutes("all")).toEqual({ removed: 1 });
+        expect(yield* queue.forgetRoutes("all")).toEqual({ removed: 0 });
+        expect(yield* queue.listRoutes()).toEqual({ routes: [] });
+        NodeFS.writeFileSync(NodePath.join(dir, "routes.json"), "{not json");
+        const damaged = yield* queue.listRoutes();
+        expect(damaged.routes).toEqual([]);
+        expect(damaged.warning).toContain("routes.json.corrupt-");
       }),
     ),
   );
@@ -442,14 +680,17 @@ describe("Linux as clients see it", () => {
     Queue.publishRunner(dir, block(false));
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toBeNull();
     Queue.publishRunner(dir, block(true));
-    Queue.recordHealth(dir, { ok: false, error: "refused" });
-    Queue.recordHealth(dir, { ok: false, error: "refused" });
+    // Failures closer than half a heartbeat are one outage, so these are a minute apart.
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
     Queue.enqueue(dir, { ...holder, startedAt: "2026-01-01T00:00:00.000Z", runner: "linux" });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toEqual({
       host: "pc",
       online: false,
       slots: 3,
       running: 1,
+      cpuPercent: null,
       load1: null,
       cpuCount: null,
       availableMemoryBytes: null,

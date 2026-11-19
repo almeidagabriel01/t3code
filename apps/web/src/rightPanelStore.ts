@@ -767,14 +767,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       byThreadKey: {},
       panelOpen: false,
       lastFixedKind: "files",
-      showChat: (ref) =>
+      showChat: (ref) => {
+        // Every thread pick calls this; already on the chat it is no user action to count.
+        if (get().byThreadKey[scopedThreadKey(rightPanelHostRef(ref))]?.activeMainId === undefined)
+          return;
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            if (current.activeMainId === undefined) return current;
             const { activeMainId: _main, ...rest } = current;
             return rest;
           }),
-        ),
+        );
+      },
       ensureActiveSurface: (ref, preferredKind) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {

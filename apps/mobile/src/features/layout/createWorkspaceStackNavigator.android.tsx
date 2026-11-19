@@ -19,6 +19,7 @@ import {
 } from "@react-navigation/native-stack";
 import { use, type ComponentProps } from "react";
 
+import { OverlayPortalScope } from "../../components/ui/OverlayPortal";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 
 import {
@@ -131,7 +132,9 @@ function WorkspaceStackNavigator({
                 ...(descriptor.options.presentation === "formSheet"
                   ? {
                       render: () => (
-                        <RoutedFormSheetContext value>{descriptor.render()}</RoutedFormSheetContext>
+                        <RoutedFormSheetContext value>
+                          <OverlayPortalScope>{descriptor.render()}</OverlayPortalScope>
+                        </RoutedFormSheetContext>
                       ),
                     }
                   : undefined),

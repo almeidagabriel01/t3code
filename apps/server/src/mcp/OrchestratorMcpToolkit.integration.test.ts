@@ -468,10 +468,10 @@ describe("orchestrator MCP toolkit", () => {
           );
           expect(followupTasks).toHaveLength(2);
           expect(followupTasks.every((task) => task.result === null)).toBe(true);
-          expect(followupTasks.map((task) => task.id)).toEqual([
-            runningFollowup.taskId,
-            queuedFollowup.taskId,
-          ]);
+          // Ordered by wall-clock started_at, which a clock step can invert.
+          expect(followupTasks.map((task) => task.id).toSorted()).toEqual(
+            [runningFollowup.taskId, queuedFollowup.taskId].toSorted(),
+          );
           expect(
             pendingProjection.runs.find((run) => run.id === delegated.childRunId)?.status,
           ).toBe("completed");

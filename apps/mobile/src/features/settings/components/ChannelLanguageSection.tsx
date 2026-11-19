@@ -7,6 +7,7 @@ import {
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { useChannelLanguage } from "../../../state/channelLanguage";
 import { SettingsSection } from "./SettingsSection";
+import { CHANNEL_LANGUAGE_TITLE } from "./channelCopy";
 
 /** One server setting, shown in both the iMessage and the Telegram settings. */
 export function ChannelLanguageSection(props: {
@@ -15,7 +16,7 @@ export function ChannelLanguageSection(props: {
 }) {
   const { language, set } = useChannelLanguage(props.environmentId);
   return (
-    <SettingsSection title="Language" footer={CHANNEL_LANGUAGE_DESCRIPTION}>
+    <SettingsSection title={CHANNEL_LANGUAGE_TITLE} footer={CHANNEL_LANGUAGE_DESCRIPTION}>
       {CHANNEL_LANGUAGE_OPTIONS.map((option, index) => (
         <ListChoiceRow
           key={option.value}

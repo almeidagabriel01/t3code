@@ -683,6 +683,46 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       });
     }
 
+    // The context meter reads the active provider thread alone: no provider thread yet reads
+    // as none, and a newer report of another provider thread never wins.
+    assert.isNull(yield* store.getThreadContextUsage(threadId));
+    assert.isNull(yield* store.getThreadContextUsage(ThreadId.make("thread:missing")));
+    const providerThread = (id: ProviderThreadId, appThreadId: ThreadId | null) =>
+      store.apply({
+        id: EventId.make(`event:idle-compaction:${id}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id,
+          appThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          contextUsage: { usedTokens: 90_000, maxTokens: 200_000 },
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    yield* providerThread(ProviderThreadId.make("provider-thread:idle-other"), threadId);
+    yield* providerThread(selected, threadId);
+    const usage = yield* store.getThreadContextUsage(threadId);
+    assert.deepEqual(usage?.latestTurnUsage, {
+      usedTokens: 150_000,
+      updatedAt: DateTime.formatIso(minutes(3)),
+    });
+    assert.deepEqual(usage?.providerThread?.contextUsage, {
+      usedTokens: 90_000,
+      maxTokens: 200_000,
+    });
     const records = yield* store.getThreadRecords(
       threadId,
       ["runs", "providerTurns", "runtimeRequests", "contextTransfers"],

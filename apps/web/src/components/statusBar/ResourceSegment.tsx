@@ -1,4 +1,10 @@
+import { useAtom } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  heavyWork,
+  heavyWorkItems,
+  macReading,
+} from "@t3tools/client-runtime/state/heavyQueueModel";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
   AuthDiagnosticsReadScope,
@@ -11,61 +17,81 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
+  ActivityIcon,
   AppWindowIcon,
+  AppWindowMacIcon,
+  EllipsisIcon,
   BotIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   CpuIcon,
+  FolderIcon,
   ListOrderedIcon,
-  PauseIcon,
   MemoryStickIcon,
+  MonitorCogIcon,
   MonitorIcon,
+  PauseIcon,
   ServerIcon,
   SmartphoneIcon,
+  SquareDashedIcon,
   TerminalIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { createContext, use, useEffect, useRef, useState } from "react";
+import { createContext, use, useRef, useState, type ReactNode } from "react";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useOrderWhileOpen } from "../../hooks/useOrderWhileOpen";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
-import { useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
+import { resourceManagerOpenAtom, useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HeavyCommandRows, type HeavyCommandThreads } from "./HeavyCommandsBody";
-import { HeavyQueueBody } from "./HeavyQueueBody";
-import { processLabel } from "./processLabel.logic";
+import { HeavyWorkSection } from "./HeavyQueueBody";
+import { MachineBar } from "./MachineBar";
+import { processLabel } from "@t3tools/client-runtime/state/processLabel";
 import {
   addUsage,
-  buildResourceTree,
+  APP_GROUP_LABEL,
+  environmentResourceTree,
   deviceRowLabel,
   deviceShutdownTargets,
   EMPTY_USAGE,
+  formatMemory,
+  isHeavyProcess,
   orderResourceTree,
+  outsideT3Usage,
   resourceTreeKeys,
+  runningTerminals,
   type AppProcessGroup,
   type DevicePlatform,
   type DeviceRow,
   type ResourceSort,
   type ResourceUsage,
-} from "./resourceUsage.logic";
-import { CPU_COLUMN, formatCpu, GUTTER, MEM_COLUMN, Metrics, METRICS } from "./ResourceMetrics";
-import { formatMemory, sparklinePoints } from "./statusBar.logic";
+} from "@t3tools/client-runtime/state/resourceTree";
+import {
+  CPU_COLUMN,
+  FOCUS_RING,
+  GLYPH,
+  GUTTER,
+  MEM_COLUMN,
+  Metrics,
+  METRICS,
+  ResourceSection,
+  ROW_HOVER,
+  ROW_LINE,
+  UNDER_NAME,
+} from "./ResourceMetrics";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
 import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
 import {
@@ -75,13 +101,8 @@ import {
 } from "./useEnvironmentResources";
 
 type SortOption = ResourceSort;
+type ProjectInfo = ProjectFaviconProject & { readonly title: string };
 
-const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
-  main: "Desktop main",
-  renderer: "Renderers",
-  server: "Server",
-  other: "Other processes",
-};
 const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
   main: AppWindowIcon,
   renderer: MonitorIcon,
@@ -90,157 +111,7 @@ const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
 };
 const UNATTRIBUTED = "Unattributed";
 
-// Half a core; process CPU arrives as a share of the whole machine.
-const HEAVY_CPU_PERCENT_OF_CORE = 50;
 const HostCoresContext = createContext(1);
-const HEAVY_RSS_BYTES = 1024 ** 3;
-
-const CPU_SCALE_HINT = "Share of the whole machine: 100% means every CPU core is busy.";
-
-const SCOPE_HINT: Record<"mac" | "t3", string> = {
-  mac: "Every app on this computer.",
-  t3: "T3 Code and the agents and commands it runs.",
-};
-
-function FigureRow({
-  scope,
-  label,
-  detail,
-  cpuPercent,
-  memory,
-}: {
-  readonly scope: "mac" | "t3";
-  readonly label: string;
-  readonly detail?: string;
-  readonly cpuPercent: number | null;
-  readonly memory: string;
-}) {
-  return (
-    <div className="flex items-center justify-between px-3 py-0.5 text-xs tabular-nums">
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 cursor-default truncate font-medium text-foreground" />}
-        >
-          {label}
-          {detail === undefined ? null : (
-            <span className="font-normal text-muted-foreground"> · {detail}</span>
-          )}
-        </TooltipTrigger>
-        <TooltipPopup side="bottom" className="max-w-xs">
-          {SCOPE_HINT[scope]} {CPU_SCALE_HINT}
-        </TooltipPopup>
-      </Tooltip>
-      {/* Same columns as the process table below, so the figures read down its CPU and Memory. */}
-      <div className="flex items-center gap-2">
-        <div className={cn(METRICS, "text-foreground")}>
-          <span className={CPU_COLUMN}>{cpuPercent === null ? "--" : formatCpu(cpuPercent)}</span>
-          <span className={MEM_COLUMN}>{memory}</span>
-        </div>
-        <span className={GUTTER} aria-hidden />
-      </div>
-    </div>
-  );
-}
-
-/** Whole machine and T3 side by side; T3 is a subset, so it never reads above the machine. */
-function ResourceFigures({
-  environmentId,
-  t3,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly t3: ResourceUsage | null;
-}) {
-  const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
-  const host = useEnvironmentQuery(
-    canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
-  ).data;
-  const macCpu = host?.cpuUtilization == null ? null : host.cpuUtilization * 100;
-  return (
-    <div className="border-b border-border py-1.5">
-      {host === null || host === undefined ? null : (
-        <FigureRow
-          scope="mac"
-          label="Mac"
-          cpuPercent={macCpu}
-          detail={`${formatMemory(host.totalMemoryBytes)} total`}
-          memory={formatMemory(host.totalMemoryBytes - host.availableMemoryBytes)}
-        />
-      )}
-      {t3 === null ? null : (
-        <FigureRow
-          scope="t3"
-          label="T3"
-          cpuPercent={macCpu === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpu)}
-          memory={formatMemory(t3.rssBytes)}
-        />
-      )}
-    </div>
-  );
-}
-
-const HISTORY_INPUT = { windowMs: 5 * 60_000, bucketMs: 15_000 } as const;
-const HISTORY_REFRESH_MS = 15_000;
-const SPARKLINE_WIDTH = 120;
-const SPARKLINE_HEIGHT = 20;
-
-function Sparkline({
-  label,
-  values,
-}: {
-  readonly label: string;
-  readonly values: ReadonlyArray<number>;
-}) {
-  return (
-    <svg
-      role="img"
-      aria-label={label}
-      width={SPARKLINE_WIDTH}
-      height={SPARKLINE_HEIGHT}
-      className="text-muted-foreground"
-    >
-      <polyline
-        points={sparklinePoints(values, SPARKLINE_WIDTH, SPARKLINE_HEIGHT)}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1}
-      />
-    </svg>
-  );
-}
-
-function ResourceHistory({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const canRead = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
-  const history = useEnvironmentQuery(
-    canRead
-      ? serverEnvironment.resourceTelemetryHistory({ environmentId, input: HISTORY_INPUT })
-      : null,
-  );
-  const { refresh } = history;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-reads server-retained history while the popover shows it
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (!document.hidden) refresh();
-    }, HISTORY_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
-  const buckets = history.data?.buckets ?? [];
-  if (buckets.length < 2) return null;
-  return (
-    <div className="flex items-center justify-between px-3 py-1 text-2xs text-muted-foreground">
-      <span>T3 · last 5 min</span>
-      <Sparkline label="Memory history" values={buckets.map((bucket) => bucket.maxRssBytes)} />
-      <Sparkline label="CPU history" values={buckets.map((bucket) => bucket.avgCpuPercent)} />
-    </div>
-  );
-}
-
-function ChevronToggle({ open }: { readonly open: boolean }) {
-  return open ? (
-    <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground" />
-  ) : (
-    <ChevronRightIcon aria-hidden className="size-3 text-muted-foreground" />
-  );
-}
 
 const DEVICE_ICON: Record<DevicePlatform, typeof SmartphoneIcon> = {
   android: SmartphoneIcon,
@@ -255,16 +126,14 @@ function ProcessList({
 }) {
   const cores = use(HostCoresContext);
   return (
-    <div>
+    <div className="pb-1">
       {processes.map((process) => {
-        const heavy =
-          process.cpuPercent * cores >= HEAVY_CPU_PERCENT_OF_CORE ||
-          process.residentBytes >= HEAVY_RSS_BYTES;
+        const heavy = isHeavyProcess(process, cores);
         const label = processLabel(process);
         return (
           <div
             key={process.identity.pid}
-            className="flex items-center gap-2 py-1 pl-16 pr-3 hover:bg-foreground/8"
+            className={cn("flex items-center gap-2 py-0.5 pr-3", UNDER_NAME, ROW_HOVER)}
           >
             <Tooltip>
               <TooltipTrigger
@@ -283,7 +152,7 @@ function ProcessList({
                   <bdi dir="ltr">{process.command}</bdi>
                 </span>
               </TooltipTrigger>
-              <TooltipPopup side="top" className="max-w-sm break-all">
+              <TooltipPopup side="left" className="max-w-sm break-all">
                 {process.command} · pid {process.identity.pid}
               </TooltipPopup>
             </Tooltip>
@@ -312,7 +181,7 @@ function UsageRow({
   onClose,
   processes,
 }: {
-  readonly icon: React.ReactNode;
+  readonly icon: ReactNode;
   readonly label: string;
   readonly detail: string;
   readonly suffix?: string | null;
@@ -329,33 +198,49 @@ function UsageRow({
   const text = (
     <>
       {label}
-      {suffix ? <span className="text-foreground/70"> · {suffix}</span> : null}
+      {suffix ? <span className="text-muted-foreground"> · {suffix}</span> : null}
     </>
   );
+  const name = "min-w-0 flex-1 truncate text-start text-xs text-foreground/90";
   return (
     <>
-      <div
-        className={cn(
-          "group/row flex items-center gap-2 py-1.5 pr-3 hover:bg-foreground/8",
-          expandable ? "pl-3" : "pl-10",
-        )}
-      >
+      <div className={cn(ROW_LINE, ROW_HOVER, "group/row")}>
         {expandable ? (
           <button
             type="button"
             aria-expanded={expanded}
             aria-label={`${expanded ? "Hide" : "Show"} processes of ${label}`}
             onClick={() => setExpanded((value) => !value)}
-            className="flex w-5 shrink-0 cursor-pointer items-center justify-center self-stretch rounded-sm outline-none hover:bg-foreground/8 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            className={cn(
+              GLYPH,
+              "group/toggle cursor-pointer rounded-sm hover:text-foreground",
+              FOCUS_RING,
+            )}
           >
-            <ChevronToggle open={expanded} />
+            {/* The row's icon at rest; a chevron says it opens once the row is pointed at or open. */}
+            <span
+              className={cn(
+                "[&>svg]:size-3.5",
+                expanded ? "hidden" : "group-hover/row:hidden group-focus-visible/toggle:hidden",
+              )}
+            >
+              {icon}
+            </span>
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "transition-transform duration-150 ease-out motion-reduce:transition-none",
+                expanded
+                  ? "rotate-90"
+                  : "hidden group-hover/row:block group-focus-visible/toggle:block",
+              )}
+            />
           </button>
-        ) : null}
-        <span className="shrink-0 text-muted-foreground [&>svg]:size-3">{icon}</span>
+        ) : (
+          <span className={GLYPH}>{icon}</span>
+        )}
         {onOpen === null ? (
-          <span className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground">
-            {text}
-          </span>
+          <span className={name}>{text}</span>
         ) : (
           <Tooltip>
             <TooltipTrigger
@@ -363,13 +248,17 @@ function UsageRow({
                 <button
                   type="button"
                   onClick={onOpen}
-                  className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  className={cn(
+                    name,
+                    "cursor-pointer rounded-sm hover:text-foreground",
+                    FOCUS_RING,
+                  )}
                 />
               }
             >
               {text}
             </TooltipTrigger>
-            <TooltipPopup side="top">{detail}</TooltipPopup>
+            <TooltipPopup side="left">{detail}</TooltipPopup>
           </Tooltip>
         )}
         <Metrics usage={usage} />
@@ -403,53 +292,6 @@ function UsageRow({
   );
 }
 
-const SECTIONS_KEY = "t3code:resource-manager:sections";
-const SectionsSchema = Schema.Record(Schema.String, Schema.Boolean);
-
-/** Each section keeps the open state the user left it in, so closing the popup does not reset it. */
-function useSectionOpen(id: string, defaultOpen: boolean) {
-  const [sections, setSections] = useLocalStorage(SECTIONS_KEY, {}, SectionsSchema);
-  const setOpen = (open: boolean) => setSections((current) => ({ ...current, [id]: open }));
-  return [sections[id] ?? defaultOpen, setOpen] as const;
-}
-
-function ProjectGroup({
-  title,
-  sectionId,
-  count,
-  usage,
-  children,
-}: {
-  readonly title: string;
-  readonly count: number;
-  /** Omitted for groups whose rows have no usage, so the header shows no empty metrics. */
-  readonly usage?: ResourceUsage | null;
-  readonly sectionId: string;
-  readonly children: React.ReactNode;
-}) {
-  const [open, setOpen] = useSectionOpen(sectionId, true);
-  return (
-    <div className="border-t border-border/50">
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
-          <span className="flex w-5 shrink-0 items-center justify-center">
-            <ChevronToggle open={open} />
-          </span>
-          <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {title}
-            <span className="font-normal normal-case"> ({count})</span>
-          </span>
-          {usage === undefined ? null : <Metrics usage={usage} />}
-          <span className={GUTTER} aria-hidden />
-        </CollapsibleTrigger>
-        <CollapsiblePanel animate={false}>
-          <div className="border-t border-border/30">{children}</div>
-        </CollapsiblePanel>
-      </Collapsible>
-    </div>
-  );
-}
-
 interface ThreadInfo {
   readonly projectId: ProjectId;
   readonly title: string;
@@ -457,7 +299,7 @@ interface ThreadInfo {
 }
 
 /** Rendered only while devices run, so the device state subscription stays closed otherwise. */
-function DeviceGroup({
+function DeviceRows({
   environmentId,
   devices,
   outside,
@@ -472,91 +314,28 @@ function DeviceGroup({
   const localHostIds = new Set<string>(
     state.hosts.flatMap((host) => (host.kind === "local" ? [host.id] : [])),
   );
-  const total = devices.reduce((sum, device) => addUsage(sum, device.usage), EMPTY_USAGE);
-  return (
-    <ProjectGroup
-      title={outside ? "Devices outside T3" : "Devices"}
-      sectionId={`${environmentId}:${outside ? "outside-devices" : "devices"}`}
-      count={devices.length}
-      usage={total}
-    >
-      {devices.map((device) => {
-        const Icon = DEVICE_ICON[device.platform];
-        const targets = deviceShutdownTargets(device, state.devices, localHostIds);
-        const label = deviceRowLabel(device, state.devices, localHostIds);
-        return (
-          <UsageRow
-            key={device.key}
-            icon={<Icon aria-hidden />}
-            label={label}
-            detail={outside ? `${label} · runs outside T3, not counted in the T3 total` : label}
-            usage={device.usage}
-            processes={device.processes}
-            onOpen={null}
-            closeLabel="Shut down"
-            onClose={canShutDown && targets.length > 0 ? () => void shutDown(targets, label) : null}
-          />
-        );
-      })}
-    </ProjectGroup>
-  );
+  return devices.map((device) => {
+    const Icon = DEVICE_ICON[device.platform];
+    const targets = deviceShutdownTargets(device, state.devices, localHostIds);
+    const label = deviceRowLabel(device, state.devices, localHostIds);
+    return (
+      <UsageRow
+        key={device.key}
+        icon={<Icon aria-hidden />}
+        label={label}
+        detail={outside ? `${label} · runs outside T3, not counted in the T3 total` : label}
+        usage={device.usage}
+        processes={device.processes}
+        onOpen={null}
+        closeLabel="Shut down"
+        onClose={canShutDown && targets.length > 0 ? () => void shutDown(targets, label) : null}
+      />
+    );
+  });
 }
 
-/** Renders nothing while no heavy command runs; while mounted the server samples processes. */
-export function HeavyCommandsGroup({
-  environmentId,
-  threads,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly threads: HeavyCommandThreads;
-}) {
-  const { commands, cpuCount } = useHeavyCommands(environmentId);
-  if (commands.length === 0) return null;
-  return (
-    <ProjectGroup
-      title="Heavy commands"
-      sectionId={`${environmentId}:heavy-commands`}
-      count={commands.length}
-    >
-      <HeavyCommandRows
-        environmentId={environmentId}
-        commands={commands}
-        cpuCount={cpuCount}
-        threads={threads}
-      />
-    </ProjectGroup>
-  );
-}
-
-/** Renders nothing while the machine-wide heavy-work queue is on, empty and not paused. */
-export function HeavyQueueGroup({
-  environmentId,
-  threadTitle,
-  projectIdOfThread,
-  onOpenThread,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly threadTitle: (threadId: string) => string | undefined;
-  readonly projectIdOfThread: (threadId: string) => string | undefined;
-  readonly onOpenThread: (threadId: string) => void;
-}) {
-  const { entries, paused, enabled } = useHeavyQueue(environmentId);
-  if (entries.length === 0 && !paused && enabled) return null;
-  return (
-    <ProjectGroup
-      title="Heavy work queue"
-      sectionId={`${environmentId}:heavy-queue`}
-      count={entries.length}
-    >
-      <HeavyQueueBody
-        environmentId={environmentId}
-        threadTitle={threadTitle}
-        projectIdOfThread={projectIdOfThread}
-        onOpenThread={onOpenThread}
-      />
-    </ProjectGroup>
-  );
-}
+const sumUsage = (rows: ReadonlyArray<{ readonly usage: ResourceUsage }>) =>
+  rows.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE);
 
 export function EnvironmentSection({
   resources,
@@ -565,7 +344,8 @@ export function EnvironmentSection({
   holdOrder = false,
   label,
   threadInfo,
-  projectTitleById,
+  projectById,
+  sortHeader = null,
 }: {
   readonly resources: EnvironmentResources;
   readonly snapshot: ResourceTelemetrySnapshot | null;
@@ -574,190 +354,249 @@ export function EnvironmentSection({
   readonly holdOrder?: boolean;
   readonly label: string | null;
   readonly threadInfo: ReadonlyMap<string, ThreadInfo>;
-  readonly projectTitleById: ReadonlyMap<ProjectId, string>;
+  readonly projectById: ReadonlyMap<ProjectId, ProjectInfo>;
+  /** The columns' sort header, under the first environment's machines. */
+  readonly sortHeader?: ReactNode;
 }) {
   const { environmentId } = resources;
   const navigate = useNavigate();
   const { canClose, close } = useCloseTerminal(environmentId);
-  const [appOpen, setAppOpen] = useSectionOpen(`${environmentId}:app`, false);
+  const queue = useHeavyQueue(environmentId);
+  const canReadHost = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  // The same polled reading as the machine bar, so Outside T3 is This Mac minus the T3 total.
+  const host = useEnvironmentQuery(
+    canReadHost ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  );
+  // While mounted, the server samples processes for heavy commands.
+  const { commands, cpuCount } = useHeavyCommands(environmentId);
   const infoOf = (threadId: string) => threadInfo.get(`${environmentId}:${threadId}`);
   const openThread = (threadId: ThreadId) =>
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
     });
-  const sessions = new Map(
-    resources.terminals
-      .filter((session) => session.state.status === "running")
-      .map((session) => [`${session.target.threadId}:${session.target.terminalId}`, session]),
-  );
-  const owners = snapshot?.owners ?? [];
-  const ranked = buildResourceTree({
-    processes: snapshot?.processes ?? [],
-    terminals: [...sessions].map(([key, session]) => ({
-      key,
-      name: session.state.summary?.label || session.target.terminalId,
-      threadId: session.target.threadId,
-      projectKey: infoOf(session.target.threadId)?.projectId ?? null,
-      pid: session.state.summary?.pid ?? null,
-    })),
-    agents: owners.flatMap((owner) =>
-      owner.kind === "agent" ? [{ pid: owner.pid, threadId: owner.threadId }] : [],
-    ),
-    hubPids: owners.flatMap((owner) => (owner.kind === "device-hub" ? [owner.pid] : [])),
+  const threads: HeavyCommandThreads = {
+    threadTitle: (threadId) => infoOf(threadId)?.title,
+    projectIdOfThread: (threadId) => infoOf(threadId)?.projectId,
+    onOpenThread: (threadId) => openThread(threadId as ThreadId),
+  };
+  const sessions = runningTerminals(resources.terminals);
+  const ranked = environmentResourceTree({
+    snapshot,
+    terminals: sessions,
     sort,
     projectOfThread: (threadId) => infoOf(threadId)?.projectId ?? null,
     projectTitle: (projectKey) =>
       projectKey === null
         ? UNATTRIBUTED
-        : (projectTitleById.get(projectKey as ProjectId) ?? UNATTRIBUTED),
+        : (projectById.get(projectKey as ProjectId)?.title ?? UNATTRIBUTED),
     threadTitle: (threadId) => infoOf(threadId)?.title || "Agent",
   });
   const order = useOrderWhileOpen(resourceTreeKeys(ranked), String, holdOrder);
   const tree = holdOrder ? orderResourceTree(ranked, order) : ranked;
   const t3Devices = tree.devices.filter((device) => !device.outside);
   const outsideDevices = tree.devices.filter((device) => device.outside);
+  const work = heavyWork(queue, commands);
+  const detached = work.detached;
+  const heavyCount = heavyWorkItems(work).length;
   const app = snapshot === null ? null : tree.app;
-  const appTotal =
-    app === null ? null : app.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE);
+  const t3 =
+    snapshot === null
+      ? null
+      : {
+          cpuPercent: snapshot.groups.allT3.currentCpuPercent,
+          rssBytes: snapshot.groups.allT3.currentRssBytes,
+          processCount: snapshot.groups.allT3.processCount,
+        };
+  const outsideRows = detached.reduce(
+    (sum, command) =>
+      command.cpu === undefined || command.memory === undefined
+        ? sum
+        : addUsage(sum, {
+            cpuPercent: (command.cpu / Math.max(1, cpuCount)) * 100,
+            rssBytes: command.memory,
+            processCount: 1,
+          }),
+    sumUsage([...outsideDevices, ...tree.outsideApps]),
+  );
+  const outside = outsideT3Usage({
+    mac: macReading(queue, host.data),
+    t3,
+    rows: [outsideRows],
+  });
+  const outsideCount =
+    outsideDevices.length +
+    detached.length +
+    tree.outsideApps.length +
+    (outside.other === null ? 0 : 1);
 
   return (
     <HostCoresContext value={snapshot?.cpuCount ?? 1}>
-      <div>
+      <div className="border-t border-foreground/10 first:border-t-0">
         {label === null ? null : (
-          <div className="border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="flex items-center gap-2 px-3 pt-2.5 text-2xs font-semibold text-foreground/80 [&>svg]:size-3.5 [&>svg]:text-muted-foreground">
+            <ServerIcon aria-hidden />
             {label}
           </div>
         )}
-        <ResourceFigures
-          environmentId={environmentId}
-          t3={
-            snapshot === null
-              ? null
-              : {
-                  cpuPercent: snapshot.groups.allT3.currentCpuPercent,
-                  rssBytes: snapshot.groups.allT3.currentRssBytes,
-                  processCount: snapshot.groups.allT3.processCount,
-                }
-          }
-        />
-        <ResourceHistory environmentId={environmentId} />
-        {tree.projects.length === 0 && t3Devices.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+        <MachineBar environmentId={environmentId} t3={t3} />
+        {sortHeader}
+        {tree.projects.length === 0 && t3Devices.length === 0 && heavyCount === 0 ? (
+          <div className="flex flex-col items-center gap-1.5 px-3 py-8 text-center text-xs text-muted-foreground">
+            <ActivityIcon aria-hidden className="size-4 opacity-60" />
             Nothing running right now
           </div>
         ) : null}
-        <HeavyCommandsGroup
+        <HeavyWorkSection
           environmentId={environmentId}
-          threads={{
-            threadTitle: (threadId) => infoOf(threadId)?.title,
-            projectIdOfThread: (threadId) => infoOf(threadId)?.projectId,
-            onOpenThread: (threadId) => openThread(threadId as ThreadId),
-          }}
+          commands={commands}
+          cpuCount={cpuCount}
+          threads={threads}
         />
-        {tree.projects.map((project) => (
-          <ProjectGroup
-            key={project.projectKey ?? UNATTRIBUTED}
-            sectionId={`${environmentId}:project:${project.projectKey ?? UNATTRIBUTED}`}
-            title={project.title}
-            count={project.rows.length}
-            usage={snapshot === null ? null : project.usage}
-          >
-            {project.rows.map((row) => {
-              const usage = snapshot === null ? null : row.usage;
-              if (row.kind === "agent") {
-                const working = infoOf(row.threadId)?.working ?? false;
+        {tree.projects.map((project) => {
+          const info =
+            project.projectKey === null
+              ? undefined
+              : projectById.get(project.projectKey as ProjectId);
+          return (
+            <ResourceSection
+              key={project.projectKey ?? UNATTRIBUTED}
+              sectionId={`${environmentId}:project:${project.projectKey ?? UNATTRIBUTED}`}
+              title={project.title}
+              icon={
+                info === undefined ? (
+                  <FolderIcon aria-hidden />
+                ) : (
+                  <ProjectFavicon project={info} className="size-3.5" />
+                )
+              }
+              count={project.rows.length}
+              usage={snapshot === null ? null : project.usage}
+            >
+              {project.rows.map((row) => {
+                const usage = snapshot === null ? null : row.usage;
+                if (row.kind === "agent") {
+                  const working = infoOf(row.threadId)?.working ?? false;
+                  return (
+                    <UsageRow
+                      key={row.key}
+                      icon={<BotIcon aria-hidden />}
+                      label={row.name}
+                      detail={
+                        working
+                          ? `Agent · ${row.name}`
+                          : `Idle agent session, kept open for follow-ups · ${row.name}`
+                      }
+                      suffix={working ? null : "idle"}
+                      usage={usage}
+                      processes={snapshot === null ? undefined : row.processes}
+                      onOpen={() => openThread(row.threadId as ThreadId)}
+                    />
+                  );
+                }
+                const session = sessions.get(row.key);
                 return (
                   <UsageRow
                     key={row.key}
-                    icon={<BotIcon aria-hidden />}
+                    icon={<TerminalIcon aria-hidden />}
                     label={row.name}
-                    detail={
-                      working
-                        ? `Agent · ${row.name}`
-                        : `Idle agent session, kept open for follow-ups · ${row.name}`
-                    }
-                    suffix={working ? null : "idle"}
+                    detail={session?.state.summary?.cwd ?? row.name}
+                    suffix={session?.state.hasRunningSubprocess ? "running" : null}
                     usage={usage}
                     processes={snapshot === null ? undefined : row.processes}
                     onOpen={() => openThread(row.threadId as ThreadId)}
+                    closeLabel="End terminal"
+                    onClose={
+                      canClose && session !== undefined
+                        ? () =>
+                            void close(
+                              {
+                                threadId: session.target.threadId,
+                                terminalId: session.target.terminalId,
+                              },
+                              row.name,
+                            )
+                        : null
+                    }
                   />
                 );
-              }
-              const session = sessions.get(row.key);
+              })}
+            </ResourceSection>
+          );
+        })}
+        {t3Devices.length === 0 ? null : (
+          <ResourceSection
+            sectionId={`${environmentId}:devices`}
+            title="Devices"
+            icon={<SmartphoneIcon aria-hidden />}
+            count={t3Devices.length}
+            usage={sumUsage(t3Devices)}
+          >
+            <DeviceRows environmentId={environmentId} devices={t3Devices} outside={false} />
+          </ResourceSection>
+        )}
+        {app === null ? null : (
+          <ResourceSection
+            sectionId={`${environmentId}:app`}
+            title="T3 Code"
+            icon={<MonitorCogIcon aria-hidden />}
+            count={app.length}
+            usage={sumUsage(app)}
+            defaultOpen={false}
+          >
+            {app.map((row) => {
+              const AppGroupIcon = APP_GROUP_ICON[row.group];
               return (
                 <UsageRow
-                  key={row.key}
-                  icon={<TerminalIcon aria-hidden />}
-                  label={row.name}
-                  detail={session?.state.summary?.cwd ?? row.name}
-                  suffix={session?.state.hasRunningSubprocess ? "running" : null}
-                  usage={usage}
-                  processes={snapshot === null ? undefined : row.processes}
-                  onOpen={() => openThread(row.threadId as ThreadId)}
-                  closeLabel="End terminal"
-                  onClose={
-                    canClose && session !== undefined
-                      ? () =>
-                          void close(
-                            {
-                              threadId: session.target.threadId,
-                              terminalId: session.target.terminalId,
-                            },
-                            row.name,
-                          )
-                      : null
-                  }
+                  key={row.group}
+                  icon={<AppGroupIcon aria-hidden />}
+                  label={`${APP_GROUP_LABEL[row.group]} (${row.usage.processCount})`}
+                  detail={APP_GROUP_LABEL[row.group]}
+                  usage={row.usage}
+                  processes={row.processes}
+                  onOpen={null}
                 />
               );
             })}
-          </ProjectGroup>
-        ))}
-        {t3Devices.length === 0 ? null : (
-          <DeviceGroup environmentId={environmentId} devices={t3Devices} outside={false} />
+          </ResourceSection>
         )}
-        <HeavyQueueGroup
-          environmentId={environmentId}
-          threadTitle={(threadId) => infoOf(threadId)?.title}
-          projectIdOfThread={(threadId) => infoOf(threadId)?.projectId}
-          onOpenThread={(threadId) => openThread(threadId as ThreadId)}
-        />
-        {app === null || appTotal === null ? null : (
-          <div className="border-t border-border/50">
-            <Collapsible open={appOpen} onOpenChange={setAppOpen}>
-              <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
-                <span className="flex w-5 shrink-0 items-center justify-center">
-                  <ChevronToggle open={appOpen} />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  T3 Code
-                </span>
-                <Metrics usage={appTotal} />
-                <span className={GUTTER} aria-hidden />
-              </CollapsibleTrigger>
-              <CollapsiblePanel animate={false}>
-                <div className="border-t border-border/30">
-                  {app.map((row) => {
-                    const AppGroupIcon = APP_GROUP_ICON[row.group];
-                    return (
-                      <UsageRow
-                        key={row.group}
-                        icon={<AppGroupIcon aria-hidden />}
-                        label={`${APP_GROUP_LABEL[row.group]} (${row.usage.processCount})`}
-                        detail={APP_GROUP_LABEL[row.group]}
-                        usage={row.usage}
-                        processes={row.processes}
-                        onOpen={null}
-                      />
-                    );
-                  })}
-                </div>
-              </CollapsiblePanel>
-            </Collapsible>
-          </div>
-        )}
-        {outsideDevices.length === 0 ? null : (
-          <DeviceGroup environmentId={environmentId} devices={outsideDevices} outside />
+        {outsideCount === 0 ? null : (
+          <ResourceSection
+            sectionId={`${environmentId}:outside`}
+            title="Outside T3"
+            icon={<SquareDashedIcon aria-hidden />}
+            count={outsideCount}
+            usage={outside.total}
+          >
+            {outsideDevices.length === 0 ? null : (
+              <DeviceRows environmentId={environmentId} devices={outsideDevices} outside />
+            )}
+            {tree.outsideApps.map((row) => (
+              <UsageRow
+                key={row.name}
+                icon={<AppWindowMacIcon aria-hidden />}
+                label={row.name}
+                detail={`${row.name} · runs outside T3, not counted in the T3 total`}
+                usage={row.usage}
+                onOpen={null}
+              />
+            ))}
+            <HeavyCommandRows
+              environmentId={environmentId}
+              commands={detached}
+              cpuCount={cpuCount}
+              threads={threads}
+            />
+            {outside.other === null ? null : (
+              <UsageRow
+                icon={<EllipsisIcon aria-hidden />}
+                label="Other"
+                detail="Other · runs outside T3, not counted in the T3 total"
+                usage={outside.other}
+                onOpen={null}
+              />
+            )}
+          </ResourceSection>
         )}
       </div>
     </HostCoresContext>
@@ -778,15 +617,16 @@ function SortHeader({
       onClick={() => onSort(option)}
       className={cn(
         className,
-        "transition-colors hover:text-foreground",
-        sort === option ? "font-semibold text-foreground" : "text-muted-foreground/80",
+        "cursor-pointer rounded-sm transition-colors hover:text-foreground",
+        FOCUS_RING,
+        sort === option ? "font-semibold text-foreground" : "text-muted-foreground",
       )}
     >
       {text}
     </button>
   );
   return (
-    <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs uppercase tracking-wide">
+    <div className="flex items-center justify-between border-y border-foreground/10 py-1 pr-3 pl-9 text-3xs tracking-wide uppercase">
       {cell("name", "", "Name")}
       <div className="flex items-center gap-2">
         <div className={METRICS}>
@@ -817,8 +657,8 @@ function ResourceManager({
   const projects = useProjects();
   const threads = useThreadShells();
   const snapshots = useEnvironmentSnapshots(resources.map(({ environmentId }) => environmentId));
-  const projectTitleById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.title]),
+  const projectById = new Map<ProjectId, ProjectInfo>(
+    projects.map((project) => [project.id, project]),
   );
   const threadInfo = new Map<string, ThreadInfo>(
     threads.map((thread) => [
@@ -834,17 +674,16 @@ function ResourceManager({
     // Base UI measures the popup with --available-height set to max-content, which voids a min() height:
     // the full list then overflows every side and the popup lands beside the button.
     <div className="flex h-[40rem] max-h-(--available-height) w-full flex-col">
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-2xs font-medium text-foreground">
-        <MemoryStickIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+      <div className="flex items-center gap-2 border-b border-foreground/10 px-3 py-2 text-xs font-semibold text-foreground">
+        <MemoryStickIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">Resource Manager</span>
       </div>
-      <SortHeader sort={sort} onSort={changeSort} />
       <div
         ref={listRef}
         className="min-h-0 flex-1 overflow-y-auto"
         onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
       >
-        {resources.map((environment) => (
+        {resources.map((environment, index) => (
           <EnvironmentSection
             key={environment.environmentId}
             resources={environment}
@@ -853,7 +692,8 @@ function ResourceManager({
             holdOrder={scrolled}
             label={resources.length > 1 ? environment.label : null}
             threadInfo={threadInfo}
-            projectTitleById={projectTitleById}
+            projectById={projectById}
+            sortHeader={index === 0 ? <SortHeader sort={sort} onSort={changeSort} /> : null}
           />
         ))}
       </div>
@@ -903,7 +743,7 @@ function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId |
 
 function ResourceSegmentBody() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useAtom(resourceManagerOpenAtom);
   const resources = useEnvironmentResources();
   const terminalCount = resources.reduce(
     (sum, { terminals }) =>
@@ -922,7 +762,12 @@ function ResourceSegmentBody() {
         <span className="tabular-nums">{terminalCount}</span>
         <QueueCount environmentId={primaryEnvironmentId} />
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" padding="none" className="w-[26rem]">
+      <PopoverPopup
+        side="top"
+        align="end"
+        padding="none"
+        className="w-[28rem] max-w-[calc(100vw-1rem)]"
+      >
         <ResourceManager resources={resources} />
       </PopoverPopup>
     </Popover>

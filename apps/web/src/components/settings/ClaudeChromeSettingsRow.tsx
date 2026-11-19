@@ -5,6 +5,8 @@ import { ClaudeChromeDialog, useClaudeChrome } from "../claudeChrome/ClaudeChrom
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 
 export function ClaudeChromeSettingsRow(props: {
   readonly environmentId: EnvironmentId;
@@ -15,11 +17,11 @@ export function ClaudeChromeSettingsRow(props: {
   return (
     <>
       <SettingsRow
-        title="Claude in Chrome"
+        title={settingCopy("claude-in-chrome").title}
         description={
           status.error !== null
-            ? "Status unavailable. Open Manage to retry."
-            : "Lets Claude use your Chrome. Applies to new sessions for this account."
+            ? PROVIDER_SETTINGS_COPY.claudeChromeUnavailable
+            : settingCopy("claude-in-chrome").description
         }
         control={
           <div className="flex items-center gap-3">

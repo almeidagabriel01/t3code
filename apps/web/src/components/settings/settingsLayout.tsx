@@ -20,7 +20,13 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useContext,
+  useState,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -31,6 +37,7 @@ import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePag
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { settingCopy } from "./settingsSearch";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
   isProjectScopedSettingKey,
@@ -58,6 +65,8 @@ declare module "@tanstack/react-router" {
 
 interface SettingsSearchTargetContextValue {
   readonly targetId: string | null;
+  /** The last target a search landed on; it outlives the hash, which clears once the row mounts. */
+  readonly revealedId: string | null;
   readonly highlightTarget: boolean;
   readonly onTargetHandled: () => void;
 }
@@ -65,22 +74,25 @@ interface SettingsSearchTargetContextValue {
 const noop = () => undefined;
 const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
   targetId: null,
+  revealedId: null,
   highlightTarget: true,
   onTargetHandled: noop,
 });
 
 function SettingsSearchTargetProvider({
   targetId,
+  revealedId,
   highlightTarget = true,
   onTargetHandled = noop,
   children,
 }: {
   targetId: string | null;
+  revealedId: string | null;
   highlightTarget?: boolean;
   onTargetHandled?: () => void;
   children: ReactNode;
 }) {
-  const value = { targetId, highlightTarget, onTargetHandled };
+  const value = { targetId, revealedId, highlightTarget, onTargetHandled };
   return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
 }
 
@@ -167,6 +179,11 @@ export function useSettingsSearchTargetId(): string | null {
   return useContext(SettingsSearchTargetContext).targetId;
 }
 
+/** For a row hidden until a search lands on it: stays set after the target is handled. */
+export function useSettingsSearchRevealedId(): string | null {
+  return useContext(SettingsSearchTargetContext).revealedId;
+}
+
 export function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
   const { targetId, highlightTarget, onTargetHandled } = useContext(SettingsSearchTargetContext);
   const isSearchTarget = id !== undefined && id === targetId;
@@ -184,8 +201,9 @@ export function SettingsSearchTarget({
   children,
   // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
   title: _searchTitle,
+  description: _searchDescription,
   ...targetProps
-}: ComponentPropsWithoutRef<"div">) {
+}: ComponentPropsWithoutRef<"div"> & { description?: string }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
   return (
     <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
@@ -271,6 +289,24 @@ export function SettingsSection({
         {children}
       </SettingsGroup>
     </section>
+  );
+}
+
+/** Stands in for a page's server sections while no environment is connected. */
+export function SettingsServerEnvironmentNotice({
+  id,
+  children,
+}: {
+  id?: string;
+  children: string;
+}) {
+  return (
+    <SettingsSection
+      {...(id === undefined ? {} : { id })}
+      title={settingCopy("source-control-server-environment").title}
+    >
+      <p className="px-4 py-3 text-sm text-muted-foreground">{children}</p>
+    </SettingsSection>
   );
 }
 
@@ -634,7 +670,10 @@ export function SettingsPageContainer({
   const highlightTarget = useLocation({
     select: (location) => location.state.settingsTargetHighlight !== false,
   });
-  const targetId = hash.replace(/^#/, "") || null;
+  const hashTarget = hash.replace(/^#/, "") || null;
+  const targetId = hashTarget === null ? null : (searchTargetFallbacks?.[hashTarget] ?? hashTarget);
+  const [revealedId, setRevealedId] = useState(targetId);
+  if (targetId !== null && targetId !== revealedId) setRevealedId(targetId);
   const clearTargetHash = () => {
     void navigate({
       hash: "",
@@ -647,7 +686,8 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId === null ? null : (searchTargetFallbacks?.[targetId] ?? targetId)}
+      targetId={targetId}
+      revealedId={revealedId}
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >

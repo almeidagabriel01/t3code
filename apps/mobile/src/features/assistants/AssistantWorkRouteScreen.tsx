@@ -4,14 +4,18 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_RETRY_TEXT,
   assistantRetryPlan,
+  assistantWorkHeadline,
   assistantWorkStatus,
   type AssistantWorkFix,
+  type AssistantWorkHeadline,
 } from "@t3tools/client-runtime/assistantWork";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
 import type { Assistant, EnvironmentId } from "@t3tools/contracts";
 import * as Crypto from "expo-crypto";
 import { useState } from "react";
 import { View } from "react-native";
 
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -22,8 +26,10 @@ import {
   useAssistantEntries,
   useAssistantSandbox,
   useAssistantSandboxActions,
+  useAssistantStatus,
 } from "../../state/assistants";
 import { useEnvironmentServerConfig, useProjects, useThreadShell } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAutonomySettings } from "../../state/autonomy";
@@ -78,29 +84,62 @@ function AssistantWork(props: {
   const shell = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
+  const reachable = environmentReachable(
+    useEnvironmentPresentation(environmentId).presentation?.connection,
+  );
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       contentContainerClassName="gap-6 px-5 pt-4 pb-10"
     >
-      <StatusSection environmentId={environmentId} assistant={assistant} />
-      <AssistantSchedulesSection
+      <StatusSection environmentId={environmentId} assistant={assistant} reachable={reachable} />
+      <AssistantWorkSections
         environmentId={environmentId}
+        assistant={assistant}
+        modelSelection={shell?.modelSelection ?? null}
         environmentLabel={
           savedConnectionsById[environmentId]?.environmentLabel ?? String(environmentId)
         }
-        assistant={assistant}
-        modelSelection={shell?.modelSelection ?? null}
       />
-      <AssistantWorkMemorySection environmentId={environmentId} assistant={assistant} />
-      <AssistantWorkLibrarySection environmentId={environmentId} assistant={assistant} />
     </ScrollView>
   );
 }
 
+function AssistantWorkSections(props: {
+  readonly environmentId: EnvironmentId;
+  readonly assistant: Assistant;
+  readonly modelSelection: Parameters<typeof AssistantSchedulesSection>[0]["modelSelection"];
+  readonly environmentLabel: string;
+}) {
+  const { environmentId, assistant } = props;
+  return (
+    <>
+      <AssistantSchedulesSection
+        environmentId={environmentId}
+        environmentLabel={props.environmentLabel}
+        assistant={assistant}
+        modelSelection={props.modelSelection}
+      />
+      <AssistantWorkMemorySection environmentId={environmentId} assistant={assistant} />
+      <AssistantWorkLibrarySection environmentId={environmentId} assistant={assistant} />
+    </>
+  );
+}
+
+const HEADLINE_ICON: Record<AssistantWorkHeadline["kind"], AppSymbolName> = {
+  offline: "wifi.slash",
+  needs: "questionmark.bubble",
+  blocked: "exclamationmark.triangle",
+  limited: "exclamationmark.triangle",
+  working: "ellipsis.circle",
+  failed: "xmark.circle.fill",
+  ready: "checkmark.circle",
+};
+
 function StatusSection(props: {
   readonly environmentId: EnvironmentId;
   readonly assistant: Assistant;
+  readonly reachable: boolean | null;
 }) {
   const { environmentId, assistant } = props;
   const navigation = useNavigation();
@@ -126,8 +165,14 @@ function StatusSection(props: {
     sandbox: assistant.workspace === "sandbox" ? sandbox : null,
     autonomyEnabled: autonomy.enabled,
   });
-  const retry = assistantRetryPlan(shell);
   const limitLabel = useUsageLimitLabel();
+  const headline = assistantWorkHeadline(
+    status,
+    useAssistantStatus().of(environmentId, assistant, limitLabel),
+    props.reachable,
+  );
+  const retry = headline.kind === "offline" ? null : assistantRetryPlan(shell);
+  const fixAction = headline.kind === "blocked" || headline.kind === "limited" ? status : null;
 
   const fix = async (kind: AssistantWorkFix) => {
     switch (kind) {
@@ -174,16 +219,16 @@ function StatusSection(props: {
       <ListSection>
         <View className="bg-grouped-card">
           <ListRowLayout
-            icon={status.ok ? "checkmark.circle" : "exclamationmark.triangle"}
-            label={status.ok ? "Ready to work" : status.title}
-            description={status.ok ? "Nothing is in its way." : status.detail}
+            icon={HEADLINE_ICON[headline.kind]}
+            label={headline.title}
+            {...(headline.detail === null ? {} : { description: headline.detail })}
           />
         </View>
-        {!status.ok && status.fix !== null ? (
+        {fixAction !== null && !fixAction.ok && fixAction.fix !== null ? (
           <ListActionRow
             icon="arrow.right.circle"
-            label={status.fix.label}
-            onPress={() => void fix(status.fix!.kind)}
+            label={fixAction.fix.label}
+            onPress={() => void fix(fixAction.fix!.kind)}
           />
         ) : null}
         {retry === null ? null : (

@@ -68,7 +68,15 @@ vi.mock("../../components/ui/ThemedSwitch", () => ({
   ),
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks } }),
+  useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks }, error: null, refresh: vi.fn() }),
+}));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: { connection: { phase: "connected" } } }),
+}));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; onPress: () => void }) => (
+    <button onClick={props.onPress}>{props.label}</button>
+  ),
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { scheduledTasksLive: () => ({}), setScheduledTaskEnabled: {} },

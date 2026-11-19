@@ -7,12 +7,15 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   parseGoalCommand,
+  type ProviderSessionId,
+  type ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -36,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { makeThreadWorkspace } from "./ThreadWorkspace.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -51,7 +55,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
-import { assistantNote } from "../assistants/assistantNote.ts";
+import { assistantNote, settledWaitsForTurn } from "../assistants/assistantNote.ts";
 import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -59,6 +63,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as MemorySnapshot from "../memory/MemorySnapshot.ts";
 import { runMemoryPrepareInput } from "./MemoryPrepareInput.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { endProcessBoundTurnItems, processBoundTurnItems } from "./processBoundWork.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -103,11 +108,42 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+const STOPPED_TURN_WAIT_MS = 10_000;
+const STOPPED_TURN_RETRY_MS = 250;
+const STOPPED_TURN_FORGET_MS = 60_000;
+
+/** Anchors a waiting run's window at its first wait; "stuck" once that window has passed. */
+export const stoppedTurnWait = (
+  firstWaitAt: Map<RunId, number>,
+  runId: RunId,
+  now: number,
+): "wait" | "stuck" => {
+  const since = firstWaitAt.get(runId) ?? now;
+  if (now - since >= STOPPED_TURN_WAIT_MS) {
+    firstWaitAt.delete(runId);
+    return "stuck";
+  }
+  // A start cancelled while waiting never returns; drop anchors no live wait could still use.
+  for (const [waiting, at] of firstWaitAt) {
+    if (now - at >= STOPPED_TURN_FORGET_MS) firstWaitAt.delete(waiting);
+  }
+  firstWaitAt.set(runId, since);
+  return "wait";
+};
+const STOPPED_ATTEMPT_STATUSES: ReadonlySet<OrchestrationV2RunAttempt["status"]> = new Set([
+  "interrupted",
+  "failed",
+  "cancelled",
+  "superseded",
+]);
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    /** When the start was queued; it bounds the wait for a stopped turn that holds the slot. */
+    readonly mayWaitForStoppedTurns?: boolean;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -249,6 +285,63 @@ export const layer: Layer.Layer<
       };
     };
 
+    // Interrupts already on their way, so a waiting start does not repeat them on every claim.
+    const interruptsInFlight = new Set<ProviderTurnId>();
+    // When each waiting start first found the slot held. The window starts there, not at enqueue,
+    // so time spent behind earlier effects on the thread does not use it up.
+    const firstWaitAt = new Map<RunId, number>();
+    // A stopped run's native turn can outlive its Stop and hold the provider's turn slot. The start
+    // waits outside the worker slot, in place in its thread's queue, and reports "stuck" past the window.
+    const awaitStoppedTurns = Effect.fn("ProviderTurnStartService.awaitStoppedTurns")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly providerSessionId: ProviderSessionId;
+        readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+        readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt>;
+      }) {
+        const stopped = input.providerTurns.filter(
+          (turn) =>
+            turn.status === "running" &&
+            turn.providerThreadId === input.providerThread.id &&
+            input.attempts.some(
+              (attempt) =>
+                attempt.id === turn.runAttemptId && STOPPED_ATTEMPT_STATUSES.has(attempt.status),
+            ),
+        );
+        // Without a live runtime nothing holds the slot; the stale row ends with the session.
+        const session =
+          stopped.length === 0
+            ? Option.none()
+            : yield* providerSessions
+                .get(input.providerSessionId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(session)) {
+          firstWaitAt.delete(input.runId);
+          return "free" as const;
+        }
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        if (stoppedTurnWait(firstWaitAt, input.runId, now) === "stuck") return "stuck" as const;
+        for (const turn of stopped) {
+          if (interruptsInFlight.has(turn.id)) continue;
+          interruptsInFlight.add(turn.id);
+          // Detached: an adapter can take seconds to confirm a stop.
+          yield* session.value
+            .interruptTurn({ providerThread: input.providerThread, providerTurnId: turn.id })
+            .pipe(
+              Effect.ignoreCause({ log: true }),
+              Effect.ensuring(Effect.sync(() => interruptsInFlight.delete(turn.id))),
+              Effect.forkDetach,
+            );
+        }
+        return yield* new EffectOutbox.EffectNotReadyError({
+          retryAfterMs: STOPPED_TURN_RETRY_MS,
+          reason: `Run ${input.runId} waits for stopped provider turns ${stopped.map((turn) => turn.id).join(", ")}.`,
+        });
+      },
+    );
+
     const makeDeliverySession = (
       session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       startWithHandoffs: (
@@ -288,6 +381,7 @@ export const layer: Layer.Layer<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
+      readonly mayWaitForStoppedTurns?: boolean;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -497,6 +591,28 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if (
+        input.mayWaitForStoppedTurns === true &&
+        (yield* awaitStoppedTurns({
+          threadId: input.threadId,
+          runId,
+          providerThread,
+          providerSessionId: providerThread.providerSessionId,
+          providerTurns: projection.providerTurns,
+          attempts: projection.attempts,
+        })) === "stuck"
+      ) {
+        yield* settleStartFailure({
+          signal: "stopped-turn-still-running",
+          title: "Previous turn still running",
+          error: new ProviderTurnStartError({
+            runId,
+            cause: `Run ${runId} found a stopped provider turn still running after ${STOPPED_TURN_WAIT_MS} ms.`,
+          }),
+          message: "The stopped turn has not ended yet. Send the message again once it ends.",
+        });
+        return;
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
@@ -713,6 +829,9 @@ export const layer: Layer.Layer<
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
+        // The restart below takes its background tasks with it, as a release does.
+        const restartEndsRoster =
+          Option.isSome(liveSession) && liveSession.value.backgroundTasksEndWithProcess === true;
         if (Option.isSome(liveSession)) {
           // Older versions could fail the run without stopping its provider.
           // Recover that exact turn before reusing its native conversation.
@@ -734,25 +853,68 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const abandonedTurnIds = new Set(abandonedTurns.map(({ turn }) => turn.id));
+        // Ending the turn ends its commands, as Stop does; no later provider event can.
+        const abandonedRecords = yield* projectionStore.getThreadRecords(
+          projection.thread.id,
+          ["turnItems", "providerThreads"],
+          {
+            turnItemRunIds: abandonedTurns.map(({ run: failedRun }) => failedRun.id),
+            turnItemTypes: ["command_execution", "dynamic_tool"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
+        );
+        const deadItems = processBoundTurnItems(abandonedRecords.turnItems).filter(
+          (item) => item.providerTurnId !== null && abandonedTurnIds.has(item.providerTurnId),
+        );
+        const staleRoster = restartEndsRoster
+          ? abandonedRecords.providerThreads.find(
+              (candidate) =>
+                candidate.id === providerThread.id &&
+                (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+            )
+          : undefined;
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: failedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: failedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: [
+            ...(yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
+              Effect.gen(function* () {
+                return {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "provider-turn.updated" as const,
+                  threadId: projection.thread.id,
+                  runId: failedRun.id,
+                  nodeId: turn.nodeId,
+                  providerInstanceId: failedRun.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: { ...turn, status: "interrupted" as const, completedAt },
+                };
+              }),
+            )),
+            ...(yield* endProcessBoundTurnItems({
+              items: deadItems,
+              nodes: projection.nodes,
+              status: "interrupted",
+              now: completedAt,
+              owner: { providerInstanceId: run.providerInstanceId },
+              allocateEventId: () => idAllocator.allocate.event({ threadId: projection.thread.id }),
+            })),
+            ...(staleRoster === undefined
+              ? []
+              : [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                    type: "provider-thread.updated" as const,
+                    threadId: projection.thread.id,
+                    driver: staleRoster.driver,
+                    occurredAt: completedAt,
+                    payload: { ...staleRoster, pendingBackgroundTasks: [], updatedAt: completedAt },
+                  },
+                ]),
+          ],
         });
         if (!repaired.committed) return;
       }
@@ -850,6 +1012,7 @@ export const layer: Layer.Layer<
       });
       const restartNote = [
         yield* assistantNote(assistantDirectory, projection.thread.id, userText),
+        yield* settledWaitsForTurn(assistantDirectory, projection.runs, run, userText),
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork),

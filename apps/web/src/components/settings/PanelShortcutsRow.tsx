@@ -18,7 +18,6 @@ export function PanelShortcutsRow() {
   return (
     <SettingsRow
       {...searchableSetting("right-panel-quick-buttons")}
-      description="Choose which quick buttons appear under the right panel's tabs, and their order. You can also right-click the buttons."
       resetAction={
         isDefaultQuickButtons(saved) ? null : (
           <SettingResetButton label="panel shortcuts" onClick={resetQuickButtons} />

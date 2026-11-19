@@ -21,6 +21,7 @@ import {
   useHiddenNavigationTabs,
   useEnabledNavigationTabs,
 } from "../layout/workspace/navigation-tabs";
+import { NAVIGATION_COPY } from "./navigationCopy";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { resolveWorkspaceTabOrder } from "../layout/workspace/workspace-tabs-state";
@@ -37,18 +38,16 @@ export function SettingsNavigationRouteScreen() {
   const ready = customizable && AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const save = useAtomSet(updateMobilePreferencesAtom);
   return (
-    <SettingsScreen title="Navigation tabs">
+    <SettingsScreen title={NAVIGATION_COPY.title}>
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-4 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
         <Text className="px-2 text-sm text-foreground-muted">
-          {customizable
-            ? "Phones show the first four enabled sections; Android tablet rails show all enabled sections. Remaining sections appear at the top of Settings. Hidden sections appear only here. Settings always stays last. Saved on this device."
-            : "Tab customization becomes available when there are six sections, including Settings."}
+          {customizable ? NAVIGATION_COPY.intro : NAVIGATION_COPY.introUnavailable}
         </Text>
-        <SettingsSection title="Tab order">
+        <SettingsSection title={NAVIGATION_COPY.tabOrder}>
           {order.map((tab, index) => (
             <View key={tab} className="flex-row items-center gap-3 px-4 py-3">
               <SymbolView
@@ -60,10 +59,10 @@ export function SettingsNavigationRouteScreen() {
                 <Text>{WORKSPACE_TAB_LABELS[tab]}</Text>
                 <Text className="text-xs text-foreground-muted">
                   {hidden.includes(tab)
-                    ? "Hidden"
+                    ? NAVIGATION_COPY.hidden
                     : enabled.indexOf(tab) < capacity
                       ? `Tab ${enabled.indexOf(tab) + 1}`
-                      : "In Settings"}
+                      : NAVIGATION_COPY.inSettings}
                 </Text>
               </View>
               <IconButton

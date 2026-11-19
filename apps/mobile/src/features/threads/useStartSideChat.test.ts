@@ -12,12 +12,14 @@ const { mocks } = vi.hoisted(() => ({
     alert: vi.fn(),
     open: vi.fn(),
     waitForShell: vi.fn(),
+    prepare: vi.fn(),
     parentRuntimeMode: "full-access" as string | null,
   },
 }));
 
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "side" }));
+vi.mock("../../lib/attachmentUpload", () => ({ prepareTurnAttachments: mocks.prepare }));
 vi.mock("../../state/threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
@@ -41,6 +43,11 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("./useOpenLinkedThread", () => ({ useOpenLinkedThread: () => mocks.open }));
 vi.mock("./threadForkNavigation", () => ({ waitForThreadShell: mocks.waitForShell }));
 
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  formatComposerContextReference,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { startingSideChatsAtom } from "../../state/starting-side-chats";
 import { useStartSideChatWithPrompt } from "./useStartSideChat";
@@ -54,7 +61,15 @@ const starting = () => appAtomRegistry.get(startingSideChatsAtom);
 
 function setup(parentRuntimeMode: RuntimeMode | null = "full-access") {
   appAtomRegistry.set(startingSideChatsAtom, {});
-  for (const mock of [mocks.alert, mocks.open, mocks.waitForShell]) mock.mockReset();
+  for (const mock of [mocks.alert, mocks.open, mocks.waitForShell, mocks.prepare]) {
+    mock.mockReset();
+  }
+  mocks.prepare.mockResolvedValue({
+    status: "ready",
+    attachments: [],
+    draftAttachments: [],
+    pendingAttachmentIds: [],
+  });
   mocks.waitForShell.mockResolvedValue(true);
   mocks.parentRuntimeMode = parentRuntimeMode;
   mocks.commands = {
@@ -71,7 +86,11 @@ describe("useStartSideChatWithPrompt", () => {
   it("opens the side chat with its message before the server has forked it", async () => {
     const start = setup();
     const fork = Promise.withResolvers<typeof ok>();
-    mocks.commands.forkSideChat = vi.fn(() => fork.promise);
+    const forking = Promise.withResolvers<void>();
+    mocks.commands.forkSideChat = vi.fn(() => {
+      forking.resolve();
+      return fork.promise;
+    });
     // The message stays on screen while the shell is late: a slow link gets a second wait.
     const arrived = [false, true];
     mocks.waitForShell.mockImplementation(async () => {
@@ -82,6 +101,7 @@ describe("useStartSideChatWithPrompt", () => {
     const started = start();
     expect(starting()).toEqual({ side: { prompt: "why does this fail?", error: null } });
     expect(mocks.open).toHaveBeenCalledExactlyOnceWith(target);
+    await forking.promise;
     expect(mocks.commands.forkSideChat).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       input: {
@@ -109,11 +129,104 @@ describe("useStartSideChatWithPrompt", () => {
     expect(mocks.waitForShell).toHaveBeenLastCalledWith(
       scopeThreadRef(environmentId, "side" as ThreadId),
     );
-    expect(starting()).toEqual({});
+    // The screen keeps the message until the side chat's detail carries it.
+    expect(starting()).toEqual({
+      side: { prompt: "why does this fail?", error: null, started: true },
+    });
     // A fork copies its parent's mode, so the unchanged mode is not set again.
     expect(mocks.commands.setRuntimeMode).not.toHaveBeenCalled();
     expect(mocks.commands.delete).not.toHaveBeenCalled();
     expect(mocks.open).toHaveBeenCalledOnce();
+  });
+
+  it("sends the composer's attachments with the ids the environment gave them", async () => {
+    setup();
+    const image = {
+      type: "image" as const,
+      id: "local-image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "file:///shot.png",
+    };
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: toKindScopedComposerContextId("image", "local-image"),
+      label: "shot.png",
+      attachmentId: "local-image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } as const;
+    const uploaded = {
+      type: "image",
+      id: "upload-1",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    mocks.prepare.mockResolvedValue({
+      status: "ready",
+      attachments: [uploaded],
+      draftAttachments: [image],
+      pendingAttachmentIds: ["upload-1"],
+    });
+    const prompt = formatComposerContextReference({
+      kind: "image",
+      contextId: record.contextId,
+      label: "shot.png",
+    });
+    const started = useStartSideChatWithPrompt()(
+      source,
+      prompt,
+      { runtimeMode: "full-access", modelSelection },
+      { attachments: [image], context: { version: 1, records: [record] } as never },
+    );
+    // Its screen names the image instead of showing the reference.
+    expect(starting()).toEqual({ side: { prompt: "shot.png", error: null } });
+    expect(await started).toBe(true);
+    expect(mocks.prepare).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      attachments: [image],
+      supportsImageUploads: true,
+    });
+    expect(mocks.commands.startTurn).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: expect.objectContaining({
+        message: {
+          messageId: "side",
+          role: "user",
+          // An image without a question asks about the image, as the main send does.
+          text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          context: { version: 1, records: [{ ...record, attachmentId: "upload-1" }] },
+          attachments: [uploaded],
+        },
+        titleSeed: "Attached image",
+      }),
+    });
+  });
+
+  it.each([
+    {
+      name: "fails",
+      prepare: async () => {
+        throw new Error("Upload failed for 'shot.png' (500).");
+      },
+      error: "Upload failed for 'shot.png' (500).",
+    },
+    {
+      name: "is abandoned",
+      prepare: async () => ({ status: "abandoned" }),
+      error: "Could not upload the attachments.",
+    },
+  ])("starts no side chat when the upload $name", async ({ prepare, error }) => {
+    const start = setup();
+    mocks.prepare.mockImplementation(prepare);
+    expect(await start()).toBe(false);
+    expect(starting()).toEqual({ side: { prompt: "why does this fail?", error } });
+    expect(mocks.commands.forkSideChat).not.toHaveBeenCalled();
+    expect(mocks.commands.delete).not.toHaveBeenCalled();
   });
 
   it.each([

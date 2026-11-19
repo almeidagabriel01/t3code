@@ -1,16 +1,9 @@
-import {
-  assistantFace,
-  assistantGroupOwnerKey,
-  assistantGroupThreadsOf,
-  assistantPresence,
-  assistantQueuedLabel,
-} from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
   assistantSections,
   assistantProjectsLabel,
 } from "@t3tools/client-runtime/assistantSections";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
@@ -26,27 +19,30 @@ import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
-import { relativeTime } from "../../lib/time";
 import {
   useAssistantEntries,
   useAssistantSpend,
+  useAssistantStatus,
   useAssistantsEnvironmentIds,
   type AssistantEntry,
   type AssistantTeamEntry,
 } from "../../state/assistants";
-import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { AssistantIntegrationChips } from "./AssistantIntegrationsSection";
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
-import { moodTextClass } from "./assistantPresenceLabels";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
+import { AssistantStatus, useAssistantAttention, useGroupAttention } from "./assistantAttention";
+import { assistantStatusText } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
+import { ASSISTANT_SECTION_TITLE, RESTORE_JARVIS_DESCRIPTION } from "./settingsAssistantsCopy";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -60,27 +56,13 @@ function AssistantCard(props: {
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
   const archived = assistant.archivedAt !== null;
-  const thread = useThreadShell(
-    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
-  );
-  const shells = useQuietThreadShells();
+  const taskSections = useAssistantTaskSections(props.entry);
+  const { attention } = useAssistantAttention(props.entry);
   const limitLabel = useUsageLimitLabel();
-  const presence = assistantPresence(
-    thread,
-    assistantGroupThreadsOf(shells, environmentId, assistant.id),
-    limitLabel,
-  );
+  const presence = useAssistantStatus().of(environmentId, assistant, limitLabel);
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;
-  const status = archived
-    ? "Archived"
-    : [
-        presence.detail,
-        presence.since === null ? null : relativeTime(presence.since, props.nowMs),
-        assistantQueuedLabel(presence.queued),
-      ]
-        .filter((part) => part !== null)
-        .join(" · ");
+  const status = archived ? "Archived" : assistantStatusText(presence, props.nowMs);
   const where = [
     props.projectLabel,
     ...props.detail,
@@ -99,26 +81,28 @@ function AssistantCard(props: {
           size={44}
         />
         <View className="min-w-0 flex-1 gap-0.5">
-          <View className="flex-row items-center gap-2">
-            <Text textRole="body" className="shrink text-foreground" numberOfLines={1}>
+          <View className="flex-row items-start gap-2">
+            <Text textRole="body" className="min-w-0 flex-1 text-foreground" numberOfLines={2}>
               {assistant.name}
             </Text>
-            {assistant.role === "" ? null : (
-              <View className="max-w-28 rounded-md border border-border px-1.5 py-px">
-                <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
-                  {assistant.role}
-                </Text>
-              </View>
+            {archived || attention === null ? null : (
+              <AssistantStatus attention={attention} testID="assistant-status" />
             )}
           </View>
+          {assistant.role === "" ? null : (
+            <Text
+              testID="assistant-card-role"
+              textRole="footnote"
+              className="text-foreground-secondary"
+              numberOfLines={1}
+            >
+              {assistant.role}
+            </Text>
+          )}
           <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
             {where.join(" · ")}
           </Text>
-          <Text
-            textRole="footnote"
-            className={archived ? "text-foreground-muted" : moodTextClass(presence.mood)}
-            numberOfLines={1}
-          >
+          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
             {status}
           </Text>
         </View>
@@ -137,7 +121,13 @@ function AssistantCard(props: {
           </View>
         )}
       </View>
-      {archived ? null : <AssistantTaskRows entry={props.entry} />}
+      {archived ? null : <AssistantTaskRows entry={props.entry} sections={taskSections} />}
+      {archived ? null : (
+        <AssistantIntegrationChips
+          environmentId={environmentId}
+          selection={assistant.integrations}
+        />
+      )}
       {props.groupNames.length === 0 ? null : (
         <View className="flex-row flex-wrap gap-1">
           {props.groupNames.map((name) => (
@@ -189,6 +179,8 @@ function AssistantCard(props: {
 function Section(props: {
   readonly title: string;
   readonly count?: number;
+  /** What the section's group is doing, after its count. */
+  readonly status?: ReactNode;
   readonly tone?: string;
   readonly actions?: ReactNode;
   readonly empty?: string;
@@ -209,6 +201,7 @@ function Section(props: {
         {props.count === undefined ? null : (
           <Text className="text-xs text-foreground-muted">{props.count}</Text>
         )}
+        {props.status}
         <View className="flex-1 flex-row items-center justify-end gap-1">{props.actions}</View>
       </View>
       {props.empty === undefined ? (
@@ -309,7 +302,7 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
     <ListActionRow
       icon="arrow.uturn.backward"
       label="Restore Jarvis"
-      description="The default assistant was deleted. Brings him back."
+      description={RESTORE_JARVIS_DESCRIPTION}
       disabled={!flows.canAct}
       onPress={() => void flows.restoreDefault()}
     />
@@ -329,33 +322,34 @@ export function SettingsAssistantsRouteScreen() {
   const insets = useSafeAreaInsets();
   const openEditor = useOpenAssistantEditor();
   const projects = useProjects();
-  const shells = useQuietThreadShells();
+  const status = useAssistantStatus();
+  const groupAttention = useGroupAttention();
   const nowMs = useNowMinuteMs();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentIds = useAssistantsEnvironmentIds();
   const firstEnvironmentId = loadedEnvironmentIds[0] ?? null;
 
-  const keyByThread = new Map(
-    active.flatMap((entry) =>
-      entry.assistant.threadId === null
-        ? []
-        : [
-            [
-              scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId)),
-              assistantEntryKey(entry),
-            ] as const,
-          ],
-    ),
+  const needsKeys = new Set(
+    active
+      .filter((entry) => status.of(entry.environmentId, entry.assistant).mood === "needs")
+      .map(assistantEntryKey),
   );
-  const needsKeys = new Set<string>();
-  for (const shell of shells) {
-    const key =
-      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
-      assistantGroupOwnerKey(shell);
-    if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
-  }
   const sections = assistantSections({ assistants: active, teams, needsKeys });
 
+  // Every member counts, also one listed under "Needs you" instead of its group.
+  const groupStatus = (entry: AssistantTeamEntry) => {
+    const attention = groupAttention(
+      entry,
+      active.filter(
+        (member) =>
+          member.environmentId === entry.environmentId &&
+          entry.team.memberIds.includes(member.assistant.id),
+      ),
+    );
+    return attention === null ? null : (
+      <AssistantStatus attention={attention} testID="group-status" />
+    );
+  };
   const projectName = (environmentId: string, projectId: string) =>
     projects.find((project) => project.environmentId === environmentId && project.id === projectId)
       ?.title ?? "Project";
@@ -434,7 +428,7 @@ export function SettingsAssistantsRouteScreen() {
             ) : null}
             {sections.needs.length === 0 ? null : (
               <Section
-                title="Needs you"
+                title={ASSISTANT_SECTION_TITLE.needs}
                 count={sections.needs.length}
                 tone="text-warning-foreground"
               >
@@ -446,6 +440,7 @@ export function SettingsAssistantsRouteScreen() {
                 key={`${entry.environmentId}:${entry.team.id}`}
                 title={entry.team.name}
                 count={members.length}
+                status={groupStatus(entry)}
                 {...(members.length === 0 ? { empty: "No members yet." } : {})}
                 actions={<GroupMenu entry={entry} />}
               >
@@ -477,19 +472,22 @@ export function SettingsAssistantsRouteScreen() {
               </Section>
             ))}
             {sections.unassigned.length === 0 ? null : (
-              <Section title="Unassigned" count={sections.unassigned.length}>
+              <Section
+                title={ASSISTANT_SECTION_TITLE.unassigned}
+                count={sections.unassigned.length}
+              >
                 {sections.unassigned.map((entry) => card(entry, "unassigned"))}
               </Section>
             )}
             {archivedTeams.length === 0 ? null : (
-              <Section title="Archived groups" count={archivedTeams.length}>
+              <Section title={ASSISTANT_SECTION_TITLE.archivedGroups} count={archivedTeams.length}>
                 {archivedTeams.map((entry) => (
                   <ArchivedGroupRow key={`${entry.environmentId}:${entry.team.id}`} entry={entry} />
                 ))}
               </Section>
             )}
             {archived.length === 0 ? null : (
-              <Section title="Archived" count={archived.length}>
+              <Section title={ASSISTANT_SECTION_TITLE.archived} count={archived.length}>
                 {archived.map((entry) => card(entry, "archived"))}
               </Section>
             )}

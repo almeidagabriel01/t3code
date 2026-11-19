@@ -65,7 +65,13 @@ vi.mock(import("../state/shell"), async (original) => {
 });
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
-  readThreadShell: (() => ({ projectId: "project-1", worktreePath: null })) as never,
+  readThreadShell: ((thread: { environmentId: string; threadId: string }) => ({
+    id: thread.threadId,
+    environmentId: thread.environmentId,
+    projectId: "project-1",
+    lineage: { sideChat: false },
+    worktreePath: null,
+  })) as never,
   readProject: (() =>
     state.workspaceAvailable ? { workspaceRoot: "/work/project" } : null) as never,
 }));
@@ -77,6 +83,7 @@ vi.mock(import("./ui/toast"), async (original) => {
 import { useClosedViewStore } from "../closedViewStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useThreadTabsStore } from "../threadTabsStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
 const ref = { environmentId: "remote", threadId: "thread-1" } as ScopedThreadRef;
@@ -148,6 +155,47 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it.each([
+    [
+      "returns a closed thread tab to the split group it left",
+      "split",
+      ["remote:a", "remote:thread-1"],
+    ],
+    ["opens it as any pick once that layout closed", "gone", undefined],
+  ])("%s", async (_name, layoutKey, restoredTabs) => {
+    setup();
+    const split = {
+      groups: [
+        { id: "main", tabs: ["remote:p"], active: "remote:p" },
+        { id: "g2", tabs: ["remote:a"], active: "remote:a" },
+      ],
+      layout: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        ratio: 0.5,
+        first: { type: "leaf", groupId: "main" },
+        second: { type: "leaf", groupId: "g2" },
+      },
+      focusedGroupId: "main",
+    } as const;
+    useThreadTabsStore.setState({ byProject: { split }, visibleKey: "split" });
+    useClosedViewStore
+      .getState()
+      .remember({ kind: "thread-tab", threadRef: ref, layoutKey, groupId: "g2" });
+    await using _view = await renderShortcut();
+    await act(() => {
+      press();
+    });
+    expect(useThreadTabsStore.getState().byProject.split?.groups[1]?.tabs).toEqual(
+      restoredTabs ?? ["remote:a"],
+    );
+    expect(state.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ threadId: "thread-1" }) }),
+    );
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore

@@ -8,6 +8,7 @@ import {
   type OrchestrationV2TurnItem,
   type ThreadId,
 } from "@t3tools/contracts";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 import { redactChannelText } from "../channels/channelRedaction.ts";
 import {
@@ -31,8 +32,7 @@ export const WAIT_WAKE_PREFIX = "assistant-task-waits:";
 export const waitWakeId = (targetThreadId: ThreadId, key: string) =>
   `${WAIT_WAKE_PREFIX}${targetThreadId}:${key}`;
 
-/** Kinds T3 answers itself; every other pending request waits on the user. */
-export const MACHINE_REQUEST_KINDS = ["dynamic_tool_call", "auth_refresh"] as const;
+export { MACHINE_REQUEST_KINDS } from "@t3tools/shared/needsUser";
 
 /** A user-input option id points back at the option by position: `option:<index>`. */
 const OPTION_PREFIX = "option:";
@@ -197,6 +197,58 @@ export function defaultNoticeText(input: {
   return [
     `Waiting on the user: ${input.title}`,
     `From ${input.origin} in ${input.link}. They answer it ${where}.`,
-    "It is also in Activity: keep it for when they ask what waits on them, never answer it for them, and reply in one line at most.",
+    "It is also in Activity. Never answer it for them; reply in one line at most and do nothing else now.",
+    "It can be answered at any time: when they later ask what waits on them, check what still waits at that moment instead of repeating it from memory.",
+  ].join("\n");
+}
+
+/** The wait a wake message was about (`request:<id>` / `decision:<id>`), or null for any other message. */
+export function waitKeyOfWake(messageId: string): string | null {
+  if (!messageId.startsWith(WAIT_WAKE_PREFIX)) return null;
+  const rest = messageId.slice(WAIT_WAKE_PREFIX.length);
+  const at = [rest.indexOf(":request:"), rest.indexOf(":decision:")]
+    .filter((index) => index >= 0)
+    .reduce((first, index) => Math.min(first, index), Number.POSITIVE_INFINITY);
+  return Number.isFinite(at) ? rest.slice(at + 1) : null;
+}
+
+const SETTLED_REQUESTS: Readonly<Record<string, string>> = {
+  command: "command approval",
+  "file-change": "file change approval",
+  "file-read": "file read approval",
+  user_input: "question",
+};
+
+/** A wait this conversation was told about that no longer waits on the user. */
+export interface SettledWait {
+  readonly key: string;
+  readonly threadId: ThreadId;
+  readonly threadTitle: string;
+  /** The request's kind, or the decision's title. */
+  readonly what: { readonly requestKind: string } | { readonly decisionTitle: string };
+}
+
+/**
+ * Rides with the next turn of a conversation that was told of these waits: nothing wakes it just
+ * to say a wait is over.
+ */
+export function settledWaitsNote(waits: ReadonlyArray<SettledWait>): string {
+  if (waits.length === 0) return "";
+  const lines = waits.map((wait) => {
+    const what =
+      "decisionTitle" in wait.what
+        ? `the decision "${clip(wait.what.decisionTitle, DECISION_TITLE_MAX_LENGTH)}"`
+        : `the ${SETTLED_REQUESTS[wait.what.requestKind] ?? "approval"}`;
+    const link = formatThreadLink(
+      { environmentId: null, threadId: wait.threadId },
+      wait.threadTitle,
+    );
+    return `- ${what} in ${link}`;
+  });
+  return [
+    "<t3_settled_waits>",
+    "These waits you were told about were answered, cancelled or ended since, so they no longer wait on the user. Never report them as pending; mention one only if the user asks about it.",
+    ...lines,
+    "</t3_settled_waits>",
   ].join("\n");
 }

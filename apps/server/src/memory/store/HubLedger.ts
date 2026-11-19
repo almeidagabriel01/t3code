@@ -32,6 +32,7 @@ import {
   Transaction,
   hashText,
   strict,
+  expiredTerminalWorkSql,
 } from "./StoreModel.ts";
 import type { HubCheckpointHandle } from "./StoreModel.ts";
 import type { MemoryStoreShape } from "./StoreShape.ts";
@@ -644,7 +645,7 @@ export const makeHubLedger = (
       sql<{
         id: string;
         bytes: number;
-      }>`SELECT id,length(CAST(metadata_json AS BLOB))+coalesce(length(CAST(ticket_json AS BLOB)),0)+coalesce(length(CAST(frozen_claim_json AS BLOB)),0) AS bytes FROM memory_outbox o WHERE space=${input.memorySpaceId} AND kind IN ('sync','resolve','revert_intent','rebuild') AND status IN ('completed','failed','cancelled') AND terminal_at<=${input.now - M.MEMORY_LOG_RETENTION_MS} AND NOT EXISTS(SELECT 1 FROM memory_pending_forget_intents f WHERE f.space=o.space AND f.operation_id=json_extract(o.metadata_json,'$.operationId')) ORDER BY terminal_at,id LIMIT ${Math.max(0, limit - removedRows)}`,
+      }>`SELECT id,length(CAST(metadata_json AS BLOB))+coalesce(length(CAST(ticket_json AS BLOB)),0)+coalesce(length(CAST(frozen_claim_json AS BLOB)),0) AS bytes FROM memory_outbox o WHERE o.space=${input.memorySpaceId} AND ${sql.unsafe(expiredTerminalWorkSql("o", input.now))} ORDER BY terminal_at,id LIMIT ${Math.max(0, limit - removedRows)}`,
     );
     for (const work of terminalWork) {
       yield* stored(

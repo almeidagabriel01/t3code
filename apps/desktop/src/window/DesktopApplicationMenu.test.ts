@@ -46,6 +46,8 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   setName: () => Effect.void,
   setAboutPanelOptions: () => Effect.void,
   setAppUserModelId: () => Effect.void,
+  getLoginItemSettings: () => Effect.die("unexpected login item read"),
+  setLoginItemSettings: () => Effect.die("unexpected login item change"),
   getAppMetrics: Effect.succeed([]),
   setAsDefaultProtocolClient: () => Effect.succeed(true),
   setDesktopName: () => Effect.void,

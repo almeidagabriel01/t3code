@@ -46,6 +46,19 @@ import {
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
 } from "./globalSkillsRpc.ts";
+import {
+  INTEGRATIONS_WS_METHODS,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSubscribeRpc,
+  WsIntegrationsUpdateRpc,
+  WsIntegrationsMakeAvailableRpc,
+} from "./integrations.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -435,6 +448,7 @@ import {
   KanbanCardIdInput,
   KanbanCardMoveInput,
   KanbanCardThreadLinkInput,
+  KanbanCardSetProblemIgnoredInput,
   KanbanCardUpdateInput,
   KanbanColumnCreateInput,
   KanbanColumnDeleteInput,
@@ -465,6 +479,7 @@ import {
   DecisionError,
   DecisionsAnswerInput,
   DecisionsDismissInput,
+  DecisionsReopenInput,
   DecisionsEvent,
   DecisionsListInput,
   DecisionsListResult,
@@ -561,12 +576,23 @@ import {
   HeavyQueueSetDeviceIdleMinutesInput,
   HeavyQueueSetEnabledInput,
   HeavyQueueSetMaxRunningInput,
+  HeavyQueueSetMacMemoryFloorPercentInput,
+  HeavyQueueSetMacCpuCeilingPercentInput,
+  HeavyQueueSetHeavyOverLimitSecondsInput,
+  HeavyQueueSetAdmissionLimitsInput,
   HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
+  HeavyQueueRouteAllInput,
+  HeavyQueueRouteAllResult,
+  HeavyQueueListRoutesInput,
+  HeavyQueueListRoutesResult,
+  HeavyQueueForgetRoutesInput,
+  HeavyQueueForgetRoutesResult,
   HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
+import { HeavyNoticeBatch } from "./heavyNotices.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -621,6 +647,7 @@ import {
 
 export const WS_METHODS = {
   ...GLOBAL_SKILLS_WS_METHODS,
+  ...INTEGRATIONS_WS_METHODS,
   ...MEMORY_WS_METHODS,
 
   projectsListEntries: "projects.listEntries",
@@ -808,6 +835,7 @@ export const WS_METHODS = {
   kanbanCardComment: "kanban.cardComment",
   kanbanCardLinkThread: "kanban.cardLinkThread",
   kanbanCardUnlinkThread: "kanban.cardUnlinkThread",
+  kanbanCardSetProblemIgnored: "kanban.cardSetProblemIgnored",
 
   notesList: "notes.list",
   notesRead: "notes.read",
@@ -821,6 +849,7 @@ export const WS_METHODS = {
   decisionsSubscribe: "decisions.subscribe",
   decisionsAnswer: "decisions.answer",
   decisionsDismiss: "decisions.dismiss",
+  decisionsReopen: "decisions.reopen",
   computerUsePermissions: "computerUse.permissions",
   computerUseOpenSettings: "computerUse.openSettings",
   assistantsSubscribe: "assistants.subscribe",
@@ -868,11 +897,19 @@ export const WS_METHODS = {
   heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueRoute: "heavyQueue.route",
+  heavyQueueRouteAll: "heavyQueue.routeAll",
+  heavyQueueListRoutes: "heavyQueue.listRoutes",
+  heavyQueueForgetRoutes: "heavyQueue.forgetRoutes",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
+  heavyQueueSetMacMemoryFloorPercent: "heavyQueue.setMacMemoryFloorPercent",
+  heavyQueueSetMacCpuCeilingPercent: "heavyQueue.setMacCpuCeilingPercent",
+  heavyQueueSetHeavyOverLimitSeconds: "heavyQueue.setHeavyOverLimitSeconds",
+  heavyQueueSetAdmissionLimits: "heavyQueue.setAdmissionLimits",
   heavyQueueSetPriority: "heavyQueue.setPriority",
   heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
   heavyQueueSetDeviceIdleMinutes: "heavyQueue.setDeviceIdleMinutes",
   heavyQueueSubscribeCommands: "heavyQueue.subscribeCommands",
+  heavyQueueSubscribeNotices: "heavyQueue.subscribeNotices",
   heavyQueueStopCommand: "heavyQueue.stopCommand",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
@@ -2251,6 +2288,15 @@ const WsOrchestrationV2GetThreadTitlesRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2GetThreadContextUsageRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadContextUsage.input,
+    success: OrchestrationV2RpcSchemas.getThreadContextUsage.output,
+    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetThreadLinkMetadataRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
   {
@@ -2462,6 +2508,11 @@ const WsDecisionsAnswerRpc = Rpc.make(WS_METHODS.decisionsAnswer, {
 });
 const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
   payload: DecisionsDismissInput,
+  success: Decision,
+  error: DecisionRpcErrors,
+});
+const WsDecisionsReopenRpc = Rpc.make(WS_METHODS.decisionsReopen, {
+  payload: DecisionsReopenInput,
   success: Decision,
   error: DecisionRpcErrors,
 });
@@ -2716,6 +2767,24 @@ const WsHeavyQueueRouteRpc = Rpc.make(WS_METHODS.heavyQueueRoute, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueRouteAllRpc = Rpc.make(WS_METHODS.heavyQueueRouteAll, {
+  payload: HeavyQueueRouteAllInput,
+  success: HeavyQueueRouteAllResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueListRoutesRpc = Rpc.make(WS_METHODS.heavyQueueListRoutes, {
+  payload: HeavyQueueListRoutesInput,
+  success: HeavyQueueListRoutesResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueForgetRoutesRpc = Rpc.make(WS_METHODS.heavyQueueForgetRoutes, {
+  payload: HeavyQueueForgetRoutesInput,
+  success: HeavyQueueForgetRoutesResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
   payload: HeavyQueueSetRuleInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -2723,6 +2792,35 @@ const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
 
 const WsHeavyQueueSetMaxRunningRpc = Rpc.make(WS_METHODS.heavyQueueSetMaxRunning, {
   payload: HeavyQueueSetMaxRunningInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetMacMemoryFloorPercentRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
+  {
+    payload: HeavyQueueSetMacMemoryFloorPercentInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsHeavyQueueSetMacCpuCeilingPercentRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
+  {
+    payload: HeavyQueueSetMacCpuCeilingPercentInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsHeavyQueueSetHeavyOverLimitSecondsRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+  {
+    payload: HeavyQueueSetHeavyOverLimitSecondsInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsHeavyQueueSetAdmissionLimitsRpc = Rpc.make(WS_METHODS.heavyQueueSetAdmissionLimits, {
+  payload: HeavyQueueSetAdmissionLimitsInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
@@ -2744,6 +2842,13 @@ const WsHeavyQueueSetDeviceIdleMinutesRpc = Rpc.make(WS_METHODS.heavyQueueSetDev
 const WsHeavyQueueSubscribeCommandsRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeCommands, {
   payload: Schema.Struct({}),
   success: HeavyCommandsState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsHeavyQueueSubscribeNoticesRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeNotices, {
+  payload: Schema.Struct({}),
+  success: HeavyNoticeBatch,
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -2923,6 +3028,12 @@ const WsKanbanCardUnlinkThreadRpc = Rpc.make(WS_METHODS.kanbanCardUnlinkThread, 
   error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
 });
 
+const WsKanbanCardSetProblemIgnoredRpc = Rpc.make(WS_METHODS.kanbanCardSetProblemIgnored, {
+  payload: KanbanCardSetProblemIgnoredInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -3014,6 +3125,16 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 export const WsRpcGroup = RpcGroup.make(
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
+  WsIntegrationsSubscribeRpc,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsUpdateRpc,
+  WsIntegrationsMakeAvailableRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -3112,6 +3233,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsKanbanCardCommentRpc,
   WsKanbanCardLinkThreadRpc,
   WsKanbanCardUnlinkThreadRpc,
+  WsKanbanCardSetProblemIgnoredRpc,
   WsNotesListRpc,
   WsNotesReadRpc,
   WsNotesWriteRpc,
@@ -3124,6 +3246,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDecisionsSubscribeRpc,
   WsDecisionsAnswerRpc,
   WsDecisionsDismissRpc,
+  WsDecisionsReopenRpc,
   WsComputerUsePermissionsRpc,
   WsComputerUseOpenSettingsRpc,
   WsAssistantsSubscribeRpc,
@@ -3171,11 +3294,19 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueRouteRpc,
+  WsHeavyQueueRouteAllRpc,
+  WsHeavyQueueListRoutesRpc,
+  WsHeavyQueueForgetRoutesRpc,
   WsHeavyQueueSetMaxRunningRpc,
+  WsHeavyQueueSetMacMemoryFloorPercentRpc,
+  WsHeavyQueueSetMacCpuCeilingPercentRpc,
+  WsHeavyQueueSetHeavyOverLimitSecondsRpc,
+  WsHeavyQueueSetAdmissionLimitsRpc,
   WsHeavyQueueSetPriorityRpc,
   WsHeavyQueueSetClaudeHookRpc,
   WsHeavyQueueSetDeviceIdleMinutesRpc,
   WsHeavyQueueSubscribeCommandsRpc,
+  WsHeavyQueueSubscribeNoticesRpc,
   WsHeavyQueueStopCommandRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
@@ -3333,6 +3464,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetThreadFamilyRpc,
   WsOrchestrationV2GetThreadTitlesRpc,
   WsOrchestrationV2GetThreadLinkMetadataRpc,
+  WsOrchestrationV2GetThreadContextUsageRpc,
   WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,

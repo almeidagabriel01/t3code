@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/require-searchable-settings-copy -- add-provider dialog, not a Settings page */
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";

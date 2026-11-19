@@ -17,6 +17,9 @@ vi.mock("react-native", () => ({ Keyboard: { dismiss: vi.fn() } }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => "id" }));
 vi.mock("../../components/ui/Dialog", () => ({ confirm: vi.fn(), alert: vi.fn() }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: { connection: { phase: "connected" } } }),
+}));
 vi.mock("../../state/memory", () => ({
   memoryEnvironment: {
     syncStatus: { label: "sync", permissionAtom: () => ({}) },

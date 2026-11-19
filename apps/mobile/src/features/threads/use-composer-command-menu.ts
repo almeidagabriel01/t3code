@@ -4,7 +4,6 @@ import type {
   ProjectId,
   ServerProvider,
   ThreadId,
-  ServerProviderSkill,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
@@ -33,22 +32,16 @@ import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
+  isAtMessageStart,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import {
-  insertRankedSearchResult,
-  normalizeSearchQuery,
-  scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
-import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
-  dedupeProviderSkillsByName,
   describeCatalogEntry,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
-  isProviderSkillUserInvocable,
   isProviderWorkspaceSnapshotScanning,
   type ProviderWorkspaceSnapshotRefreshState,
   resolveProviderSkillsForCwd,
@@ -71,7 +64,7 @@ import {
 } from "../../state/queries";
 import type { ModelOption } from "../../lib/modelOptions";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
-import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { composerSkillItems, composerSlashSkillItems } from "./composerSkillItems";
 
 const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshAtomFamily({
   providers: serverEnvironment.providersValueAtom,
@@ -83,26 +76,6 @@ const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<
 > = Atom.make<ProviderWorkspaceSnapshotRefreshState | undefined>(undefined).pipe(
   Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
 );
-
-export function buildComposerSkillItem(input: {
-  readonly skill: ServerProviderSkill;
-  readonly label: string;
-  readonly catalogScanning: boolean;
-  readonly fallback: string;
-}): Extract<ComposerCommandItem, { type: "skill" }> {
-  const { skill } = input;
-  return {
-    id: `skill:${skill.name}`,
-    type: "skill",
-    skill,
-    label: input.label,
-    description: describeCatalogEntry(
-      skill.shortDescription ?? skill.description,
-      input.catalogScanning,
-      skill.scope ? `${skill.scope} skill` : input.fallback,
-    ),
-  };
-}
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
@@ -132,6 +105,8 @@ export function resolveComposerMenuSelection(input: {
 export function buildComposerSlashCommandItems(input: {
   readonly query: string;
   readonly atMessageStart: boolean;
+  /** Only chips come before the command; `/side` and `/btw` take attachments, so they still work. */
+  readonly afterLeadingChips?: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly offersUsageLimits?: boolean;
@@ -168,10 +143,7 @@ export function buildComposerSlashCommandItems(input: {
     });
   }
 
-  // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction, except `/clear`.
-  if (!input.atMessageStart) return items;
-  if (input.offersSideChat) {
+  if (input.offersSideChat && (input.afterLeadingChips ?? input.atMessageStart)) {
     for (const [command, description] of [
       ["side", "Ask a side question in a new side chat"],
       ["btw", "Same as /side"],
@@ -186,6 +158,9 @@ export function buildComposerSlashCommandItems(input: {
       });
     }
   }
+  // Providers expand commands only at the start of a message. T3 commands
+  // change local state and do not have this restriction, except `/clear`.
+  if (!input.atMessageStart) return items;
   if (input.offersFreshSession && "clear".includes(query)) {
     items.push({
       id: "cmd:clear",
@@ -447,6 +422,7 @@ export function useComposerCommandMenu({
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
+        afterLeadingChips: isAtMessageStart(draftMessage, trigger.rangeStart),
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
@@ -464,103 +440,11 @@ export function useComposerCommandMenu({
           : null,
       });
 
-      const skillItems = visibleSkills
-        .filter((skill) => matchesSlashSkillQuery(skill, q))
-        .map((skill) =>
-          buildComposerSkillItem({
-            skill,
-            label: `skill:${skill.name}`,
-            catalogScanning,
-            fallback: "",
-          }),
-        );
-
-      return [...commandItems, ...skillItems];
+      return [...commandItems, ...composerSlashSkillItems(visibleSkills, q, catalogScanning)];
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
-      const normalizedQuery = normalizeSearchQuery(trigger.query, {
-        trimLeadingPattern: /^\p{Sc}+/u,
-      });
-
-      if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) =>
-          buildComposerSkillItem({
-            skill,
-            label: skill.displayName ?? skill.name,
-            catalogScanning,
-            fallback: "Run provider skill",
-          }),
-        );
-      }
-
-      const ranked: Array<{
-        item: (typeof enabledSkills)[number];
-        score: number;
-        tieBreaker: string;
-      }> = [];
-      for (const skill of enabledSkills) {
-        const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
-        const scores = [
-          scoreQueryMatch({
-            value: skill.name.toLowerCase(),
-            query: normalizedQuery,
-            exactBase: 0,
-            prefixBase: 2,
-            boundaryBase: 4,
-            includesBase: 6,
-            fuzzyBase: 100,
-            boundaryMarkers: ["-", "_", "/"],
-          }),
-          scoreQueryMatch({
-            value: displayLabel,
-            query: normalizedQuery,
-            exactBase: 1,
-            prefixBase: 3,
-            boundaryBase: 5,
-            includesBase: 7,
-            fuzzyBase: 110,
-          }),
-          scoreQueryMatch({
-            value: skill.shortDescription?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 20,
-            prefixBase: 22,
-            boundaryBase: 24,
-            includesBase: 26,
-          }),
-          scoreQueryMatch({
-            value: skill.description?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 30,
-            prefixBase: 32,
-            boundaryBase: 34,
-            includesBase: 36,
-          }),
-        ].filter((score): score is number => score !== null);
-
-        if (scores.length > 0) {
-          insertRankedSearchResult(
-            ranked,
-            {
-              item: skill,
-              score: Math.min(...scores),
-              tieBreaker: `${displayLabel}\u0000${skill.name}`,
-            },
-            20,
-          );
-        }
-      }
-
-      return ranked.map(({ item: skill }) =>
-        buildComposerSkillItem({
-          skill,
-          label: skill.displayName ?? skill.name,
-          catalogScanning,
-          fallback: "Run provider skill",
-        }),
-      );
+      return composerSkillItems(skills, trigger.query, catalogScanning);
     }
 
     if (trigger.kind === "path") {

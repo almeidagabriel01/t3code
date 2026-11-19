@@ -2172,6 +2172,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
+  /** When the oldest of those messages arrived; null when none waits. Absent from older servers. */
+  oldestPendingGuestMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   /** Messages waiting behind the active run. Absent from older servers. */
   queuedMessageCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
@@ -3691,6 +3693,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getThreadContextUsage: "orchestration.getThreadContextUsage",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -3845,6 +3848,23 @@ export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
 });
 export type OrchestrationV2ThreadLinkMetadata = typeof OrchestrationV2ThreadLinkMetadata.Type;
+
+export const OrchestrationV2GetThreadContextUsageInput = Schema.Struct({ threadId: ThreadId });
+
+/**
+ * What a thread's context meter reads, without its timeline: its active provider thread's newest
+ * turn report and its own report. `deriveLatestContextWindowSnapshot` takes them as they are.
+ */
+export const OrchestrationV2ThreadContextUsage = Schema.Struct({
+  latestTurnUsage: Schema.NullOr(OrchestrationV2ProviderTurnTokenUsage),
+  providerThread: Schema.NullOr(
+    Schema.Struct({
+      contextUsage: Schema.NullOr(ThreadTokenUsageSnapshot),
+      updatedAt: Schema.DateTimeUtc,
+    }),
+  ),
+});
+export type OrchestrationV2ThreadContextUsage = typeof OrchestrationV2ThreadContextUsage.Type;
 
 export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
@@ -4056,6 +4076,8 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    /** Refused until the user lets the named work finish or stops it; never retry it unchanged. */
+    refusal: Schema.optional(Schema.Literals(["session-busy"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -4433,6 +4455,11 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getThreadContextUsage: {
+    input: OrchestrationV2GetThreadContextUsageInput,
+    /** null for an unknown thread or one with no provider thread yet. */
+    output: Schema.NullOr(OrchestrationV2ThreadContextUsage),
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,

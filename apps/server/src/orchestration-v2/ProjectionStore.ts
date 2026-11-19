@@ -1,11 +1,12 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { oldestPendingGuestMessageAt, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -36,6 +37,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2DelegatedCompletionTaskDeliveryState,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
@@ -225,9 +227,27 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingBackgroundTasks"
   | "pendingGuestMessageCount"
 > &
-  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
+  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt" | "lineage" | "unsettledAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
+    /** A subagent child's hand-off to its parent; null for every other thread. */
+    readonly subagentHandoff: ProjectionSubagentHandoff | null;
+    /** An assistant task thread whose task was dismissed from the assistant's list. */
+    readonly assistantTaskDismissed: boolean;
   };
+
+export interface ProjectionSubagentHandoff {
+  /** Null when the parent holds no subagent record for the child. */
+  readonly origin: OrchestrationV2Subagent["origin"] | null;
+  readonly status: OrchestrationV2Subagent["status"] | null;
+  readonly deliveryState: OrchestrationV2DelegatedCompletionTaskDeliveryState | null;
+  /** The parent is settled, archived or gone, so nobody waits on the child any more. */
+  readonly parentSettled: boolean;
+  /** A run of the parent is live or queued. */
+  readonly parentRunActive: boolean;
+  /** A run of the parent ended after the child finished, so it held the result. */
+  readonly parentReadResult: boolean;
+  readonly parentWorktreePath: string | null;
+}
 
 const ProjectionCheckpointContext = Schema.Struct({
   runs: Schema.Array(
@@ -579,6 +599,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
+  /** The active provider thread's context usage; null for an unknown thread or none started. */
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -1084,7 +1108,17 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
->;
+> & {
+  readonly lineage_relationship: string | null;
+  readonly subagent_origin: OrchestrationV2Subagent["origin"] | null;
+  readonly subagent_status: OrchestrationV2Subagent["status"] | null;
+  readonly subagent_delivery_state: OrchestrationV2DelegatedCompletionTaskDeliveryState | null;
+  readonly parent_settled: number | null;
+  readonly parent_run_active: number | null;
+  readonly parent_read_result: number | null;
+  readonly parent_worktree_path: string | null;
+  readonly assistant_task_dismissed: number;
+};
 
 type ShellRunItemCountRow = {
   readonly thread_id: string;
@@ -1688,6 +1722,7 @@ export function threadShellFromProjection(
     ),
     pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
+    oldestPendingGuestMessageAt: oldestPendingGuestMessageAt(projection.thread.guestShare),
     queuedMessageCount: runs.filter((run) => run.status === "queued").length,
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -1988,6 +2023,7 @@ function shellFromState(input: {
     usageLimitResetAt: input.state.usageLimitResetAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
+    oldestPendingGuestMessageAt: oldestPendingGuestMessageAt(input.state.thread.guestShare),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
@@ -2018,6 +2054,15 @@ function shellFromState(input: {
     deletedAt: input.state.thread.deletedAt,
   };
 }
+
+/**
+ * A provider-native subagent still at work, as a condition on the `orchestration_v2_projection_subagents`
+ * row named `alias`. Its child thread has no runs of its own, so this row is the child's activity.
+ */
+export const liveNativeSubagent = (sql: SqlClient.SqlClient, alias: string) => {
+  const row = sql.literal(alias);
+  return sql`(${row}.origin = 'provider_native' AND ${row}.status IN ('pending', 'running', 'waiting'))`;
+};
 
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
@@ -6422,8 +6467,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT CASE native.status WHEN 'pending' THEN 'starting' ELSE native.status END
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6447,8 +6491,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT native.started_at
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6800,7 +6843,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND NOT ${isIdleCompactionMessage("message")}
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_authored_message_at
+              ) AS latest_user_authored_message_at,
+              json_extract(t.payload_json, '$.lineage.relationshipToParent') AS lineage_relationship,
+              s.origin AS subagent_origin,
+              s.status AS subagent_status,
+              s.completion_delivery_state AS subagent_delivery_state,
+              CASE WHEN json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                THEN (
+                  p.thread_id IS NULL OR p.deleted_at IS NOT NULL
+                  OR json_extract(p.payload_json, '$.archivedAt') IS NOT NULL
+                  OR json_extract(p.payload_json, '$.settledOverride') = 'settled'
+                )
+              END AS parent_settled,
+              CASE WHEN p.thread_id IS NOT NULL THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs parent_run
+                WHERE parent_run.thread_id = p.thread_id
+                  AND parent_run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+              ) END AS parent_run_active,
+              -- A parent turn that ended after the child did is the one that read its result.
+              CASE WHEN s.completed_at IS NOT NULL THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs parent_run
+                WHERE parent_run.thread_id = s.thread_id
+                  AND parent_run.completed_at >= s.completed_at
+              ) END AS parent_read_result,
+              json_extract(p.payload_json, '$.worktreePath') AS parent_worktree_path,
+              EXISTS (
+                SELECT 1 FROM assistant_tasks task
+                WHERE task.thread_id = t.thread_id AND task.dismissed_at IS NOT NULL
+              ) AS assistant_task_dismissed
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -6809,7 +6879,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY latest.ordinal DESC, latest.run_id DESC
               LIMIT 1
             )
-            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
+            LEFT JOIN orchestration_v2_projection_subagents s ON s.subagent_id = (
+              SELECT record.subagent_id FROM orchestration_v2_projection_subagents record
+              WHERE record.child_thread_id = t.thread_id
+              ORDER BY record.updated_at DESC, record.subagent_id DESC
+              LIMIT 1
+            )
+            LEFT JOIN orchestration_v2_projection_threads p
+              ON p.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+            WHERE t.deleted_at IS NULL${
+              threadId === undefined
+                ? sql``
+                : // A parent's sweep also covers its children: their hand-off follows its events.
+                  sql` AND (t.thread_id = ${threadId} OR t.thread_id IN (
+                    SELECT child_thread_id FROM orchestration_v2_projection_subagents
+                    WHERE thread_id = ${threadId} AND child_thread_id IS NOT NULL
+                  ))`
+            }
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
@@ -6818,6 +6904,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
                   AND active.status IN ('preparing', 'starting', 'running', 'waiting')
+              )
+              -- Native children have no runs of their own: the parent's record is their activity.
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_subagents native
+                WHERE native.child_thread_id = t.thread_id
+                  AND ${liveNativeSubagent(sql, "native")}
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
@@ -6883,6 +6975,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_authored_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+                  subagentHandoff:
+                    row.lineage_relationship === "subagent"
+                      ? {
+                          origin: row.subagent_origin,
+                          status: row.subagent_status,
+                          deliveryState: row.subagent_delivery_state,
+                          parentSettled: row.parent_settled === 1,
+                          parentRunActive: row.parent_run_active === 1,
+                          parentReadResult: row.parent_read_result === 1,
+                          parentWorktreePath: row.parent_worktree_path,
+                        }
+                      : null,
+                  assistantTaskDismissed: row.assistant_task_dismissed === 1,
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
@@ -7537,6 +7642,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getThreadContextUsage = Effect.fn("ProjectionStore.getThreadContextUsage")(
+      function* (threadId: ThreadId) {
+        const [row] = yield* sql<{ readonly active_provider_thread_id: ProviderThreadId | null }>`
+          SELECT active_provider_thread_id FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId} AND deleted_at IS NULL
+        `;
+        const active = row?.active_provider_thread_id ?? null;
+        if (active === null) return null;
+        const records = yield* readCanonicalProjection(
+          threadId,
+          undefined,
+          ["providerThreads", "providerTurns"],
+          {
+            providerThreadIds: [active],
+            providerTurnThreadIds: [active],
+            latestProviderTurnUsageOnly: true,
+          },
+        );
+        const providerThread = records.providerThreads.find((thread) => thread.id === active);
+        return {
+          latestTurnUsage: records.providerTurns[0]?.tokenUsage ?? null,
+          providerThread:
+            providerThread === undefined
+              ? null
+              : {
+                  contextUsage: providerThread.contextUsage ?? null,
+                  updatedAt: providerThread.updatedAt,
+                },
+        };
+      },
+      (effect, threadId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -7717,6 +7856,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
+      getThreadContextUsage: readOnReader(getThreadContextUsage),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),

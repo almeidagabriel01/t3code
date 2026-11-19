@@ -49,6 +49,8 @@ function layerElectronApp(
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
     setAppUserModelId: () => Effect.void,
+    getLoginItemSettings: () => Effect.die("unexpected login item read"),
+    setLoginItemSettings: () => Effect.die("unexpected login item change"),
     getAppMetrics: Effect.succeed([]),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
     setDesktopName: () => Effect.void,
@@ -228,7 +230,7 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("relaunches without the app link that launched it", () =>
+  it.effect("relaunches without the app link or login launch that started it", () =>
     Effect.gen(function* () {
       const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
@@ -263,6 +265,7 @@ describe("DesktopLifecycle", () => {
         Effect.provideService(HostProcess.Arguments, [
           "/opt/T3 Code/t3code",
           "--no-sandbox",
+          "--opened-at-login",
           "T3CODE://pair?token=spent",
           "t3code://new?prompt=hello",
         ]),

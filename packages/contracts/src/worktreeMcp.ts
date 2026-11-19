@@ -85,6 +85,36 @@ export const WorktreeMcpStatusResult = Schema.Struct({
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
 
+export const WorktreeMcpFinishInput = Schema.Struct({
+  worktreePath: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Absolute path of a worktree of this project's repository. Omit for this thread's worktree.",
+  }),
+});
+export type WorktreeMcpFinishInput = typeof WorktreeMcpFinishInput.Type;
+
+export const WorktreeFinishKeptReason = Schema.Literals([
+  "cleanup-off",
+  "uncommitted-changes",
+  "not-integrated",
+  "not-a-worktree",
+  "main-checkout",
+  "locked",
+  "other",
+]);
+export type WorktreeFinishKeptReason = typeof WorktreeFinishKeptReason.Type;
+
+export const WorktreeMcpFinishResult = Schema.Struct({
+  status: Schema.Literals(["scheduled", "removed", "kept", "gone"]).annotate({
+    description:
+      "scheduled: removed once nothing uses it; removed: deleted now; kept: see `reason`; gone: already deleted.",
+  }),
+  worktreePath: Schema.String,
+  reason: Schema.optional(WorktreeFinishKeptReason),
+  detail: Schema.String,
+});
+export type WorktreeMcpFinishResult = typeof WorktreeMcpFinishResult.Type;
+
 export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()(
   "WorktreeMcpFailure",
   {

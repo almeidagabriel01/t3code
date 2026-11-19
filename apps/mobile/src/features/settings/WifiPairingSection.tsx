@@ -15,6 +15,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { deviceEnvironment } from "../../state/device";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { WIFI_PAIRING_COPY } from "./devicesCopy";
 
 function PairingCode(props: { readonly value: string }) {
   const { size, path } = qrCodePath(props.value, "M", 2);
@@ -93,16 +94,13 @@ export function WifiPairingSection(props: {
     void dismiss(attempt?.attemptId);
   };
 
-  const title = `Phone over Wi-Fi${props.suffix}`;
+  const title = `${WIFI_PAIRING_COPY.title}${props.suffix}`;
   if (!open) {
     return (
-      <ListSection
-        title={title}
-        footer={`Pair an Android phone on the same Wi-Fi network as the computer running T3 Code.`}
-      >
+      <ListSection title={title} footer={WIFI_PAIRING_COPY.footer}>
         <SettingsActionRow
           icon="wifi"
-          label="Connect a phone over Wi-Fi"
+          label={WIFI_PAIRING_COPY.connect}
           disabled={!canPair}
           onPress={() => void begin()}
         />

@@ -143,6 +143,14 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Answer what needs you from the sidebar
+
+The top of the sidebar, and of Home on mobile, lists everything waiting on you under **Needs you**,
+oldest first: approvals, questions and decisions from any thread, including the ones assistants
+started. Approve or deny, pick an option or type a one-line answer right there, or choose **Open**
+to go to the thread. A request with several questions opens in its thread. The section is gone
+while nothing waits.
+
 ### Follow what needs you in Activity
 
 On web and desktop, choose the bell at the top of the sidebar or in the rail, or press
@@ -160,8 +168,8 @@ unacknowledged wakes on connections you can change. **Clear read** also removes 
 already read from the list. Work in progress and pending requests stay. Nothing is archived or
 deleted.
 
-On mobile, Home shows the same threads in a **Needs you** section, and the tablet sidebar does too.
-Its menu has **Mark all as read** and **Clear read**.
+On mobile, **Mark all as read** and **Clear read** are in the **⋯** menu beside **Projects** on Home
+and in the tablet sidebar.
 
 On macOS, the desktop app also puts the same view in the menu bar: threads that need you, running
 threads and pinned threads, from every connected environment, with **New thread**, **Open T3 Code**
@@ -316,7 +324,7 @@ the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, a thread's active subagents are listed under it in the sidebar.
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
@@ -345,15 +353,23 @@ back the standard rows.
 
 ## Thread tabs and side-by-side groups
 
-On web and desktop, threads you open show as tabs under the thread header, like open files.
-Picking a thread in the sidebar opens its tab, or switches to it when it is already open. Close a
-tab with its **×**, a middle click, or `mod+w`. Each project keeps its own tabs and layout, and
-they come back after a reload.
+On web and desktop, threads you open show as tabs under the thread header. A thread's tab is its
+chat, and files you open from that thread get their own tabs right beside it, in the same row.
+Picking a thread in the sidebar opens its tab, or switches to it when it is already open, and
+always shows its chat, even when one of its files was showing. Close a tab with its **×**, a middle
+click, or `mod+w`; `mod+w` closes the file you are looking at before the thread. Closing a thread's
+tab also hides its file tabs, and they come back with the thread. **Reopen Closed Tab** brings
+back the last tab you closed, thread or file. Each project keeps its own tabs and layout, and they
+come back after a reload.
 
 Drag a tab, or a thread from the sidebar, over the thread area and keep holding: an overlay shows
 where it will go. Drop it on an edge to open a new group on that side, in the middle to add it to
-that group, or between tabs to place it there. Each group shows its own thread with its own
-composer; the thread you picked last is the full one, with the header, right panel and terminal.
+that group, or between tabs to place it there. A thread's file tabs move with it and always stay
+beside it. A thread from another project splits the same way and stays in that layout until you
+close its tab. Picking another thread of that project, from the sidebar or anywhere else, opens it
+in the group showing that project, so the split stays; closing it returns that group to the tab it
+showed before. **Reopen Closed Tab** puts a thread tab back in the layout and group it closed from. Each group shows its own thread with its own composer; the thread you picked last is
+the full one, with the header, right panel and terminal.
 Clicking a group's title makes its thread the full one. Drag the line between groups to resize
 them, or double-click it to even them. Dragging a group's last tab elsewhere, or closing it,
 removes the group. **Open side by side** in a thread's menu or the command palette opens a thread
@@ -368,7 +384,9 @@ A side chat lets you ask a question about a thread without adding to it. It star
 with what the thread knows, and the thread keeps working while you ask.
 
 On web and desktop, start a message with `/side` or `/btw`, then your question.
-You can also choose **Side chat** from the **+** menu in the right panel. The side
+Images and files attached to that message go to the side chat with it, even when you
+attach them before typing `/side`. Other added
+context, such as terminal output or attached threads, cannot start a side chat. You can also choose **Side chat** from the **+** menu in the right panel. The side
 chat opens as a tab there, with its own composer. Side chats do not show in the
 sidebar. Find one again under **Side chats** in thread details.
 

@@ -176,6 +176,15 @@ describe("selectThreadCreationDetail", () => {
     });
     expect(delivered.pendingCreation?.outcome?.kind).toBe("delivered");
     expect(delivered.detailRef).toBe(threadRef);
+
+    const startingSideChat = selectThreadCreationDetail({
+      threadRef,
+      threadKey,
+      queuedMessagesByThreadKey: {},
+      outcomes: {},
+      startingSideChat: true,
+    });
+    expect(startingSideChat).toEqual({ pendingCreation: null, detailRef: null });
   });
 
   it("does not hold back existing threads with only follow-ups queued", () => {

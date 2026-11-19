@@ -1,48 +1,33 @@
-import {
-  assistantFace,
-  assistantGroupThreadsOf,
-  assistantPresence,
-} from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  assistantWorkingHereLabel,
+  projectAssistantFaces,
+  type AssistantWorkSite,
+} from "@t3tools/client-runtime/assistantLiveWork";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
-import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
-import { useQuietThreadShells, useThreadShell } from "../../state/entities";
+import {
+  useAssistantEntries,
+  useAssistantLiveWork,
+  useAssistantStatus,
+  type AssistantEntry,
+} from "../../state/assistants";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantCluster } from "./assistantPresentation";
 
-const FACE_LIMIT = 2;
-const FACE_SIZE = 16;
+const CLUSTER_SIZE = 20;
 
 const keyOf = ({ environmentId, assistant }: AssistantEntry) => `${environmentId}:${assistant.id}`;
 
-function Face({ entry }: { readonly entry: AssistantEntry }) {
-  const { assistant, environmentId } = entry;
-  const thread = useThreadShell(
-    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
-  );
-  const shells = useQuietThreadShells();
-  const presence = assistantPresence(
-    thread,
-    assistantGroupThreadsOf(shells, environmentId, assistant.id),
-  );
-  return (
-    <AssistantAvatar
-      assistant={assistant}
-      environmentId={environmentId}
-      mood={assistantFace(presence)}
-      size={FACE_SIZE}
-    />
-  );
-}
+type ProjectFace = { readonly entry: AssistantEntry; readonly site: AssistantWorkSite | null };
 
 /**
- * The project's name with its assistants as small faces beside it (nothing when it has none).
- * The faces are one 44pt hit area: one assistant opens its conversation, several open a menu to pick.
+ * The project's name with one cluster of the assistants working there, then its own assistants.
+ * The cluster is one 44pt hit area: one assistant opens its conversation, several open a menu to pick.
  * Uses `useSelectWorkspaceDetail`, not `useRoute`, so the tablet sidebar can render it.
  */
 export function ProjectAssistantFaces(props: {
@@ -52,43 +37,48 @@ export function ProjectAssistantFaces(props: {
   readonly sidebar?: boolean;
 }) {
   const { active } = useAssistantEntries();
+  const { sites } = useAssistantLiveWork();
   const selectDetail = useSelectWorkspaceDetail();
-  const entries = projectAssistants(active, props.members);
-  if (entries.length === 0) return null;
-  const open = ({ assistant, environmentId }: AssistantEntry) => {
-    if (assistant.threadId === null) return;
+  const status = useAssistantStatus();
+  const faces = projectAssistantFaces({
+    assistants: active,
+    configured: projectAssistants(active, props.members),
+    sites,
+    members: props.members,
+  });
+  if (faces.length === 0) return null;
+  const threadOf = ({ entry, site }: ProjectFace) => site?.threadId ?? entry.assistant.threadId;
+  const open = (face: ProjectFace) => {
+    const threadId = threadOf(face);
+    if (threadId === null) return;
     selectDetail({
       name: "Thread",
-      params: { environmentId: String(environmentId), threadId: String(assistant.threadId) },
+      params: { environmentId: String(face.entry.environmentId), threadId: String(threadId) },
     });
   };
-  const shown = entries.slice(0, FACE_LIMIT);
-  const more = entries.length - shown.length;
-  const label = `${entries.map(({ assistant }) => assistant.name).join(", ")}: assistants in this project`;
+  const titleOf = ({ entry, site }: ProjectFace) =>
+    site === null ? entry.assistant.name : assistantWorkingHereLabel(entry.assistant.name);
+  const label = faces.some((face) => face.site !== null)
+    ? faces.map(titleOf).join(", ")
+    : `${faces.map(titleOf).join(", ")}: assistants in this project`;
   const cluster = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      disabled={entries.length === 1 && entries[0]!.assistant.threadId === null}
-      onPress={entries.length === 1 ? () => open(entries[0]!) : undefined}
+      disabled={faces.length === 1 && threadOf(faces[0]!) === null}
+      onPress={faces.length === 1 ? () => open(faces[0]!) : undefined}
       className="min-h-11 min-w-11 flex-row items-center justify-center rounded-2xl px-2 active:opacity-70"
     >
-      {shown.map((entry, index) => (
-        <View key={keyOf(entry)} style={{ marginLeft: index === 0 ? 0 : -4 }}>
-          <Face entry={entry} />
-        </View>
-      ))}
-      {more > 0 ? (
-        <Text
-          testID="project-assistant-more"
-          className={cn(
-            "pl-1 text-2xs font-t3-medium",
-            props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
-          )}
-        >
-          +{more}
-        </Text>
-      ) : null}
+      <AssistantCluster
+        size={CLUSTER_SIZE}
+        environmentId={faces[0]!.entry.environmentId}
+        faces={faces.map(({ entry, site }) => ({
+          key: keyOf(entry),
+          assistant: entry.assistant,
+          // A working face wears the work's state, so it matches "is working here" in the label.
+          mood: site?.face ?? assistantFace(status.of(entry.environmentId, entry.assistant)),
+        }))}
+      />
     </Pressable>
   );
   return (
@@ -102,18 +92,18 @@ export function ProjectAssistantFaces(props: {
       >
         {props.title}
       </Text>
-      {entries.length === 1 ? (
+      {faces.length === 1 ? (
         cluster
       ) : (
         <Menu
-          actions={entries.map((entry) => ({
-            id: keyOf(entry),
-            title: entry.assistant.name,
-            attributes: { disabled: entry.assistant.threadId === null },
+          actions={faces.map((face) => ({
+            id: keyOf(face.entry),
+            title: titleOf(face),
+            attributes: { disabled: threadOf(face) === null },
           }))}
           onPressAction={({ nativeEvent }) => {
-            const entry = entries.find((candidate) => keyOf(candidate) === nativeEvent.event);
-            if (entry !== undefined) open(entry);
+            const face = faces.find((candidate) => keyOf(candidate.entry) === nativeEvent.event);
+            if (face !== undefined) open(face);
           }}
         >
           {cluster}

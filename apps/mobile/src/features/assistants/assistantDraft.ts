@@ -18,7 +18,9 @@ import {
   assistantHandleFromName,
   AssistantHandle,
   DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_ASSISTANT_INTEGRATIONS,
   type Assistant,
+  type AssistantIntegrations,
   type AssistantId,
   type AssistantAutonomy,
   type AssistantsCreateInput,
@@ -74,6 +76,8 @@ export interface AssistantDraft {
   /** Groups the user ticked or unticked; absent means the assistant's current membership. */
   readonly groupChoices: Readonly<Record<string, boolean>>;
   readonly connectors: ReadonlyArray<ConnectorDraft>;
+  /** Which T3 integrations and hand-made servers its sessions get. */
+  readonly integrations: AssistantIntegrations;
   readonly role: string;
   readonly budget: BudgetDraft;
   readonly autonomy: AssistantAutonomy;
@@ -191,6 +195,7 @@ export function assistantDraftFor(
     groupChoices:
       assistant === null && preset.teamId !== undefined ? { [preset.teamId]: true } : {},
     connectors: connectorDraftsFrom(assistant?.mcpServers ?? []),
+    integrations: assistant?.integrations ?? DEFAULT_ASSISTANT_INTEGRATIONS,
     role: assistant?.role ?? "",
     budget: budgetDraftFor(assistant?.budget),
     autonomy: assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
@@ -354,6 +359,7 @@ export function assistantCreateInput(
     ...(current.connectors.length === 0
       ? {}
       : { mcpServers: connectorInputsFrom(current.connectors) }),
+    ...(current.integrations.mode === "all" ? {} : { integrations: current.integrations }),
     ...(current.role.trim() === "" ? {} : { role: current.role.trim() }),
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
     ...(sameAssistantAutonomy(current.autonomy, DEFAULT_ASSISTANT_AUTONOMY)
@@ -396,6 +402,9 @@ export function assistantUpdateInput(
     ...(connectorsEqual(editor.initial.connectors, current.connectors)
       ? {}
       : { mcpServers: connectorInputsFrom(current.connectors) }),
+    ...(JSON.stringify(editor.initial.integrations) === JSON.stringify(current.integrations)
+      ? {}
+      : { integrations: current.integrations }),
     ...(current.role.trim() !== assistant.role ? { role: current.role.trim() } : {}),
     ...(budgetDraftChanged(editor.initial.budget, current.budget)
       ? { budget: budgetFromDraft(current.budget) }

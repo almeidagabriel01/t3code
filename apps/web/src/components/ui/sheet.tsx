@@ -62,10 +62,13 @@ function SheetPopup({
   transitionDurationMs,
   side = "right",
   variant = "default",
+  backdrop = true,
   style,
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  /** False for a panel beside the page: no backdrop, and the page around it stays clickable. Pair with `modal={false}` on the root. */
+  backdrop?: boolean;
   keepMounted?: boolean;
   transitionDurationMs?: number;
   side?: "right" | "left" | "top" | "bottom";
@@ -79,15 +82,21 @@ function SheetPopup({
 
   return (
     <SheetPortal keepMounted={keepMounted}>
-      <SheetBackdrop
-        className={
-          instant
-            ? "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!"
-            : undefined
-        }
-        style={transitionStyle}
-      />
-      <SheetViewport side={side} variant={variant}>
+      {backdrop ? (
+        <SheetBackdrop
+          className={
+            instant
+              ? "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!"
+              : undefined
+          }
+          style={transitionStyle}
+        />
+      ) : null}
+      <SheetViewport
+        side={side}
+        variant={variant}
+        className={backdrop ? undefined : "pointer-events-none"}
+      >
         <SheetPrimitive.Popup
           className={cn(
             "dialog-glass relative flex max-h-full [-webkit-app-region:no-drag] min-h-0 w-full min-w-0 flex-col not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 transition-[opacity,translate] duration-200 ease-in-out will-change-transform before:pointer-events-none before:absolute before:inset-0 before:shadow-[0_1px_--theme(--color-black/4%)] data-ending-style:opacity-0 data-starting-style:opacity-0 max-sm:before:hidden dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
@@ -101,6 +110,7 @@ function SheetPopup({
               "col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s data-ending-style:translate-x-8 data-starting-style:translate-x-8",
             variant === "inset" &&
               "before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
+            !backdrop && "pointer-events-auto",
             instant &&
               "transition-none! will-change-auto! data-ending-style:translate-x-0! data-starting-style:translate-x-0! data-ending-style:translate-y-0! data-starting-style:translate-y-0! data-ending-style:opacity-100! data-starting-style:opacity-100!",
             className,

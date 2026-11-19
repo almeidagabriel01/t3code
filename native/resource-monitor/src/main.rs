@@ -22,6 +22,10 @@ const MAX_PROCESS_COMMAND_BYTES: usize = 16 * 1_024;
 const MAX_PROCESS_STATUS_BYTES: usize = 256;
 const HISTORY_CHUNK_SNAPSHOTS: usize = 32;
 const TWO_STAGE_PROCESS_REFRESH: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+// Linux discovery would need an extra /proc read per process for memory, so it sends no list.
+const UNTRACKED_USAGE: bool = cfg!(not(target_os = "linux"));
+// ponytail: names per metric; an app split over many small names can rank a little low.
+const UNTRACKED_USAGE_LIMIT: usize = 16;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +156,16 @@ struct ProcessSample {
     io_semantics: IoSemantics,
 }
 
+/// Processes outside every tracked tree, summed per process name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UntrackedUsage {
+    name: String,
+    cpu_percent: f32,
+    resident_bytes: u64,
+    process_count: u32,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProcessTableEntry {
@@ -195,6 +209,8 @@ struct SnapshotEvent {
     request_id: Option<String>,
     external_processes: Vec<ExternalProcess>,
     processes: Vec<ProcessSample>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    untracked: Vec<UntrackedUsage>,
 }
 
 impl SnapshotEvent {
@@ -280,6 +296,7 @@ impl HistoryRecorder {
             .is_some_and(|previous| previous.sampled_at_unix_ms > snapshot.sampled_at_unix_ms);
         let mut retained = snapshot.clone();
         retained.request_id = None;
+        retained.untracked = Vec::new();
         self.retained_entry_count = self
             .retained_entry_count
             .saturating_add(retained.retained_entry_count());
@@ -481,6 +498,24 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
+        let untracked = if UNTRACKED_USAGE {
+            heaviest_untracked(
+                self.system
+                    .processes()
+                    .iter()
+                    .filter(|(pid, _)| pid.as_u32() != 0 && !tracked.contains(&pid.as_u32()))
+                    .map(|(_, process)| {
+                        (
+                            process.name().to_string_lossy().into_owned(),
+                            process.cpu_usage(),
+                            process.memory(),
+                        )
+                    }),
+                UNTRACKED_USAGE_LIMIT,
+            )
+        } else {
+            Vec::new()
+        };
         let process_details = if TWO_STAGE_PROCESS_REFRESH && !tracked.is_empty() {
             let monitor_pid = Pid::from_u32(std::process::id());
             let mut detail_pids = tracked
@@ -582,13 +617,54 @@ impl Collector {
             request_id,
             external_processes,
             processes,
+            untracked,
         }
     }
 }
 
+/// Sums processes by name, then keeps the `limit` heaviest names by CPU and by memory.
+fn heaviest_untracked(
+    processes: impl Iterator<Item = (String, f32, u64)>,
+    limit: usize,
+) -> Vec<UntrackedUsage> {
+    let mut by_name = HashMap::<String, UntrackedUsage>::new();
+    for (name, cpu_percent, resident_bytes) in processes {
+        let usage = by_name.entry(name.clone()).or_insert(UntrackedUsage {
+            name: truncate_utf8(name, MAX_PROCESS_NAME_BYTES),
+            cpu_percent: 0.0,
+            resident_bytes: 0,
+            process_count: 0,
+        });
+        usage.cpu_percent += cpu_percent;
+        usage.resident_bytes = usage.resident_bytes.saturating_add(resident_bytes);
+        usage.process_count += 1;
+    }
+    let mut by_cpu = by_name.into_values().collect::<Vec<_>>();
+    by_cpu.sort_by(|a, b| {
+        b.cpu_percent
+            .total_cmp(&a.cpu_percent)
+            .then(a.name.cmp(&b.name))
+    });
+    let mut by_memory = by_cpu.split_off(limit.min(by_cpu.len()));
+    by_memory.sort_by(|a, b| {
+        b.resident_bytes
+            .cmp(&a.resident_bytes)
+            .then(a.name.cmp(&b.name))
+    });
+    by_memory.truncate(limit);
+    by_cpu.extend(by_memory);
+    by_cpu
+}
+
 // Keep CPU baselines separate. Even a metadata refresh resets Linux process times.
 fn process_discovery_refresh_kind() -> ProcessRefreshKind {
-    if TWO_STAGE_PROCESS_REFRESH {
+    if cfg!(target_os = "macos") {
+        // One proc_pidinfo call reads both, so memory for the untracked list costs nothing more.
+        ProcessRefreshKind::nothing()
+            .with_cpu()
+            .with_memory()
+            .without_tasks()
+    } else if TWO_STAGE_PROCESS_REFRESH {
         ProcessRefreshKind::nothing().with_cpu().without_tasks()
     } else {
         process_refresh_kind()
@@ -1091,8 +1167,13 @@ mod tests {
         let pid = Pid::from_u32(std::process::id());
         let unselected = collector.system.process(pid).expect("discovered process");
         assert!(unselected.cmd().is_empty());
-        assert_eq!(unselected.memory(), 0);
-        assert_eq!(unselected.virtual_memory(), 0);
+        // macOS reads memory with CPU in one call, for the untracked list.
+        if cfg!(target_os = "linux") {
+            assert_eq!(unselected.memory(), 0);
+            assert_eq!(unselected.virtual_memory(), 0);
+        } else {
+            assert!(unselected.memory() > 0);
+        }
 
         config.external_processes.insert(pid.as_u32(), None);
         let snapshot = collector.sample(&config, None);
@@ -1110,8 +1191,10 @@ mod tests {
             .process(pid)
             .expect("retained CPU baseline");
         assert!(retained.cmd().is_empty());
-        assert_eq!(retained.memory(), 0);
-        assert_eq!(retained.virtual_memory(), 0);
+        if cfg!(target_os = "linux") {
+            assert_eq!(retained.memory(), 0);
+            assert_eq!(retained.virtual_memory(), 0);
+        }
     }
 
     #[test]
@@ -1219,10 +1302,22 @@ mod tests {
                     start_time_ms: Some(1_000),
                 }],
                 processes: Vec::new(),
+                untracked: vec![UntrackedUsage {
+                    name: "Slack".to_owned(),
+                    cpu_percent: 1.0,
+                    resident_bytes: 1,
+                    process_count: 1,
+                }],
             });
         }
 
         assert_eq!(history.snapshots.len(), MAX_HISTORY_SNAPSHOTS);
+        assert!(
+            history
+                .snapshots
+                .iter()
+                .all(|snapshot| snapshot.untracked.is_empty())
+        );
         assert!(
             history
                 .snapshots
@@ -1243,6 +1338,48 @@ mod tests {
     }
 
     #[test]
+    fn sums_untracked_processes_by_name_and_keeps_the_heaviest_by_cpu_and_by_memory() {
+        let rows = [
+            ("Google Chrome Helper", 10.0, 100),
+            ("Google Chrome Helper", 5.0, 300),
+            ("node", 50.0, 10),
+            ("WindowServer", 20.0, 50),
+            ("Slack", 1.0, 900),
+            ("idle", 0.0, 1),
+        ];
+        let usage = heaviest_untracked(
+            rows.iter()
+                .map(|(name, cpu, memory)| ((*name).to_owned(), *cpu, *memory)),
+            1,
+        );
+        let summary = usage
+            .iter()
+            .map(|entry| {
+                (
+                    entry.name.as_str(),
+                    entry.cpu_percent,
+                    entry.resident_bytes,
+                    entry.process_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(summary, vec![("node", 50.0, 10, 1), ("Slack", 1.0, 900, 1)]);
+
+        let all = heaviest_untracked(
+            rows.iter()
+                .map(|(name, cpu, memory)| ((*name).to_owned(), *cpu, *memory)),
+            10,
+        );
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&UntrackedUsage {
+            name: "Google Chrome Helper".to_owned(),
+            cpu_percent: 15.0,
+            resident_bytes: 400,
+            process_count: 2,
+        }));
+    }
+
+    #[test]
     fn excludes_and_trims_future_history_after_the_clock_moves_backward() {
         let mut history = HistoryRecorder::default();
         let snapshot = SnapshotEvent {
@@ -1257,6 +1394,7 @@ mod tests {
             request_id: None,
             external_processes: Vec::new(),
             processes: Vec::new(),
+            untracked: Vec::new(),
         };
         history.record(&snapshot);
 
@@ -1314,6 +1452,7 @@ mod tests {
                         start_time_ms: sequence * 1_000,
                         ..process.clone()
                     }],
+                    untracked: Vec::new(),
                 },
                 3,
                 3,
@@ -1350,6 +1489,7 @@ mod tests {
             request_id: None,
             external_processes,
             processes: Vec::new(),
+            untracked: Vec::new(),
         };
         let snapshot_bytes = snapshot.estimated_history_bytes();
         let snapshot_entries = snapshot.retained_entry_count();

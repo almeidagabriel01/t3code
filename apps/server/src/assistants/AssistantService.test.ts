@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { firstUsableProviderModel } from "@t3tools/shared/modelSelectionPrecedence";
 import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -65,6 +66,7 @@ interface FakeThread {
   modelSelection: ModelSelection;
   activeRunId?: string | null;
   shell?: Record<string, unknown>;
+  runs?: ReadonlyArray<{ readonly id: string; readonly status: string; readonly ordinal: number }>;
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
@@ -77,6 +79,7 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
   const taskDeletes: string[] = [];
   const tasks: Array<{ threadId: string | null; prompt: string; [key: string]: unknown }> = [];
   const failingTaskDeletes = new Set<string>();
+  const refusedCommands = new Set<string>();
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
 
@@ -91,7 +94,7 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
             const thread = threads.get(threadId);
             return thread === undefined
               ? Effect.fail(new Error("missing") as never)
-              : Effect.succeed({ thread } as never);
+              : Effect.succeed({ thread, runs: thread.runs ?? [] } as never);
           },
           getThreadShell: (threadId: string) =>
             Effect.succeed(
@@ -107,27 +110,35 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
                   }
                 : null) as never,
             ),
-          dispatch: (command: { type: string; threadId: string }) =>
-            Effect.gen(function* () {
-              const row = yield* sql<{
-                thread_id: string | null;
-              }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`;
-              const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`;
-              dispatched.push(command);
-              pointers.push({
-                type: command.type,
-                threadId: command.threadId,
-                pointer: row[0]?.thread_id ?? null,
-                rows: all[0]!.n,
-              });
-              const thread = threads.get(command.threadId);
-              if (thread !== undefined) {
-                if (command.type === "thread.archive") thread.archivedAt = "now";
-                if (command.type === "thread.unarchive") thread.archivedAt = null;
-                if (command.type === "thread.delete") thread.deletedAt = "now";
-              }
-              return {} as never;
-            }).pipe(Effect.orDie),
+          dispatch: (command: { type: string; threadId: string; commandId: CommandId }) =>
+            refusedCommands.has(command.type)
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorProviderSelectionBusyError({
+                    commandId: command.commandId,
+                    threadId: ThreadId.make(command.threadId),
+                    change: "mode",
+                  }),
+                )
+              : Effect.gen(function* () {
+                  const row = yield* sql<{
+                    thread_id: string | null;
+                  }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`;
+                  const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`;
+                  dispatched.push(command);
+                  pointers.push({
+                    type: command.type,
+                    threadId: command.threadId,
+                    pointer: row[0]?.thread_id ?? null,
+                    rows: all[0]!.n,
+                  });
+                  const thread = threads.get(command.threadId);
+                  if (thread !== undefined) {
+                    if (command.type === "thread.archive") thread.archivedAt = "now";
+                    if (command.type === "thread.unarchive") thread.archivedAt = null;
+                    if (command.type === "thread.delete") thread.deletedAt = "now";
+                  }
+                  return {} as never;
+                }).pipe(Effect.orDie),
         } as never;
       }),
     ),
@@ -246,6 +257,7 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
     inspected,
     launched,
     dispatched,
+    refusedCommands,
     pointers,
     retargets,
     taskDeletes,
@@ -590,7 +602,7 @@ it.effect("an install that already had Jarvis keeps him archived and never resee
 });
 
 it.effect("update writes the row, then renames, switches access and archives the thread", () => {
-  const { layer, dispatched, pointers } = harness();
+  const { layer, dispatched, pointers, refusedCommands } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
     const made = yield* assistants.create(create());
@@ -604,17 +616,40 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.deepEqual(
       dispatched.map((command) => command.type),
       [
+        "thread.runtime-mode.set",
         "thread.metadata.update",
         "thread.notice.record",
         "thread.model-selection.set",
-        "thread.runtime-mode.set",
       ],
     );
-    assert.equal((dispatched[1] as unknown as { message: string }).message, "Renamed to Renamed");
+    assert.equal((dispatched[2] as unknown as { message: string }).message, "Renamed to Renamed");
     assert.equal(
-      (dispatched[3] as unknown as { runtimeMode: string }).runtimeMode,
+      (dispatched[0] as unknown as { runtimeMode: string }).runtimeMode,
       "approval-required",
     );
+
+    // A busy thread refuses the mode change; the row keeps the access the thread still runs with.
+    refusedCommands.add("thread.runtime-mode.set");
+    const refused = yield* assistants
+      .update({ assistantId: made.id, toolAccess: "full" })
+      .pipe(Effect.flip);
+    assert.match(refused.message, /while the agent is working/);
+    assert.equal(
+      (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
+      "read-only",
+    );
+    refusedCommands.clear();
+    // A refusal after the mode change leaves the row on the access the thread now runs with.
+    refusedCommands.add("thread.model-selection.set");
+    yield* assistants
+      .update({ assistantId: made.id, toolAccess: "full", modelSelection: model("m3") })
+      .pipe(Effect.flip);
+    assert.equal(dispatched.at(-1)!.type, "thread.runtime-mode.set");
+    assert.equal(
+      (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
+      "full",
+    );
+    refusedCommands.clear();
 
     pointers.length = 0;
     yield* assistants.update({ assistantId: made.id, archived: true });
@@ -939,6 +974,26 @@ it.effect(
   },
 );
 
+it.effect("the integration selection defaults to all, saves and survives unrelated updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.deepEqual(plain.integrations, { mode: "all" });
+    const chosen = yield* assistants.create(
+      create({ name: "Scheduler", integrations: { mode: "selected", names: ["google-calendar"] } }),
+    );
+    assert.deepEqual(chosen.integrations, { mode: "selected", names: ["google-calendar"] });
+    const renamed = yield* assistants.update({ assistantId: chosen.id, role: "Ops" });
+    assert.deepEqual(renamed.integrations, { mode: "selected", names: ["google-calendar"] });
+    const opened = yield* assistants.update({
+      assistantId: chosen.id,
+      integrations: { mode: "all" },
+    });
+    assert.deepEqual(opened.integrations, { mode: "all" });
+  }).pipe(Effect.provide(layer), Effect.orDie);
+});
+
 it.effect(
   "connector secrets are write-only: reads show keys, omitted keeps, empty clears, deletes clean up",
   () => {
@@ -1029,6 +1084,27 @@ it.effect(
       );
       assert.equal(bad.reason, "invalid");
       assert.equal(secretValues.size, 0);
+
+      // A connector saved before the URL rule tightened survives a save that leaves its URL alone.
+      const legacy = {
+        name: "lan",
+        transport: "http" as const,
+        url: "http://192.168.1.5/mcp",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      };
+      const lanInput = { name: "lan", transport: "http" as const, url: legacy.url, enabled: true };
+      const resaved = yield* connectors.save(made.id, [legacy], [lanInput, docs([])]);
+      assert.deepEqual(
+        resaved.servers.map((server) => server.url),
+        [legacy.url, "https://docs.example.test/mcp"],
+      );
+      const edited = yield* Effect.flip(
+        connectors.save(made.id, [legacy], [{ ...lanInput, url: "http://192.168.1.6/mcp" }]),
+      );
+      assert.equal(edited.reason, "invalid");
 
       yield* assistants.update({
         assistantId: made.id,
@@ -1498,7 +1574,11 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       unreadCount: 0,
       working: false,
       runningCount: 0,
+      runningMemberIds: [],
       preview: null,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
       previewProjectId: null,
       removedProjectIds: [],
       scopes: [],
@@ -1524,6 +1604,51 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
     );
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
   }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a team counts the requests of its current conversation that wait on the user", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* assistants.create(create({ name: "Ana" }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    const message = (id: string, seq: number, kind = "message") =>
+      sql`INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text, created_at)
+        VALUES (${id}, ${team.id}, ${seq}, 'user', ${kind}, 'x', '2026-01-01')`;
+    const task = (id: string, request: string, status: string, reason: string | null, root = id) =>
+      sql`INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+          owner_id, instruction, status, reason, created_at, updated_at)
+        VALUES (${id}, ${team.id}, ${root}, ${root === id ? "root" : "child"}, ${request}, ${ana.id},
+          'x', ${status}, ${reason}, '2026-01-01', '2026-01-01')`;
+    yield* message("old", 1);
+    yield* message("cut", 2, "boundary");
+    for (const seq of [3, 4, 5, 6, 7]) yield* message(`m${seq}`, seq);
+    // Before the boundary: no longer offered in the chat, so never counted.
+    yield* task("t-old-paused", "old", "paused", "handoff_limit");
+    yield* task("t-old-failed", "old", "failed", null);
+    // One paused request is one, however many of its tasks paused with it.
+    yield* task("t-hop", "m3", "paused", "handoff_limit");
+    yield* task("t-hop-child", "m3", "paused", "handoff_limit", "t-hop");
+    yield* task("t-unknown", "m4", "paused", "something_new");
+    // Paused by the user or by an archive: nothing to ask them.
+    yield* task("t-stopped", "m5", "paused", "stopped");
+    yield* task("t-archived", "m5", "paused", "group_archived");
+    yield* task("t-failed", "m6", "failed", "failed");
+    // A failed child is reported to its parent, which goes on.
+    yield* task("t-root", "m7", "running", null);
+    yield* task("t-child-failed", "m7", "failed", null, "t-root");
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id, seen_seq)
+      VALUES (${team.id}, ${ana.id}, 'assistant:ana:g-1', 0)`;
+    // A request's own member thread belongs to the group too.
+    yield* sql`INSERT INTO assistant_group_request_threads (request_id, assistant_id, team_id, thread_id)
+      VALUES ('m3', ${ana.id}, ${team.id}, 'assistant:ana:r-1')`;
+    const [counted] = (yield* assistants.teams).filter((candidate) => candidate.id === team.id);
+    assert.deepEqual(
+      [counted?.chat?.pausedTasks, counted?.chat?.failedTasks, counted?.chat?.threadIds],
+      [2, 1, ["assistant:ana:g-1", "assistant:ana:r-1"]],
+    );
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect("a deleted project leaves assistant and group lists, and subscribers see it", () => {
@@ -1663,8 +1788,15 @@ it.effect(
 
       // Restoring needs no idle thread, and a repeat lands on the same result.
       threads.get("task-1")!.activeRunId = "run-2";
+      threads.get("task-1")!.runs = [
+        { id: "run-1", status: "completed", ordinal: 1 },
+        { id: "run-2", status: "rolled_back", ordinal: 2 },
+      ];
       assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
       assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
+      // The restore covers the result it saw: that run's delivery never dismisses it again.
+      assert.isFalse(yield* links.autoDismiss(task, "run-1"));
+      assert.isTrue(yield* links.autoDismiss(task, "run-3"));
 
       const missing = yield* assistants.restoreTask(ThreadId.make("nope")).pipe(Effect.flip);
       assert.equal(missing.reason, "not_found");

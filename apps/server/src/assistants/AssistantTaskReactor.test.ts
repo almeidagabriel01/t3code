@@ -10,8 +10,10 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NeedsUser from "../autonomy/NeedsUser.ts";
@@ -21,6 +23,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { AssistantGroups } from "./AssistantGroups.ts";
 import * as Reactor from "./AssistantTaskReactor.ts";
 import * as Tasks from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
@@ -119,8 +122,19 @@ const harness = (
     readonly runs?: ReadonlyArray<Record<string, unknown>>;
     readonly pendingBackgroundTasks?: ReadonlyArray<Record<string, unknown>>;
     readonly changes?: ReadonlyArray<NeedsUser.UserWaitChange>;
+    /** Threads a group request launched: the group takes their events. */
+    readonly requestLaunches?: ReadonlyArray<string>;
+    /** The assistant conversation's own runs. */
+    readonly ownerRuns?: ReadonlyArray<Record<string, unknown>>;
+    readonly shell?: Record<string, unknown>;
+    /** What the notices door says the assistant was already told; none when unset. */
+    readonly told?: string | undefined;
+    /** Runs while the reactor asks the notices door, between its reads and its write. */
+    readonly whileTold?: () => Effect.Effect<void>;
   } = {},
 ) => {
+  /** What the group was handed, as `settle:<thread>` or `wait:<thread>`. */
+  const toGroup: Array<string> = [];
   /** Wait wakes, sent straight to the conversation. */
   const sends: Array<Record<string, unknown>> = [];
   /** Run ends, offered to the notices door. */
@@ -136,7 +150,10 @@ const harness = (
     Effect.succeed({
       thread: THREADS[threadId] ?? plainThread,
       messages: [{ text: "Done: retry added" }, { text: "  " }],
-      runs: options.runs ?? [],
+      runs:
+        threadId.startsWith("assistant:") && options.ownerRuns !== undefined
+          ? options.ownerRuns
+          : (options.runs ?? []),
     } as never);
   // The real owner chain, default lookup and withdrawal; only what waits is scripted.
   const needsUser = Layer.effect(
@@ -183,11 +200,13 @@ const harness = (
         SqlitePersistence.layerMemory,
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           getThreadShell: () =>
             Effect.succeed({
               title: "Add retry",
               archivedAt: null,
               pendingBackgroundTasks: options.pendingBackgroundTasks ?? [],
+              ...options.shell,
             } as never),
           getThreadRecords: records,
           dispatch: (command) =>
@@ -203,6 +222,20 @@ const harness = (
                   Effect.as({} as never),
                 ),
         }),
+        Layer.mock(AssistantGroups)({
+          member: {} as never,
+          settleLaunch: (threadId) =>
+            Effect.sync(() => {
+              toGroup.push(`settle:${threadId}`);
+              return options.requestLaunches?.includes(threadId) === true;
+            }),
+          settleWaiting: Effect.void,
+          syncWaitingThread: (threadId) =>
+            Effect.sync(() => {
+              toGroup.push(`wait:${threadId}`);
+              return options.requestLaunches?.includes(threadId) === true;
+            }),
+        }),
         Layer.mock(TaskEventNotices)({
           send: (notice) =>
             options.failSend === true
@@ -211,6 +244,10 @@ const harness = (
                   notices.push(notice as never);
                   return "sent" as const;
                 }),
+          told: () =>
+            (options.whileTold?.() ?? Effect.void).pipe(
+              Effect.as(Option.fromNullishOr(options.told)),
+            ),
           foldQueued: (threadId) =>
             Effect.suspend(() => {
               folded.push(threadId);
@@ -220,7 +257,7 @@ const harness = (
       ),
     ),
   );
-  return { sends, notices, folded, allFolded, dispatched, onSend, layer };
+  return { sends, notices, folded, allFolded, dispatched, onSend, toGroup, layer };
 };
 
 const insertAssistant = (id: string, archived = false) =>
@@ -250,7 +287,7 @@ const setupAda = (archived = false) =>
     });
   });
 
-const setup = (archived = false) =>
+const setup = (archived = false, sourceThreadId?: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -264,8 +301,40 @@ const setup = (archived = false) =>
       projectId: ProjectId.make("p1"),
       title: "Add retry",
       createdAt: "2026-01-02T00:00:00.000Z",
+      ...(sourceThreadId === undefined ? {} : { sourceThreadId: ThreadId.make(sourceThreadId) }),
     });
   });
+
+it.effect.each([
+  { from: "a group request's conversation", forRequest: true },
+  { from: "the assistant's own conversation", forRequest: false },
+])("a task launched from $from reports where it was launched from", ({ forRequest }) => {
+  const { notices, sends, toGroup, layer } = harness({
+    requestLaunches: forRequest ? [taskThread] : [],
+  });
+  return Effect.gen(function* () {
+    yield* setup(false, forRequest ? "assistant:jarvis:g-0123456789abcdef" : "assistant:jarvis:1");
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* reactor.handle(runEvent(taskThread, "completed"));
+    yield* reactor.handleWait(requestChange(taskThread, "command")!);
+    yield* reactor.handle({ type: "thread.deleted", threadId: taskThread } as never);
+    // Background work ending with no run after it is asked too, and never wakes anyone itself.
+    yield* reactor.handle({
+      type: "provider-thread.updated",
+      threadId: taskThread,
+      payload: { pendingBackgroundTasks: [] },
+    } as never);
+    // The group is always asked; only a request's thread keeps the direct conversation out of it.
+    assert.deepEqual(toGroup, [
+      `settle:${taskThread}`,
+      `wait:${taskThread}`,
+      `settle:${taskThread}`,
+      `settle:${taskThread}`,
+    ]);
+    assert.lengthOf(notices, forRequest ? 0 : 1);
+    assert.lengthOf(sends, forRequest ? 0 : 1);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect(
   "a task run that ends is offered to its assistant through the notices door, with its last message",
@@ -505,6 +574,59 @@ it.effect("a settled wait also takes back the default assistant's queued notice"
 });
 
 it.effect(
+  "a settled wait of a group request's thread still takes back the default's queued notice",
+  () => {
+    const jarvis = waitWakeId(ThreadId.make("assistant:jarvis:1"), "request:req-command");
+    const { sends, dispatched, layer } = harness({
+      requestLaunches: [taskThread],
+      ownerRuns: [{ id: "run-jarvis", status: "queued", userMessageId: jarvis }],
+    });
+    return Effect.gen(function* () {
+      yield* setup(false, "assistant:jarvis:g-0123456789abcdef");
+      yield* (yield* Reactor.AssistantTaskReactor).handleWait(
+        requestChange(taskThread, "command", "resolved")!,
+      );
+      assert.strictEqual(sends.length, 0);
+      assert.deepStrictEqual(
+        dispatched.map((command) => [command.threadId, command.runId]),
+        [["assistant:jarvis:1", "run-jarvis"]],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a request settled within its grace wakes no one; one still open wakes after it", () => {
+  const h = harness({
+    changes: [
+      requestChange(taskThread, "command")!,
+      requestChange(taskThread, "command", "resolved")!,
+      requestChange(taskThread, "file-change")!,
+      // Woken at once: its wake marks the end of the changes.
+      decisionChange()!,
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    const sent = yield* Queue.unbounded<unknown>();
+    h.onSend.current = (input) => Queue.offer(sent, input).pipe(Effect.asVoid);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* (yield* Reactor.AssistantTaskReactor).start();
+        yield* Queue.take(sent);
+        assert.strictEqual(h.sends.length, 1);
+        yield* TestClock.adjust(Reactor.REQUEST_WAKE_GRACE);
+        yield* Queue.take(sent);
+      }),
+    );
+    const ada = ThreadId.make("assistant:ada:1");
+    assert.deepStrictEqual(
+      h.sends.map((send) => send.messageId),
+      [waitWakeId(ada, "decision:dec-1"), waitWakeId(ada, "request:req-file-change")],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
   "the default's own task wakes it under the id its notice uses, so it is told once",
   () => {
     const { sends, layer } = harness();
@@ -593,8 +715,15 @@ it.effect("start wakes for what already waits, and a second start repeats the sa
     const sent = yield* Queue.unbounded<unknown>();
     h.onSend.current = (input) => Queue.offer(sent, input).pipe(Effect.asVoid);
     const reactor = yield* Reactor.AssistantTaskReactor;
+    // The decision wakes at once; the request after its grace.
     const startAndAwaitTwoWakes = Effect.scoped(
-      reactor.start().pipe(Effect.andThen(Queue.take(sent)), Effect.andThen(Queue.take(sent))),
+      reactor
+        .start()
+        .pipe(
+          Effect.andThen(Queue.take(sent)),
+          Effect.andThen(TestClock.adjust(Reactor.REQUEST_WAKE_GRACE)),
+          Effect.andThen(Queue.take(sent)),
+        ),
     );
     yield* startAndAwaitTwoWakes;
     yield* startAndAwaitTwoWakes;
@@ -607,4 +736,158 @@ it.effect("start wakes for what already waits, and a second start repeats the sa
       "assistant-task-waits:assistant:ada:1:request:req-command",
     ]);
   }).pipe(Effect.provide(h.layer));
+});
+
+const NOTICE_ID = "assistant-task:run-completed";
+const doneShell = {
+  activeRunId: null,
+  status: "completed",
+  activityRunStatus: null,
+  pendingRuntimeRequest: null,
+};
+const taskRun = (status: string) => ({
+  id: "run-completed",
+  threadId: taskThread,
+  ordinal: 1,
+  status,
+  userMessageId: "m1",
+});
+const ownerRun = (status: string) => ({
+  id: "owner-run",
+  threadId: "assistant:jarvis:1",
+  ordinal: 1,
+  status,
+  userMessageId: NOTICE_ID,
+});
+const ownerRunEvent = (status: string) =>
+  ({ type: "run.updated", payload: ownerRun(status) }) as never as OrchestrationV2DomainEvent;
+const noticeRow = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    INSERT INTO assistant_task_notices
+      (thread_id, subject_thread_id, run_id, status, head_sha, message_id, updated_at)
+    VALUES ('assistant:jarvis:1', ${taskThread}, 'run-completed', 'completed', NULL, ${NOTICE_ID},
+      '2026-01-02T00:00:00.000Z')`;
+});
+const dismissedAt = Effect.gen(function* () {
+  const task = yield* (yield* Tasks.AssistantTasks).forThread(taskThread);
+  return Option.getOrThrow(task).dismissedAt;
+});
+
+it.effect.each([
+  ["the assistant's turn that read the result completed", {}, true],
+  ["the assistant is still reading the result", { ownerRuns: [ownerRun("running")] }, false],
+  ["the assistant's turn that read it failed", { ownerRuns: [ownerRun("failed")] }, false],
+  ["the assistant was never told this run", { told: undefined }, false],
+  ["the task failed", { runs: [taskRun("failed")] }, false],
+  [
+    "the task waits on the user",
+    { shell: { ...doneShell, pendingRuntimeRequest: { kind: "permission" } } },
+    false,
+  ],
+  [
+    "the task resumes on its own",
+    { pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }] },
+    false,
+  ],
+  [
+    "the task runs again",
+    { runs: [taskRun("completed"), { ...taskRun("running"), id: "run-2", ordinal: 2 }] },
+    false,
+  ],
+] satisfies ReadonlyArray<readonly [string, Parameters<typeof harness>[0], boolean]>)(
+  "a delivered task leaves the list only when %s",
+  ([, overrides, dismissed]) => {
+    const { layer } = harness({
+      runs: [taskRun("completed")],
+      ownerRuns: [ownerRun("completed")],
+      shell: doneShell,
+      told: NOTICE_ID,
+      ...overrides,
+    });
+    return Effect.gen(function* () {
+      yield* setup();
+      yield* noticeRow;
+      const reactor = yield* Reactor.AssistantTaskReactor;
+      yield* reactor.handle(ownerRunEvent("completed"));
+      assert.strictEqual((yield* dismissedAt) !== null, dismissed);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a task whose result was read before its run event leaves the list on that event", () => {
+  const { layer } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [ownerRun("completed")],
+    shell: doneShell,
+    told: NOTICE_ID,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* reactor.handle(runEvent(taskThread, "completed"));
+    assert.isNotNull(yield* dismissedAt);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a restored task stays restored until another run delivers", () => {
+  const { layer } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [ownerRun("completed")],
+    shell: doneShell,
+    told: NOTICE_ID,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* noticeRow;
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* reactor.handle(ownerRunEvent("completed"));
+    assert.isNotNull(yield* dismissedAt);
+    yield* (yield* Tasks.AssistantTasks).setDismissed(taskThread, null);
+    yield* reactor.handle(ownerRunEvent("completed"));
+    yield* reactor.handle(runEvent(taskThread, "completed"));
+    assert.isNull(yield* dismissedAt);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a restore between the delivery check and the dismissal is never overwritten", () => {
+  let interleaved: Effect.Effect<void> = Effect.void;
+  const { layer } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [ownerRun("completed")],
+    shell: doneShell,
+    told: NOTICE_ID,
+    whileTold: () => interleaved,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* noticeRow;
+    const tasks = yield* Tasks.AssistantTasks;
+    // The reactor already read the task as listed; the user dismisses and restores it now.
+    interleaved = tasks
+      .setDismissed(taskThread, "2026-01-03T00:00:00.000Z")
+      .pipe(Effect.andThen(tasks.setDismissed(taskThread, null, "run-completed")), Effect.asVoid);
+    yield* (yield* Reactor.AssistantTaskReactor).handle(ownerRunEvent("completed"));
+    assert.isNull(yield* dismissedAt);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a start dismisses the tasks delivered while the server was down", () => {
+  const { layer, allFolded } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [ownerRun("completed")],
+    shell: doneShell,
+    told: NOTICE_ID,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* insertAssistant("ada");
+    const tasks = yield* Tasks.AssistantTasks;
+    const changes = yield* PubSub.subscribe(tasks.changes);
+    yield* (yield* Reactor.AssistantTaskReactor).start();
+    yield* Deferred.await(allFolded);
+    const dismissed = yield* PubSub.take(changes);
+    assert.strictEqual(dismissed.threadId, taskThread);
+    assert.isNotNull(dismissed.dismissedAt);
+  }).pipe(Effect.scoped, Effect.provide(layer));
 });

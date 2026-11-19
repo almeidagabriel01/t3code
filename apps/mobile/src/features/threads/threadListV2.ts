@@ -73,7 +73,13 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
-export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export type ThreadListV2SwipeAction =
+  | "archive"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze"
+  | "dismiss";
 
 /**
  * Presets for a row's snooze menu, read at the list's minute instead of the
@@ -119,10 +125,19 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   readonly snoozed?: boolean;
+  /** A done or failed task in its assistant's section: dismissing it is the row's main action. */
+  readonly dismissible?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
 } {
+  if (input.dismissible === true) {
+    return {
+      primary: "dismiss",
+      secondary:
+        input.snoozeSupported && input.snoozable && input.snoozed !== true ? "snooze" : null,
+    };
+  }
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
   }
@@ -316,7 +331,7 @@ export function getThreadListV2OrderedSection(input: {
  * Ranks by what the row shows: "Done" only on a ready thread with a visit time (null means
  * imported history read; undefined, an older server), and no open decisions at all.
  */
-function sortActiveThreadsForRows(
+export function sortActiveThreadsForRows(
   threads: readonly EnvironmentThreadShell[],
   order: SidebarThreadOrder,
 ): EnvironmentThreadShell[] {
@@ -372,6 +387,8 @@ export interface ThreadListV2ThreadListItem {
   readonly hasQueuedMessages: boolean;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
+  /** Drawn by the assistants section, as a lighter one-line row. */
+  readonly compact?: boolean;
 }
 
 export interface ThreadListV2PendingListItem {

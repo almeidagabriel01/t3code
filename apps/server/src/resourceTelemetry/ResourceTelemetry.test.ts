@@ -57,6 +57,7 @@ function nativeSnapshot(input: {
   readonly childCpuTimeMs: number;
   readonly childWriteBytes: number;
   readonly externalProcesses?: ResourceMonitorSnapshotEvent["externalProcesses"];
+  readonly extraProcesses?: ResourceMonitorSnapshotEvent["processes"];
 }): ResourceMonitorSnapshotEvent {
   const processes = [
     processSample({
@@ -90,6 +91,7 @@ function nativeSnapshot(input: {
       command: "t3-resource-monitor",
       cpuTimeMs: input.sequence * 5,
     }),
+    ...(input.extraProcesses ?? []),
   ];
   return {
     version: 3,
@@ -229,17 +231,30 @@ describe("ResourceTelemetry", () => {
   );
 
   it.effect(
-    "attributes an initial Electron root from the identity recorded by the native snapshot",
+    "attributes an initial Electron root from the identity recorded by the native snapshot, and never a job's",
     () =>
       Effect.gen(function* () {
         const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const sample = nativeSnapshot({
-          sequence: 1,
-          sampledAtUnixMs,
-          childCpuTimeMs: 100,
-          childWriteBytes: 1_000,
-          externalProcesses: [{ pid: ELECTRON_PID, startTimeMs: 300 }],
-        });
+        // A heavy job's root, registered beside Electron, comes back echoed with its start time.
+        const JOB_PID = 7_000;
+        const sample = {
+          ...nativeSnapshot({
+            sequence: 1,
+            sampledAtUnixMs,
+            childCpuTimeMs: 100,
+            childWriteBytes: 1_000,
+            externalProcesses: [
+              { pid: ELECTRON_PID, startTimeMs: 300 },
+              { pid: JOB_PID, startTimeMs: 500 },
+            ],
+            extraProcesses: [
+              processSample({ pid: JOB_PID, ppid: 1, startTimeMs: 500, name: "yes" }),
+            ],
+          }),
+          untracked: [
+            { name: "Slack Helper (Renderer)", cpuPercent: 3, residentBytes: 500, processCount: 2 },
+          ],
+        };
         const desktop = {
           ...desktopSnapshot(sampledAtUnixMs),
           electronProcesses: [],
@@ -270,8 +285,14 @@ describe("ResourceTelemetry", () => {
         expect(
           snapshot.processes.find((entry) => entry.identity.pid === ELECTRON_PID)?.category,
         ).toBe("electron-main");
+        expect(snapshot.processes.find((entry) => entry.identity.pid === JOB_PID)?.category).toBe(
+          "external-device",
+        );
         expect(snapshot.groups.electron.processStarts).toBe(1);
         expect(snapshot.groups.backend.processStarts).toBe(3);
+        expect(snapshot.outsideApps).toEqual([
+          { name: "Slack", cpuPercent: 3, rssBytes: 500, processCount: 2 },
+        ]);
       }),
   );
 
@@ -397,15 +418,22 @@ describe("ResourceTelemetry", () => {
       yield* Effect.gen(function* () {
         const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
         expect(yield* Queue.take(sent)).toEqual([electron]);
+        // A heavy job's root joins the list, and leaves it when the queue says so.
+        const job = { pid: 4_242 };
+        yield* telemetry.setJobRoots([job]);
+        expect(yield* Queue.take(sent)).toEqual([electron, job]);
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* telemetry.subscribe;
             expect(yield* Queue.take(sent)).toEqual([
               electron,
               ...[500, 600, 800, 900, 901].map((pid) => ({ pid })),
+              job,
             ]);
           }),
         );
+        expect(yield* Queue.take(sent)).toEqual([electron, job]);
+        yield* telemetry.setJobRoots([]);
         expect(yield* Queue.take(sent)).toEqual([electron]);
       }).pipe(Effect.provide(layerTelemetry));
     }),

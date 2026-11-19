@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildSnoozePresetActions,
+  buildSubagentMenuActions,
+  isAssistantSubagent,
   canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
@@ -38,6 +40,19 @@ describe("thread menu", () => {
       now: new Date(0),
     });
     expect(openNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Discard draft first only while the row holds a draft, assistant rows too", () => {
+    expect(ids()).not.toContain("discard-draft");
+    expect(ids({ discardDraft: true })[0]).toBe("discard-draft");
+    expect(ids({ discardDraft: true, assistant: { name: "Jarvis" } })[0]).toBe("discard-draft");
+    const discardDraft = vi.fn();
+    runThreadMenuEvent("discard-draft", { discardDraft } as unknown as ThreadMenuHandlers, {
+      displayedPresets: [],
+      presets: undefined,
+      now: new Date(0),
+    });
+    expect(discardDraft).toHaveBeenCalledTimes(1);
   });
 
   it("offers the Project sheet only when asked and routes it", () => {
@@ -139,8 +154,13 @@ describe("thread menu", () => {
     const assistantIds = ids({
       assistant: { name: "Jarvis" },
       turnIntoProject: { archivable: true },
+      notes: true,
+      projectViews: true,
     });
     for (const removed of [
+      "new-thread-on-branch",
+      "notes",
+      "project",
       "rename",
       "regenerate-title",
       "turn-into-project",
@@ -158,6 +178,32 @@ describe("thread menu", () => {
       "Jarvis settings",
     );
     expect(ids()).not.toContain("reset-assistant");
+  });
+
+  it.each([
+    ["an assistant's subagent", "assistant:a1:0", true],
+    ["a project thread's subagent", "thread-1", false],
+    ["a root thread", null, false],
+  ] as const)("hides project actions on %s's own menu", (_name, parentThreadId, hidden) => {
+    const outsideProjects = isAssistantSubagent({ lineage: { parentThreadId } });
+    expect(outsideProjects).toBe(hidden);
+    const menu = ids({
+      outsideProjects,
+      notes: true,
+      projectViews: true,
+      turnIntoProject: { archivable: true },
+    });
+    const projectIds = ["new-thread-on-branch", "notes", "project", "turn-into-project"];
+    expect(projectIds.filter((id) => menu.includes(id))).toEqual(hidden ? [] : projectIds);
+    expect(menu).toContain("rename");
+  });
+
+  it("gives a subagent row copy and pin only, swapping pin for unpin", () => {
+    const idsOf = (pinned: boolean, pinningSupported: boolean) =>
+      buildSubagentMenuActions({ pinned, pinningSupported }).map((action) => action.id);
+    expect(idsOf(false, true)).toEqual(["copy-thread", "copy-thread-id", "pin"]);
+    expect(idsOf(true, true)).toEqual(["copy-thread", "copy-thread-id", "unpin"]);
+    expect(idsOf(false, false)).toEqual(["copy-thread", "copy-thread-id"]);
   });
 
   it.each([

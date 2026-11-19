@@ -1775,6 +1775,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   headers: {},
                   env: { TOKEN: "t" },
                 },
+                {
+                  name: "linear_t3",
+                  transport: "http",
+                  url: "http://127.0.0.1:43123/mcp/integrations/linear",
+                  args: [],
+                  headers: { Authorization: "Bearer secret-codex-token" },
+                  env: {},
+                  proxy: { preApproved: true },
+                },
               ]
             : [],
         ),
@@ -1818,6 +1827,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               http_headers: { "X-Key": "k" },
             },
             "mcp_servers.files": { command: "npx", args: ["srv"], env: { TOKEN: "t" } },
+            "mcp_servers.linear_t3": {
+              url: "http://127.0.0.1:43123/mcp/integrations/linear",
+              http_headers: { Authorization: "Bearer secret-codex-token" },
+              default_tools_approval_mode: "approve",
+            },
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
@@ -10110,6 +10124,131 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["file-read", "file-read"],
           ],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect.each([
+      {
+        method: "item/commandExecution/requestApproval",
+        params: { turnId: nativeTurnId, itemId: "cmd", startedAtMs: 2, command: "rm -rf out" },
+      },
+      {
+        method: "item/fileChange/requestApproval",
+        params: { turnId: nativeTurnId, itemId: "patch", startedAtMs: 2 },
+      },
+      {
+        method: "item/permissions/requestApproval",
+        params: {
+          turnId: nativeTurnId,
+          itemId: "perm",
+          cwd: "/w",
+          startedAtMs: 2,
+          permissions: {
+            fileSystem: { entries: [{ access: "write", path: { type: "path", path: "/w" } }] },
+          },
+        },
+      },
+      {
+        method: "mcpServer/elicitation/request",
+        params: {
+          turnId: nativeTurnId,
+          serverName: "computer-use",
+          mode: "form",
+          message: "Allow Safari?",
+          requestedSchema: { type: "object", properties: {} },
+        },
+      },
+      {
+        method: "execCommandApproval",
+        params: {
+          conversationId: nativeThreadId,
+          callId: "exec",
+          command: ["ls"],
+          cwd: "/w",
+          parsedCmd: [],
+        },
+      },
+      {
+        method: "applyPatchApproval",
+        params: { conversationId: nativeThreadId, callId: "apply", fileChanges: {} },
+      },
+      {
+        method: "item/tool/requestUserInput",
+        params: {
+          turnId: nativeTurnId,
+          itemId: "question",
+          questions: [{ id: "q", header: "Q", question: "Which?", options: null }],
+        },
+      },
+    ] as const)("closes a $method request Codex resolves on its own", ({ method, params }) =>
+      Effect.gen(function* () {
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `self-resolved-${method}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              {
+                type: "emit_inbound",
+                label: "request",
+                frame: { id: 7, method, params: { threadId: nativeThreadId, ...params } },
+              },
+              {
+                type: "emit_inbound",
+                label: "resolved",
+                frame: {
+                  method: "serverRequest/resolved",
+                  params: { threadId: nativeThreadId, requestId: 7 },
+                },
+              },
+              turnCompleted(nativeTurnId),
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "resolved" ? Queue.take(pending).pipe(Effect.asVoid) : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`self-resolved-${method}-attempt`),
+            text: prompt,
+          }),
+        );
+        yield* harness.firstTerminal;
+
+        const updates = harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+        );
+        assert.deepEqual(
+          updates.map((request) => request.status),
+          ["pending", "cancelled"],
+        );
+        const request = updates[1]!;
+        assert.isNotNull(request.resolvedAt);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.nodeId === request.nodeId
+            ? [event.turnItem.status]
+            : [],
+        );
+        assert.equal(items.at(-1), "cancelled");
       }).pipe(
         Effect.scoped,
         Effect.provide(

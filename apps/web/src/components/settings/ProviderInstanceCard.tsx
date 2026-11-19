@@ -69,6 +69,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { ClaudeChromeSettingsRow } from "./ClaudeChromeSettingsRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -440,8 +441,7 @@ export function ProviderEnvironmentSection(props: {
 
   return (
     <SettingsRow
-      title="Variables"
-      description="API keys, base URLs, and other per-instance CLI settings."
+      {...settingCopy("provider-env-variables")}
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
@@ -1253,7 +1253,9 @@ export function ProviderInstanceCard({
     />
   ) : (
     <SettingsRow
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable-driver state, not a setting
       title="Driver"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable-driver state, not a setting
       description={
         <span>
           This instance uses <code className="text-foreground">{String(instance.driver)}</code>,
@@ -1266,12 +1268,12 @@ export function ProviderInstanceCard({
   return (
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
-        <SettingsRow title="Status" status={statusContent} />
+        <SettingsRow title={settingCopy("provider-status").title} status={statusContent} />
         {environmentId !== undefined && liveProvider?.driver === "claudeAgent" ? (
           <ClaudeChromeSettingsRow environmentId={environmentId} instanceId={instanceId} />
         ) : null}
         <SettingsRow
-          title="Display name"
+          title={settingCopy("provider-display-name").title}
           control={
             <div
               inert={readOnly}
@@ -1302,7 +1304,7 @@ export function ProviderInstanceCard({
       </SettingsSection>
 
       {setup || environmentFields.length > 0 ? (
-        <SettingsSection title="Setup">
+        <SettingsSection title={settingCopy("provider-setup").title}>
           {setup}
           {environmentFields.length > 0 ? (
             <div
@@ -1342,7 +1344,7 @@ export function ProviderInstanceCard({
           <FoldedSettingsSection
             key={instanceId}
             id={`provider-instance-${instanceId}-runtime`}
-            title="Runtime"
+            title={settingCopy("provider-runtime").title}
             headerPlacement="outside"
           >
             {runtime ?? runtimeFields}
@@ -1350,7 +1352,7 @@ export function ProviderInstanceCard({
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
         <SettingsSection
-          title="Runtime"
+          title={settingCopy("provider-runtime").title}
           inert={readOnly}
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
@@ -1360,7 +1362,7 @@ export function ProviderInstanceCard({
       ) : null}
 
       <SettingsSection
-        title="Environment"
+        title={settingCopy("provider-environment").title}
         inert={readOnly || instanceLocks?.wholeEnvironment}
         aria-disabled={readOnly || instanceLocks?.wholeEnvironment || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
@@ -1407,7 +1409,7 @@ export function ProviderInstanceCard({
       ) : null}
 
       {driverOption !== undefined ? (
-        <SettingsSection title="Models">
+        <SettingsSection title={settingCopy("provider-models").title}>
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
               Model preferences and custom models are saved on the selected environment and shared

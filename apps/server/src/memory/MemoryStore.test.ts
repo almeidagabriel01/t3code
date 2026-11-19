@@ -1550,6 +1550,7 @@ describe("MemoryStore", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* Store.MemoryStore;
+        const sql = yield* SqlClient.SqlClient;
         yield* store.enqueueWork(summaryWork(1));
         yield* store.enqueueWork({ ...summaryWork(2), kind: "consolidate", nextAttemptAt: 10000 });
         yield* store.enqueueWork(summaryWork(3));
@@ -1557,9 +1558,13 @@ describe("MemoryStore", () => {
         yield* store.enqueueWork({ ...summaryWork(4), status: "completed" });
         yield* store.enqueueWork(summaryWork(5, M.EnvironmentId.make("other")));
         const thread = { environmentId: env, threadId: M.ThreadId.make(id(70)) };
-        assert.strictEqual(yield* store.cancelThreadWork(thread), 3);
-        assert.strictEqual(yield* store.cancelThreadWork(thread), 0);
+        assert.strictEqual(yield* store.cancelThreadWork(thread, "source_invalidated"), 3);
+        assert.strictEqual(yield* store.cancelThreadWork(thread, "source_unavailable"), 0);
         assert.strictEqual((yield* store.readWork(summaryWork(3).id))?.status, "cancelled");
+        assert.deepStrictEqual(
+          yield* sql`SELECT DISTINCT failure_code FROM memory_outbox WHERE status='cancelled'`,
+          [{ failure_code: "source_invalidated" }],
+        );
         assert.isNull((yield* store.readWork(summaryWork(3).id))?.claimedBy);
         assert.strictEqual((yield* store.readWork(summaryWork(4).id))?.status, "completed");
         assert.strictEqual((yield* store.readWork(summaryWork(5).id))?.status, "pending");
@@ -3256,7 +3261,7 @@ describe("MemoryStore durable hub checkpoints", () => {
       }).pipe(checkUsage, Effect.provide(live)),
   );
   it.effect(
-    "producer reauthenticates the real hub and rolls back capacity and outer publication failure",
+    "producer reauthenticates the real hub, publishes past full staging and rolls back outer failure",
     () =>
       Effect.gen(function* () {
         yield* seed;
@@ -3350,10 +3355,12 @@ describe("MemoryStore durable hub checkpoints", () => {
                 nextFloor: 1,
                 now: 0,
               });
+              // Compaction is admitted past full staging; only the outer failure rolls it back.
+              return yield* Effect.fail("rollback" as const);
             }),
           )
           .pipe(Effect.flip);
-        assert.strictEqual(capacity._tag, "MemoryCapacityError");
+        assert.strictEqual(capacity, "rollback");
         assert.deepStrictEqual(
           yield* sql`SELECT * FROM memory_hub_retention WHERE space=${space}`,
           full,
@@ -5185,7 +5192,14 @@ it.effect(
       const empty = yield* store.readProcessing(input);
       assert.strictEqual(empty.processing.deferred, 0);
       assert.strictEqual(empty.processing.oldestDeferredAtUtc, null);
+      const appliedAt = "2026-10-12T00:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(appliedAt));
       yield* store.apply(decision());
+      // A deferral starts when the write that deferred it commits, never at the epoch.
+      assert.strictEqual(
+        (yield* store.readProcessing(input)).processing.oldestDeferredAtUtc,
+        appliedAt,
+      );
       const since = "2026-10-13T00:00:00.000Z";
       const later = "2026-10-14T00:00:00.000Z";
       const deferred = [
@@ -7355,7 +7369,7 @@ it.effect("r16 nullable processing reads the actual local item counters and PK p
     const plans = [
       yield* sql<{
         detail: string;
-      }>`EXPLAIN QUERY PLAN SELECT dimension,value FROM memory_quota_counters WHERE space=${key} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_admission_failures')`,
+      }>`EXPLAIN QUERY PLAN SELECT dimension,value FROM memory_quota_counters WHERE space=${key} AND scope_key='' AND dimension IN ('processing_quarantined','processing_eligible','processing_indexed','processing_cleanup','processing_scanner_held','processing_scanner_pending','processing_missing_parent','processing_deferred','processing_pending_sync','processing_parked','processing_failed_sync')`,
       yield* sql<{
         detail: string;
       }>`EXPLAIN QUERY PLAN SELECT processing_oldest_at FROM memory_items WHERE space=${key} AND processing_oldest_at IS NOT NULL ORDER BY processing_oldest_at LIMIT 1`,

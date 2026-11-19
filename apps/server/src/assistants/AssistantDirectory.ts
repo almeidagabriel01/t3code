@@ -2,6 +2,7 @@ import {
   type Assistant,
   type AssistantId,
   AssistantAvatar,
+  AssistantIntegrations,
   AssistantMcpServer,
   type AssistantTeam,
   type AssistantToolAccess,
@@ -12,9 +13,10 @@ import {
   isAssistantThreadId,
   AssistantAutonomy,
   DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_ASSISTANT_INTEGRATIONS,
   ProviderBudget,
   type ProjectId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +25,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { SettledWait } from "../autonomy/needsYou.ts";
 import { allTeams, decodeModelSelectionJson } from "./AssistantTeams.ts";
 
 export interface AssistantRow {
@@ -46,6 +49,7 @@ export interface AssistantRow {
   /** "project" when it lives in a real project; null until the service has worked it out. */
   readonly scope: string | null;
   readonly mcp_servers_json: string | null;
+  readonly integrations_json?: string | null;
   /** JSON array of the project ids a project assistant may work in; null reads as just `project_id`. */
   readonly project_ids_json?: string | null;
   readonly default_model_selection?: string | null;
@@ -81,6 +85,18 @@ export const decodeMcpServers = (json: string | null): ReadonlyArray<AssistantMc
 export const encodeMcpServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(AssistantMcpServer)),
 );
+
+const IntegrationsJson = Schema.fromJsonString(AssistantIntegrations);
+// A selection that no longer decodes falls back to all, the default before it was set.
+const decodeIntegrations = Schema.decodeOption(IntegrationsJson);
+export const encodeIntegrations = Schema.encodeSync(IntegrationsJson);
+const integrationsOf = (row: AssistantRow): AssistantIntegrations =>
+  row.integrations_json == null
+    ? DEFAULT_ASSISTANT_INTEGRATIONS
+    : Option.getOrElse(
+        decodeIntegrations(row.integrations_json),
+        () => DEFAULT_ASSISTANT_INTEGRATIONS,
+      );
 
 const ProjectIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeProjectIds = Schema.decodeOption(ProjectIdsJson);
@@ -118,6 +134,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   avatar: row.avatar_json === null ? null : Option.getOrNull(decodeAvatarOption(row.avatar_json)),
   scope: row.scope === "project" ? "project" : "all",
   mcpServers: decodeMcpServers(row.mcp_servers_json),
+  integrations: integrationsOf(row),
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:
     row.autonomy_json === null
@@ -152,6 +169,11 @@ export interface AssistantDirectoryShape {
   readonly taskOwner: (threadId: ThreadId) => Effect.Effect<Option.Option<Assistant>>;
   /** Whether a group still owns this hidden thread; absent means it does. */
   readonly inGroup?: (threadId: ThreadId) => Effect.Effect<boolean>;
+  /** Of these waits (`request:<id>` / `decision:<id>`), the ones that settled after `since`. */
+  readonly settledWaits?: (input: {
+    readonly keys: ReadonlyArray<string>;
+    readonly since: string;
+  }) => Effect.Effect<ReadonlyArray<SettledWait>>;
   /** Titles of the projects that still exist; a missing or unreadable one is simply absent. */
   readonly projectTitles?: (
     projectIds: ReadonlyArray<string>,
@@ -187,6 +209,56 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => Option.fromNullishOr(rows[0]?.environment_id as EnvironmentId)),
       // A failed read must not look like "not linked": the refusal would then send the work nowhere.
       Effect.orDie,
+    ),
+    settledWaits: Effect.fn("AssistantDirectory.settledWaits")(
+      function* ({ keys, since }) {
+        const ids = (prefix: string) =>
+          keys.filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
+        const requestIds = ids("request:");
+        const decisionIds = ids("decision:");
+        const requests =
+          requestIds.length === 0
+            ? []
+            : yield* sql<{
+                readonly id: string;
+                readonly thread_id: string;
+                readonly kind: string;
+                readonly title: string | null;
+              }>`
+                SELECT r.runtime_request_id AS id, r.thread_id, r.kind, t.title
+                FROM orchestration_v2_projection_runtime_requests r
+                LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
+                WHERE r.runtime_request_id IN ${sql.in(requestIds)} AND r.status <> 'pending'
+                  AND COALESCE(r.resolved_at, r.created_at) > ${since}`;
+        const decisions =
+          decisionIds.length === 0
+            ? []
+            : yield* sql<{
+                readonly id: string;
+                readonly from_thread_id: string;
+                readonly title: string;
+                readonly thread_title: string | null;
+              }>`
+                SELECT decision_id AS id, from_thread_id, title, thread_title FROM decisions
+                WHERE decision_id IN ${sql.in(decisionIds)} AND status <> 'open'
+                  AND COALESCE(answered_at, delivered_at, created_at) > ${since}`;
+        return [
+          ...requests.map((row): SettledWait => ({
+            key: `request:${row.id}`,
+            threadId: ThreadId.make(row.thread_id),
+            threadTitle: row.title ?? "the thread",
+            what: { requestKind: row.kind },
+          })),
+          ...decisions.map((row): SettledWait => ({
+            key: `decision:${row.id}`,
+            threadId: ThreadId.make(row.from_thread_id),
+            threadTitle: row.thread_title ?? "the thread",
+            what: { decisionTitle: row.title },
+          })),
+        ];
+      },
+      // A failed read only drops the note; the live check still covers the assistant.
+      Effect.orElseSucceed(() => []),
     ),
     projectTitles: (projectIds) =>
       projectIds.length === 0

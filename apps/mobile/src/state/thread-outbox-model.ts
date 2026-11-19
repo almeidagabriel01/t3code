@@ -286,6 +286,18 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
   return isTransportConnectionErrorMessage(errorMessage(error));
 }
 
+/** The server refused until the user lets running work finish or stops it; a retry would loop. */
+function isUserClearableRefusal(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "OrchestrationV2DispatchCommandError" &&
+    "refusal" in error &&
+    error.refusal === "session-busy"
+  );
+}
+
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
 export type ThreadOutboxFailureAction = "retry" | "restore";
 
@@ -294,6 +306,7 @@ export function resolveThreadOutboxFailureAction(input: {
   readonly error: unknown;
   readonly interrupted: boolean;
 }): ThreadOutboxFailureAction {
+  if (isUserClearableRefusal(input.error)) return "restore";
   if (
     input.stage === "settings-sync" ||
     input.interrupted ||

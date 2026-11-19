@@ -129,7 +129,7 @@ function deriveRepositoryScopedKey(
 function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
@@ -138,7 +138,8 @@ function deriveLogicalProjectKey(
 ): string {
   if (options?.groupScratchProjects && project.isScratch) return SCRATCH_PROJECT_SCOPE_KEY;
   const groupingMode = options?.groupingMode ?? "repository";
-  if (groupingMode === "separate") {
+  // Managed projects live in T3 home, which may sit inside any repo; they never join its group.
+  if (groupingMode === "separate" || project.managedRole !== undefined) {
     return derivePhysicalProjectKey(project);
   }
 
@@ -152,7 +153,7 @@ function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
   >,
   settings: ProjectGroupingSettings,
   options?: { readonly groupScratchProjects?: boolean },
@@ -168,7 +169,7 @@ export function resolveScratchProjectScopeKey(
   projects: ReadonlyArray<
     Pick<
       EnvironmentProject,
-      "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+      "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
     >
   >,
   settings: ProjectGroupingSettings = {
@@ -301,8 +302,10 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly preferredEnvironmentId?: EnvironmentId | null;
   readonly groupScratchProjects?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
+  // The assistants' home holds their conversations, never project work: no project list shows it.
+  const projects = input.projects.filter((project) => project.managedRole !== "assistants");
   const projectsByPhysicalKey = new Map<string, TProject[]>();
-  for (const project of input.projects) {
+  for (const project of projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const existing = projectsByPhysicalKey.get(physicalProjectKey);
     if (existing) {
@@ -335,7 +338,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const projectRefsByLogicalKey = new Map<string, ScopedProjectRef[]>();
   const seenProjectRefs = new Set<string>();
-  for (const project of input.projects) {
+  for (const project of projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const logicalKey =
       logicalKeyByPhysicalKey.get(physicalProjectKey) ??

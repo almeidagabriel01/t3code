@@ -104,7 +104,7 @@ export interface ThreadDragLabel {
   readonly count: number;
   /** The one dragged thread; null for several. */
   readonly threadKey: string | null;
-  /** `environmentId:projectId` of that thread: tabs only open in their own project's groups. */
+  /** The workspace to split; null when it has none (a side chat, or nothing on screen). */
   readonly projectKey: string | null;
   /** A tab moves between groups and never mentions itself in a composer. */
   readonly fromTab?: boolean;
@@ -162,6 +162,15 @@ function zoneRect(rect: DOMRect, zone: TabDropZone) {
   }
 }
 
+/** A sidebar drop on the composer is a mention, so the body's bottom edge zone sits above it. */
+function aboveComposer(body: HTMLElement, rect: DOMRect) {
+  const composerTop = body.querySelector(`[${DROP_TARGET_ATTRIBUTE}]`)?.getBoundingClientRect().top;
+  if (composerTop === undefined || composerTop <= rect.top || composerTop >= rect.bottom) {
+    return rect;
+  }
+  return { left: rect.left, top: rect.top, width: rect.width, height: composerTop - rect.top };
+}
+
 function findTabDrop(
   point: { x: number; y: number },
   label: ThreadDragLabel,
@@ -169,16 +178,17 @@ function findTabDrop(
   if (label.threadKey === null || label.projectKey === null) return null;
   const element = document.elementFromPoint(point.x, point.y);
   const groups = element?.closest<HTMLElement>(`[${GROUPS_ATTRIBUTE}]`);
-  if (!element || !groups || groups.getAttribute(GROUPS_ATTRIBUTE) !== label.projectKey) {
-    return null;
-  }
+  if (!element || !groups) return null;
   const strip = element.closest<HTMLElement>(`[${STRIP_ATTRIBUTE}]`);
   const stripGroupId = strip?.getAttribute(STRIP_ATTRIBUTE);
   if (strip && stripGroupId) {
     const stripRect = strip.getBoundingClientRect();
-    const tabRects = [...strip.querySelectorAll(`[${TAB_ATTRIBUTE}]`)].map((tab) =>
-      tab.getBoundingClientRect(),
-    );
+    // Thread blocks are `display: contents`, so each spans its first to its last tab.
+    const tabRects = [...strip.querySelectorAll(`[${TAB_ATTRIBUTE}]`)].map((block) => {
+      const left = block.firstElementChild?.getBoundingClientRect().left ?? 0;
+      const right = block.lastElementChild?.getBoundingClientRect().right ?? left;
+      return { left, right, width: right - left };
+    });
     const index = resolveTabInsertIndex(tabRects, point.x);
     const x = tabRects[index]?.left ?? tabRects.at(-1)?.right ?? stripRect.left;
     return {
@@ -198,7 +208,7 @@ function findTabDrop(
   const groupId = body?.getAttribute(BODY_ATTRIBUTE);
   if (!body || !groupId) return null;
   const rect = body.getBoundingClientRect();
-  const zone = resolveTabDropZone(rect, point);
+  const zone = resolveTabDropZone(label.fromTab ? rect : aboveComposer(body, rect), point);
   return {
     groups,
     target: { groupId, zone },
@@ -246,6 +256,7 @@ export function dropThreadContext(
     count: 1,
     threadKey,
     projectKey: label?.projectKey ?? null,
+    fromTab: label?.fromTab === true,
   });
   if (drop === null) return false;
   drop.groups.dispatchEvent(

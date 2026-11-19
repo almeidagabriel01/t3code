@@ -65,12 +65,12 @@ import { previewBridge } from "./preview/previewBridge";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   type PullRequestTabStatusSeed,
-  panelTabKeyAction,
   previewFaviconOf,
   RightPanelTab,
   SortableTabList,
   type TabAudioState,
 } from "./RightPanelTab";
+import { panelTabKeyAction } from "./tabKeyAction";
 import { usePanelTabLayout } from "./usePanelTabLayout";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 

@@ -108,6 +108,11 @@ vi.mock("./usagePaceSettings", () => ({
   }),
 }));
 
+import {
+  connectEnvironmentToSee,
+  selectEnvironmentToSee,
+} from "@t3tools/client-runtime/settings-empty-selection";
+
 import { AccountLimits } from "./UsageLimitsSection";
 import { UsageLimitAccountScreen, UsageLimitsSection } from "./UsageLimitsPooled";
 
@@ -146,14 +151,18 @@ const provider = {
   usageLimits,
 } as unknown as ServerProvider;
 
-async function mount(element: ReactNode) {
+async function mount(element: ReactNode, connected = true) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  mocks.presentations = new Map([
-    [
-      environmentId,
-      { entry: { target: { label: "Mac" } }, serverConfig: { providers: [provider] } },
-    ],
-  ]);
+  mocks.presentations = new Map(
+    connected
+      ? [
+          [
+            environmentId,
+            { entry: { target: { label: "Mac" } }, serverConfig: { providers: [provider] } },
+          ],
+        ]
+      : [],
+  );
   const container = window.document.createElement("div");
   await act(() => createRoot(container).render(element));
   return container;
@@ -209,5 +218,27 @@ describe("weekly model split", () => {
     );
     expect(container.textContent).toContain(SPLIT);
     expect(container.textContent).toContain("Up to 60% of the weekly limit");
+  });
+});
+
+describe("limits with no environment selected", () => {
+  it.each([
+    ["asks for one when there is none", false, null, connectEnvironmentToSee("limits")],
+    [
+      "asks to pick one when none is selected",
+      true,
+      new Set<EnvironmentId>(),
+      selectEnvironmentToSee("limits"),
+    ],
+  ] as const)("%s", async (_name, connected, selectedEnvironmentIds, expected) => {
+    const container = await mount(
+      <UsageLimitsSection
+        now={now}
+        failedLabels={[]}
+        selectedEnvironmentIds={selectedEnvironmentIds}
+      />,
+      connected,
+    );
+    expect(container.textContent).toBe(expected);
   });
 });

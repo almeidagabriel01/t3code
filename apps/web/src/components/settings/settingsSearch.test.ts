@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  type IntegrationsState,
   makeProviderSettingsSchema,
+  PROVIDER_DISPLAY_NAMES,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
@@ -10,14 +12,17 @@ import * as Schema from "effect/Schema";
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
+  integrationSearchItems,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
+  searchableSetting,
   searchSettings,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
   sourceControlHostSettingsSearchId,
+  type SettingsSearchAvailability,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -56,6 +61,27 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
     to: "/settings/general",
   },
 ];
+
+const EVERYTHING_AVAILABLE = {
+  localEnvironmentDisabled: false,
+  hasCloudPublicConfig: true,
+  hasEnvironment: true,
+  hasProviderSettingsEnvironment: true,
+  canManageLocalBackend: true,
+  isWslSettingsRowVisible: true,
+  hasThreadAutoSettlement: true,
+  managedTunnelActive: true,
+  hasPeerLinkHost: true,
+  hasMemory: true,
+  hasIntegrations: true,
+  hasImessage: true,
+  hasTelegram: true,
+  hasMacProviderSettingsEnvironment: true,
+  hasComputerUseHostEnvironment: true,
+  hasFastWorktreeCheckoutEnvironment: true,
+  hasTextGeneratorsEnvironment: true,
+  hasPrimaryEnvironment: true,
+} satisfies Required<SettingsSearchAvailability>;
 
 describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {
@@ -113,11 +139,28 @@ describe("searchSettings", () => {
     ).toEqual(["network-access", "connections-environment"]);
   });
 
+  it("tells the two machines' limits apart by the machine they belong to", () => {
+    const limits = searchSettings("cpu limit").filter((item) => item.title === "CPU limit");
+    expect(limits.map((item) => [item.id, item.machine])).toEqual([
+      ["heavy-work-cpu-ceiling", "This Mac"],
+      ["runner-linux-cpu-ceiling", "Linux PC"],
+      ["assistant-sandbox-cpu", undefined],
+    ]);
+    expect(searchSettings("linux pc cpu").map((item) => item.id)).toContain(
+      "runner-linux-cpu-ceiling",
+    );
+    expect(searchSettings("this mac memory free").map((item) => item.id)).toEqual([
+      "heavy-work-memory-floor",
+    ]);
+  });
+
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
-    expect(searchSettings("hold to quit")).toEqual([]);
-    expect(searchSettings("wsl")).toEqual([]);
-    expect(searchSettings("update track")).toEqual([]);
+    expect(searchSettings("hold to quit").map((item) => item.id)).not.toContain(
+      "quit-confirmation",
+    );
+    expect(searchSettings("wsl").map((item) => item.id)).toEqual([]);
+    expect(searchSettings("update track").map((item) => item.id)).toEqual([]);
   });
 
   it("hides System glass when the desktop bridge has no material API", () => {
@@ -261,18 +304,107 @@ describe("searchSettings", () => {
   });
 
   it("finds rows by the titles shown on their pages", () => {
-    for (const [title, id] of [
-      ["Automatic worktree cleanup", "storage-worktrees"],
-      ["Delete settled worktrees", "storage-worktrees"],
-      ["Delete old browser artifacts", "storage-artifacts"],
-      ["Delete old rotated logs", "storage-artifacts"],
-      ["Custom search URL", "browser-search-engine"],
-      ["Native sessions", "providers"],
-      ["CODEX_HOME path", "providers"],
-      ["Shadow home path", "providers"],
-    ] as const) {
-      expect(searchSettings(title)[0]?.id, title).toBe(id);
+    for (const title of [
+      "Automatic worktree cleanup",
+      "Delete settled worktrees",
+      "Delete old browser artifacts",
+      "Delete old rotated logs",
+      "Custom search URL",
+      "Native sessions",
+      "CODEX_HOME path",
+      "Shadow home path",
+    ]) {
+      expect(searchSettings(title)[0]?.title, title).toBe(title);
     }
+  });
+
+  // One row per area whose rows used to draw text the index never saw.
+  it.each([
+    { query: "runtime", title: "Runtime", to: "/settings/providers" },
+    { query: "account", title: "Account", to: "/settings/providers" },
+    { query: "budget", title: "Budget (USD)", to: "/settings/providers" },
+    { query: "warn at", title: "Warn at (%)", to: "/settings/providers" },
+    { query: "turns yellow", title: "Warn at (%)", to: "/settings/providers" },
+    { query: "cursor account", title: "Cursor account", to: "/settings/providers" },
+    { query: "manage servers", title: "Manage servers", to: "/settings/providers" },
+    { query: "fallback models", title: "Fallback models", to: "/settings/threads" },
+    { query: "model by folder", title: "Model by folder", to: "/settings/threads" },
+    { query: "when a task is done", title: "When a task is done", to: "/settings/assistants" },
+    { query: "stuck after", title: "Stuck after", to: "/settings/assistants" },
+    { query: "agent memory access", title: "Allow agent memory access", to: "/settings/memory" },
+    { query: "reconcile sync", title: "Reconcile sync", to: "/settings/memory" },
+    { query: "tool output", title: "Summarize old tool output", to: "/settings/maintenance" },
+    { query: "reclaim", title: "Reclaim freed database space", to: "/settings/maintenance" },
+    { query: "cleanup instructions", title: "Cleanup instructions", to: "/settings/voice" },
+    { query: "pinned projects", title: "Pin", to: "/settings/projects" },
+    { query: "board to configure", title: "Board to configure", to: "/settings/kanban" },
+    { query: "scheduled tasks", title: "Scheduled tasks", to: "/settings/scheduled-tasks" },
+    { query: "first run on the phone", title: "First run on the phone", to: "/settings/devices" },
+  ] as const)("finds the $title row by $query", ({ query, title, to }) => {
+    const found = searchSettings(query, filterAvailableSettingsSearchItems(EVERYTHING_AVAILABLE));
+    expect(found.map((item) => [item.title, item.to])).toContainEqual([title, to]);
+  });
+
+  it("shows rows that share a title, page and jump target once", () => {
+    const runtimes = searchSettings("runtime").filter((item) => item.title === "Runtime");
+    expect(runtimes).toHaveLength(1);
+  });
+
+  it("finds every provider by its display name", () => {
+    for (const name of Object.values(PROVIDER_DISPLAY_NAMES).filter((name) => name !== undefined)) {
+      expect(searchSettings(name).map((item) => item.title)).toContain(name);
+    }
+  });
+
+  it("finds integrations by the name and blurb the directory draws", () => {
+    const items = integrationSearchItems([
+      {
+        catalog: [],
+        integrations: [],
+        ownApps: [],
+        loopbackRedirectUri: "http://127.0.0.1:1/callback",
+        detected: [
+          {
+            id: "detected-1",
+            name: "Acme tracker",
+            origin: "claude-code" as const,
+            transport: "http",
+            catalogId: null,
+            enabled: true,
+            copyable: false,
+            secretKeys: [],
+            needsValue: [],
+          },
+        ],
+        detectionSources: [],
+      } satisfies IntegrationsState,
+    ]);
+    expect(searchSettings("acme", items).map((item) => [item.title, item.to])).toEqual([
+      ["Acme tracker", "/settings/integrations"],
+    ]);
+  });
+
+  it("hides every row of a page that this machine does not have", () => {
+    const pages = filterAvailableSettingsSearchItems({
+      ...EVERYTHING_AVAILABLE,
+      hasMemory: false,
+      hasTelegram: false,
+    }).map((item) => item.to);
+    expect(pages).not.toContain("/settings/memory");
+    expect(pages).not.toContain("/settings/telegram");
+    expect(pages).toContain("/settings/imessage");
+  });
+
+  it("keeps each description short enough to stay two lines beside a control", () => {
+    const long = SETTINGS_SEARCH_ITEMS.flatMap((item: SettingsSearchItem) =>
+      (item.description?.length ?? 0) > 200 ? [item.id] : [],
+    );
+    expect(long).toEqual([]);
+  });
+
+  it("keeps setting ids a closed set", () => {
+    // @ts-expect-error A row cannot read text for an id the index does not hold.
+    expect(() => searchableSetting("not-a-setting")).toThrow();
   });
 
   it("keeps catalog result ids unique", () => {
@@ -341,6 +473,7 @@ describe("auto-settlement search availability", () => {
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
+      "threads-section-auto-settle",
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
@@ -438,5 +571,7 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
+    expect(movedSettingsPath("/settings/integrations", "")).toBeNull();
+    expect(movedSettingsPath("/settings/integrations", "integrations")).toBeNull();
   });
 });

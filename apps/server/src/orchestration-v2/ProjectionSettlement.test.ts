@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -330,7 +331,12 @@ it.effect(
         new Set(eligible.map((thread) => thread.id)),
         new Set(
           shell.threads
-            .filter((thread) => isAutoSettlementCandidate(thread, DateTime.toEpochMillis(now)))
+            .filter((thread) =>
+              isAutoSettlementCandidate(
+                { ...thread, subagentHandoff: null, assistantTaskDismissed: false },
+                DateTime.toEpochMillis(now),
+              ),
+            )
             .map((thread) => thread.id),
         ),
       );
@@ -349,6 +355,8 @@ it.effect(
             ...settings,
             thread: {
               ...expected,
+              subagentHandoff: null,
+              assistantTaskDismissed: false,
               latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
             },
           }),
@@ -476,5 +484,114 @@ it.effect("sql: an unsettled-only shell read skips settled threads", () =>
     assert.equal(shell.archivedThreads.length, 0);
     const all = yield* store.getShellSnapshot({ location: "active" });
     assert.equal(all.threads.length, 4);
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parent = yield* createThread("parent", { worktreePath: "/worktrees/parent" });
+    const settledParent = yield* createThread("settled-parent", {
+      settledOverride: "settled",
+      settledAt: old,
+    });
+    const asChild = (parentThreadId: ThreadId, worktreePath: string | null) => ({
+      worktreePath,
+      lineage: {
+        parentThreadId,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: parentThreadId,
+      },
+    });
+    const native = yield* createThread("native", asChild(parent, "/worktrees/parent"));
+    const delegated = yield* createThread("delegated", asChild(parent, "/worktrees/delegated"));
+    const orphan = yield* createThread("orphan", asChild(settledParent, null));
+    const task = yield* createThread("task");
+    const parentRun = yield* createRun(parent, "running");
+    const record = (
+      childThreadId: ThreadId,
+      origin: "provider_native" | "app_owned",
+      deliveryState?: "delivered",
+    ) =>
+      store.apply({
+        id: EventId.make(`event:subagent:${childThreadId}`),
+        type: "subagent.updated",
+        threadId: parent,
+        runId: parentRun,
+        nodeId: NodeId.make(`node:${childThreadId}`),
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: old,
+        payload: {
+          id: NodeId.make(`node:${childThreadId}`),
+          threadId: parent,
+          runId: parentRun,
+          parentNodeId: NodeId.make("node:parent"),
+          origin,
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Review",
+          title: null,
+          model: null,
+          ...(deliveryState === undefined
+            ? {}
+            : { completionDelivery: { state: deliveryState, observedByRunId: null } }),
+          status: "completed",
+          result: "done",
+          startedAt: old,
+          completedAt: old,
+          updatedAt: old,
+        },
+      });
+    yield* record(native, "provider_native");
+    yield* record(delegated, "app_owned", "delivered");
+    yield* sql`INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at, dismissed_at)
+      VALUES (${task}, 'jarvis', 'project:settlement', 'task', ${DateTime.formatIso(old)}, ${DateTime.formatIso(now)})`;
+
+    const byId = new Map((yield* store.getSettlementCandidates()).map((row) => [row.id, row]));
+    assert.deepEqual(byId.get(native)?.subagentHandoff, {
+      origin: "provider_native",
+      status: "completed",
+      deliveryState: null,
+      parentSettled: false,
+      parentRunActive: true,
+      parentReadResult: false,
+      parentWorktreePath: "/worktrees/parent",
+    });
+    assert.deepEqual(byId.get(delegated)?.subagentHandoff, {
+      origin: "app_owned",
+      status: "completed",
+      deliveryState: "delivered",
+      parentSettled: false,
+      parentRunActive: true,
+      parentReadResult: false,
+      parentWorktreePath: "/worktrees/parent",
+    });
+    assert.deepEqual(byId.get(orphan)?.subagentHandoff, {
+      origin: null,
+      status: null,
+      deliveryState: null,
+      parentSettled: true,
+      parentRunActive: false,
+      parentReadResult: false,
+      parentWorktreePath: null,
+    });
+    assert.equal(byId.get(task)?.subagentHandoff, null);
+    assert.equal(byId.get(task)?.assistantTaskDismissed, true);
+    assert.equal(byId.get(native)?.assistantTaskDismissed, false);
+    // A parent turn that ends once the child finished is the one that read its result.
+    yield* createRun(parent, "completed", 2);
+    const read = (yield* store.getSettlementCandidates(native))[0];
+    assert.equal(read?.subagentHandoff?.parentReadResult, true);
+    // A parent's sweep covers its children.
+    assert.deepEqual(
+      new Set((yield* store.getSettlementCandidates(parent)).map((row) => row.id)),
+      new Set([native, delegated]),
+    );
   }).pipe(Effect.provide(layerSql)),
 );

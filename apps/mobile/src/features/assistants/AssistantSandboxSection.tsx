@@ -17,6 +17,7 @@ import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { useAssistantSandbox, useAssistantSandboxActions } from "../../state/assistants";
 import { ChoiceRow } from "./AssistantFormFields";
+import { SANDBOX_COPY } from "./settingsAssistantsCopy";
 
 /** The sandbox container assistants may work in: its state and Start / Stop / Remove. */
 export function AssistantSandboxSection(props: {
@@ -75,21 +76,16 @@ export function AssistantSandboxSection(props: {
 
   return (
     <>
-      <ListSection
-        title={`Sandbox${props.suffix}`}
-        footer={
-          "A Linux container (Docker) on the server's machine where assistants set to Sandbox run commands and edit files. To sign in to providers inside it, open T3 Code on that Mac, Settings, Assistants, Sandbox."
-        }
-      >
+      <ListSection title={`${SANDBOX_COPY.title}${props.suffix}`} footer={SANDBOX_COPY.footer}>
         <ListRowLayout
           icon="cube"
-          label={`Sandbox container · ${view.label}`}
+          label={`${SANDBOX_COPY.container} · ${view.label}`}
           {...(view.detail === null ? {} : { description: view.detail })}
         />
         <ListRowLayout
           icon="link"
-          label={`Linked environments · ${status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
-          description="The sandbox link needs it. Starting the sandbox turns it on."
+          label={`${SANDBOX_COPY.linkedEnvironments} · ${status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
+          description={SANDBOX_COPY.linkedEnvironmentsDescription}
         />
         <ListActionRow
           icon="play"
@@ -111,10 +107,10 @@ export function AssistantSandboxSection(props: {
           onPress={remove}
         />
       </ListSection>
-      <ListSection title="GitHub in the sandbox" footer={SANDBOX_GITHUB_DESCRIPTION}>
+      <ListSection title={SANDBOX_COPY.githubTitle} footer={SANDBOX_GITHUB_DESCRIPTION}>
         <ListRowLayout
           icon="person.crop.circle"
-          label={`GitHub · ${github.label}`}
+          label={`${SANDBOX_COPY.github} · ${github.label}`}
           {...(userCode !== null
             ? { description: userCode }
             : github.detail === null
@@ -154,7 +150,7 @@ export function AssistantSandboxSection(props: {
           />
         ) : null}
       </ListSection>
-      <ListSection title="CPU limit" footer={SANDBOX_CPU_DESCRIPTION}>
+      <ListSection title={SANDBOX_COPY.cpuTitle} footer={SANDBOX_CPU_DESCRIPTION}>
         {sandboxCpuChoices(status.cpus).map((choice) => (
           <ChoiceRow
             key={choice.label}
@@ -172,7 +168,7 @@ export function AssistantSandboxSection(props: {
           />
         ))}
       </ListSection>
-      <ListSection title="When a task is done" footer={SANDBOX_WHEN_DONE_DESCRIPTION}>
+      <ListSection title={SANDBOX_COPY.whenDoneTitle} footer={SANDBOX_WHEN_DONE_DESCRIPTION}>
         {SANDBOX_WHEN_DONE_CHOICES.map((choice) => (
           <ChoiceRow
             key={choice.value}

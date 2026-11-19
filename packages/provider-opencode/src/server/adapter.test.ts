@@ -25,7 +25,6 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
-  type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -58,74 +57,20 @@ import {
   OPENCODE_PROVIDER,
   reconcileOpenCodePromptAdmissionStatus,
 } from "./adapter.ts";
+import {
+  asyncEventStream,
+  makeOpenCodeRuntimeHarness,
+  OPEN_CODE_TEST_SETTINGS,
+  openCodeTurnSlotRace,
+  promiseGate,
+  runtimePolicy,
+} from "./adapter.testkit.ts";
 import { packMemoryContext, memoryContextText } from "@t3tools/provider-core/server/memoryContext";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeOpenCodeSettings = Schema.decodeEffect(OpenCodeSettings);
-const OPEN_CODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
-  serverUrl: "http://test.invalid",
-});
-
-function promiseGate<A>() {
-  let resolve!: (value: A) => void;
-  const promise = new Promise<A>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-function asyncEventStream() {
-  const values: Array<{ value: unknown; handled: ReturnType<typeof promiseGate<void>> }> = [];
-  const waiters: Array<(value: IteratorResult<unknown>) => void> = [];
-  let previousHandled: ReturnType<typeof promiseGate<void>> | undefined;
-  let closed = false;
-  return {
-    close() {
-      closed = true;
-      for (const waiter of waiters.splice(0)) waiter({ done: true, value: undefined });
-    },
-    push(value: unknown) {
-      const handled = promiseGate<void>();
-      const waiter = waiters.shift();
-      if (waiter) {
-        previousHandled = handled;
-        waiter({ done: false, value });
-      } else values.push({ value, handled });
-      return handled.promise;
-    },
-    stream: {
-      [Symbol.asyncIterator]() {
-        return {
-          next: () => {
-            previousHandled?.resolve();
-            if (closed) return Promise.resolve({ done: true as const, value: undefined });
-            const entry = values.shift();
-            if (entry !== undefined) {
-              previousHandled = entry.handled;
-              return Promise.resolve({ done: false as const, value: entry.value });
-            }
-            return new Promise<IteratorResult<unknown>>((resolve) => waiters.push(resolve));
-          },
-        };
-      },
-    },
-  };
-}
 
 const OPENCODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
-
-function runtimePolicy(
-  runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
-  override: Partial<ProviderAdapter.ProviderAdapterV2RuntimePolicy> = {},
-): ProviderAdapter.ProviderAdapterV2RuntimePolicy {
-  return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode,
-    interactionMode: "default",
-    cwd: null,
-    ...override,
-  });
-}
 
 function permissionAction(rules: ReturnType<typeof openCodePermissionRules>, permission: string) {
   return rules.findLast((rule) => rule.permission === "*" || rule.permission === permission)
@@ -152,117 +97,6 @@ function providerTurn(input: {
     completedAt: null,
   };
 }
-
-const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(function* (
-  suffix: string,
-  nativeSessionId: string,
-  client: object,
-  host: Partial<ProviderHost.ProviderHost["Service"]> = {},
-  turnSettings: {
-    readonly options?: ReadonlyArray<ProviderOptionSelection>;
-    readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
-  } = {},
-  memory: Pick<
-    ProviderAdapter.ProviderAdapterV2TurnInput,
-    "memoryContext" | "refreshMemoryContext"
-  > = {},
-) {
-  const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
-  const threadId = ThreadId.make(`thread-opencode-${suffix}`);
-  const modelSelection = {
-    instanceId,
-    model: "anthropic/claude-sonnet",
-    options: turnSettings.options ?? [],
-  };
-  const policy = runtimePolicy("full-access", {
-    cwd: "/workspace",
-    interactionMode: turnSettings.interactionMode ?? "default",
-  });
-  const adapter = yield* makeOpenCodeAdapterV2({
-    instanceId,
-    settings: OPEN_CODE_TEST_SETTINGS,
-    environment: {},
-  }).pipe(
-    Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
-      createOpenCodeSdkClient: () => client,
-    } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
-    Effect.provideService(ProviderHost.ProviderHost, {
-      paths: { cwd: "/workspace" },
-      resolveAttachmentPath: () => null,
-      ...host,
-    } as unknown as ProviderHost.ProviderHost["Service"]),
-  );
-  const runtime = yield* adapter.openSession({
-    threadId,
-    providerSessionId: ProviderSessionId.make(`session-opencode-${suffix}`),
-    modelSelection,
-    runtimePolicy: policy,
-  });
-  const providerThread = yield* runtime.ensureThread({
-    threadId,
-    modelSelection,
-    runtimePolicy: policy,
-  });
-  const now = yield* DateTime.now;
-  const startTurn = (
-    text = "hello",
-    startProviderThread: OrchestrationV2ProviderThread = providerThread,
-    turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
-  ) =>
-    runtime.startTurn({
-      appThread: {
-        id: threadId,
-        projectId: ProjectId.make(`project-opencode-${suffix}`),
-        title: suffix,
-        providerInstanceId: modelSelection.instanceId,
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: policy.interactionMode,
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: providerThread.id,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-        forkedFrom: null,
-        createdBy: "user",
-        creationSource: "web",
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        lastVisitedAt: null,
-        deletedAt: null,
-      },
-      threadId,
-      runId: RunId.make(`run-opencode-${suffix}`),
-      runOrdinal: 1,
-      providerTurnOrdinal: 1,
-      attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
-      rootNodeId: NodeId.make(`node-opencode-${suffix}`),
-      providerThread: startProviderThread,
-      message: {
-        createdBy: "user",
-        creationSource: "web",
-        messageId: MessageId.make(`message-opencode-${suffix}`),
-        text,
-        attachments: [],
-      },
-      modelSelection,
-      runtimePolicy: turnPolicy,
-      ...memory,
-    });
-  return {
-    nativeSessionId,
-    now,
-    policy,
-    providerThread,
-    runId: RunId.make(`run-opencode-${suffix}`),
-    runtime,
-    startTurn,
-    threadId,
-  };
-});
 
 const memorySnapshot = packMemoryContext({
   memorySpaceId: MemorySpaceId.make("00000000-0000-4000-8000-000000000099"),
@@ -2483,6 +2317,27 @@ describe("OpenCodeAdapterV2", () => {
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const { exit, seen, firstPromptId } = yield* openCodeTurnSlotRace;
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
+      // The ended turn's thread state lands before its end, never on top of the next turn's.
+      const terminalIndex = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.isTrue(
+        seen
+          .slice(0, terminalIndex)
+          .some(
+            (earlier) =>
+              earlier.type === "provider_thread.updated" &&
+              earlier.providerThread.nativeConversationHeadRef?.nativeId === firstPromptId,
+          ),
+      );
+    }),
   );
 
   it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>

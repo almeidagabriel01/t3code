@@ -128,7 +128,7 @@ export function projectLabelsByScope(input: {
   );
 }
 
-/** Projects without a board yet, plus "No project" where the server offers it and it has none. */
+/** Projects without a board yet, plus "No project" where Scratch exists or the server offers it, and has none. */
 export function newBoardTargets(input: {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -159,18 +159,29 @@ export function newBoardTargets(input: {
         title: labels.get(boardScopeKey(environmentId, project.id)) ?? project.title,
         projectId: project.id,
       }));
+    // Without the server's folder, only a Scratch project that already exists can take the board.
     const noProject =
-      scratchWorkspaceRoot === null ||
-      (scratch !== undefined && hasBoard.has(boardScopeKey(environmentId, scratch.id)))
+      scratch !== undefined && hasBoard.has(boardScopeKey(environmentId, scratch.id))
         ? []
-        : [
-            {
-              key: `${environmentId}:no-project`,
-              environmentId,
-              title: "No project",
-              projectId: null,
-            },
-          ];
+        : scratchWorkspaceRoot !== null
+          ? [
+              {
+                key: `${environmentId}:no-project`,
+                environmentId,
+                title: "No project",
+                projectId: null,
+              },
+            ]
+          : scratch !== undefined
+            ? [
+                {
+                  key: boardScopeKey(environmentId, scratch.id),
+                  environmentId,
+                  title: "No project",
+                  projectId: scratch.id,
+                },
+              ]
+            : [];
     return [...noProject, ...named];
   });
 }

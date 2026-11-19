@@ -7,6 +7,7 @@ import * as NodeStreamPromises from "node:stream/promises";
 
 import {
   ASSISTANT_TRANSFER_HEADING,
+  assistantTransferList,
   type AssistantLibrary,
   type AssistantLibraryFile,
 } from "@t3tools/contracts";
@@ -197,8 +198,4 @@ export const listLibrary = (sharedDir: string, assistantId: string) =>
 
 /** What the recipient reads: where the copies are, as links the clients open in the file viewer. */
 export const transferText = (paths: ReadonlyArray<string>) =>
-  paths.length === 0
-    ? ""
-    : `\n${ASSISTANT_TRANSFER_HEADING}\n${paths
-        .map((path) => `- [${NodePath.basename(path)}](<${path}>)`)
-        .join("\n")}`;
+  paths.length === 0 ? "" : `\n${ASSISTANT_TRANSFER_HEADING}\n${assistantTransferList(paths)}`;

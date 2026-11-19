@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   makeSubagentChildThread,
@@ -181,6 +182,16 @@ it.effect.each(["provider", "mcp"] as const)(
         autoSettleOnMerge: false,
       });
       assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
+
+      // A native child still running is never a candidate: its activity lives in the parent.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents
+          (subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status,
+            updated_at, payload_json)
+        VALUES ('subagent:live', ${parentThreadId}, 'node:subagent-parent', 'claudeAgent',
+          ${childThreadId}, 'provider_native', 'running', '2026-01-01', '{}')`;
+      assert.deepEqual(yield* store.getSettlementCandidates(), []);
     }).pipe(
       Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
     ),

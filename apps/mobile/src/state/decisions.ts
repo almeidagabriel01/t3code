@@ -56,7 +56,7 @@ const decisionStatesAtom = Atom.make((get) =>
   }),
 ).pipe(Atom.withLabel("mobile-decision-states"));
 
-const decisionEntriesAtom = Atom.make((get) =>
+export const decisionEntriesAtom = Atom.make((get) =>
   collectDecisionEntries(get(decisionStatesAtom)),
 ).pipe(Atom.withLabel("mobile-decision-entries"));
 

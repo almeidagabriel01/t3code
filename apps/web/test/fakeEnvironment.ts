@@ -25,6 +25,9 @@ import {
   WsRpcGroup,
   AssistantError,
   type Assistant,
+  type IntegrationBeginConnectInput,
+  type IntegrationBeginConnectResult,
+  type IntegrationsState,
   type AssistantGroupMessage,
   type AssistantGroupsEvent,
   type AssistantGroupsHistoryResult,
@@ -59,6 +62,7 @@ import {
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ThreadContextUsage,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type ServerConfigStreamEvent,
@@ -141,6 +145,7 @@ const baseServerConfig: ServerConfig = {
     threadSnapshotPagination: true,
     threadResumeCompletionMarker: true,
     shellResumeCompletionMarker: true,
+    threadContextUsage: true,
   }),
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 };
@@ -649,6 +654,37 @@ handlers[WS_METHODS.decisionsAnswer] = (input: { readonly decisionId: string }) 
 handlers[WS_METHODS.decisionsDismiss] = (input: { readonly decisionId: string }) =>
   settle(WS_METHODS.decisionsDismiss, input, "withdrawn");
 
+/** The integrations state the fake server pushes, and the connects it was asked for. */
+export const fakeIntegrations = {
+  state: null as IntegrationsState | null,
+  begun: [] as IntegrationBeginConnectInput[],
+  beginResult: null as IntegrationBeginConnectResult | null,
+  /** Live integrations streams opened so far. */
+  subscriptions: 0,
+};
+const integrationSubscribers = new Set<Queue.Queue<IntegrationsState>>();
+handlers[WS_METHODS.integrationsSubscribe] = () => {
+  fakeIntegrations.subscriptions += 1;
+  return subscribe<IntegrationsState>(
+    fakeIntegrations.state === null ? [] : [fakeIntegrations.state],
+    (queue) => {
+      integrationSubscribers.add(queue);
+      return () => integrationSubscribers.delete(queue);
+    },
+  );
+};
+handlers[WS_METHODS.integrationsBeginConnect] = (input: IntegrationBeginConnectInput) => {
+  fakeIntegrations.begun.push(input);
+  return fakeIntegrations.beginResult === null
+    ? Effect.never
+    : Effect.succeed(fakeIntegrations.beginResult);
+};
+/** Replaces the integrations state, including for a subscription already open. */
+export function publishIntegrations(state: IntegrationsState): void {
+  fakeIntegrations.state = state;
+  for (const queue of integrationSubscribers) Effect.runSync(Queue.offer(queue, state));
+}
+
 /** Assistants the fake server holds; it only serves the snapshot, mutations stay pending. */
 export const fakeAssistants = { items: [] as Assistant[], teams: [] as AssistantTeam[] };
 const assistantSubscribers = new Set<Queue.Queue<AssistantsEvent>>();
@@ -667,12 +703,35 @@ handlers[WS_METHODS.assistantsSubscribe] = () =>
       return () => assistantSubscribers.delete(queue);
     },
   );
+/** A changed record's `updatedAt` only moves forward, as the server stamps every change; clients key on it. */
+function restamp<T extends { readonly id: string; readonly updatedAt: string }>(
+  previous: ReadonlyArray<T>,
+  next: ReadonlyArray<T>,
+): T[] {
+  const before = new Map(previous.map((record) => [record.id, record]));
+  const content = (record: T) => JSON.stringify({ ...record, updatedAt: null });
+  return next.map((record) => {
+    const prior = before.get(record.id);
+    if (prior === undefined) return record;
+    if (content(prior) === content(record)) return prior;
+    const stamp = Math.max(Date.parse(prior.updatedAt), Date.parse(record.updatedAt)) + 1;
+    return { ...record, updatedAt: new Date(stamp).toISOString() };
+  });
+}
+
 /** Replaces the assistants, including for a subscription an earlier screen left open. */
 export function publishAssistants(items: Assistant[], teams: AssistantTeam[] = []): void {
-  fakeAssistants.items = items;
-  fakeAssistants.teams = teams;
+  fakeAssistants.items = restamp(fakeAssistants.items, items);
+  fakeAssistants.teams = restamp(fakeAssistants.teams, teams);
   for (const queue of assistantSubscribers) {
-    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items, teams, tasks: [] }));
+    Effect.runSync(
+      Queue.offer(queue, {
+        type: "snapshot",
+        assistants: fakeAssistants.items,
+        teams: fakeAssistants.teams,
+        tasks: [],
+      }),
+    );
   }
 }
 
@@ -727,7 +786,12 @@ export const fakeGroupChat = {
   conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
   subscriptions: [] as Array<Record<string, unknown>>,
+  /** What `getThreadContextUsage` answers, by thread id. */
+  contextUsage: new Map<string, OrchestrationV2ThreadContextUsage>(),
 };
+handlers[ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage] = (input: {
+  readonly threadId: ThreadId;
+}) => Effect.succeed(fakeGroupChat.contextUsage.get(input.threadId) ?? null);
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
 handlers[WS_METHODS.assistantGroupsSubscribe] = (input: Record<string, unknown>) => {
   fakeGroupChat.subscriptions.push(input);
@@ -1259,6 +1323,7 @@ export function installFakeEnvironment(
   options: {
     readonly decisions?: boolean;
     readonly assistants?: boolean;
+    readonly integrations?: boolean;
     readonly imessageChannel?: boolean;
     readonly telegramChannel?: boolean;
     readonly sideChats?: boolean;
@@ -1286,6 +1351,7 @@ export function installFakeEnvironment(
   extraCapabilities = {
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),
+    ...(options.integrations ? { integrations: true } : {}),
     ...(options.imessageChannel ? { imessageChannel: true } : {}),
     ...(options.telegramChannel ? { telegramChannel: true } : {}),
     ...(options.sideChats ? { sideChats: true } : {}),
@@ -1322,6 +1388,9 @@ export function installFakeEnvironment(
       fakeSettings.refuse = null;
       fakeWatches.items = [];
       fakeWatches.calls = [];
+      fakeIntegrations.state = null;
+      fakeIntegrations.begun = [];
+      fakeIntegrations.beginResult = null;
       // The app caches the environment's config and capabilities here; the next test starts cold.
       appAtomRegistry.reset();
       dispatched = [];

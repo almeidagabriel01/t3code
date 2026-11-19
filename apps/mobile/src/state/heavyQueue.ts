@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createHeavyQueueEnvironmentAtoms } from "@t3tools/client-runtime/state/heavyQueue";
-import type { EnvironmentId, HeavyCommandsState, HeavyQueueState } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type EnvironmentId,
+  type HeavyCommandsState,
+  type HeavyQueueState,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
@@ -14,6 +19,7 @@ const EMPTY: HeavyQueueState = {
   paused: false,
   rules: [],
   maxRunning: 1,
+  ...HEAVY_QUEUE_DEFAULTS,
   reasons: {},
   room: true,
   claudeHookInstalled: false,

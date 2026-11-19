@@ -26,6 +26,7 @@ import {
   parseStartupCrashRecords,
   type StartupCrashRecord,
 } from "./crash-log-model";
+import { DIAGNOSTICS_COPY } from "./diagnosticsCopy";
 
 // expo-updates retains only seven days of logs.
 const LOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -103,7 +104,7 @@ export function SettingsDiagnosticsRouteScreen() {
       >
         {crashReportingAvailable ? <CrashReportsSetting /> : null}
 
-        <SettingsSection title="Startup crashes">
+        <SettingsSection title={DIAGNOSTICS_COPY.startupCrashes.title}>
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
               <AppActivityIndicator />
@@ -129,7 +130,7 @@ export function SettingsDiagnosticsRouteScreen() {
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title="Actions">
+          <SettingsSection title={DIAGNOSTICS_COPY.actions.title}>
             <SettingsActionRow
               icon={copied ? "checkmark" : "doc.on.doc"}
               label={copied ? "Copied" : "Copy crash report"}
@@ -138,9 +139,7 @@ export function SettingsDiagnosticsRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Paste the report into a GitHub issue. It contains the app version, the JavaScript error
-            message, and the component stack. Error messages can quote values from the app, so read
-            it over before sharing.
+            {DIAGNOSTICS_COPY.actions.footer}
           </Text>
         </View>
       </ScrollView>
@@ -178,19 +177,17 @@ function CrashReportsSetting() {
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Crash reports">
+      <SettingsSection title={DIAGNOSTICS_COPY.crashReports.title}>
         <SettingsSwitchRow
           icon="tray.and.arrow.up"
-          label="Send crash reports"
+          label={DIAGNOSTICS_COPY.crashReports.send}
           disabled={!ready || saving}
           value={enabled}
           onValueChange={change}
         />
       </SettingsSection>
       <Text className="px-2 text-sm leading-normal text-foreground-muted">
-        When the app crashes or hits an error, it sends the error message, the stack trace, the app
-        version, and the device model and OS version to the T3 Code team. Each launch also sends
-        startup timings. Reports carry a random ID for this install.
+        {DIAGNOSTICS_COPY.crashReports.footer}
       </Text>
     </View>
   );

@@ -49,6 +49,7 @@ function card(id: string, columnId: string): KanbanCard {
     parentCardId: null,
     attachments: [],
     coverAttachmentId: null,
+    problem: null,
     archivedAt: null,
     createdBy: "user",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -56,14 +57,14 @@ function card(id: string, columnId: string): KanbanCard {
   } as KanbanCard;
 }
 
-function setup() {
+function setup(todoCards = [card("c1", "todo"), card("c2", "todo")]) {
   const onMoveCard = vi.fn(() => Promise.resolve());
   const onAddCard = vi.fn();
   const ui = (
     <KanbanColumns
       environmentId={EnvironmentId.make("env")}
       columns={[
-        { column: column("todo", "todo"), cards: [card("c1", "todo"), card("c2", "todo")] },
+        { column: column("todo", "todo"), cards: todoCards },
         { column: column("doing", "in-progress", 1), cards: [card("c3", "doing")] },
       ]}
       labels={[]}
@@ -112,6 +113,19 @@ describe("KanbanColumns", () => {
       { id: "todo" },
       { id: "doing" },
     ]);
+  });
+
+  it("marks problem cards with their badge and leaves ordinary cards bare", async () => {
+    const problem = { kind: "ci", count: 4, ownerName: null, previousCardNumber: null } as const;
+    const { ui } = setup([
+      { ...card("c1", "todo"), problem: { ...problem, ignored: false } },
+      { ...card("c2", "todo"), problem: { ...problem, count: 1, ignored: true } },
+    ]);
+    await using _screen = await render(ui, { router: false });
+    const badges = page.getByTestId("kanban-problem-badge");
+    await expect.element(badges.first()).toHaveTextContent("Seen 4 times");
+    await expect.element(badges.nth(1).getByRole("img", { name: "Ignored" })).toBeInTheDocument();
+    expect(badges.all()).toHaveLength(2);
   });
 
   it("adds a card from the column quick add on Enter", async () => {

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Pure synchronous hashing keeps page matching bounded without a runtime dependency.
 import * as NodeCrypto from "node:crypto";
-import type { ThreadId } from "@t3tools/contracts";
+import type { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,6 +40,17 @@ export class McpProviderSessions extends Context.Service<
     readonly installConnectors: (
       source: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadConnector>>,
     ) => Effect.Effect<void>;
+    /** A session's own report of the MCP servers it loaded; dropped until a sink is installed. */
+    readonly reportLoadedServers: (
+      instanceId: ProviderInstanceId,
+      servers: ReadonlyArray<LoadedServer>,
+    ) => Effect.Effect<void>;
+    readonly installLoadedServersSink: (
+      sink: (
+        instanceId: ProviderInstanceId,
+        servers: ReadonlyArray<LoadedServer>,
+      ) => Effect.Effect<void>,
+    ) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: {
@@ -59,6 +70,11 @@ export class McpProviderSessions extends Context.Service<
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
+
+export interface LoadedServer {
+  readonly name: string;
+  readonly status: string;
+}
 
 interface PageInput {
   readonly html?: unknown;
@@ -111,7 +127,20 @@ const make = Effect.gen(function* () {
   const connectorSource = yield* Ref.make<
     (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadConnector>>
   >(() => Effect.succeed([]));
+  const loadedServersSink = yield* Ref.make<
+    (instanceId: ProviderInstanceId, servers: ReadonlyArray<LoadedServer>) => Effect.Effect<void>
+  >(() => Effect.void);
   return McpProviderSessions.of({
+    reportLoadedServers: Effect.fn("McpProviderSessions.reportLoadedServers")(
+      function* (instanceId, servers) {
+        yield* (yield* Ref.get(loadedServersSink))(instanceId, servers);
+      },
+    ),
+    installLoadedServersSink: Effect.fn("McpProviderSessions.installLoadedServersSink")(
+      function* (sink) {
+        yield* Ref.set(loadedServersSink, sink);
+      },
+    ),
     connectors: Effect.fn("McpProviderSessions.connectors")(function* (threadId) {
       return yield* (yield* Ref.get(connectorSource))(threadId);
     }),

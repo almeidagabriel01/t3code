@@ -3,9 +3,7 @@ import {
   assistantSandboxGithubView,
   assistantSandboxView,
   SANDBOX_CPU_DESCRIPTION,
-  SANDBOX_GITHUB_DESCRIPTION,
   SANDBOX_WHEN_DONE_CHOICES,
-  SANDBOX_WHEN_DONE_DESCRIPTION,
   sandboxCpuChoices,
   sandboxCpuLabel,
 } from "@t3tools/client-runtime/state/assistants";
@@ -40,6 +38,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
 import { DeviceCode } from "./SourceControlAppSignInSettings";
 
 function toast(title: string, description: string) {
@@ -116,16 +115,13 @@ export function AssistantSandboxSection(props: {
 
   return (
     <SettingsSection
-      title={`Sandbox${props.suffix}`}
+      title={`${settingCopy("assistant-sandbox").title}${props.suffix}`}
       icon={<BoxIcon className="size-4 text-muted-foreground" />}
     >
       <SettingsRow
-        title="Sandbox container"
+        title={settingCopy("assistant-sandbox-container").title}
         status={view.label}
-        description={
-          view.detail ??
-          "A Linux container (Docker) where assistants set to Sandbox run commands and edit files."
-        }
+        description={view.detail ?? settingCopy("assistant-sandbox-container").description}
         control={
           <span className="flex items-center gap-1">
             <Button
@@ -164,7 +160,7 @@ export function AssistantSandboxSection(props: {
             title={
               <span className="inline-flex items-center gap-2">
                 <CpuIcon className="size-4 text-muted-foreground" />
-                CPU limit
+                {settingCopy("assistant-sandbox-cpu").title}
               </span>
             }
             description={SANDBOX_CPU_DESCRIPTION}
@@ -196,8 +192,7 @@ export function AssistantSandboxSection(props: {
             }
           />
           <SettingsRow
-            title="When a task is done"
-            description={SANDBOX_WHEN_DONE_DESCRIPTION}
+            {...settingCopy("assistant-sandbox-when-done")}
             control={
               <Select
                 value={status.whenDone}
@@ -239,16 +234,15 @@ export function AssistantSandboxSection(props: {
         title={
           <span className="inline-flex items-center gap-2">
             <LinkIcon className="size-4 text-muted-foreground" />
-            Linked environments
+            {settingCopy("assistant-sandbox-linked").title}
           </span>
         }
         status={status === null ? undefined : status.linkedEnvironmentsEnabled ? "On" : "Off"}
-        description="The sandbox is linked to this machine, which needs Linked environments (Settings → Labs). Starting the sandbox turns it on."
+        description={settingCopy("assistant-sandbox-linked").description}
       />
       {view.canSignIn ? (
         <SettingsRow
-          title="Sign in to providers in the sandbox"
-          description="Providers need their own sign-in inside the sandbox. This opens its Providers settings; it works from the Mac that runs the sandbox."
+          {...settingCopy("assistant-sandbox-sign-in")}
           control={
             <Button size="sm" variant="outline" onClick={() => void signIn()}>
               <KeyRoundIcon />
@@ -261,11 +255,11 @@ export function AssistantSandboxSection(props: {
         title={
           <span className="inline-flex items-center gap-2">
             <GithubIcon className="size-4 text-muted-foreground" />
-            GitHub in the sandbox
+            {settingCopy("assistant-sandbox-github").title}
           </span>
         }
         status={github.label}
-        description={github.detail ?? SANDBOX_GITHUB_DESCRIPTION}
+        description={github.detail ?? settingCopy("assistant-sandbox-github").description}
         control={
           github.action === "sign_in" ? (
             <Button

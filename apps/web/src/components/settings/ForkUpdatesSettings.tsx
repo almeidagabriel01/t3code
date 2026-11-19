@@ -16,7 +16,8 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 
 function describeStatus(status: ForkUpdateStatus): string {
   const head = `${status.headSha?.slice(0, 8) ?? "unknown"}${status.headTag === null ? "" : ` (${status.headTag})`}`;
@@ -61,10 +62,9 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
   };
 
   return (
-    <SettingsSection id="fork-updates" title="Fork updates">
+    <SettingsSection id="fork-updates" title={settingCopy("fork-updates-status").title}>
       <SettingsRow
         {...searchableSetting("fork-updates-folder")}
-        description="Your fork's git checkout on this machine. Leave empty for ~/DEV/Pessoal/t3code."
         control={
           <Input
             className="w-72"
@@ -80,7 +80,6 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
       />
       <SettingsRow
         {...searchableSetting("fork-updates-channel")}
-        description="Stable and nightly are different apps. Auto follows the version your fork is built from."
         control={
           <Select
             value={channel}
@@ -113,14 +112,12 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
         {...searchableSetting("fork-updates-status")}
         description={
           status === null
-            ? "Checking upstream..."
+            ? MAINTENANCE_SETTINGS_COPY.forkChecking
             : status.available
               ? `${describeStatus(status)}${conflict === null ? "" : ` ${conflict}`}${
-                  action === "add-project"
-                    ? " Add the fork folder as a project so an agent can run the update."
-                    : ""
+                  action === "add-project" ? MAINTENANCE_SETTINGS_COPY.forkAddProject : ""
                 }`
-              : `No fork checkout with an upstream remote at ${status.path}.`
+              : `${MAINTENANCE_SETTINGS_COPY.forkNoCheckout}${status.path}.`
         }
         control={
           <div className="flex flex-wrap justify-end gap-2">
@@ -167,9 +164,11 @@ export function ForkUpdatesSettingsPanel() {
   return (
     <SettingsPageContainer>
       {environmentId === null ? (
-        <SettingsSection id="fork-updates" title="Fork updates">
+        <SettingsSection id="fork-updates" title={settingCopy("fork-updates-status").title}>
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Fork updates need the local T3 Code server on this machine."
           />
         </SettingsSection>

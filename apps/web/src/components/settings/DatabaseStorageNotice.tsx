@@ -28,6 +28,8 @@ import {
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 
 const DismissedEnvironmentIds = Schema.Array(Schema.String);
 const reclaimPermissionsAtom = environmentAtomList(
@@ -68,13 +70,13 @@ export function DatabaseStorageNotice({
     }));
   if (visible.length === 0) return null;
   return (
-    <SettingsSection id="storage-database" title="Database">
+    <SettingsSection id="storage-database" title={settingCopy("storage-database").title}>
       <SettingsRow
-        title="Reclaim freed database space"
-        description={`These databases still hold space freed by history cleanup.${
+        {...settingCopy("storage-database-reclaim")}
+        description={`${settingCopy("storage-database-reclaim").description}${
           visible.every((recommendation) => recommendation.reclaimable)
             ? ""
-            : " Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment."
+            : MAINTENANCE_SETTINGS_COPY.databaseReclaimCommand
         }`}
       />
       {visible.map(({ environmentId, status, label, reclaimable }) => {
@@ -98,6 +100,7 @@ export function DatabaseStorageNotice({
         ) : (
           <SettingsRow
             key={environmentId}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- database size on a machine, not a setting
             title={`${formatGiB(status.reclaimableBytes)} on ${label}`}
             description={<code className="select-text break-all">{status.compactCommand}</code>}
             control={
@@ -160,7 +163,9 @@ function ReclaimRow({
   };
   return (
     <SettingsRow
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- database size on a machine, not a setting
       title={`${amount} on ${label}`}
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- restart status for one database, not a setting
       description={
         status.reclaimFailure === undefined
           ? `Restarts T3 Code there. It will be offline for about ${minutes} min.`

@@ -63,3 +63,68 @@ describe("buildHomeListFilterMenuItems archive action", () => {
     ).toEqual(["Environment", "Project"]);
   });
 });
+
+describe("buildHomeListFilterMenuItems project subtitles", () => {
+  const mac = EnvironmentId.make("mac");
+  const pc = EnvironmentId.make("pc");
+  const environments = [
+    { environmentId: mac, label: "Mac" },
+    { environmentId: pc, label: "PC" },
+  ];
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly projects: ReadonlyArray<{
+      key: string;
+      label: string;
+      environmentIds?: EnvironmentId[];
+    }>;
+    readonly subtitles: ReadonlyArray<string | undefined>;
+  }> = [
+    {
+      name: "unique names stay plain",
+      projects: [
+        { key: "a", label: "Alpha", environmentIds: [mac] },
+        { key: "b", label: "Beta", environmentIds: [pc] },
+      ],
+      subtitles: [undefined, undefined],
+    },
+    {
+      name: "same names name their machine",
+      projects: [
+        { key: "a", label: "Tirss", environmentIds: [mac] },
+        { key: "b", label: "Tirss", environmentIds: [pc] },
+        { key: "c", label: "Beta", environmentIds: [pc] },
+      ],
+      subtitles: ["Mac", "PC", undefined],
+    },
+    {
+      name: "a group on several machines names each once",
+      projects: [
+        { key: "a", label: "Tirss", environmentIds: [mac, pc, mac] },
+        { key: "b", label: "Tirss", environmentIds: [pc] },
+      ],
+      subtitles: ["Mac, PC", "PC"],
+    },
+    {
+      name: "an unknown machine adds no subtitle",
+      projects: [
+        { key: "a", label: "Tirss", environmentIds: [EnvironmentId.make("gone")] },
+        { key: "b", label: "Tirss" },
+      ],
+      subtitles: [undefined, undefined],
+    },
+  ];
+
+  it.each(cases)("$name", ({ projects, subtitles }) => {
+    const section = buildHomeListFilterMenuItems({
+      ...base,
+      environments,
+      projects,
+      selectedProjectKey: null,
+    }).find((item) => item.id === "project");
+    if (!section || !("items" in section)) throw new Error("expected the project section");
+    expect(
+      section.items.slice(1).map((item) => ("subtitle" in item ? item.subtitle : undefined)),
+    ).toEqual(subtitles);
+  });
+});

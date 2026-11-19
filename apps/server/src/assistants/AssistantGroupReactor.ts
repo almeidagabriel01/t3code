@@ -31,7 +31,11 @@ const make = Effect.gen(function* () {
       Effect.andThen(
         forkParked(
           Stream.runForEach(
-            engine.streamDomainEvents.pipe(Stream.retry(RESUBSCRIBE)),
+            // Subscribed before the waiting tasks are checked, on every resubscribe, so a
+            // subagent end missed in between is caught up.
+            Stream.unwrap(
+              engine.subscribeDomainEvents.pipe(Effect.tap(() => groups.settleWaiting)),
+            ).pipe(Stream.retry(RESUBSCRIBE)),
             groups.handleRunEvent,
           ).pipe(
             Effect.catchCause((cause) =>
@@ -40,12 +44,21 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-      // A decision a member asked, or its answer from anywhere, updates the request's notice.
+      // A decision a member asked, or its answer from anywhere, updates the request's notice; once
+      // its outcome is handed over, the task that waited on it runs again.
       Effect.andThen(
         forkParked(
           Stream.runForEach(decisions.subscribe.pipe(Stream.retry(RESUBSCRIBE)), (event) =>
             event.type === "upserted" && isAssistantGroupThreadId(event.decision.fromThreadId)
-              ? groups.syncWaitingThread(event.decision.fromThreadId)
+              ? groups
+                  .syncWaitingThread(event.decision.fromThreadId)
+                  .pipe(
+                    Effect.andThen(
+                      event.decision.status === "open"
+                        ? Effect.void
+                        : groups.settleDecision(event.decision.fromThreadId),
+                    ),
+                  )
               : Effect.void,
           ).pipe(
             Effect.catchCause((cause) =>

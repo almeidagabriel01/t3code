@@ -1,7 +1,11 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { migratePersistedRightPanelState, useRightPanelStore } from "./rightPanelStore";
 import {
   closeThreadTab,
+  commitRouteTab,
   dropThreadTab,
   focusThreadTabGroup,
   layoutGeometry,
@@ -10,9 +14,13 @@ import {
   reconcileRouteTab,
   resolveTabDropZone,
   resolveTabInsertIndex,
+  restoreThreadTab,
   setThreadSplitRatio,
   type ThreadTabLayout,
+  threadTabPlacement,
+  threadTabRow,
   type ThreadTabWorkspace,
+  useThreadTabsStore,
 } from "./threadTabsStore";
 
 const ids = () => {
@@ -62,6 +70,181 @@ describe("reconcileRouteTab", () => {
     expect(next.groups[0]?.active).toBe("b");
     const settled = sideBySide();
     expect(reconcileRouteTab(settled, "a")).toBe(settled);
+  });
+});
+
+/** Project p's split: main (p1) | g2 (q1) | g3 (q2), a q thread being any key starting with q. */
+const mixed = (focused: string, recent?: string[]): ThreadTabWorkspace => ({
+  groups: [
+    { id: "main", tabs: ["p1"], active: "p1" },
+    { id: "g2", tabs: ["q1"], active: "q1" },
+    { id: "g3", tabs: ["q2"], active: "q2" },
+  ],
+  layout: {
+    type: "split",
+    id: "s1",
+    direction: "horizontal",
+    ratio: 0.5,
+    first: leaf("main"),
+    second: {
+      type: "split",
+      id: "s2",
+      direction: "vertical",
+      ratio: 0.5,
+      first: leaf("g2"),
+      second: leaf("g3"),
+    },
+  },
+  focusedGroupId: focused,
+  ...(recent ? { recentGroupIds: recent } : {}),
+});
+const projectOf = (key: string) => (key.startsWith("q") ? "Q" : key.startsWith("p") ? "P" : "R");
+
+describe("threadTabPlacement", () => {
+  it.each<
+    [
+      string,
+      Record<string, ThreadTabWorkspace>,
+      string | null,
+      string,
+      string | null,
+      object | null,
+    ]
+  >([
+    [
+      "the focused group when it shows the project",
+      { P: mixed("g3", ["g3", "g2"]) },
+      "P",
+      "qn",
+      "Q",
+      { key: "P", groupId: "g3" },
+    ],
+    [
+      "the q group focused last when another group has focus",
+      { P: mixed("main", ["main", "g3", "g2"]) },
+      "P",
+      "qn",
+      "Q",
+      { key: "P", groupId: "g3" },
+    ],
+    [
+      "the first q group in reading order without a focus history",
+      { P: mixed("main") },
+      "P",
+      "qn",
+      "Q",
+      { key: "P", groupId: "g2" },
+    ],
+    [
+      "its own project's tabs when no group in view shows it",
+      { P: mixed("main") },
+      "P",
+      "rn",
+      "R",
+      { key: "R" },
+    ],
+    [
+      "its own project's focused group, unchanged, when that is the view",
+      { P: mixed("main") },
+      "P",
+      "pn",
+      "P",
+      { key: "P" },
+    ],
+    [
+      "its own project's tabs when the visible layout closed",
+      { Q: one(["q9"]) },
+      "P",
+      "qn",
+      "Q",
+      { key: "Q" },
+    ],
+    [
+      "its own project's tabs when nothing was shown yet",
+      { P: mixed("main") },
+      null,
+      "qn",
+      "Q",
+      { key: "Q" },
+    ],
+    [
+      "the layout already holding its tab",
+      { P: mixed("main"), Q: one(["q9"]) },
+      "P",
+      "q9",
+      "Q",
+      { key: "Q" },
+    ],
+    [
+      "the split holding its tab rather than its own project's",
+      { P: mixed("main"), Q: one(["q9"]) },
+      "Q",
+      "q1",
+      "Q",
+      { key: "P" },
+    ],
+    ["no tabs for a thread that opens without them", { P: mixed("main") }, "P", "qn", null, null],
+    [
+      "the layout a projectless thread was dropped into",
+      { P: mixed("main"), Q: one(["an"]) },
+      "P",
+      "an",
+      null,
+      { key: "Q" },
+    ],
+  ])(
+    "puts an untabbed or tabbed thread in %s",
+    (_name, byProject, visibleKey, threadKey, ownKey, expected) => {
+      expect(threadTabPlacement({ byProject, visibleKey }, threadKey, ownKey, projectOf)).toEqual(
+        expected,
+      );
+    },
+  );
+
+  it("opens the pick in that group, keeps the split and shows that layout", () => {
+    useThreadTabsStore.setState({
+      byProject: { P: mixed("main", ["main", "g3"]) },
+      visibleKey: "P",
+    });
+    commitRouteTab("qn", "Q", projectOf);
+    const { byProject, visibleKey } = useThreadTabsStore.getState();
+    expect(visibleKey).toBe("P");
+    expect(byProject.Q).toBeUndefined();
+    expect(byProject.P?.focusedGroupId).toBe("g3");
+    expect(byProject.P?.recentGroupIds).toEqual(["g3", "main"]);
+    expect(byProject.P?.groups[2]).toEqual({
+      id: "g3",
+      tabs: ["q2", "qn"],
+      active: "qn",
+      returnTo: { tab: "qn", to: "q2" },
+    });
+    commitRouteTab("rn", "R", projectOf);
+    expect(useThreadTabsStore.getState().visibleKey).toBe("R");
+    expect(useThreadTabsStore.getState().byProject.R).toMatchObject(one(["rn"]));
+    const settled = useThreadTabsStore.getState();
+    commitRouteTab("rn", "R", projectOf);
+    commitRouteTab("x", null, projectOf);
+    expect(useThreadTabsStore.getState()).toBe(settled);
+  });
+
+  it("reopens a closed tab in its group, else its layout's focused group, never in two layouts", () => {
+    useThreadTabsStore.setState({
+      byProject: { P: mixed("main"), Q: one(["qn"]) },
+      visibleKey: "P",
+    });
+    restoreThreadTab("P", "g3", "qn");
+    expect(useThreadTabsStore.getState().byProject.P?.groups[2]).toEqual({
+      id: "g3",
+      tabs: ["q2", "qn"],
+      active: "qn",
+    });
+    expect(useThreadTabsStore.getState().byProject.Q).toBeUndefined();
+    restoreThreadTab("P", "gone", "p2");
+    expect(useThreadTabsStore.getState().byProject.P?.groups[2]?.tabs).toEqual(["q2", "qn", "p2"]);
+    const settled = useThreadTabsStore.getState();
+    restoreThreadTab("P", "g3", "p2");
+    restoreThreadTab("missing", "main", "p3");
+    expect(useThreadTabsStore.getState()).toBe(settled);
   });
 });
 
@@ -146,6 +329,28 @@ describe("closeThreadTab", () => {
     expect(navigateTo).toBe("a");
   });
 
+  it("returns a group to the tab a pick opened over, not the one to its right", () => {
+    const opened = reconcileRouteTab(sideBySide(), "d", "main");
+    expect(opened.groups[0]).toEqual({
+      id: "main",
+      tabs: ["a", "d", "b"],
+      active: "d",
+      returnTo: { tab: "d", to: "a" },
+    });
+    const closed = closeThreadTab(opened, "d", "d");
+    expect(closed.navigateTo).toBe("a");
+    expect(closed.workspace?.groups[0]).toEqual({ id: "main", tabs: ["a", "b"], active: "a" });
+    // The tab it would return to closed first: the usual neighbour takes over.
+    const orphaned = closeThreadTab(opened, "a", "d").workspace!;
+    expect(orphaned.groups[0]).toEqual({ id: "main", tabs: ["d", "b"], active: "d" });
+    expect(closeThreadTab(orphaned, "d", "d").navigateTo).toBe("b");
+    // Another tab closing keeps it.
+    expect(closeThreadTab(opened, "b", "d").workspace?.groups[0]?.returnTo).toEqual({
+      tab: "d",
+      to: "a",
+    });
+  });
+
   it("leaves nothing to route to after the last tab", () => {
     expect(closeThreadTab(one(["a"]), "a", "a")).toEqual({ workspace: null, navigateTo: null });
   });
@@ -228,5 +433,162 @@ describe("parsePersistedWorkspace", () => {
         focusedGroupId: "missing",
       }),
     ).toEqual(one(["a"]));
+    const withHistory = {
+      ...sideBySide("g2"),
+      groups: [
+        { id: "main", tabs: ["a", "b"], active: "b", returnTo: { tab: "b", to: "a" } },
+        { id: "g2", tabs: ["c"], active: "c", returnTo: { tab: "c", to: "gone" } },
+      ],
+      recentGroupIds: ["g2", 7, "closed", "main"],
+    };
+    expect(parsePersistedWorkspace(withHistory)).toEqual({
+      ...sideBySide("g2"),
+      groups: [
+        { id: "main", tabs: ["a", "b"], active: "b", returnTo: { tab: "b", to: "a" } },
+        { id: "g2", tabs: ["c"], active: "c" },
+      ],
+      recentGroupIds: ["g2", "main"],
+    });
+  });
+});
+
+describe("threadTabRow", () => {
+  const ref = (id: string) => scopeThreadRef("env" as EnvironmentId, ThreadId.make(id));
+  const A = ref("a");
+  const B = ref("b");
+  const key = (id: string) => scopedThreadKey(ref(id));
+  const panels = () => useRightPanelStore.getState();
+  /** `*` marks the active tab; a file shows as `thread/path`. */
+  const show = (workspace: ThreadTabWorkspace | null) =>
+    workspace === null
+      ? []
+      : threadTabRow(workspace.groups[0]!, panels().byThreadKey).map(
+          (entry) =>
+            `${entry.active ? "*" : ""}${entry.threadKey.split(":")[1]}${
+              entry.kind === "file" ? `/${entry.surface.relativePath}` : ""
+            }`,
+        );
+  const scenario = () => {
+    useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+    let workspace: ThreadTabWorkspace | null = reconcileRouteTab(undefined, key("a"));
+    return {
+      route: (id: string) => {
+        workspace = reconcileRouteTab(workspace ?? undefined, key(id));
+      },
+      close: (id: string, routeId: string) => {
+        workspace = workspace && closeThreadTab(workspace, key(id), key(routeId)).workspace;
+      },
+      drop: (id: string, index: number) => {
+        workspace =
+          (workspace && dropThreadTab(workspace, key(id), { groupId: "main", index }, ids())) ??
+          workspace;
+      },
+      row: () => show(workspace),
+    };
+  };
+  type Scenario = ReturnType<typeof scenario>;
+
+  it.each<[string, (t: Scenario) => void, string[]]>([
+    ["opens a thread as a tab after the active one", (t) => t.route("b"), ["a", "*b"]],
+    [
+      "opens a file beside the thread it came from, in opening order",
+      (t) => {
+        t.route("b");
+        t.route("a");
+        panels().openFile(A, "src/x.ts");
+        panels().openFile(A, "src/y.ts");
+      },
+      ["a", "a/src/x.ts", "*a/src/y.ts", "b"],
+    ],
+    [
+      "keeps another thread's files beside that thread, inactive",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        t.route("b");
+        t.route("a");
+      },
+      ["*a", "b", "b/b.ts"],
+    ],
+    [
+      "lands on the chat tab from the sidebar, even over a file of the same thread",
+      (t) => {
+        panels().openFile(A, "x.ts");
+        panels().showChat(A);
+        t.route("a");
+      },
+      ["*a", "a/x.ts"],
+    ],
+    [
+      "picks a file tab of another thread by activating it and routing there",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        panels().showChat(B);
+        t.route("b");
+        t.route("a");
+        panels().activateSurface(B, "file:b.ts");
+        t.route("b");
+      },
+      ["a", "b", "*b/b.ts"],
+    ],
+    [
+      "closes a file tab and hands focus to its neighbour",
+      () => {
+        panels().openFile(A, "x.ts");
+        panels().openFile(A, "y.ts");
+        panels().closeSurface(A, "file:y.ts");
+      },
+      ["a", "*a/x.ts"],
+    ],
+    [
+      "takes a thread's files out of the row with it, and back as they were when it reopens",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        t.route("b");
+        t.close("b", "a");
+        expect(t.row()).toEqual(["*a"]);
+        t.route("b");
+      },
+      ["a", "b", "*b/b.ts"],
+    ],
+    [
+      "reorders a thread with its files as one block",
+      (t) => {
+        t.route("b");
+        panels().openFile(A, "x.ts");
+        t.drop("b", 0);
+      },
+      ["*b", "a", "a/x.ts"],
+    ],
+  ])("%s", (_name, steps, expected) => {
+    const t = scenario();
+    steps(t);
+    expect(t.row()).toEqual(expected);
+  });
+
+  it("derives the row from layouts and panels saved before the unified strip", () => {
+    const workspace = parsePersistedWorkspace({
+      groups: [{ id: "main", tabs: [key("a"), key("b")], active: key("b") }],
+      layout: leaf("main"),
+      focusedGroupId: "main",
+    });
+    const file = (path: string) => ({
+      id: `file:${path}`,
+      kind: "file",
+      relativePath: path,
+      revealLine: null,
+      revealRequestId: 1,
+    });
+    const { byThreadKey } = migratePersistedRightPanelState({
+      byThreadKey: {
+        [key("b")]: {
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }, file("one.ts"), file("two.ts")],
+          activeMainId: "file:two.ts",
+        },
+      },
+    });
+    useRightPanelStore.setState({ byThreadKey });
+    expect(show(workspace)).toEqual(["a", "b", "b/one.ts", "*b/two.ts"]);
   });
 });

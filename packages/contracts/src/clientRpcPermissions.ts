@@ -1,4 +1,5 @@
 import { GLOBAL_SKILLS_WS_METHODS } from "./globalSkillsRpc.ts";
+import { INTEGRATIONS_WS_METHODS } from "./integrations.ts";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { AssetCreateUrlInput } from "./assets.ts";
 import type { DeviceListInput } from "./device.ts";
@@ -70,12 +71,29 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSetEnabled]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetRule]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueRoute]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueRouteAll]: AuthTerminalOperateScope,
+  // Forgetting a learned route sends that program back to Linux.
+  [WS_METHODS.heavyQueueForgetRoutes]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMaxRunning]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetHeavyOverLimitSeconds]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetAdmissionLimits]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetPriority]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetClaudeHook]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetDeviceIdleMinutes]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueStopCommand]: AuthTerminalOperateScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRemove]: AuthSettingsWriteScope,
+  // Integrations hold credentials to outside services, as settings secrets do.
+  [INTEGRATIONS_WS_METHODS.integrationsBeginConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsCompleteConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsCancelConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsDisconnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsSaveToken]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsSaveOwnApp]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsRemoveOwnApp]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsUpdate]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsMakeAvailable]: AuthSettingsWriteScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.threadsRestoreWorkspace]: AuthOrchestrationOperateScope,
@@ -148,6 +166,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.kanbanCardComment]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardLinkThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardUnlinkThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.kanbanCardSetProblemIgnored]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesMove]: AuthOrchestrationOperateScope,
@@ -155,6 +174,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.notesStartWork]: AuthOrchestrationOperateScope,
   [WS_METHODS.decisionsAnswer]: AuthOrchestrationOperateScope,
   [WS_METHODS.decisionsDismiss]: AuthOrchestrationOperateScope,
+  [WS_METHODS.decisionsReopen]: AuthOrchestrationOperateScope,
   [WS_METHODS.computerUseOpenSettings]: AuthSettingsWriteScope,
   [WS_METHODS.assistantsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsUpdate]: AuthOrchestrationOperateScope,
@@ -237,6 +257,7 @@ const UNGUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
@@ -327,6 +348,9 @@ const UNGUARDED_RPC_SCOPES = {
   [WS_METHODS.keepAwakeSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribeCommands]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueSubscribeNotices]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueListRoutes]: AuthOrchestrationReadScope,
+  [INTEGRATIONS_WS_METHODS.integrationsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelSubscribeStatus]: AuthOrchestrationReadScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.

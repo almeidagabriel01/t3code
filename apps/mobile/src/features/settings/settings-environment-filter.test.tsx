@@ -111,7 +111,8 @@ describe("settings project filter", () => {
     press("project:b");
 
     expect(projectsSection().title).toBe("2 projects");
-    expect(latest.menu.icon).toBe("line.3.horizontal.decrease.circle.fill");
+    // A changed icon makes iOS rebuild the header button and close the open menu.
+    expect(latest.menu.icon).toBe("line.3.horizontal.decrease");
     expect(projectItems().map((item) => [item.id, item.selected])).toEqual([
       ["project:all", false],
       ["project:a", true],

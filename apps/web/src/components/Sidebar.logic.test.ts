@@ -22,6 +22,8 @@ import {
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
+  resolveSidebarMenuThread,
+  sidebarNavigationThreadKeys,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -190,9 +192,18 @@ describe("sidebar thread lineage helpers", () => {
     const parent = makeThreadFixture({ id: ThreadId.make("parent") });
     const sideChat = { ...makeThreadFixture({ id: ThreadId.make("side") }), sideChatOf: parent.id };
     const assistant = makeThreadFixture({ id: ThreadId.make("assistant:jarvis:1") });
-    expect(filterSidebarV2VisibleThreads([parent, sideChat, assistant], null, new Set())).toEqual([
-      parent,
-    ]);
+    // Its delegated child lists under the assistant, not in the home project.
+    const delegated = makeThreadFixture({
+      id: ThreadId.make("delegated"),
+      lineage: {
+        rootThreadId: assistant.id,
+        parentThreadId: assistant.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(
+      filterSidebarV2VisibleThreads([parent, sideChat, assistant, delegated], null, new Set()),
+    ).toEqual([parent]);
   });
 });
 
@@ -903,6 +914,70 @@ describe("resolveSidebarSweepKeys", () => {
   });
 });
 
+describe("resolveSidebarMenuThread", () => {
+  const now = "2026-11-13T12:00:00.000Z";
+  const shell = (overrides: Record<string, unknown> = {}) =>
+    ({
+      id: "t",
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      settledOverride: null,
+      snoozedUntil: null,
+      ...overrides,
+    }) as never as Parameters<typeof resolveSidebarMenuThread>[0]["shell"] & object;
+
+  it.each([
+    ["a listed row, by its section", "listed", "settled", {}, [true, false]],
+    [
+      "an unlisted thread, settled by hand",
+      "shell",
+      undefined,
+      { settledOverride: "settled" },
+      [true, false],
+    ],
+    [
+      "an unlisted thread, snoozed",
+      "shell",
+      undefined,
+      { snoozedUntil: "2026-11-14T00:00:00.000Z" },
+      [false, true],
+    ],
+    [
+      "an unlisted thread whose snooze ran out",
+      "shell",
+      undefined,
+      { snoozedUntil: "2026-11-12T00:00:00.000Z" },
+      [false, false],
+    ],
+  ] as const)("reads %s", (_name, source, section, overrides, [isSettled, isSnoozed]) => {
+    const thread = shell(overrides);
+    const resolved = resolveSidebarMenuThread({
+      listed: source === "listed" ? thread : undefined,
+      shell: source === "shell" ? thread : null,
+      section,
+      now,
+    });
+    expect(resolved).toEqual({ thread, isSettled, isSnoozed });
+  });
+
+  it("answers nothing for a thread that has not loaded", () => {
+    expect(
+      resolveSidebarMenuThread({ listed: undefined, shell: null, section: undefined, now }),
+    ).toBe(null);
+  });
+});
+
+describe("sidebarNavigationThreadKeys", () => {
+  it("numbers the assistants section first and keeps one number per thread", () => {
+    expect(sidebarNavigationThreadKeys(["chat", "task"], ["a", "task", "b"])).toEqual([
+      "chat",
+      "task",
+      "a",
+      "b",
+    ]);
+  });
+});
+
 describe("navigation after parking a thread", () => {
   it.each([
     ["settle", "settled", null, "thread", true],
@@ -1596,6 +1671,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
@@ -1610,6 +1686,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: null, widensScope: false });
   });
@@ -1626,10 +1703,31 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       });
     resolve("environment-test:unlisted");
     expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
+
+  it.each([
+    { teamsShown: true, widensScope: false },
+    { teamsShown: false, widensScope: true },
+  ])(
+    "an assistant's task the scope hides widens it only when Teams is hidden: teams=$teamsShown",
+    ({ teamsShown, widensScope }) => {
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: "environment-test:other", pendingKey: null },
+          routeKey: hiddenKey,
+          isSearching: false,
+          scopedProjectKeys,
+          delegatedUnderParent: new Set(),
+          findThread,
+          listedInTeams: () => teamsShown,
+        }),
+      ).toEqual({ pendingKey: hiddenKey, widensScope });
+    },
+  );
 
   it("holds a pending reveal without widening while searching", () => {
     expect(
@@ -1640,6 +1738,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: false });
   });

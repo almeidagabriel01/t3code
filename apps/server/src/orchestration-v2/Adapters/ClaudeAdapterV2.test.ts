@@ -42,7 +42,6 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
-  type OrchestrationV2AppThread,
   type OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   ProjectId,
@@ -71,8 +70,8 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -101,10 +100,7 @@ import { DocsToolkit } from "../../mcp/toolkits/docs/tools.ts";
 import { HeavyToolkit } from "../../mcp/toolkits/heavy/tools.ts";
 import { HostToolkit } from "../../mcp/toolkits/host/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
-import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
-  type ClaudeModelCatalog,
-} from "../../provider/ClaudeModelCatalog.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -113,7 +109,17 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { queueBashCall } from "../../heavyQueue/heavyHook.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
+import {
+  CLAUDE_TEST_MODEL_SELECTION,
+  CLAUDE_TEST_RUNTIME_POLICY,
+  ClaudeOrchestratorReplayHarness,
+  claudeTurnSlotRace,
+  DEFAULT_CLAUDE_SETTINGS,
+  makeChangeSignal,
+  makeClaudeTestTurnInput,
+  makeWakeHarnessWithOptions,
+  WAKE_NATIVE_SESSION,
+} from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
 import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
@@ -138,7 +144,6 @@ beforeEach(() => {
   });
 });
 
-const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
@@ -184,93 +189,11 @@ const ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)
     },
   ],
 });
-const CLAUDE_TEST_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
-  model: "claude-sonnet-4-6",
-  options: [{ id: "effort", value: "ultrathink" }],
-} satisfies ModelSelection;
 const CLAUDE_TEST_RESTART_MODEL_SELECTION = {
   ...CLAUDE_TEST_MODEL_SELECTION,
   model: "claude-haiku-4-5-20251001",
   options: [{ id: "thinking", value: false }],
 } satisfies ModelSelection;
-const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  cwd: "/workspace",
-});
-
-function makeClaudeTestAppThread(input: {
-  readonly threadId: ThreadId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly now: DateTime.Utc;
-}): OrchestrationV2AppThread {
-  return {
-    createdBy: "user",
-    creationSource: "web",
-    id: input.threadId,
-    projectId: ProjectId.make(`project-${input.threadId}`),
-    title: "Claude attachment test",
-    providerInstanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
-    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    activeProviderThreadId: input.providerThread.id,
-    lineage: {
-      parentThreadId: null,
-      relationshipToParent: null,
-      rootThreadId: input.threadId,
-    },
-    forkedFrom: null,
-    createdAt: input.now,
-    updatedAt: input.now,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    lastVisitedAt: null,
-    deletedAt: null,
-  };
-}
-
-function makeClaudeTestTurnInput(input: {
-  readonly threadId: ThreadId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly now: DateTime.Utc;
-  readonly attemptId: RunAttemptId;
-  readonly text: string;
-  readonly attachments: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
-  readonly providerTurnOrdinal?: number;
-  readonly nativeThreadHasTurns?: boolean;
-  readonly messageCreatedBy?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["createdBy"];
-  readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
-  readonly modelSelection?: ModelSelection;
-  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-}): ProviderAdapter.ProviderAdapterV2TurnInput {
-  return {
-    appThread: makeClaudeTestAppThread(input),
-    threadId: input.threadId,
-    runId: RunId.make(`run-${input.attemptId}`),
-    runOrdinal: 1,
-    providerTurnOrdinal: input.providerTurnOrdinal ?? 1,
-    ...(input.nativeThreadHasTurns === undefined
-      ? {}
-      : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
-    attemptId: input.attemptId,
-    rootNodeId: NodeId.make(`node-${input.attemptId}`),
-    providerThread: input.providerThread,
-    message: {
-      createdBy: input.messageCreatedBy ?? "user",
-      creationSource: input.messageCreationSource ?? "web",
-      messageId: MessageId.make(`message-${input.attemptId}`),
-      text: input.text,
-      attachments: input.attachments,
-    },
-    modelSelection: input.modelSelection ?? CLAUDE_TEST_MODEL_SELECTION,
-    runtimePolicy: input.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY,
-  };
-}
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
@@ -662,6 +585,42 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     );
   });
 
+  it("pre-approves only proxied integrations T3's gate already decides for", () => {
+    const mcpSession = mcpSessionFor(ThreadId.make("assistant:sam:1"));
+    const authorizationHeader = mcpSession.authorizationHeader;
+    const proxied = (name: string, preApproved: boolean) => ({
+      name,
+      transport: "http" as const,
+      url: `http://127.0.0.1:43123/mcp/integrations/${name}`,
+      args: [],
+      headers: { Authorization: authorizationHeader },
+      env: {},
+      proxy: { preApproved },
+    });
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+      connectors: [proxied("linear_t3", true), proxied("notion_t3", false)],
+    });
+    assert.deepEqual(overrides.allowedTools, [
+      ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD,
+      "mcp__linear_t3__*",
+    ]);
+    assert.deepEqual(overrides.mcpServers?.linear_t3, {
+      type: "http",
+      url: "http://127.0.0.1:43123/mcp/integrations/linear_t3",
+      headers: { Authorization: authorizationHeader },
+    });
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession: undefined,
+        readOnlySandbox: false,
+        connectors: [proxied("linear_t3", true)],
+      }).allowedTools,
+      ["mcp__linear_t3__*"],
+    );
+  });
+
   it("invalidates live-query reuse when MCP credentials rotate", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
@@ -902,7 +861,10 @@ describe("ClaudeAdapterV2 heavy queue hook", () => {
     assert.deepInclude((queued as { hookSpecificOutput: object }).hookSpecificOutput, {
       hookEventName: "PreToolUse",
     });
-    assert.include(JSON.stringify(queued), "t3 heavy --queue-dir /q --name 'vp test run'");
+    assert.include(
+      JSON.stringify(queued),
+      "t3 heavy --queue-dir /q --request-id 'toolu_1' --name 'vp test run'",
+    );
     assert.deepEqual(await preToolUse("ls"), [{}]);
     assert.isUndefined(options({ deviceToolsAvailable: false, hook: false }).hooks);
   });
@@ -3258,7 +3220,6 @@ const encodeProviderThreadJson = Schema.encodeEffect(providerThreadJson);
 const decodeProviderThreadJson = Schema.decodeUnknownEffect(providerThreadJson);
 
 describe("ClaudeAdapterV2 background wake turns", () => {
-  const WAKE_NATIVE_SESSION = "native-thread-claude-wake";
   const WAKE_TASK_ID = "bdqirlcyw";
   const WAKE_TOOL_USE_ID = "toolu_01Rs6JNNf5SqHRxpq5DeJHrW";
   const WAKE_TASK_DESCRIPTION = "Background sleep test";
@@ -3435,21 +3396,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     terminalReason: null,
   });
 
-  // Harnesses notify after every recorded event, continuation, or prompt, so a
-  // wait re-checks exactly when the state it reads changes. Subscribing before
-  // the first check means a change that lands in between is not lost.
-  const makeChangeSignal = Effect.gen(function* () {
-    const changes = yield* PubSub.unbounded<void>();
-    const until = (predicate: () => boolean): Effect.Effect<void> =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(changes);
-          while (!predicate()) yield* PubSub.take(subscription);
-        }),
-      );
-    return { notify: PubSub.publish(changes, undefined), until };
-  });
-
   // Fixed quiet windows for asserting that nothing happens after input the
   // harness cannot observe being handled (a shut-down query, a replaced process).
   const yieldTicks = (ticks: number): Effect.Effect<void> =>
@@ -3457,281 +3403,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       for (let tick = 0; tick < ticks; tick++) yield* Effect.yieldNow;
     });
 
-  const makeWakeHarnessWithOptions = (options?: {
-    readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
-    readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
-    readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
-    readonly stopTask?: (
-      taskId: string,
-    ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
-    readonly backgroundTasks?: (
-      toolUseId: string,
-    ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
-    readonly mcp?: Pick<
-      ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
-      "mcpServerStatus" | "readMcpResource" | "callMcpTool"
-    > &
-      Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly subagentLaunchToolUseId?: string;
-    readonly nativeSessionId?: string;
-    readonly settings?: ClaudeSettings;
-    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
-    readonly freshQueueOnReopen?: boolean;
-    readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
-    readonly allocateSessionId?: Effect.Effect<string>;
-    readonly promptSuggestions?: boolean;
-  }) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-claude-v2-wake-",
-      });
-      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
-      const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-      const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
-      const offerAndWait = Effect.fnUntraced(function* (
-        message: SDKMessage,
-        offered?: Deferred.Deferred<void>,
-      ) {
-        const processed = yield* Deferred.make<void>();
-        processedMessages.set(message, processed);
-        yield* Queue.offer(processQueues.at(-1) ?? sdkMessages, message);
-        if (offered !== undefined) yield* Deferred.succeed(offered, undefined);
-        yield* Deferred.await(processed);
-      });
-      const changes = yield* makeChangeSignal;
-      const offeredMessages: Array<SDKUserMessage> = [];
-      const permissionModeChanges: Array<string> = [];
-      const liveSelectionChanges: Array<unknown> = [];
-      const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
-        [];
-      const continuationReceipts =
-        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
-      const terminalReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
-        >();
-      const subagentReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
-        >();
-      const systemNoticeReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
-        >();
-      const runtimeRequestReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-        >();
-      const planReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "plan.updated" }>
-        >();
-      const providerThreadReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
-        >();
-      let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-        settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
-        ...(options?.modelCatalog === undefined ? {} : { modelCatalog: options.modelCatalog }),
-        environment: options?.environment ?? {},
-        attachmentsDir,
-        fileSystem,
-        path: yield* Path.Path,
-        random: yield* SecureRandom.SecureRandom,
-        idAllocator,
-        continuationRequests: {
-          offer: (request) =>
-            Effect.sync(() => {
-              continuationRequests.push(request);
-            }).pipe(
-              Effect.andThen(Queue.offer(continuationReceipts, request)),
-              Effect.andThen(changes.notify),
-            ),
-        },
-        queryRunner: {
-          allocateSessionId:
-            options?.allocateSessionId ??
-            Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
-          open: (input) =>
-            Effect.gen(function* () {
-              openedOptions = input.options;
-              const processMessages =
-                options?.freshQueueOnReopen === true && processQueues.length > 0
-                  ? yield* Queue.unbounded<SDKMessage>()
-                  : sdkMessages;
-              const messages = Stream.fromQueue(processMessages).pipe(
-                Stream.flatMap((message) =>
-                  Stream.make(message).pipe(
-                    Stream.concat(
-                      Stream.fromEffect(
-                        Effect.suspend(() => {
-                          const processed = processedMessages.get(message);
-                          return processed === undefined
-                            ? Effect.void
-                            : Deferred.succeed(processed, undefined);
-                        }),
-                      ).pipe(Stream.drain),
-                    ),
-                  ),
-                ),
-              );
-              if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
-                processQueues.push(processMessages);
-                return {
-                  messages,
-                  offer: (message: SDKUserMessage) =>
-                    Effect.sync(() => {
-                      offeredMessages.push(message);
-                    }).pipe(Effect.andThen(changes.notify)),
-                  setModel: () => Effect.void,
-                  applyFlagSettings: () => Effect.void,
-                  setPermissionMode: (mode) =>
-                    Effect.sync(() => {
-                      permissionModeChanges.push(mode);
-                    }).pipe(
-                      Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void),
-                    ),
-                  backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-                  mcpServerStatus: Effect.succeed([]),
-                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
-                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
-                  listPermissionRules: Effect.die("unexpected permission rules read"),
-                  stopTask: options?.stopTask ?? (() => Effect.void),
-                  interrupt: Effect.void,
-                  close: Queue.shutdown(processMessages),
-                };
-              }
-              processQueues.push(sdkMessages);
-              return {
-                messages,
-                offer: (message) =>
-                  Effect.sync(() => {
-                    offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
-                setModel: (model) =>
-                  Effect.sync(() => {
-                    liveSelectionChanges.push({ model });
-                  }),
-                applyFlagSettings: (settings) =>
-                  Effect.sync(() => {
-                    liveSelectionChanges.push(settings);
-                  }).pipe(
-                    Effect.andThen(() => options?.applyFlagSettings?.(settings) ?? Effect.void),
-                  ),
-                setPermissionMode: (mode) =>
-                  Effect.sync(() => {
-                    permissionModeChanges.push(mode);
-                  }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
-                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-                mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
-                readMcpResource:
-                  options?.mcp?.readMcpResource ??
-                  (() => Effect.die("unexpected MCP resource read")),
-                callMcpTool:
-                  options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
-                listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
-                stopTask: options?.stopTask ?? (() => Effect.void),
-                interrupt: options?.interrupt ?? Effect.void,
-                close: options?.close?.(sdkMessages) ?? Effect.void,
-              };
-            }),
-          forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
-          subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
-          assertComplete: Effect.void,
-        },
-      });
-      const threadId = ThreadId.make("thread-claude-wake");
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
-        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-        promptSuggestions: Effect.succeed(options?.promptSuggestions === true),
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-      });
-      const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) =>
-          Effect.gen(function* () {
-            events.push(event);
-            if (event.type === "subagent.updated") {
-              yield* Queue.offer(subagentReceipts, event);
-            }
-            if (event.type === "turn.terminal") {
-              yield* Queue.offer(terminalReceipts, event);
-            }
-            if (event.type === "runtime_request.updated") {
-              yield* Queue.offer(runtimeRequestReceipts, event);
-            }
-            if (event.type === "plan.updated") {
-              yield* Queue.offer(planReceipts, event);
-            }
-            if (event.type === "provider_thread.updated") {
-              yield* Queue.offer(providerThreadReceipts, event);
-            }
-            if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
-              yield* Queue.offer(systemNoticeReceipts, event);
-            }
-            yield* changes.notify;
-          }),
-        ),
-        Effect.forkScoped,
-      );
-      if (runtime.hasPendingBackgroundWork === undefined) {
-        throw new Error("Claude adapter runtime must expose hasPendingBackgroundWork.");
-      }
-      const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
-      const terminalEvents = () =>
-        events.filter(
-          (
-            event,
-          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
-            event.type === "turn.terminal",
-        );
-      return {
-        attachmentsDir,
-        runtime,
-        providerThread,
-        threadId,
-        sdkMessages,
-        processQueues,
-        offerAndWait,
-        offeredMessages,
-        promptUuid: (index: number) => {
-          const uuid = offeredMessages[index]?.uuid;
-          if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
-          return uuid;
-        },
-        permissionModeChanges,
-        liveSelectionChanges,
-        continuationRequests,
-        continuationReceipts,
-        events,
-        terminalReceipts,
-        subagentReceipts,
-        systemNoticeReceipts,
-        runtimeRequestReceipts,
-        planReceipts,
-        providerThreadReceipts,
-        getOpenedOptions: () => openedOptions,
-        terminalEvents,
-        hasPendingBackgroundWork,
-        until: changes.until,
-        awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
-        awaitContinuation: (count: number) =>
-          changes.until(() => continuationRequests.length >= count),
-      };
-    });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
@@ -7276,6 +6947,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("a turn's terminal event is published only after its turn slot is free", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const now = yield* DateTime.now;
+      const firstInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-slot-first"),
+        text: "Run sleep 60.",
+        attachments: [],
+        providerTurnOrdinal: 1,
+        nativeThreadHasTurns: false,
+      });
+      const firstTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${firstInput.attemptId}`,
+      });
+      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      let threadSettledFirst = false;
+      harness.eventHooks.push((event) =>
+        event.type === "provider_turn.updated" &&
+        event.providerTurn.id === firstTurnId &&
+        event.providerTurn.status === "interrupted"
+          ? Effect.sync(() => {
+              // The ended turn's thread state lands before its end, never on top of the next turn's.
+              threadSettledFirst = harness.events.some(
+                (earlier) =>
+                  earlier.type === "provider_thread.updated" &&
+                  earlier.providerThread.lastRunOrdinal === firstInput.runOrdinal &&
+                  earlier.providerThread.status === "idle",
+              );
+            }).pipe(
+              Effect.andThen(
+                harness.runtime
+                  .startTurn(
+                    makeClaudeTestTurnInput({
+                      threadId: harness.threadId,
+                      providerThread: harness.providerThread,
+                      now,
+                      attemptId: RunAttemptId.make("attempt-claude-slot-next"),
+                      text: "Next.",
+                      attachments: [],
+                      providerTurnOrdinal: 2,
+                      nativeThreadHasTurns: true,
+                    }),
+                  )
+                  .pipe(
+                    Effect.exit,
+                    Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+                  ),
+              ),
+            )
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(firstInput);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: firstTurnId,
+      });
+      const exit = yield* Deferred.await(nextStart);
+      assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+      assert.isTrue(threadSettledFirst);
+    }).pipe(
+      Effect.provideService(References.MaxOpsBeforeYield, 8),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* claudeTurnSlotRace;
+      assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+    }),
   );
 
   it.effect("an interrupted turn after a rollback stops resuming at the rolled-back head", () =>

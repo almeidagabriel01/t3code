@@ -11,6 +11,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { MEMORY_COPY } from "./memoryCopy";
 
 /** Settings-only diagnostics; rearming admission never establishes completed synchronization. */
 export function MemorySyncDiagnostics({
@@ -88,7 +89,7 @@ export function MemorySyncDiagnostics({
     </Text>
   );
   return (
-    <SettingsSection title="Memory sync">
+    <SettingsSection title={MEMORY_COPY.syncDiagnostics.title}>
       {copy(view.label)}
       {view.publicationLabel ? copy(view.publicationLabel) : null}
       {view.recoverableHolds.map((hold) =>

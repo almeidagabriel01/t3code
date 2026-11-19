@@ -12,7 +12,7 @@ import { AssistantGroups } from "./AssistantGroups.ts";
 import * as Reactor from "./AssistantGroupReactor.ts";
 
 it.effect(
-  "starts the group's change watch, hands it every domain event and a group thread's decisions, resubscribing after a failure",
+  "starts the group's change watch, hands it every domain event and a group thread's decisions, resubscribing both after a failure",
   () =>
     Effect.gen(function* () {
       const events = [
@@ -22,16 +22,30 @@ it.effect(
       const handled: string[] = [];
       const watching: string[] = [];
       const synced: string[] = [];
+      const released: string[] = [];
       const done = yield* Deferred.make<void>();
       const decided = yield* Deferred.make<void>();
       const failed = yield* Deferred.make<void>();
       let subscriptions = 0;
-      const decision = (fromThreadId: string) => ({ type: "upserted", decision: { fromThreadId } });
+      let domainSubscriptions = 0;
+      const decision = (fromThreadId: string, status = "open") => ({
+        type: "upserted",
+        decision: { fromThreadId, status },
+      });
       const layer = Reactor.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.fromIterable(events),
+              // The first domain subscription fails; the retry subscribes and settles again.
+              subscribeDomainEvents: Effect.suspend(() =>
+                (domainSubscriptions += 1) === 1
+                  ? Effect.sync(() => void watching.push("failed")).pipe(
+                      Effect.andThen(Effect.fail("closed")),
+                    )
+                  : Effect.sync(() => void watching.push("subscribed")).pipe(
+                      Effect.as(Stream.fromIterable(events)),
+                    ),
+              ) as never,
             }),
             Layer.mock(DecisionService.DecisionService)({
               // The first subscription fails; the retry gets the decisions.
@@ -42,18 +56,21 @@ it.effect(
                     )
                   : Stream.fromIterable([
                       { type: "snapshot", decisions: [] },
-                      decision("thread:outside"),
+                      decision("thread:outside", "answered"),
                       decision("assistant:ada:g-0123456789abcdef"),
+                      decision("assistant:ada:g-0123456789abcdef", "answered"),
                     ]),
               ) as never,
             }),
             Layer.mock(AssistantGroups)({
               member: {} as never,
               start: Effect.sync(() => void watching.push("started")),
+              settleWaiting: Effect.sync(() => void watching.push("settled")),
               syncWaitingThread: (threadId) =>
-                Effect.sync(() => void synced.push(threadId)).pipe(
+                Effect.sync(() => void synced.push(threadId)).pipe(Effect.as(true)),
+              settleDecision: (threadId) =>
+                Effect.sync(() => void released.push(threadId)).pipe(
                   Effect.andThen(Deferred.succeed(decided, undefined)),
-                  Effect.asVoid,
                 ),
               handleRunEvent: (event) =>
                 Effect.sync(() => void handled.push(event.type)).pipe(
@@ -71,15 +88,23 @@ it.effect(
       yield* Effect.gen(function* () {
         const reactor = yield* Reactor.AssistantGroupReactor;
         yield* reactor.start();
-        yield* Deferred.await(done);
         yield* Deferred.await(failed);
         assert.deepEqual(synced, []);
+        assert.deepEqual(handled, []);
         yield* TestClock.adjust("1 minute");
+        yield* Deferred.await(done);
         yield* Deferred.await(decided);
         assert.equal(subscriptions, 2);
-        assert.deepEqual(watching, ["started"]);
+        assert.equal(domainSubscriptions, 2);
+        // A failed subscription checks nothing; the retry checks the waiting tasks once anchored.
+        assert.deepEqual(watching, ["started", "failed", "subscribed", "settled"]);
         assert.deepEqual(handled, ["run.updated", "thread.created"]);
-        assert.deepEqual(synced, ["assistant:ada:g-0123456789abcdef"]);
+        assert.deepEqual(synced, [
+          "assistant:ada:g-0123456789abcdef",
+          "assistant:ada:g-0123456789abcdef",
+        ]);
+        // Only a settled decision can let the task that waited on it run again.
+        assert.deepEqual(released, ["assistant:ada:g-0123456789abcdef"]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
 );

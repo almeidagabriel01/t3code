@@ -211,7 +211,6 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { ThreadWorkspaceNotice } from "./ThreadWorkspaceNotice";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadAssistantStack } from "../assistants/AssistantPresence";
-import { AssistantTaskChip } from "../assistants/AssistantTaskChip";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadComposerKanbanCardChip } from "../kanban/ThreadComposerKanbanCardChip";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
@@ -1194,6 +1193,19 @@ function ThreadDetailBody(
       ),
     [userInputCoverageApplies],
   );
+  // The iOS question card grows over the panels above it, so the faces rise with it.
+  const presenceLiftStyle = useAnimatedStyle(
+    () => ({
+      transform: [
+        {
+          translateY: userInputCoverageApplies
+            ? -userInputCardProgress.value * userInputCardCoverage.value
+            : 0,
+        },
+      ],
+    }),
+    [userInputCoverageApplies],
+  );
   // A jump this thread never reached lets go when it closes.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the thread scope, clears its timers and ends a pending message jump when the thread changes
   useEffect(() => {
@@ -1711,17 +1723,13 @@ function ThreadDetailBody(
                       canOperateThread={props.canOperateThread}
                     />
                     {props.draftMode ? null : (
-                      <AssistantTaskChip
-                        environmentId={props.environmentId}
-                        threadId={props.selectedThread.id}
-                      />
-                    )}
-                    {props.draftMode ? null : (
-                      <ThreadAssistantStack
-                        environmentId={props.environmentId}
-                        threadId={props.selectedThread.id}
-                        messages={presenceMessages}
-                      />
+                      <Animated.View pointerEvents="box-none" style={presenceLiftStyle}>
+                        <ThreadAssistantStack
+                          environmentId={props.environmentId}
+                          threadId={props.selectedThread.id}
+                          messages={presenceMessages}
+                        />
+                      </Animated.View>
                     )}
                     <ThreadKanbanCardChip
                       environmentId={props.environmentId}

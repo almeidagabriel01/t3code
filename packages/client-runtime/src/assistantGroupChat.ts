@@ -5,6 +5,7 @@ import {
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   assistantGroupCountsAsUnread,
   assistantGroupFinishedScopes,
+  assistantGroupTaskNeedsUser,
   assistantGroupTasksNeedUser,
   assistantGroupInstructionBody,
   assistantGroupMentions,
@@ -16,7 +17,9 @@ import {
   type Assistant,
   type AssistantTeam,
   type AssistantTeamChat,
+  type AssistantTeamId,
   type AssistantTeamChatScope,
+  type AssistantTeamChatWaitingReason,
   type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantGroupMessageId,
@@ -30,6 +33,7 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
@@ -43,6 +47,7 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
+import type { AssistantMood } from "./assistantRobot.ts";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
@@ -188,6 +193,8 @@ export type AssistantGroupRequestStatus =
   | "working"
   /** A task is paused or failed: the user resumes, reassigns or cancels it. */
   | "needs-you"
+  /** The user stopped it (or archived the group): it waits on no one until resumed. */
+  | "stopped"
   | "done"
   | "cancelled";
 
@@ -196,6 +203,7 @@ export const ASSISTANT_GROUP_REQUEST_STATUS_LABEL: Record<AssistantGroupRequestS
   "needs-project": "Needs project",
   working: "Working",
   "needs-you": "Needs you",
+  stopped: "Stopped",
   done: "Done",
   cancelled: "Cancelled",
 };
@@ -246,7 +254,8 @@ function requestStatus(
   // A member's conversation waiting on the user outranks the work around it.
   if (rows.some((row) => row.message.waiting?.resolved === false)) return "needs-you";
   if (tasks.some((task) => OPEN_STATUSES.has(task.status))) return "working";
-  if (assistantGroupTasksNeedUser(tasks.map((task) => task.status))) return "needs-you";
+  if (assistantGroupTasksNeedUser(tasks)) return "needs-you";
+  if (tasks.some((task) => task.status === "paused")) return "stopped";
   if (tasks.length > 0) {
     return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
   }
@@ -313,8 +322,16 @@ export function assistantGroupRequestProject(
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
 /** The tab of a project's requests; General for those with none. */
-function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
   return projectId === null ? "general" : `project:${projectId}`;
+}
+
+/**
+ * The thread id a group's unsent message is kept under, so each client stores it in its thread
+ * draft store and reads "has a draft" the same way for threads, assistants and groups.
+ */
+export function assistantGroupDraftThreadId(teamId: AssistantTeamId): ThreadId {
+  return ThreadId.make(`assistant-group:${teamId}`);
 }
 
 export interface AssistantGroupTab {
@@ -399,7 +416,7 @@ export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
 /**
  * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
  * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
- * brings it back.
+ * brings it back, unless a failed send of that tab does (`assistantGroupFailedSendRouting`).
  */
 export function assistantGroupTabPick<T>(
   pick: AssistantGroupTabPick<T> | null,
@@ -653,7 +670,8 @@ export function assistantGroupHeldAttachments(
 
 /**
  * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
- * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed. It holds
+ * whatever the failure was: a resend that never left may follow an unconfirmed post the server has.
  */
 export function assistantGroupSendRequestId(
   failed: { readonly requestId: string; readonly sendKey: string } | null,
@@ -662,6 +680,100 @@ export function assistantGroupSendRequestId(
 ) {
   const sendKey = JSON.stringify(carries);
   return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
+/** What a group send went with besides its text and files: the open reply and its tab's picks. */
+export interface AssistantGroupSendRouting<Reply> {
+  readonly reply: Reply | null;
+  readonly projectPick: AssistantGroupProjectPick | null;
+  readonly modelPick: AssistantGroupTabPick<ModelSelection> | null;
+}
+
+/**
+ * A reply or pick once its send landed, by the post's reply or by the chat showing the post: it
+ * goes, unless the user changed it since the send.
+ */
+export function assistantGroupLandedPick<T>(current: T | null, sent: T | null): T | null {
+  return current === sent ? null : current;
+}
+
+const sameRouting = <Reply>(
+  left: AssistantGroupSendRouting<Reply>,
+  right: AssistantGroupSendRouting<Reply>,
+) =>
+  left.reply === right.reply &&
+  left.projectPick === right.projectPick &&
+  left.modelPick === right.modelPick;
+
+/**
+ * As the open tab's send comes into view, on its way or failed, the chat takes its routing back
+ * (`restore`), or a resend would go under a new id; while it shows, the user's changes become it
+ * (`keep`), so a cancelled reply stays cancelled. `seen`: the request id the tab showed last.
+ */
+export function assistantGroupFailedSendRouting<
+  Reply,
+  T extends AssistantGroupOutgoing & {
+    readonly requestId: string;
+    readonly routing: AssistantGroupSendRouting<Reply> | null;
+  },
+>(
+  seen: string | null,
+  shown: T | null,
+  tab: AssistantGroupTabKey | null,
+  current: AssistantGroupSendRouting<Reply>,
+): {
+  readonly seen: string | null;
+  readonly restore: AssistantGroupSendRouting<Reply> | null;
+  readonly keep: AssistantGroupSendRouting<Reply> | null;
+} {
+  const own = shown !== null && shown.tab === tab ? shown : null;
+  const next = own?.requestId ?? null;
+  const held = own?.routing ?? null;
+  if (held === null) return { seen: next, restore: null, keep: null };
+  if (next !== seen) return { seen: next, restore: held, keep: null };
+  return { seen: next, restore: null, keep: sameRouting(held, current) ? null : current };
+}
+
+const NO_FILES: ReadonlyArray<never> = [];
+
+/**
+ * Each group composer's files, outside any one mount, so the files a send took come back with
+ * it when the chat opens again and its resend carries them under the same id. Leaving the chat
+ * keeps only those; the rest were never sent and go.
+ */
+export function createAssistantGroupFileStore<T extends { readonly id: string }>() {
+  const groups = new Map<string, ReadonlyArray<T>>();
+  const listeners = new Set<() => void>();
+  const set = (group: string, files: ReadonlyArray<T>) => {
+    if (files.length === 0) groups.delete(group);
+    else groups.set(group, files);
+    for (const listener of listeners) listener();
+  };
+  const get = (group: string): ReadonlyArray<T> => groups.get(group) ?? NO_FILES;
+  return {
+    /** The same array until the group's files change, as `useSyncExternalStore` needs. */
+    get,
+    update: (group: string, change: (files: ReadonlyArray<T>) => ReadonlyArray<T>) =>
+      set(group, change(get(group))),
+    /** Leaving the chat: drops the files no pending send holds and returns them to release. */
+    leave: (group: string, pending: ReadonlySet<string>): ReadonlyArray<T> => {
+      const files = get(group);
+      const gone = files.filter((file) => !pending.has(file.id));
+      if (gone.length > 0)
+        set(
+          group,
+          files.filter((file) => pending.has(file.id)),
+        );
+      return gone;
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear: () => groups.clear(),
+  };
 }
 
 const NO_OUTGOING: ReadonlyArray<never> = [];
@@ -702,6 +814,12 @@ export function assistantGroupInScope(
   return scope === undefined || block.projectId === scope.projectId;
 }
 
+const FOLDED_STATUSES: ReadonlySet<AssistantGroupRequestStatus> = new Set([
+  "done",
+  "cancelled",
+  "stopped",
+]);
+
 /**
  * A block opens by itself while it needs attention, holds unread messages, or is the newest one;
  * finished requests fold away. The user's own toggle wins over this.
@@ -711,7 +829,7 @@ export function assistantGroupRequestExpanded(
   readSeq: number,
   newest: boolean,
 ): boolean {
-  if (newest || (block.status !== "done" && block.status !== "cancelled")) return true;
+  if (newest || !FOLDED_STATUSES.has(block.status)) return true;
   const lastUserSeq = lastUserSeqs(block.rows.map((row) => row.message)).get(block.requestId);
   return block.rows.some(
     (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message, lastUserSeq),
@@ -840,6 +958,52 @@ export function assistantGroupSendContextEqual(
         task.ownerId === right.stopped[index]!.ownerId,
     )
   );
+}
+
+/**
+ * The session a draft lands in, for the composer's context meter: the member who answers (a
+ * resumed task's owner, the one routing names, else the lead) and its thread in the replied request.
+ * Null for a new request, which opens fresh threads, and while that member has no task loaded there.
+ */
+export function assistantGroupComposerSession(input: {
+  readonly state: AssistantGroupChatState | null;
+  /** The request a reply continues; null for a new request. */
+  readonly requestId: AssistantGroupMessageId | null;
+  readonly text: string;
+  readonly members: ReadonlyArray<Recipient>;
+  readonly leadId: AssistantId | null;
+  readonly context: AssistantGroupSendContext;
+}): AssistantGroupTask | null {
+  const { state, requestId, context } = input;
+  if (state === null || requestId === null) return null;
+  const { replyOwner } = context;
+  const owners =
+    replyOwner === null
+      ? []
+      : input.members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
+  const decision = routeGroupMessage({
+    text: input.text,
+    members: input.members,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
+    stopped: context.stopped,
+    fromUser: true,
+    requestOwnerId: context.request?.ownerId ?? null,
+  });
+  if (decision?.kind === "resume") {
+    return state.tasks.get(decision.taskId as AssistantGroupTaskId) ?? null;
+  }
+  // A draft to several members lands in several sessions: no one meter speaks for them.
+  if (decision !== null && decision.ids.length > 1) return null;
+  const ownerId = decision?.ids[0] ?? input.leadId;
+  let newest: AssistantGroupTask | null = null;
+  for (const task of state.tasks.values()) {
+    const taskRequest = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (task.ownerId !== ownerId || taskRequest !== requestId) continue;
+    if (newest === null || newest.updatedAt < task.updatedAt) newest = task;
+  }
+  return newest;
 }
 
 /**
@@ -1204,6 +1368,7 @@ const ACTIVITY_STATUS: Partial<
   cancelled: "cancelled",
   paused: "interrupted",
   "needs-you": "interrupted",
+  stopped: "interrupted",
 };
 
 const ACTIVITY_LABEL: Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, string> = {
@@ -1271,6 +1436,7 @@ const FAILURE_REASON_LABEL: Record<string, string> = {
   thread_unavailable: "Could not open the owner's conversation",
   request_missing: "The request is gone",
   could_not_start: "Could not start the owner's turn",
+  thread_usage_limit: "A launched thread hit its usage limit",
 };
 
 /** A cancellation the server made; one a member made carries its own words, shown elsewhere. */
@@ -1292,11 +1458,166 @@ export function assistantGroupTaskReasonLabel(
   return null;
 }
 
+/** Why a request waits on the user, as the folder tooltip and the "Waiting on you" strip say it. */
+export function assistantGroupWaitingWhy(request: {
+  readonly reason: AssistantTeamChatWaitingReason;
+  readonly taskReason?: string | null | undefined;
+}): string {
+  switch (request.reason) {
+    case "wait":
+      return "Waiting for your answer";
+    case "project":
+      return "Needs a project";
+    case "failed":
+    case "paused":
+      return (
+        assistantGroupTaskReasonLabel({
+          status: request.reason,
+          reason: request.taskReason ?? null,
+        }) ?? (request.reason === "failed" ? "Failed" : "Paused")
+      );
+  }
+}
+
+export interface AssistantGroupWaitingItem {
+  readonly requestId: AssistantGroupMessageId;
+  readonly title: string;
+  readonly projectId: ProjectId | null;
+  readonly reason: AssistantTeamChatWaitingReason;
+  /** The member whose wait or task it is; null for the lead's project question. */
+  readonly assistantId: AssistantId | null;
+  /** The paused or failed task the user resumes; null for a wait or a project question. */
+  readonly task: AssistantGroupTask | null;
+}
+
+/**
+ * The requests that wait on the user, oldest first, one item each, by the rule the server's
+ * `waiting` follows: an open wait, the lead asking for a project, or tasks that need the user
+ * (one asked for before the newest boundary no longer counts). Open tasks come with the snapshot;
+ * a wait off the loaded page comes from its tab's `waitingRequest`, the oldest there.
+ */
+export function assistantGroupWaitingRequests(
+  state: AssistantGroupChatState,
+  scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "waitingRequest">> = [],
+): ReadonlyArray<AssistantGroupWaitingItem> {
+  const rootOf = (requestId: AssistantGroupMessageId) =>
+    state.messages.get(requestId) ?? state.requests.get(requestId) ?? null;
+  const item = (
+    requestId: AssistantGroupMessageId,
+    rest: Pick<AssistantGroupWaitingItem, "reason" | "assistantId" | "task">,
+  ): AssistantGroupWaitingItem => {
+    const root = rootOf(requestId);
+    return { requestId, title: titleOf(root), projectId: root?.projectId ?? null, ...rest };
+  };
+  const found = new Map<AssistantGroupMessageId, AssistantGroupWaitingItem>();
+  const tasksOf = new Map<AssistantGroupMessageId, AssistantGroupTask[]>();
+  for (const task of state.tasks.values()) {
+    const requestId = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (requestId === undefined) continue;
+    tasksOf.set(requestId, [...(tasksOf.get(requestId) ?? []), task]);
+  }
+  let boundarySeq = 0;
+  const messages = [...state.messages.values()].sort((a, b) => a.seq - b.seq);
+  for (const message of messages) {
+    if (message.kind === "boundary") boundarySeq = message.seq;
+    const requestId = message.requestId;
+    if (requestId === undefined || found.has(requestId)) continue;
+    if (message.waiting?.resolved === false) {
+      found.set(
+        requestId,
+        item(requestId, { reason: "wait", assistantId: message.assistantId ?? null, task: null }),
+      );
+    } else if (
+      message.asksProject === true &&
+      rootOf(requestId)?.projectId === undefined &&
+      !tasksOf.has(requestId)
+    ) {
+      found.set(requestId, item(requestId, { reason: "project", assistantId: null, task: null }));
+    }
+  }
+  // A task's own asking message dates it; one off the page is older than any loaded boundary.
+  const afterBoundary = (task: AssistantGroupTask) =>
+    boundarySeq === 0 || (rootOf(task.requestMessageId)?.seq ?? 0) > boundarySeq;
+  for (const [requestId, tasks] of tasksOf) {
+    if (found.has(requestId) || !assistantGroupTasksNeedUser(tasks)) continue;
+    const task = tasks
+      .filter((entry) => afterBoundary(entry) && assistantGroupTaskNeedsUser(entry, tasks))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (task === undefined) continue;
+    found.set(
+      requestId,
+      item(requestId, {
+        reason: task.status === "failed" ? "failed" : "paused",
+        assistantId: task.ownerId,
+        task,
+      }),
+    );
+  }
+  for (const { projectId, waitingRequest } of scopes) {
+    if (waitingRequest === undefined) continue;
+    const requestId = waitingRequest.requestId as AssistantGroupMessageId;
+    if (found.has(requestId)) continue;
+    found.set(requestId, {
+      requestId,
+      title: waitingRequest.title,
+      projectId,
+      reason: waitingRequest.reason,
+      assistantId: waitingRequest.assistantId,
+      task: null,
+    });
+  }
+  // A request with no loaded root lies before the page.
+  const seqOf = (requestId: AssistantGroupMessageId) =>
+    rootOf(requestId)?.seq ?? Number.NEGATIVE_INFINITY;
+  return [...found.values()].sort((a, b) => seqOf(a.requestId) - seqOf(b.requestId));
+}
+
 /** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
 export function assistantGroupWaitingReason(
   task: Pick<AssistantGroupTask, "status" | "reason">,
 ): string | null {
   return task.status === "queued" && task.reason?.startsWith("waiting for ") ? task.reason : null;
+}
+
+/** What a waiting member's turn holds on: work threads it launched and live subagent threads. */
+export interface AssistantGroupWaitingOn {
+  readonly threads: ReadonlyArray<ThreadId>;
+  readonly subagents: ReadonlyArray<ThreadId>;
+}
+
+/**
+ * Reads a waiting task's `threads:<id>,<id>;subagents:<id>` reason. Ids may hold `:`, so each part
+ * splits on its first one; unknown kinds and blank ids are skipped.
+ */
+export function assistantGroupWaitingOn(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): AssistantGroupWaitingOn | null {
+  if (task.status !== "waiting" || task.reason === null) return null;
+  const ids = { threads: new Set<string>(), subagents: new Set<string>() };
+  for (const part of task.reason.split(";")) {
+    const colon = part.indexOf(":");
+    const kind = part.slice(0, colon).trim();
+    if (colon < 0 || (kind !== "threads" && kind !== "subagents")) continue;
+    for (const id of part.slice(colon + 1).split(",")) {
+      if (id.trim() !== "") ids[kind].add(id.trim());
+    }
+  }
+  if (ids.threads.size === 0 && ids.subagents.size === 0) return null;
+  return {
+    threads: [...ids.threads].map((id) => ThreadId.make(id)),
+    subagents: [...ids.subagents].map((id) => ThreadId.make(id)),
+  };
+}
+
+const countLabel = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** "Waiting on 2 threads", "Waiting on 1 subagent", "Waiting on 2 threads and 1 subagent". */
+export function assistantGroupWaitingOnLabel(waitingOn: AssistantGroupWaitingOn): string {
+  const parts = [
+    waitingOn.threads.length > 0 ? countLabel(waitingOn.threads.length, "thread") : null,
+    waitingOn.subagents.length > 0 ? countLabel(waitingOn.subagents.length, "subagent") : null,
+  ].filter((part) => part !== null);
+  return `Waiting on ${parts.join(" and ")}`;
 }
 
 /**
@@ -1460,11 +1781,103 @@ export function assistantGroupFinishedInView(
   return open === null || open === "all" || open === finished;
 }
 
-/** "N running" count for the header: tasks being worked right now. */
-export function assistantGroupRunningCount(state: AssistantGroupChatState): number {
-  let count = 0;
-  for (const task of state.tasks.values()) if (task.status === "running") count += 1;
-  return count;
+/** The group's running tasks, oldest first: its Working now rows and its "N running". */
+export const assistantGroupRunningTasks = (
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupTask> =>
+  [...state.tasks.values()]
+    .filter((task) => task.status === "running")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+export const assistantGroupRunningCount = (state: AssistantGroupChatState): number =>
+  assistantGroupRunningTasks(state).length;
+
+/** A member at work: its newest open task, where it runs, and since when it is in that state. */
+export interface AssistantGroupMemberWork {
+  readonly task: AssistantGroupTask;
+  readonly projectId: ProjectId | null;
+}
+
+/** One line per member with open work, its newest task, most recently changed first. */
+export function assistantGroupMemberWork(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupMemberWork> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of state.tasks.values()) {
+    if (!OPEN_STATUSES.has(task.status)) continue;
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt < task.updatedAt) newest.set(task.ownerId, task);
+  }
+  return [...newest.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map((task) => ({
+      task,
+      projectId: assistantGroupRequestProject(
+        state,
+        task.requestId ?? state.messages.get(task.requestMessageId)?.requestId,
+      ),
+    }));
+}
+
+/** The face a member shows for one task: working, held by a limit, stopped on the user, failed or done. */
+export const ASSISTANT_GROUP_TASK_MOOD: Record<AssistantGroupTaskStatus, AssistantMood> = {
+  queued: "working",
+  running: "working",
+  waiting: "working",
+  usage_limited: "limited",
+  paused: "needs",
+  failed: "failed",
+  completed: "idle",
+  cancelled: "idle",
+};
+
+/** The members with a task in a request, each once by its newest task, in the order they joined it. */
+export function assistantGroupRequestOwners(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<AssistantGroupTask> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of [...tasks].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt <= task.updatedAt)
+      newest.set(task.ownerId, task);
+  }
+  return [...newest.values()];
+}
+
+/**
+ * A request's tasks as a tree, depth first: each root, then what it handed off, then their
+ * replies. A task whose parent is not loaded, or that sits in a parent cycle, starts its own branch.
+ */
+export function assistantGroupTaskTree(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<{ readonly task: AssistantGroupTask; readonly depth: number }> {
+  const ordered = [...tasks].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const ids = new Set(ordered.map((task) => task.id));
+  const children = new Map<string, AssistantGroupTask[]>();
+  for (const task of ordered) {
+    const parent = task.parentId !== null && ids.has(task.parentId) ? task.parentId : "";
+    children.set(parent, [...(children.get(parent) ?? []), task]);
+  }
+  const rows: Array<{ readonly task: AssistantGroupTask; readonly depth: number }> = [];
+  const seen = new Set<string>();
+  const walk = (parent: string, depth: number) => {
+    for (const task of children.get(parent) ?? []) {
+      if (seen.has(task.id)) continue;
+      seen.add(task.id);
+      rows.push({ task, depth });
+      walk(task.id, depth + 1);
+    }
+  };
+  walk("", 0);
+  for (const task of ordered) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    rows.push({ task, depth: 0 });
+    walk(task.id, 1);
+  }
+  return rows;
 }
 
 /** The divider's wording, for a boundary message's `new` or `compact` text. */

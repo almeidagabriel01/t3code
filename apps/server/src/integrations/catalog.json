@@ -1,0 +1,559 @@
+[
+  {
+    "id": "google-calendar",
+    "name": "Google Calendar",
+    "category": "calendar",
+    "description": "Read your calendars and create, move or answer events.",
+    "docsUrl": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+    "server": {
+      "transport": "http",
+      "url": "https://calendarmcp.googleapis.com/mcp/v1"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "google",
+      "setupUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    "availability": "preview",
+    "match": {
+      "urls": ["https://calendarmcp.googleapis.com/mcp/v1"],
+      "packages": [],
+      "names": ["google calendar", "claude.ai Google Calendar", "gcal"]
+    }
+  },
+  {
+    "id": "gmail",
+    "name": "Gmail",
+    "category": "email",
+    "description": "Search and read mail, and write drafts and labels.",
+    "docsUrl": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+    "server": {
+      "transport": "http",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "google",
+      "setupUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    "availability": "preview",
+    "note": "Drafts only, no send tool",
+    "match": {
+      "urls": ["https://gmailmcp.googleapis.com/mcp/v1"],
+      "packages": [],
+      "names": ["gmail", "claude.ai Gmail"]
+    }
+  },
+  {
+    "id": "microsoft-365",
+    "name": "Microsoft 365",
+    "category": "email",
+    "description": "Outlook mail and calendar, Teams and files through Work IQ.",
+    "docsUrl": "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview",
+    "server": {
+      "transport": "http",
+      "url": "https://workiq.svc.cloud.microsoft/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "microsoft",
+      "pkce": "assume-s256"
+    },
+    "availability": "preview",
+    "match": {
+      "urls": ["https://workiq.svc.cloud.microsoft/mcp"],
+      "packages": [],
+      "names": ["microsoft 365", "claude.ai Microsoft 365"]
+    }
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "category": "chat",
+    "description": "Read channels and post messages and canvases.",
+    "docsUrl": "https://docs.slack.dev/ai/mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.slack.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "slack"
+    },
+    "match": {
+      "urls": ["https://mcp.slack.com/mcp"],
+      "packages": [],
+      "names": ["slack", "claude.ai Slack"]
+    }
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "category": "docs",
+    "description": "Search, read and edit pages and databases.",
+    "docsUrl": "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.notion.com/mcp"],
+      "packages": [],
+      "names": ["notion", "claude.ai Notion"]
+    }
+  },
+  {
+    "id": "linear",
+    "name": "Linear",
+    "category": "tasks",
+    "description": "Find, create and update issues and projects.",
+    "docsUrl": "https://linear.app/docs/mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.linear.app/mcp"],
+      "packages": [],
+      "names": ["linear", "claude.ai Linear"]
+    }
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "category": "dev",
+    "description": "Work with repositories, issues and pull requests.",
+    "docsUrl": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "github"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://api.githubcopilot.com/mcp/"],
+      "packages": [],
+      "names": ["github", "claude.ai GitHub"]
+    }
+  },
+  {
+    "id": "asana",
+    "name": "Asana",
+    "category": "tasks",
+    "description": "Find, create and update tasks and projects.",
+    "docsUrl": "https://developers.asana.com/docs/using-asanas-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.asana.com/v2/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "asana"
+    },
+    "match": {
+      "urls": ["https://mcp.asana.com/v2/mcp"],
+      "packages": [],
+      "names": ["asana", "claude.ai Asana"]
+    }
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe",
+    "category": "payments",
+    "description": "Look up and manage customers, payments and products.",
+    "docsUrl": "https://docs.stripe.com/mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.stripe.com"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.stripe.com"],
+      "packages": [],
+      "names": ["stripe", "claude.ai Stripe"]
+    }
+  },
+  {
+    "id": "sentry",
+    "name": "Sentry",
+    "category": "dev",
+    "description": "Investigate errors and update issues.",
+    "docsUrl": "https://mcp.sentry.dev/",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.sentry.dev/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.sentry.dev/mcp"],
+      "packages": [],
+      "names": ["sentry", "claude.ai Sentry"]
+    }
+  },
+  {
+    "id": "hubspot",
+    "name": "HubSpot",
+    "category": "crm",
+    "description": "Read and update contacts, companies and deals.",
+    "docsUrl": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.hubspot.com"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "hubspot"
+    },
+    "match": {
+      "urls": ["https://mcp.hubspot.com"],
+      "packages": [],
+      "names": ["hubspot", "claude.ai HubSpot"]
+    }
+  },
+  {
+    "id": "box",
+    "name": "Box",
+    "category": "files",
+    "description": "Search, read and manage files and folders.",
+    "docsUrl": "https://developer.box.com/guides/box-mcp/remote/",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.box.com"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "box"
+    },
+    "match": {
+      "urls": ["https://mcp.box.com"],
+      "packages": [],
+      "names": ["box", "claude.ai Box"]
+    }
+  },
+  {
+    "id": "canva",
+    "name": "Canva",
+    "category": "design",
+    "description": "Find and create designs.",
+    "docsUrl": "https://www.canva.dev/docs/connect/mcp-server/",
+    "server": {
+      "transport": "http",
+      "url": "https://api.canva.com/connect/v1/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "own-app",
+      "clientGroup": "canva"
+    },
+    "match": {
+      "urls": ["https://api.canva.com/connect/v1/mcp"],
+      "packages": [],
+      "names": ["canva", "claude.ai Canva"]
+    }
+  },
+  {
+    "id": "monday",
+    "name": "monday.com",
+    "category": "tasks",
+    "description": "Read and update boards and items.",
+    "docsUrl": "https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.monday.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.monday.com/mcp"],
+      "packages": [],
+      "names": ["monday.com", "claude.ai monday.com"]
+    }
+  },
+  {
+    "id": "clickup",
+    "name": "ClickUp",
+    "category": "tasks",
+    "description": "Find, create and update tasks.",
+    "docsUrl": "https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.clickup.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.clickup.com/mcp"],
+      "packages": [],
+      "names": ["clickup", "claude.ai ClickUp"]
+    }
+  },
+  {
+    "id": "intercom",
+    "name": "Intercom",
+    "category": "crm",
+    "description": "Read conversations and write notes and articles.",
+    "docsUrl": "https://developers.intercom.com/docs/guides/mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.intercom.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "redirect": "loopback-only",
+    "match": {
+      "urls": ["https://mcp.intercom.com/mcp"],
+      "packages": [],
+      "names": ["intercom", "claude.ai Intercom"]
+    }
+  },
+  {
+    "id": "paypal",
+    "name": "PayPal",
+    "category": "payments",
+    "description": "Work with orders, invoices and payments.",
+    "docsUrl": "https://developer.paypal.com/ai-tools/mcp-server/",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.paypal.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.paypal.com/mcp"],
+      "packages": [],
+      "names": ["paypal", "claude.ai PayPal"]
+    }
+  },
+  {
+    "id": "cloudflare",
+    "name": "Cloudflare",
+    "category": "dev",
+    "description": "Manage Workers, DNS and other account resources.",
+    "docsUrl": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.cloudflare.com/mcp"],
+      "packages": [],
+      "names": ["cloudflare", "claude.ai Cloudflare"]
+    }
+  },
+  {
+    "id": "vercel",
+    "name": "Vercel",
+    "category": "dev",
+    "description": "Inspect projects and deployments, and deploy.",
+    "docsUrl": "https://vercel.com/docs/agent-resources/vercel-mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.vercel.com"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.vercel.com"],
+      "packages": [],
+      "names": ["vercel", "claude.ai Vercel"]
+    }
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase",
+    "category": "dev",
+    "description": "Query databases and manage projects and migrations.",
+    "docsUrl": "https://supabase.com/docs/guides/getting-started/mcp",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.supabase.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.supabase.com/mcp"],
+      "packages": [],
+      "names": ["supabase", "claude.ai Supabase"]
+    }
+  },
+  {
+    "id": "zapier",
+    "name": "Zapier",
+    "category": "automation",
+    "description": "Run actions in the apps connected to Zapier.",
+    "docsUrl": "https://docs.zapier.com/mcp/overview/how-connections-work.md",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.zapier.com/api/v1/connect"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.zapier.com/api/v1/connect"],
+      "packages": [],
+      "names": ["zapier", "claude.ai Zapier"]
+    }
+  },
+  {
+    "id": "webflow",
+    "name": "Webflow",
+    "category": "design",
+    "description": "Read and update sites, pages and CMS items.",
+    "docsUrl": "https://developers.webflow.com/mcp/reference/how-it-works",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.webflow.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.webflow.com/mcp"],
+      "packages": [],
+      "names": ["webflow", "claude.ai Webflow"]
+    }
+  },
+  {
+    "id": "todoist",
+    "name": "Todoist",
+    "category": "tasks",
+    "description": "Find, add and complete tasks.",
+    "docsUrl": "https://developer.todoist.com/api/v1/#tag/Todoist-MCP",
+    "server": {
+      "transport": "http",
+      "url": "https://ai.todoist.net/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://ai.todoist.net/mcp"],
+      "packages": [],
+      "names": ["todoist", "claude.ai Todoist"]
+    }
+  },
+  {
+    "id": "airtable",
+    "name": "Airtable",
+    "category": "docs",
+    "description": "Read and update bases, tables and records.",
+    "docsUrl": "https://support.airtable.com/articles/9897799762-using-the-airtable-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.airtable.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "tokenFallback": {
+      "header": "Authorization",
+      "format": "Bearer {token}"
+    },
+    "match": {
+      "urls": ["https://mcp.airtable.com/mcp"],
+      "packages": [],
+      "names": ["airtable", "claude.ai Airtable"]
+    }
+  },
+  {
+    "id": "dropbox",
+    "name": "Dropbox",
+    "category": "files",
+    "description": "Search, read and manage files.",
+    "docsUrl": "https://help.dropbox.com/integrations/connect-dropbox-mcp-server",
+    "server": {
+      "transport": "http",
+      "url": "https://mcp.dropbox.com/mcp"
+    },
+    "auth": {
+      "kind": "oauth",
+      "registration": "dynamic"
+    },
+    "match": {
+      "urls": ["https://mcp.dropbox.com/mcp"],
+      "packages": [],
+      "names": ["dropbox", "claude.ai Dropbox"]
+    }
+  }
+]

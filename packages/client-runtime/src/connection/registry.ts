@@ -553,7 +553,7 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+        detail: `That address claims to be ${saved.target.label}, which is already saved with another address. Open ${saved.target.label} in Settings and choose Pair again if it no longer accepts this device, or Add route to add this address.`,
       });
     }
   });

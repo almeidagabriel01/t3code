@@ -33,6 +33,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsProjectsLabel } from "./settings-environment-filter.logic";
 import { useAssistantsEnvironmentIds } from "../../state/assistants";
+import { useIntegrationSearchNames, useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
@@ -41,6 +42,7 @@ import { useComputerUseHostEnvironmentIds, useMacEnvironmentIds } from "../../st
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { filterSettingsSections } from "./settings-search";
+import { USAGE_ALERTS_COPY } from "./usageAlertsCopy";
 import { usePaneRole } from "../../components/ui/Pane";
 
 export function SettingsRouteScreen() {
@@ -178,9 +180,11 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
+  const integrationNames = useIntegrationSearchNames(query.trim() !== "");
   const sections = filterSettingsSections(
     [{ rows: overflowRows }, { title: "Connections", rows: props.connections }, ...indexSections],
     query,
+    { SettingsIntegrations: integrationNames },
   );
 
   return (
@@ -223,7 +227,6 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
 function useSettingsIndexSections(): SettingsListSection[] {
   const { selectedTargets, selectedProjectGroups, selectedProjectKeys } =
     useSettingsEnvironmentFilter();
-  const noServerTargets = selectedTargets.length === 0;
   const hasBoards = useHasKanbanEnvironments();
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
@@ -233,6 +236,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const hasUsageAlerts = selectedTargets.some(
     (target) => target.serverConfig?.environment?.capabilities.usageLimitAlerts === true,
   );
@@ -255,10 +259,8 @@ function useSettingsIndexSections(): SettingsListSection[] {
     target: SettingsPageTarget,
     icon: SettingsListRow["icon"],
     label: string,
-    extra?: Pick<SettingsListRow, "disabled" | "value">,
+    extra?: Pick<SettingsListRow, "value">,
   ): SettingsListRow => ({ id: target, icon, label, target, ...extra });
-  const serverPage = (target: SettingsPageTarget, icon: SettingsListRow["icon"], label: string) =>
-    page(target, icon, label, { disabled: noServerTargets });
   // The same pages and groups as Settings on web, minus what mobile has no setting for.
   return [
     {
@@ -276,13 +278,16 @@ function useSettingsIndexSections(): SettingsListSection[] {
     {
       title: "Agents",
       rows: [
-        serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
+        page("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         ...(hasUsageAlerts
-          ? [serverPage("SettingsUsageAlerts", "bell.badge", "Limit alerts")]
+          ? [page("SettingsUsageAlerts", "bell.badge", USAGE_ALERTS_COPY.title)]
           : []),
-        serverPage("SettingsThreads", "text.bubble", "Threads"),
-        serverPage("SettingsAgentTools", "hammer", "MCP servers & skills"),
+        page("SettingsThreads", "text.bubble", "Threads"),
+        page("SettingsAgentTools", "hammer", "MCP servers & skills"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
+        ...(hasIntegrations
+          ? [page("SettingsIntegrations", "cable.connector", "Integrations")]
+          : []),
         ...(hasImessage ? [page("SettingsImessage", "bubble.left", "iMessage")] : []),
         ...(hasTelegram ? [page("SettingsTelegram", "paperplane", "Telegram")] : []),
         ...(hasMac
@@ -313,13 +318,13 @@ function useSettingsIndexSections(): SettingsListSection[] {
           "Projects",
           selectedProjectKeys !== null ? { value: projectLabel } : undefined,
         ),
-        serverPage("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
-        serverPage("SettingsWorktrees", "square.on.square", "Worktrees"),
+        page("SettingsEnvironmentSourceControl", "arrow.triangle.branch", "Source control"),
+        page("SettingsWorktrees", "square.on.square", "Worktrees"),
       ],
     },
     {
       rows: [
-        serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
+        page("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
         page("SettingsLabs", "flask", "Labs"),
         page("SettingsAbout", "info.circle", "About"),
         page("SettingsArchive", "archivebox", "Archive"),

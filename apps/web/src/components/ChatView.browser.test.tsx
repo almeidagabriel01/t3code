@@ -1,6 +1,14 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -11,9 +19,11 @@ import { AppRoot } from "~/AppRoot";
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useAttachmentUploadStore } from "~/lib/attachmentUploadQueue";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
+import { useThreadTabsStore } from "~/threadTabsStore";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -108,42 +118,159 @@ it("/side shows the message in its tab before the server answers, and returns it
   await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
 });
 
+function addImage(ref: ScopedThreadRef, name: string, mimeType: string) {
+  const file = new File(["img"], name, { type: mimeType });
+  useComposerDraftStore.getState().addImages(ref, [
+    {
+      type: "image",
+      id: "side-image",
+      name,
+      mimeType,
+      sizeBytes: file.size,
+      previewUrl: URL.createObjectURL(file),
+      file,
+    },
+  ]);
+}
+
+const draftImageNames = (ref: ScopedThreadRef) =>
+  useComposerDraftStore
+    .getState()
+    .getComposerDraft(ref)
+    ?.images.map((image) => image.name) ?? [];
+
 it.each([
-  { name: "is accepted", fails: false, editorText: "" },
-  { name: "is refused", fails: true, editorText: "/side why is it slow" },
-])("/side sends the message once the side chat exists: $name", async ({ fails, editorText }) => {
+  {
+    name: "is accepted",
+    typed: "/side why is it slow",
+    text: "why is it slow",
+    fails: false,
+    editorText: "",
+    images: [],
+  },
+  {
+    name: "is refused",
+    typed: "/side why is it slow",
+    text: "why is it slow",
+    fails: true,
+    editorText: "/side why is it slow",
+    images: ["shot.png"],
+  },
+  // An image without a question asks about the image, as the main send does.
+  {
+    name: "is accepted with only an image",
+    typed: "/side",
+    text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    fails: false,
+    editorText: "",
+    images: [],
+  },
+])(
+  "/side sends the message once the side chat exists: $name",
+  async ({ typed, text, fails, editorText, images }) => {
+    const { parent, router } = await openSideChat();
+    const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+    using _draft = {
+      [Symbol.dispose]: () => {
+        useComposerDraftStore.getState().clearComposerContent(parentRef);
+        useRightPanelStore.getState().closeAllSurfaces(parentRef);
+        useAttachmentUploadStore.setState({ uploadsByImageId: {} });
+      },
+    };
+    // An image already uploaded to the environment, as the composer's upload leaves it.
+    addImage(parentRef, "shot.png", "image/png");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        "side-image": { status: "ready", environmentId: ENVIRONMENT_ID, attachmentId: "upload-1" },
+      },
+    });
+    using _environment = installFakeEnvironment([parent], { sideChats: true });
+    if (fails) fakeCommands.failTypes.add("message.dispatch");
+    await using _app = await render(<AppRoot router={router} />, { router: false });
+    const editor = page.getByTestId("composer-editor").first();
+    await userEvent.type(editor, typed);
+    await page.getByRole("button", { name: "Send to side chat" }).click();
+    // Ids, so a second send shows whether it repeated the command, the message or the thread.
+    const sent = () =>
+      fakeCommands.dispatched
+        .filter((command) => command.type === "message.dispatch")
+        .map((command) => {
+          const { commandId, threadId, messageId } = command as unknown as Record<string, string>;
+          return `${threadId} ${messageId} ${commandId}`;
+        });
+    await vi.waitFor(() => expect(sent()).not.toHaveLength(0));
+    await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
+    await expect.element(editor).toHaveTextContent(editorText);
+    expect(sent()).toHaveLength(1);
+    expect(fakeCommands.dispatched.find((command) => command.type === "message.dispatch")).toEqual(
+      expect.objectContaining({
+        text,
+        attachments: [expect.objectContaining({ type: "image", name: "shot.png" })],
+        context: { version: 1, records: [expect.objectContaining({ kind: "image" })] },
+      }),
+    );
+    // A side chat that did not start gives the image back with the text.
+    expect(draftImageNames(parentRef)).toEqual(images);
+    expect(
+      selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        parentRef,
+      ).surfaces.filter((surface) => surface.kind === "side-chat"),
+    ).toHaveLength(fails ? 0 : 1);
+  },
+);
+
+it("/side starts no side chat when its image cannot upload, and gives it back", async () => {
   const { parent, router } = await openSideChat();
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
   using _draft = {
     [Symbol.dispose]: () => {
       useComposerDraftStore.getState().clearComposerContent(parentRef);
-      useRightPanelStore.getState().closeAllSurfaces(parentRef);
+      useAttachmentUploadStore.setState({ uploadsByImageId: {} });
     },
   };
+  // The upload queue refuses this type before reaching the server.
+  addImage(parentRef, "shot.bmp", "image/bmp");
   using _environment = installFakeEnvironment([parent], { sideChats: true });
-  if (fails) fakeCommands.failTypes.add("message.dispatch");
   await using _app = await render(<AppRoot router={router} />, { router: false });
   const editor = page.getByTestId("composer-editor").first();
   await userEvent.type(editor, "/side why is it slow");
   await page.getByRole("button", { name: "Send to side chat" }).click();
-  // Ids, so a second send shows whether it repeated the command, the message or the thread.
-  const sent = () =>
-    fakeCommands.dispatched
-      .filter((command) => command.type === "message.dispatch")
-      .map((command) => {
-        const { commandId, threadId, messageId } = command as unknown as Record<string, string>;
-        return `${threadId} ${messageId} ${commandId}`;
-      });
-  await vi.waitFor(() => expect(sent()).not.toHaveLength(0));
-  await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
-  await expect.element(editor).toHaveTextContent(editorText);
-  expect(sent()).toHaveLength(1);
-  expect(
-    selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      parentRef,
-    ).surfaces.filter((surface) => surface.kind === "side-chat"),
-  ).toHaveLength(fails ? 0 : 1);
+  await expect.element(page.getByText("Attachment 'shot.bmp' failed to upload.")).toBeVisible();
+  await expect.element(editor).toHaveTextContent("/side why is it slow");
+  expect(draftImageNames(parentRef)).toEqual(["shot.bmp"]);
+  expect(fakeCommands.dispatched.map((command) => command.type)).not.toContain("thread.fork");
+});
+
+it("/side refuses added context and keeps the draft", async () => {
+  const { parent, router } = await openSideChat();
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(parentRef),
+  };
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  toast.mockClear();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.type(editor, "/side why is it slow");
+  useComposerDraftStore
+    .getState()
+    .setThreadContexts(parentRef, [
+      threadContextRecord(scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("thread-other")), "Other"),
+    ]);
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Side chats take text, images and files",
+        description: "Remove the added context, then send it again.",
+      }),
+    ),
+  );
+  expect(useComposerDraftStore.getState().getComposerDraft(parentRef)?.prompt).toContain(
+    "/side why is it slow",
+  );
+  expect(fakeCommands.dispatched.map((command) => command.type)).not.toContain("thread.fork");
 });
 
 it("Send to main chat puts a side chat answer into the parent composer", async () => {
@@ -253,8 +380,59 @@ it("keeps an open file tab mounted behind the chat, so it returns where it was",
   useRightPanelStore.getState().showChat(ref);
   await vi.waitFor(() => expect(panel?.getAttribute("aria-hidden")).toBe("true"));
   expect(panel?.isConnected).toBe(true);
-  await page.getByRole("button", { name: "plan.html", exact: true }).click();
+  // The file's tab sits in the thread tab row, inside its own thread's block.
+  expect(tab.element().closest("[data-thread-tab]")?.getAttribute("data-thread-tab")).toBe(
+    scopedThreadKey(ref),
+  );
+  await tab.click();
   await vi.waitFor(() => expect(panel?.hasAttribute("aria-hidden")).toBe(false));
+});
+
+it("shows a split group's file tabs in that group's own strip", async () => {
+  await page.viewport(1400, 900);
+  const left = threadWithHistory("split-left", 1);
+  const right = threadWithHistory("split-right", 1);
+  using _environment = installFakeEnvironment([left, right]);
+  using _tabs = { [Symbol.dispose]: () => useThreadTabsStore.setState({ byProject: {} }) };
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const leftKey = scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, left.id));
+  const rightRef = scopeThreadRef(ENVIRONMENT_ID, right.id);
+  const rightKey = scopedThreadKey(rightRef);
+  useThreadTabsStore.setState({
+    byProject: {
+      [`${ENVIRONMENT_ID}:${PROJECT_ID}`]: {
+        groups: [
+          { id: "main", tabs: [leftKey], active: leftKey },
+          { id: "g2", tabs: [rightKey], active: rightKey },
+        ],
+        layout: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: { type: "leaf", groupId: "main" },
+          second: { type: "leaf", groupId: "g2" },
+        },
+        focusedGroupId: "main",
+      },
+    },
+  });
+  useRightPanelStore.getState().openFile(rightRef, "docs/notes.md");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${left.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+
+  const tab = page.getByRole("tab", { name: "notes.md" });
+  await expect.element(tab).toBeVisible();
+  expect(tab.element().closest("[data-thread-tab]")?.getAttribute("data-thread-tab")).toBe(
+    rightKey,
+  );
+  expect(document.querySelectorAll('[role="tablist"][aria-label="Open tabs"]')).toHaveLength(2);
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {

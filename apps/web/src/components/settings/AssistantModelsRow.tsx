@@ -15,6 +15,7 @@ import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { IconAction, modelPickerProps, type PickerProps } from "./FallbackModelsRow";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 type Providers = Parameters<typeof modelPickerProps>[2];
 
@@ -145,9 +146,7 @@ export function AssistantModelsRow(
 
   return (
     <SettingsRow
-      id="assistant-models"
-      title="Model by assistant"
-      description="These assistants start new threads in this project on their own model."
+      {...searchableSetting("assistant-models")}
       control={
         anchor && !adding ? (
           <Button

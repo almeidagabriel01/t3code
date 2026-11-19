@@ -1,3 +1,5 @@
+import type { TextProps } from "react-native";
+
 export const MOBILE_TYPOGRAPHY = {
   micro: { fontSize: 11, lineHeight: 14 },
   caption: { fontSize: 12, lineHeight: 16 },
@@ -31,3 +33,11 @@ export const MOBILE_TEXT_CLASSES = {
   largeTitle: "text-2xl",
   display: "text-3xl",
 } as const satisfies Record<keyof typeof MOBILE_TYPOGRAPHY, string>;
+
+/** Android drops `numberOfLines` and `ellipsizeMode` on selectable text, so truncated text is not selectable there. */
+export function textSelectable(
+  platform: string,
+  props: Pick<TextProps, "selectable" | "numberOfLines">,
+): boolean | undefined {
+  return platform === "android" && props.numberOfLines !== undefined ? false : props.selectable;
+}

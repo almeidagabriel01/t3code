@@ -1,4 +1,5 @@
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { requestWaitsOnUser } from "@t3tools/shared/needsUser";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -62,8 +63,7 @@ function restartContinuationBlocked(
     return true;
   const waitingRequest = projection.runtimeRequests.some(
     (request) =>
-      request.kind !== "dynamic_tool_call" &&
-      request.kind !== "auth_refresh" &&
+      requestWaitsOnUser(request.kind) &&
       request.responseCapability.type !== "message" &&
       (request.status === "pending" ||
         ((request.status === "expired" || request.status === "cancelled") &&

@@ -5,6 +5,7 @@ import {
 } from "../../../../lib/appearancePreferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
+import { APPEARANCE_COPY } from "../appearanceCopy";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import {
   AppearancePreviewSeparator,
@@ -21,7 +22,7 @@ export function CodeAppearanceSection() {
   };
 
   return (
-    <SettingsSection title="Code & Diffs">
+    <SettingsSection title={APPEARANCE_COPY.code.title}>
       <CodeAppearancePreview
         fontSize={appearance.codeFontSize}
         wordBreak={appearance.codeWordBreak}
@@ -30,7 +31,7 @@ export function CodeAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chevron.left.forwardslash.chevron.right"
-        label="Custom font size"
+        label={APPEARANCE_COPY.code.customFontSize}
         onValueChange={handleToggleCustom}
         value={custom}
       />
@@ -38,7 +39,7 @@ export function CodeAppearanceSection() {
         <FontSizeSliderRow
           disabled={!isReady}
           icon="textformat.size"
-          label="Font size"
+          label={APPEARANCE_COPY.code.fontSize}
           max={MAX_CODE_FONT_SIZE}
           min={MIN_CODE_FONT_SIZE}
           onChange={setCodeFontSize}
@@ -50,7 +51,7 @@ export function CodeAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="text.word.spacing"
-        label="Word break"
+        label={APPEARANCE_COPY.code.wordBreak}
         onValueChange={setCodeWordBreak}
         value={appearance.codeWordBreak}
       />

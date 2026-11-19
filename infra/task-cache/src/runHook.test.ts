@@ -167,7 +167,8 @@ it("installs without masking .profile and configures CI through bash", async () 
   const run = (args: string[], env: NodeJS.ProcessEnv) =>
     new Promise<string>((resolve, reject) => {
       const child = NodeChildProcess.spawn(args[0]!, args.slice(1), {
-        env: { ...process.env, ...env, HOME: home, NODE_OPTIONS: "" },
+        // Not the ambient env: under ssh (SSH_CLIENT), Debian's bash reads ~/.bashrc instead of BASH_ENV.
+        env: { PATH: process.env.PATH, ...env, HOME: home },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let output = "";

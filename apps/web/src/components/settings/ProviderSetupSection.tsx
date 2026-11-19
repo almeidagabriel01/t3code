@@ -21,6 +21,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 
 interface ProviderSetupSectionProps {
@@ -53,8 +54,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
     >
       <SettingsRow
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
-        title="Environment"
-        description="Device that runs this provider."
+        {...settingCopy("antigravity-environment")}
         control={
           <div className="flex min-w-0 flex-col gap-2 sm:items-end">
             <span className="text-muted-foreground [overflow-wrap:anywhere]">
@@ -69,10 +69,17 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
         }
       />
       {props.readOnly ? (
-        <SettingsRow title="Setup unavailable" description="Provider setup is read-only." />
+        <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- read-only state, not a setting
+          title="Setup unavailable"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- read-only state, not a setting
+          description="Provider setup is read-only."
+        />
       ) : props.provider?.setup === undefined ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- update-required state, not a setting
           title="Update required"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- update-required state, not a setting
           description="Update this environment to manage Antigravity."
         />
       ) : (
@@ -193,9 +200,8 @@ function ProviderSetupActions({
         {pendingLabel ? `${pendingLabel}.` : null}
       </p>
       <SettingsRow
-        title="Runtime"
+        {...settingCopy("antigravity-runtime")}
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
-        description="Install and manage Antigravity."
         status={
           <div className="space-y-2">
             {usesCustomBinary ? (

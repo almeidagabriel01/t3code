@@ -53,6 +53,7 @@ const harness = Effect.gen(function* () {
         ),
       ),
     note: (note) => Effect.sync(() => void notes.push(note.text)),
+    claimDecision: () => Effect.succeed(false),
     install: () => Effect.void,
   });
   const layer = ScheduledTaskService.layer.pipe(

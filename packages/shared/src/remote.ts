@@ -1,11 +1,35 @@
 import * as Schema from "effect/Schema";
 
+import { isPrivateNetworkHost, isTailnetHost } from "./hostClassification.ts";
+
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
 const PAIRING_APP_LINK_PARAM = "pairingUrl";
 const APP_LINK_PROTOCOL = /^t3code(?:-[a-z]+)?:$/;
 const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+
+const URL_SCHEME = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//u;
+const IP_LITERAL = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[\da-fA-F:.]+\])$/u;
+
+/**
+ * Gives a typed address its scheme when it has none. Addresses on this device or the LAN, and IP
+ * literals (no certificate names them), use http; MagicDNS and public names use https.
+ */
+export const withRemoteScheme = (address: string): string => {
+  if (URL_SCHEME.test(address)) return address;
+  // A bare IPv6 address only parses in brackets.
+  if (address.split(":").length > 2 && !address.startsWith("[")) return `http://[${address}]`;
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${address}`).hostname;
+  } catch {
+    return `https://${address}`;
+  }
+  const plain =
+    IP_LITERAL.test(hostname) || (isPrivateNetworkHost(hostname) && !isTailnetHost(hostname));
+  return `${plain ? "http" : "https"}://${address}`;
+};
 
 export const readHashParams = (url: URL): URLSearchParams =>
   new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
@@ -84,9 +108,7 @@ const normalizeRemoteBaseUrl = (
   }
 
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
-  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
-    ? withoutLeadingSlashes
-    : `https://${withoutLeadingSlashes}`;
+  const normalizedInput = withRemoteScheme(withoutLeadingSlashes);
   let url: URL;
   try {
     url = new URL(normalizedInput);

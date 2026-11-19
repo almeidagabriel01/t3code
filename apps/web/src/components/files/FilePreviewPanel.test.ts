@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
+  fileTreeRevealTarget,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
@@ -93,6 +94,37 @@ describe("resolveFilePreviewPath", () => {
         shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
       ).toBe(true);
     }
+  });
+});
+
+describe("fileTreeRevealTarget", () => {
+  it.each([
+    ["src/main.ts", "/repo/project", "src/main.ts"],
+    ["./src//lib/../main.ts", "/repo/project", "src/main.ts"],
+    ["/repo/project/src/main.ts", "/repo/project", "src/main.ts"],
+    ["/repo/project/src/../README.md", "/repo/project/", "README.md"],
+    ["C:\\repo\\src\\main.ts", "C:\\repo", "src/main.ts"],
+    ["/repo/project-other/main.ts", "/repo/project", null],
+    ["/repo/project/../secret.ts", "/repo/project", null],
+    ["../outside.ts", "/repo/project", null],
+    ["~/notes.md", "/repo/project", null],
+    ["/repo/project", "/repo/project", null],
+    [".", "/repo/project", null],
+    ["src/main.ts", undefined, null],
+  ])("reveals %s under %s as %s", (relativePath, workspaceRoot, expected) => {
+    expect(
+      fileTreeRevealTarget({ relativePath, revealRequestId: 3 }, workspaceRoot)?.path ?? null,
+    ).toBe(expected);
+  });
+
+  it("keeps the open count and leaves the tree alone for attachments and no open file", () => {
+    expect(fileTreeRevealTarget({ relativePath: "a.ts", revealRequestId: 4 }, "/repo")).toEqual({
+      path: "a.ts",
+      requestId: 4,
+    });
+    const attachment = { relativePath: "README.md", revealRequestId: 0, attachment: {} };
+    expect(fileTreeRevealTarget(attachment, "/repo")).toBeNull();
+    expect(fileTreeRevealTarget(null, "/repo")).toBeNull();
   });
 });
 

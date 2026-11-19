@@ -1,3 +1,5 @@
+import { ComposerContextMeter } from "./ComposerContextMeter";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -51,7 +53,11 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { parseSideChatCommand, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  isAtMessageStart,
+  parseSideChatCommand,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -376,6 +382,8 @@ export interface ChatComposerProps {
   isCompacting: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
+  /** The session's latest context window, for the meter beside send; null before any report. */
+  contextWindow: ContextWindowSnapshot | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
@@ -1116,6 +1124,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
     composerTrigger,
+    slashCommandAfterLeadingChips:
+      composerTrigger !== null && isAtMessageStart(prompt, composerTrigger.rangeStart),
     environmentId,
     linkedEnvironments,
     gitCwd,
@@ -3609,6 +3619,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {props.contextWindow === null ? null : (
+                    <ComposerContextMeter usage={props.contextWindow} />
+                  )}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

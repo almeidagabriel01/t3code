@@ -26,6 +26,7 @@ import {
 } from "../settings-scoped-server";
 import { useSettingsWriter } from "../useSettingsWriter";
 import { modelDisplayName } from "./SettingsModelPicker";
+import { PROJECT_MODEL_COPY } from "./modelDefaultsCopy";
 import { SettingsSection } from "./SettingsSection";
 
 type Member = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
@@ -40,13 +41,6 @@ function useModelName(environmentId: EnvironmentId, projectId: ProjectId | null)
   return (selection: ModelSelection) =>
     modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
 }
-
-const SOURCE_TEXT = {
-  project: "Set for this project.",
-  folder: "From a folder rule.",
-  environment: "Follows the environment's default model.",
-  "t3.json": "From the repository's t3.json.",
-} as const;
 
 function ProjectModelRow(props: {
   readonly targets: readonly ScopedMobileSettingsTarget[];
@@ -75,10 +69,10 @@ function ProjectModelRow(props: {
         label={label}
         description={
           mixed
-            ? "The checkouts differ. Pick one model for all of them."
+            ? PROJECT_MODEL_COPY.checkoutsDiffer.description
             : selection === null
-              ? "Selected automatically."
-              : SOURCE_TEXT[reference.sources.defaultModelSelection]
+              ? PROJECT_MODEL_COPY.selectedAutomatically.description
+              : PROJECT_MODEL_COPY.sources[reference.sources.defaultModelSelection]
         }
         disabled={props.disabled}
         accessory={
@@ -277,7 +271,10 @@ export function ProjectModelSections(props: {
 
   return (
     <>
-      <SettingsSection title="Model" footer="Model for new threads in this project.">
+      <SettingsSection
+        title={PROJECT_MODEL_COPY.model.title}
+        footer={PROJECT_MODEL_COPY.model.description}
+      >
         <ProjectModelRow
           targets={targets}
           reference={reference}
@@ -297,8 +294,8 @@ export function ProjectModelSections(props: {
       </SettingsSection>
       {props.showAssistants ? (
         <SettingsSection
-          title="Model by assistant"
-          footer="These assistants start new threads in this project on their own model."
+          title={PROJECT_MODEL_COPY.byAssistant.title}
+          footer={PROJECT_MODEL_COPY.byAssistant.description}
         >
           {rows.map((row, index) => (
             <AssistantModelRow

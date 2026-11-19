@@ -23,6 +23,7 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../providerInstances";
+import { useRightPanelStore } from "../rightPanelStore";
 import { useVisibleThreadShells } from "../state/entities";
 import {
   useEnvironmentProviders,
@@ -183,10 +184,10 @@ export function useCommandPaletteThreadItems(input: {
           },
         });
       }
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-      });
+      const ref = scopeThreadRef(thread.environmentId, thread.id);
+      // A picked thread opens on its chat tab, as a sidebar pick does.
+      useRightPanelStore.getState().showChat(ref);
+      await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
     },
   });
 

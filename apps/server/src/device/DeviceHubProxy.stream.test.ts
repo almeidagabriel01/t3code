@@ -14,6 +14,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
@@ -52,6 +53,13 @@ it.effect("preserves binary input and admission frames through the real socket p
                 scopes: [AuthOrchestrationOperateScope],
               }),
           } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        ),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore, {
+            cookieName: "t3_session",
+            legacyCookieName: undefined,
+            awaitInvalidation: () => Effect.never,
+          }),
         ),
         Layer.provide(
           Layer.succeed(DeviceService.DeviceService, {
@@ -102,12 +110,15 @@ it.effect("preserves binary input and admission frames through the real socket p
 it.live("closes an upstream socket that is still connecting without an unhandled error", () =>
   Effect.gen(function* () {
     const dialed = Promise.withResolvers<NodeNet.Socket>();
-    // Accepts the connection and never answers the WebSocket handshake.
+    // Reads the handshake request and never answers it. Unread bytes would hold back the
+    // client's EOF, so the close below would never arrive.
     const hub = yield* Effect.acquireRelease(
       Effect.promise(
         () =>
           new Promise<NodeNet.Server>((resolve) => {
-            const server = NodeNet.createServer((socket) => dialed.resolve(socket));
+            const server = NodeNet.createServer((socket) =>
+              socket.once("data", () => dialed.resolve(socket)),
+            );
             server.listen(0, "127.0.0.1", () => resolve(server));
           }),
       ),
@@ -116,7 +127,7 @@ it.live("closes an upstream socket that is still connecting without an unhandled
     );
     const address = hub.address();
     if (typeof address !== "object" || !address) throw new Error("Missing hub port");
-    // Handshake headers, as Simlock's routes send, select the `ws` package over the global WebSocket.
+    // Handshake headers, as Simlock's routes send them.
     const upstream = yield* Socket.makeWebSocket(`ws://127.0.0.1:${address.port}`, {
       headers: { authorization: "Bearer test" },
     }).pipe(Effect.provide(DeviceHubProxy.upstreamWebSocketConstructor));

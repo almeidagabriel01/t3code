@@ -50,6 +50,7 @@ import {
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
+import { openSettingsLink } from "../settings/settings-navigation";
 import { type MarkdownLinkHandlers, type MarkdownStyleSet } from "./AssistantMarkdownContent";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
@@ -200,6 +201,7 @@ export function useMarkdownLinkHost(props: {
         if (instructionsPath) openSkillInstructions(instructionsPath);
         return;
       }
+      if (openSettingsLink(navigation, href)) return;
       if (parseThreadLinkHref(href)) {
         const target = resolveLinkedThread(href);
         if (target) {

@@ -31,6 +31,7 @@ import {
   type NewBoardTarget,
 } from "./kanbanBoardView";
 import { KanbanCardMenu } from "./KanbanCardMenu";
+import { KANBAN_BOARD_COPY } from "./kanbanBoardCopy";
 import { KanbanCardTile } from "./KanbanCardTile";
 import { useCreateKanbanBoard, useCreateKanbanCard } from "./useCreateKanbanBoard";
 import { useKanbanActions } from "./useKanbanActions";
@@ -250,7 +251,11 @@ export function KanbanBoardRouteScreen({
   const navigation = useNavigation();
   const archiveTarget = columns[0]?.addTo ?? null;
   const actions: MenuAction[] = [
-    { id: ALL_PROJECTS, title: "All projects", state: activeScope === ALL_PROJECTS ? "on" : "off" },
+    {
+      id: ALL_PROJECTS,
+      title: KANBAN_BOARD_COPY.allProjects,
+      state: activeScope === ALL_PROJECTS ? "on" : "off",
+    },
     ...options.map((option) => ({
       id: option.key,
       title: option.title,
@@ -261,7 +266,7 @@ export function KanbanBoardRouteScreen({
     states.length > 0 && states.every((entry) => entry.state === null && !entry.error);
 
   return (
-    <SettingsScreen title="Board">
+    <SettingsScreen title={KANBAN_BOARD_COPY.title}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
@@ -304,7 +309,8 @@ export function KanbanBoardRouteScreen({
                     numberOfLines={1}
                     className="font-t3-medium text-foreground"
                   >
-                    {options.find((option) => option.key === activeScope)?.title ?? "All projects"}
+                    {options.find((option) => option.key === activeScope)?.title ??
+                      KANBAN_BOARD_COPY.allProjects}
                   </Text>
                   <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
                 </Pressable>

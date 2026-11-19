@@ -444,6 +444,7 @@ it.effect(
               )
             : Effect.sync(() => void posts.push(input)),
         note: () => Effect.void,
+        claimDecision: () => Effect.succeed(false),
         install: () => Effect.void,
       });
       const provide = (withGate: boolean) =>

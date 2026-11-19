@@ -10,6 +10,7 @@ import {
 import {
   ArchiveIcon,
   BotIcon,
+  BlocksIcon,
   BrainIcon,
   CalendarClockIcon,
   createLucideIcon,
@@ -108,6 +109,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/assistants": UserRoundIcon,
+  "/settings/integrations": BlocksIcon,
   "/settings/imessage": MessageCircleIcon,
   "/settings/telegram": SendIcon,
   "/settings/memory": BrainIcon,
@@ -154,12 +156,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const [query, setQuery] = useState("");
+  const searchableItems = useAvailableSettingsSearchItems(query, scopeSearch);
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
     paths: group.paths.filter(
       (to) =>
         (to !== "/settings/memory" &&
+          to !== "/settings/integrations" &&
           to !== "/settings/imessage" &&
           to !== "/settings/telegram" &&
           to !== "/settings/mac-permissions" &&
@@ -174,7 +178,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       "",
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
   // In a narrow page the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -393,6 +396,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
                           {SETTINGS_SECTION_LABELS[item.to]}
+                          {item.machine === undefined ? null : ` · ${item.machine}`}
                         </span>
                       </span>
                     </SidebarMenuButton>

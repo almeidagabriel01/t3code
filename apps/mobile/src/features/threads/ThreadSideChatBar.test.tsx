@@ -50,6 +50,14 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => mocks.commands[command],
 }));
 vi.mock("./useOpenLinkedThread", () => ({ useOpenLinkedThread: () => mocks.open }));
+vi.mock("../../lib/attachmentUpload", () => ({
+  prepareTurnAttachments: async () => ({
+    status: "ready",
+    attachments: [],
+    draftAttachments: [],
+    pendingAttachmentIds: [],
+  }),
+}));
 
 import { ThreadSideChatBar } from "./ThreadSideChatBar";
 

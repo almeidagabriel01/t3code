@@ -51,6 +51,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     mcpServers: [],
     avatar: null,
     scope: "all",
+    integrations: { mode: "all" },
     archivedAt: null,
     autonomy: DEFAULT_ASSISTANT_AUTONOMY,
     ...extra,
@@ -78,6 +79,7 @@ const assistantsMock = () => {
     assistant("eng", {
       role: "Engineer",
       toolAccess: "read-only",
+      integrations: { mode: "selected", names: ["linear"] },
       scope: "project",
       projectIds: ["p1"] as never,
     }),
@@ -403,7 +405,9 @@ it.effect("list and read give each assistant its role and its groups' lead by ha
     expect(JSON.stringify(listed)).not.toContain("hasValue");
     expect(yield* call({ action: "read", handle: "@ENG" })).toMatchObject({
       role: "Engineer",
+      integrations: { mode: "selected", names: ["linear"] },
     });
+    expect(listed.assistants[0].integrations).toEqual({ mode: "all" });
     expect(yield* call({ action: "read" })).toMatchObject({ code: "invalid_request" });
     expect(yield* call({ action: "read", handle: "nobody" })).toMatchObject({
       code: "invalid_request",
@@ -793,72 +797,87 @@ it.effect("a user turn, including a channel or decision answer, may change a gro
   }),
 );
 
-it.effect("only the user turns an assistant's notifications on, and only the mode changes", () =>
-  Effect.gen(function* () {
-    const fromRoutine = yield* harness("full-access", {
-      id: "m2",
-      createdBy: "user",
-      scheduledTaskId: "task-1",
-    });
-    expect(
-      yield* fromRoutine.call({
-        action: "update",
-        handle: "eng",
-        notifications: "reply-and-notify",
-      }),
-    ).toMatchObject({
-      code: "capability_denied",
-      message: expect.stringContaining("this turn came from a scheduled task"),
-    });
-    // Nor may it give an assistant, itself included, more projects.
-    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
-      expect(yield* fromRoutine.call({ action: "update", handle: "eng", ...change })).toMatchObject(
-        {
-          code: "capability_denied",
-          message: expect.stringContaining("this turn came from a scheduled task"),
-        },
-      );
-    }
-    // Making a new assistant with projects is the same escalation.
-    const made = { action: "create", name: "Fresh", toolAccess: "read-only" } as const;
-    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
-      expect(yield* fromRoutine.call({ ...made, ...change })).toMatchObject({
+it.effect(
+  "only the user changes an assistant's notifications, problem level or projects, and only that changes",
+  () =>
+    Effect.gen(function* () {
+      const fromRoutine = yield* harness("full-access", {
+        id: "m2",
+        createdBy: "user",
+        scheduledTaskId: "task-1",
+      });
+      expect(
+        yield* fromRoutine.call({
+          action: "update",
+          handle: "eng",
+          notifications: "reply-and-notify",
+        }),
+      ).toMatchObject({
         code: "capability_denied",
         message: expect.stringContaining("this turn came from a scheduled task"),
       });
-    }
-    expect(fromRoutine.writes).toEqual([]);
-    // Other changes from that turn need no user.
-    expect(yield* fromRoutine.call(made)).toMatchObject({ status: "created" });
-    expect(
-      yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
-    ).toMatchObject({
-      status: "updated",
-    });
+      expect(
+        yield* fromRoutine.call({ action: "update", handle: "eng", onProblem: "fix-small" }),
+      ).toMatchObject({ code: "capability_denied" });
+      // Nor may it give an assistant, itself included, more projects.
+      for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+        expect(
+          yield* fromRoutine.call({ action: "update", handle: "eng", ...change }),
+        ).toMatchObject({
+          code: "capability_denied",
+          message: expect.stringContaining("this turn came from a scheduled task"),
+        });
+      }
+      // Making a new assistant with projects is the same escalation.
+      const made = { action: "create", name: "Fresh", toolAccess: "read-only" } as const;
+      for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+        expect(yield* fromRoutine.call({ ...made, ...change })).toMatchObject({
+          code: "capability_denied",
+          message: expect.stringContaining("this turn came from a scheduled task"),
+        });
+      }
+      expect(fromRoutine.writes).toEqual([]);
+      // Other changes from that turn need no user.
+      expect(yield* fromRoutine.call(made)).toMatchObject({ status: "created" });
+      expect(
+        yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
+      ).toMatchObject({
+        status: "updated",
+      });
 
-    const { call, writes } = yield* harness("full-access");
-    const updated = yield* call({
-      action: "update",
-      handle: "eng",
-      notifications: "reply-and-notify",
-    });
-    expect(updated).toMatchObject({ status: "updated" });
-    expect(writes).toEqual([
-      {
+      const { call, writes } = yield* harness("full-access");
+      const updated = yield* call({
+        action: "update",
+        handle: "eng",
+        notifications: "reply-and-notify",
+      });
+      expect(updated).toMatchObject({ status: "updated" });
+      expect(writes).toEqual([
+        {
+          update: {
+            assistantId: "eng",
+            autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" },
+          },
+        },
+      ]);
+      expect(yield* call({ action: "read", handle: "ceo" })).toMatchObject({
+        notifications: "reply-only",
+        onProblem: "offer",
+      });
+      yield* call({ action: "update", handle: "eng", onProblem: "tell" });
+      expect(writes.at(-1)).toEqual({
         update: {
           assistantId: "eng",
-          autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" },
+          autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify", onProblem: "tell" },
         },
-      },
-    ]);
-    expect((yield* call({ action: "read", handle: "ceo" })).notifications).toBe("reply-only");
-    expect(yield* call({ action: "update", handle: "eng", projectIds: ["p-other"] })).toMatchObject(
-      { status: "updated" },
-    );
-    expect(
-      yield* call({ ...made, projectIds: ["p-other"], clientRequestId: "fresh-user" }),
-    ).toMatchObject({ status: "created" });
-  }),
+      });
+      expect(
+        yield* call({ action: "update", handle: "eng", projectIds: ["p-other"] }),
+      ).toMatchObject({ status: "updated" });
+      expect(
+        yield* call({ ...made, projectIds: ["p-other"], clientRequestId: "fresh-user" }),
+      ).toMatchObject({ status: "created" });
+    }),
 );
 
 it.effect("notify_user is for an assistant's own turn, and a retry in the turn sends once", () =>
@@ -1085,5 +1104,26 @@ it.effect("container_discard discards the container, and reports why it cannot",
       code: "invalid_request",
       message: "1 task is still running in the container.",
     });
+  }),
+);
+
+it.effect("only the user changes an assistant's integrations", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("full-access");
+    for (const action of ["update", "create"] as const) {
+      expect(
+        yield* call({
+          action,
+          handle: "eng",
+          name: "Eng",
+          toolAccess: "read-only",
+          integrations: { mode: "all" },
+        }),
+      ).toMatchObject({
+        code: "invalid_request",
+        message: "Only the user can change which integrations an assistant uses",
+      });
+    }
+    expect(writes).toEqual([]);
   }),
 );

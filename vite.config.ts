@@ -216,7 +216,11 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    // Packages merge this config and lint from their own folder: a relative path would miss it.
+    jsPlugins: [
+      NodeURL.fileURLToPath(new URL("./oxlint-plugin-t3code/index.ts", import.meta.url)),
+      "@shadcn/lint",
+    ],
     settings: {
       shadcn: { ui: "~/components/ui" },
     },
@@ -507,6 +511,11 @@ export default defineConfig({
         rules: { "t3code/max-settings-description-length": "error" },
       },
       {
+        files: ["apps/web/src/**"],
+        excludeFiles: ["**/*.{test,spec}.{ts,tsx}"],
+        rules: { "t3code/require-searchable-settings-copy": "error" },
+      },
+      {
         files: ["apps/*/src/**", "packages/*/src/**"],
         excludeFiles: [
           "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
@@ -633,6 +642,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
+          "apps/mobile/src/features/threads/ComposerContextMeter.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/AssistantMarkdownContent.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",

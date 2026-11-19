@@ -10,6 +10,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { AssistantAutonomy, DEFAULT_ASSISTANT_AUTONOMY } from "./autonomy.ts";
+import { isMcpServerUrl, McpServerName } from "./mcpServers.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
 import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
@@ -203,27 +204,33 @@ export const AssistantMcpServerInput = Schema.Struct({
 });
 export type AssistantMcpServerInput = typeof AssistantMcpServerInput.Type;
 
-/** The first reason a connector list is unusable, or null. Clients and the server share it. */
+/** The same rule as T3's global servers: secret headers never cross a network in the clear. */
+const MCP_URL_PROBLEM = "needs an https URL (http only on localhost), without ? or #.";
+
+/**
+ * The first reason a connector list is unusable, or null. Clients and the server share it.
+ * A URL equal to the one `saved` holds under that name stays accepted: a rule that tightened
+ * later must not block saving an assistant over a connector the user did not touch.
+ */
 export function assistantMcpServersProblem(
   servers: ReadonlyArray<AssistantMcpServerInput>,
+  saved: ReadonlyArray<Pick<AssistantMcpServer, "name" | "transport" | "url">> = [],
 ): string | null {
   if (servers.length > ASSISTANT_MCP_MAX_SERVERS)
-    return `At most ${ASSISTANT_MCP_MAX_SERVERS} connectors.`;
+    return `At most ${ASSISTANT_MCP_MAX_SERVERS} custom servers.`;
   const names = new Set<string>();
   for (const server of servers) {
     if (ASSISTANT_MCP_RESERVED_NAMES.includes(server.name))
       return `"${server.name}" is reserved for T3's own tools.`;
-    if (names.has(server.name)) return `Two connectors are named "${server.name}".`;
+    if (names.has(server.name)) return `Two custom servers are named "${server.name}".`;
     names.add(server.name);
     if (server.transport === "http") {
-      let ok = false;
-      try {
-        const protocol = new URL(server.url ?? "").protocol;
-        ok = protocol === "http:" || protocol === "https:";
-      } catch {
-        // not a URL
-      }
-      if (!ok) return `"${server.name}" needs an http or https URL.`;
+      const url = (server.url ?? "").trim();
+      const unchanged = saved.some(
+        (entry) =>
+          entry.name === server.name && entry.transport === "http" && entry.url?.trim() === url,
+      );
+      if (!unchanged && !isMcpServerUrl(url)) return `"${server.name}" ${MCP_URL_PROBLEM}`;
     } else if ((server.command ?? "").trim() === "") {
       return `"${server.name}" needs a command.`;
     }
@@ -234,6 +241,14 @@ export function assistantMcpServersProblem(
   }
   return null;
 }
+
+/** Which T3 MCP servers (integrations and hand-made ones) its sessions get. */
+export const AssistantIntegrations = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("all") }),
+  Schema.Struct({ mode: Schema.Literal("selected"), names: Schema.Array(McpServerName) }),
+]);
+export type AssistantIntegrations = typeof AssistantIntegrations.Type;
+export const DEFAULT_ASSISTANT_INTEGRATIONS: AssistantIntegrations = { mode: "all" };
 
 export const Assistant = Schema.Struct({
   id: AssistantId,
@@ -268,6 +283,10 @@ export const Assistant = Schema.Struct({
   scope: AssistantScope.pipe(Schema.withDecodingDefault(Effect.succeed("all" as const))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
   mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Only the user changes it (agents read it); a name that is no longer connected stays listed. */
+  integrations: AssistantIntegrations.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_INTEGRATIONS)),
+  ),
   /** The model its new work starts on when the project names none. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   archivedAt: Schema.NullOr(IsoDateTime),
@@ -301,12 +320,47 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * A group of assistants that may message each other in any direction. The optional lead only
  * routes a group request that mentions nobody; it gains no permission.
  */
+/**
+ * Why a request waits on the user: a member's open wait (an approval, a question, a decision), a
+ * task paused without the user asking, a failed task, or the lead asking which project. A reason
+ * from a newer server reads as `paused`.
+ */
+export const AssistantTeamChatWaitingReason = Schema.Literals([
+  "wait",
+  "paused",
+  "failed",
+  "project",
+]);
+export type AssistantTeamChatWaitingReason = typeof AssistantTeamChatWaitingReason.Type;
+
+export const ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS = 80;
+
+/** The oldest request of a tab that waits on the user, so an indicator leads to it. */
+export const AssistantTeamChatWaitingRequest = Schema.Struct({
+  /** The request's first message id (an `AssistantGroupMessageId`). */
+  requestId: TrimmedNonEmptyString,
+  title: Schema.String,
+  reason: AssistantTeamChatWaitingReason.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("paused" as const)),
+  ),
+  /** For `paused` and `failed`: the task's own reason, such as `routing_failed`; absent when none. */
+  taskReason: Schema.optionalKey(Schema.String),
+  /** The member whose wait or task it is; null for the lead's project question. */
+  assistantId: Schema.NullOr(AssistantId),
+});
+export type AssistantTeamChatWaitingRequest = typeof AssistantTeamChatWaitingRequest.Type;
+
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
 export const AssistantTeamChatScope = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   unreadCount: Schema.Int,
-  /** An open wait on the user, or the lead asking which project, in this tab. */
+  /**
+   * A request of this tab waits on the user: an open wait, a task paused without the user asking
+   * or a failed root task (after the newest boundary), or the lead asking which project.
+   */
   waiting: Schema.Boolean,
+  /** The oldest such request, while `waiting`; absent from older servers. */
+  waitingRequest: Schema.optionalKey(AssistantTeamChatWaitingRequest),
   /** The tab's read position: its own, else the group's. */
   readSeq: Schema.Int,
   /** The project's title, kept after it is deleted; absent for General and unknown projects. */
@@ -338,8 +392,19 @@ export const AssistantTeamChat = Schema.Struct({
   working: Schema.Boolean,
   /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
   runningCount: Schema.optionalKey(Schema.Int),
+  /** Members with a task running now; absent from older servers. */
+  runningMemberIds: Schema.optionalKey(Schema.Array(AssistantId)),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
+  /**
+   * Tasks of the current conversation that stopped without the user asking, such as at the hand-off
+   * limit, and wait on them to resume, reassign or cancel. Absent from older servers.
+   */
+  pausedTasks: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Failed tasks of the current conversation, still open to reassign or cancel. */
+  failedTasks: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Each member's hidden thread for this group, where its group work runs. */
+  threadIds: Schema.Array(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** The project of the request `preview` comes from; null for none. Absent from older servers. */
   previewProjectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
   /**
@@ -380,6 +445,10 @@ export function assistantGroupFinishedScopes(
   return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
 }
 
+/** `requests` keeps each request in its own block; `continuous` reads the chat as one feed. */
+export const AssistantGroupConversationMode = Schema.Literals(["requests", "continuous"]);
+export type AssistantGroupConversationMode = typeof AssistantGroupConversationMode.Type;
+
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
   name: AssistantTeamName,
@@ -394,6 +463,8 @@ export const AssistantTeam = Schema.Struct({
   memories: Schema.optionalKey(AssistantTeamMemories),
   /** The model a group request starts on, below the project's own default. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Absent from older servers, which have only `requests`. */
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Projects every member may work in, on top of its own; absent from older servers. */
   projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
@@ -441,6 +512,8 @@ export const AssistantTask = Schema.Struct({
   createdAt: IsoDateTime,
   /** Hidden from the lists once set; the thread itself is untouched. Absent from older servers. */
   dismissedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The assistant conversation that launched it. Absent from older servers, null on older rows. */
+  sourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
 });
 export type AssistantTask = typeof AssistantTask.Type;
 
@@ -485,6 +558,7 @@ export const AssistantsCreateInput = Schema.Struct({
   /** A robot only: an image goes through `assistants.setAvatarImage`. */
   avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
+  integrations: Schema.optional(AssistantIntegrations),
   role: Schema.optional(AssistantRole),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
   restoreDefault: Schema.optional(Schema.Boolean),
@@ -529,6 +603,7 @@ export const AssistantsUpdateInput = Schema.Struct({
   avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   /** Replaces the whole list; leave out to keep it. */
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
+  integrations: Schema.optional(AssistantIntegrations),
   role: Schema.optional(AssistantRole),
   archived: Schema.optional(Schema.Boolean),
   /** Null clears it. Unlike `modelSelection`, it leaves the current conversation's model alone. */
@@ -712,6 +787,7 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   memories: Schema.optional(AssistantTeamMemories),
   /** Null clears it. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Replaces the group's projects; the two lists below then apply to it, removals last. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
   addProjectIds: Schema.optional(Schema.Array(ProjectId)),

@@ -1,4 +1,5 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
@@ -193,8 +194,16 @@ export interface EnvironmentThreadShell {
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
+  /** The thread's own pending runtime request, of any kind; Needs you lists it by id. */
+  readonly pendingRequest?: {
+    readonly id: string;
+    readonly kind: string;
+    readonly createdAt: string;
+  } | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
+  /** When the oldest of them arrived; null when none waits. */
+  readonly oldestPendingGuestMessageAt: string | null;
   /** Messages waiting behind the active run. */
   readonly queuedMessageCount?: number;
   readonly hasActionableProposedPlan: boolean;
@@ -353,7 +362,19 @@ export function presentThreadShell(
         ? iso(thread.pendingRuntimeRequest.createdAt)
         : null,
     pendingSubagentRequest,
+    pendingRequest:
+      thread.pendingRuntimeRequest === null
+        ? null
+        : {
+            id: thread.pendingRuntimeRequest.id,
+            kind: thread.pendingRuntimeRequest.kind,
+            createdAt: iso(thread.pendingRuntimeRequest.createdAt),
+          },
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
+    // Older servers send the count alone; the shell's last change is the nearest time they give.
+    oldestPendingGuestMessageAt: guestWaitsOnUser(thread)
+      ? (thread.oldestPendingGuestMessageAt ?? updatedAt)
+      : null,
     queuedMessageCount: thread.queuedMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
@@ -434,4 +455,14 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * A running row's elapsed time, read from the shared minute tick: a list of rows re-renders once a
+ * minute instead of every second. The thread itself still counts seconds.
+ */
+export function formatRowWorkingDurationLabel(elapsedMs: number): string {
+  return Number.isFinite(elapsedMs) && elapsedMs >= 60_000
+    ? formatWorkingDurationLabel(elapsedMs)
+    : "<1m";
 }

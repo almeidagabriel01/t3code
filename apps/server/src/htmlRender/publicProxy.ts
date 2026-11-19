@@ -74,7 +74,7 @@ const ownAddresses = () => {
   return own;
 };
 
-const isLocal = (address: string, family: number): boolean => {
+export const isLocal = (address: string, family: number): boolean => {
   const type = family === 6 ? "ipv6" : "ipv4";
   if (LOCAL_ADDRESSES.check(address, type) || ownAddresses().check(address, type)) return true;
   const embedded = family === 6 ? embeddedIPv4(address) : undefined;

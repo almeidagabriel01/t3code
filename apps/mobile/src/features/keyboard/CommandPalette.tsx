@@ -54,6 +54,7 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/assistants";
+import { useIntegrationSearchNames, useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
@@ -82,12 +83,16 @@ import {
   autonomyPauseItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
+  PALETTE_ACTION_TITLES,
+  assistantInfoItems,
+  settingsPageItem,
   type CommandPaletteItem,
   type CommandPaletteResult,
 } from "./commandPaletteItems";
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import type { SettingsPageTarget } from "../settings/components/settings-page-targets";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -254,8 +259,10 @@ export function CommandPalette(props: {
   const hasMac = useMacEnvironmentIds().length > 0;
   const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
-  const assistants = useAssistantEntries().active;
+  const assistantEntries = useAssistantEntries();
+  const assistants = assistantEntries.active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
   const openAssistantTeam = useOpenAssistantTeam();
@@ -321,158 +328,71 @@ export function CommandPalette(props: {
       .filter((match) => match.source === "user" || match.source === "assistant")
       .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
+  const integrationNames = useIntegrationSearchNames(
+    foldSearchQuery(query.startsWith(">") ? query.slice(1) : query) !== "",
+  );
   const items = useMemo(() => {
+    const openPage = (target: SettingsPageTarget) => openSettings(navigation, target);
     const actions: CommandPaletteItem[] = [
       {
         key: "newTask",
         kind: "action",
-        title: "New thread in…",
+        title: PALETTE_ACTION_TITLES.newTask,
         searchTerms: ["new task", "chat", "create", "project"],
         run: () => runCommand("newTask"),
       },
       {
         key: "addProject",
         kind: "action",
-        title: "Add project",
+        title: PALETTE_ACTION_TITLES.addProject,
         searchTerms: ["folder", "clone", "repository", "git"],
         run: () => navigation.navigate("AddProject"),
       },
       {
         key: "settings",
         kind: "action",
-        title: "Open settings",
+        title: PALETTE_ACTION_TITLES.settings,
+        // What macOS and most apps call settings.
         searchTerms: ["preferences", "configuration"],
         run: () => selectTab("settings"),
       },
-      {
-        key: "appearance",
-        kind: "action",
-        title: "Appearance",
-        searchTerms: ["theme", "colors", "dark", "light"],
-        run: () => openSettings(navigation, "SettingsAppearance"),
-      },
-      {
-        key: "environments",
-        kind: "action",
-        title: "Manage environments",
-        searchTerms: ["connections", "server", "remote"],
-        run: () => openSettings(navigation, "SettingsEnvironments"),
-      },
-      {
-        key: "scheduledTasks",
-        kind: "action",
-        title: "Scheduled tasks",
-        searchTerms: ["schedule", "automations", "recurring"],
-        run: () => openSettings(navigation, "SettingsScheduledTasks"),
-      },
-      {
-        key: "usage",
-        kind: "action",
-        title: "Usage",
-        searchTerms: ["limits", "accounts", "quota"],
-        run: () => openSettings(navigation, "SettingsUsage"),
-      },
-      ...(hasBoards
-        ? [
-            {
-              key: "kanban",
-              kind: "action" as const,
-              title: "Board",
-              searchTerms: ["kanban", "cards", "tasks"],
-              run: () => openSettings(navigation, "SettingsKanban"),
-            },
-          ]
-        : []),
+      settingsPageItem("appearance", "Appearance", "SettingsAppearance", openPage),
+      settingsPageItem("environments", "Manage environments", "SettingsEnvironments", openPage),
+      settingsPageItem("scheduledTasks", "Scheduled tasks", "SettingsScheduledTasks", openPage),
+      settingsPageItem("usage", "Usage", "SettingsUsage", openPage),
+      settingsPageItem("resourceManager", "Resource Manager", "SettingsResourceManager", openPage),
+      ...(hasBoards ? [settingsPageItem("kanban", "Board", "SettingsKanban", openPage)] : []),
       ...(hasImessage
-        ? [
-            {
-              key: "imessage",
-              kind: "action" as const,
-              title: "iMessage",
-              searchTerms: ["messages", "assistants", "chat", "full disk access"],
-              run: () => openSettings(navigation, "SettingsImessage"),
-            },
-          ]
+        ? [settingsPageItem("imessage", "iMessage", "SettingsImessage", openPage)]
         : []),
       ...(hasTelegram
-        ? [
-            {
-              key: "telegram",
-              kind: "action" as const,
-              title: "Telegram",
-              searchTerms: ["bot", "botfather", "assistants", "chat", "token", "user id"],
-              run: () => openSettings(navigation, "SettingsTelegram"),
-            },
-          ]
+        ? [settingsPageItem("telegram", "Telegram", "SettingsTelegram", openPage)]
         : []),
       ...(hasMac
         ? [
-            {
-              key: "mac-permissions",
-              kind: "action" as const,
-              title: "Mac permissions",
-              searchTerms: ["computer use", "screen recording", "accessibility", "automation"],
-              run: () => openSettings(navigation, "SettingsMacPermissions"),
-            },
+            settingsPageItem(
+              "mac-permissions",
+              "Mac permissions",
+              "SettingsMacPermissions",
+              openPage,
+            ),
           ]
         : []),
       ...(hasDevices
-        ? [
-            {
-              key: "device-access",
-              kind: "action" as const,
-              title: "Device access",
-              searchTerms: ["devices", "simulator", "emulator", "physical device", "take over"],
-              run: () => openSettings(navigation, "SettingsDevices"),
-            },
-          ]
+        ? [settingsPageItem("device-access", "Device access", "SettingsDevices", openPage)]
         : []),
       ...(hasComputerUseHost
-        ? [
-            {
-              key: "computer-use",
-              kind: "action" as const,
-              title: "Computer use",
-              searchTerms: ["windows", "linux", "wayland", "screenshot", "click", "keys"],
-              run: () => openSettings(navigation, "SettingsComputerUse"),
-            },
-          ]
+        ? [settingsPageItem("computer-use", "Computer use", "SettingsComputerUse", openPage)]
         : []),
-      ...(hasMemory
-        ? [
-            {
-              key: "memory",
-              kind: "action" as const,
-              title: "Memory",
-              searchTerms: ["remember", "conversations", "import", "sharing"],
-              run: () => openSettings(navigation, "SettingsMemory"),
-            },
-          ]
-        : []),
-      ...(hasNotes
-        ? [
-            {
-              key: "notes",
-              kind: "action" as const,
-              title: "Notes",
-              searchTerms: ["markdown", "ideas", "capture", "start work"],
-              run: () => openSettings(navigation, "SettingsNotes"),
-            },
-          ]
-        : []),
-      {
-        key: "archive",
-        kind: "action",
-        title: "Archived threads",
-        searchTerms: ["restore", "history"],
-        run: () => openSettings(navigation, "SettingsArchive"),
-      },
+      ...(hasMemory ? [settingsPageItem("memory", "Memory", "SettingsMemory", openPage)] : []),
+      ...(hasNotes ? [settingsPageItem("notes", "Notes", "SettingsNotes", openPage)] : []),
+      settingsPageItem("archive", "Archived threads", "SettingsArchive", openPage),
     ];
     if (canTriage) {
       actions.push({
         key: "triage",
         kind: "action",
-        title: "Triage an issue",
+        title: PALETTE_ACTION_TITLES.triage,
         // Mobile has no triage hero, so name the machine before it starts.
         detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
         searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
@@ -487,7 +407,7 @@ export function CommandPalette(props: {
       actions.push({
         key: `assistant:${environmentId}:${assistant.id}`,
         kind: "action",
-        title: `Open ${assistant.name}`,
+        title: PALETTE_ACTION_TITLES.openAssistant(assistant.name),
         ...(multipleAssistantEnvironments
           ? { detail: savedConnectionsById[environmentId]?.environmentLabel ?? environmentId }
           : {}),
@@ -499,12 +419,29 @@ export function CommandPalette(props: {
           }),
       });
     }
+    actions.push(
+      ...assistantInfoItems({
+        pathname: props.pathname,
+        assistants,
+        teams: assistantEntries.activeTeams,
+        openAssistant: (entry) =>
+          navigation.navigate("AssistantInfo", {
+            environmentId: entry.environmentId,
+            assistantId: entry.assistant.id,
+          }),
+        openGroup: (entry) =>
+          navigation.navigate("AssistantGroupInfo", {
+            environmentId: entry.environmentId,
+            teamId: entry.team.id,
+          }),
+      }),
+    );
     const [firstAssistant] = assistants;
     if (firstAssistant) {
       actions.push({
         key: "newAssistant",
         kind: "action",
-        title: "New assistant",
+        title: PALETTE_ACTION_TITLES.newAssistant,
         searchTerms: ["assistant", "new", "create", "add"],
         run: () => openAssistantEditor(firstAssistant.environmentId, null),
       });
@@ -512,27 +449,32 @@ export function CommandPalette(props: {
         {
           key: "newAssistantGroup",
           kind: "action",
-          title: "New assistant group",
+          title: PALETTE_ACTION_TITLES.newAssistantGroup,
           searchTerms: ["assistant", "group", "team", "new", "create"],
           run: () => openAssistantTeam.edit(firstAssistant.environmentId, null),
         },
         {
           key: "describeAssistant",
           kind: "action",
-          title: "Describe an assistant",
+          title: PALETTE_ACTION_TITLES.describeAssistant,
           searchTerms: ["assistant", "group", "build", "create", "describe"],
           run: () => navigation.navigate("SettingsAssistantDescribe"),
         },
       );
     }
     if (assistants.length > 0 || hasAssistantsEnvironment) {
-      actions.push({
-        key: "assistants",
-        kind: "action",
-        title: "Assistants",
-        searchTerms: ["assistants", "groups", "team", "agents", "page"],
-        run: () => openSettings(navigation, "SettingsAssistants"),
-      });
+      actions.push(settingsPageItem("assistants", "Assistants", "SettingsAssistants", openPage));
+    }
+    if (hasIntegrations) {
+      actions.push(
+        settingsPageItem(
+          "integrations",
+          "Integrations",
+          "SettingsIntegrations",
+          openPage,
+          integrationNames,
+        ),
+      );
     }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
@@ -544,7 +486,7 @@ export function CommandPalette(props: {
       actions.unshift({
         key: "newThread",
         kind: "action",
-        title: `New thread in ${activeProject.title}`,
+        title: PALETTE_ACTION_TITLES.newThreadIn(activeProject.title),
         searchTerms: ["new task", "chat", "create"],
         run: () =>
           selectDetail({
@@ -565,16 +507,16 @@ export function CommandPalette(props: {
     }
     if (activeThreadRef) {
       const threadActions = [
-        ["files", "Go to file", ["open", "files", "browse", "search"]],
-        ["terminal", "Open terminal", ["shell", "console"]],
-        ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
+        ["files", ["open", "files", "browse", "search"]],
+        ["terminal", ["shell", "console"]],
+        ["review", ["diff", "git", "pull request"]],
+        ["copyThreadReference", ["reference", "clipboard"]],
       ] as const;
       actions.push(
-        ...threadActions.map(([command, title, searchTerms]) => ({
+        ...threadActions.map(([command, searchTerms]) => ({
           key: command,
           kind: "action" as const,
-          title,
+          title: PALETTE_ACTION_TITLES[command],
           searchTerms,
           run: () => runCommand(command),
         })),
@@ -659,7 +601,11 @@ export function CommandPalette(props: {
     hasDevices,
     hasComputerUseHost,
     assistants,
+    assistantEntries.activeTeams,
+    props.pathname,
     hasAssistantsEnvironment,
+    hasIntegrations,
+    integrationNames,
     openAssistantTeam,
     autonomyPause,
     openAssistantEditor,

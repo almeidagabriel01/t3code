@@ -1,6 +1,6 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { Button } from "../../components/ui/Button";
-import { LegendList } from "@legendapp/list/react-native";
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -161,6 +161,27 @@ export function FileTreeBrowser(props: {
     revealSelection(controlledSelectedPath);
   }, [controlledSelectedPath, revealSelection]);
 
+  const listRef = useRef<LegendListRef>(null);
+  const scrolledSelectionRef = useRef<string | null>(null);
+  const selectedIndex =
+    controlledSelectedPath === null
+      ? -1
+      : visibleNodes.findIndex((item) => item.node.path === controlledSelectedPath);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list once to a revealed selection when its row first exists
+  useEffect(() => {
+    if (controlledSelectedPath === null) {
+      scrolledSelectionRef.current = null;
+      return;
+    }
+    if (selectedIndex < 0 || scrolledSelectionRef.current === controlledSelectedPath) return;
+    scrolledSelectionRef.current = controlledSelectedPath;
+    void listRef.current?.scrollToIndex({
+      index: selectedIndex,
+      animated: false,
+      viewPosition: 0.5,
+    });
+  }, [controlledSelectedPath, selectedIndex]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests listings for expanded directories that are not yet loaded or pending
   useEffect(() => {
     const visit = (nodes: ReadonlyArray<FileTreeNode>) => {
@@ -240,6 +261,7 @@ export function FileTreeBrowser(props: {
   // Keep the list as direct screen content so UIKit can apply header insets.
   return (
     <LegendList
+      ref={listRef}
       renderScrollComponent={NativeScrollView}
       nestedScrollEnabled={false}
       contentInset={{ top: headerInset, bottom: bottomInset }}

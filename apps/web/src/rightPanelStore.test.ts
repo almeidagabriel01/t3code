@@ -1411,6 +1411,10 @@ describe("rightPanelStore", () => {
     expect(state.activeMainId).toBe("file:src/a.ts");
     store.showChat(refA);
     expect(selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    // Already on the chat, a thread pick leaves proactive panels and focus alone.
+    const revision = store.getUserActionRevision(refA);
+    store.showChat(refA);
+    expect(store.getUserActionRevision(refA)).toBe(revision);
     store.activateSurface(refA, "file:src/a.ts");
     expect(selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
       "file:src/a.ts",

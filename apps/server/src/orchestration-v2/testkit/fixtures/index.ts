@@ -208,9 +208,12 @@ import {
 import { assertToolCallReadOnlyOnRequestFxOutput } from "./tool_call_read_only_on_request/fx_output.ts";
 import {
   stopBackgroundWorkAfterFailedTurnInput,
-  stopBackgroundWorkAfterReleaseInput,
+  backgroundWorkEndsWithReleasedSessionInput,
 } from "./stop_background_work_after_failed_turn/input.ts";
-import { assertStopBackgroundWorkAfterFailedTurnOutput } from "./stop_background_work_after_failed_turn/output.ts";
+import {
+  assertBackgroundWorkEndsWithReleasedSessionOutput,
+  assertStopBackgroundWorkAfterFailedTurnOutput,
+} from "./stop_background_work_after_failed_turn/output.ts";
 import { assertToolCallRestrictedGranularClaudeOutput } from "./tool_call_restricted_granular/claude_output.ts";
 import { assertToolCallRestrictedGranularOutput } from "./tool_call_restricted_granular/codex_output.ts";
 import { toolCallRestrictedGranularInput } from "./tool_call_restricted_granular/input.ts";
@@ -2081,8 +2084,8 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
-    name: "stop_background_work_after_release",
-    buildInput: stopBackgroundWorkAfterReleaseInput,
+    name: "background_work_ends_with_released_session",
+    buildInput: backgroundWorkEndsWithReleasedSessionInput,
     providers: [
       {
         driver: ProviderDriverKind.make("acpRegistry"),
@@ -2092,7 +2095,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         recordedScenario: "stop_background_work_after_failed_turn",
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
-        assertOutput: assertStopBackgroundWorkAfterFailedTurnOutput,
+        assertOutput: assertBackgroundWorkEndsWithReleasedSessionOutput,
       },
     ],
   },

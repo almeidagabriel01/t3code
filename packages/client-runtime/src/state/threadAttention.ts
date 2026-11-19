@@ -1,3 +1,5 @@
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
+
 import { scopedThreadKey, scopeThreadRef } from "../environment/scoped.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 
@@ -29,7 +31,7 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
     return "input";
   }
   // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
+  if (guestWaitsOnUser(thread)) {
     return "request";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
@@ -48,6 +50,11 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+/** Doing work without needing the user, including waiting on its own children or background work. */
+export function sidebarStatusIsRunning(status: SidebarThreadStatus): boolean {
+  return status === "working" || status === "waiting";
 }
 
 type ThreadAttentionFields = Pick<
@@ -100,12 +107,10 @@ function isActiveSubagentChild(thread: EnvironmentThreadShell): boolean {
   if (thread.archivedAt !== null) return false;
   const status = resolveSidebarThreadStatus(thread);
   return (
-    status === "working" ||
+    sidebarStatusIsRunning(status) ||
     status === "approval" ||
     status === "input" ||
-    status === "request" ||
-    // Blocked on a thread wait, or a finished run parked on awaited background work.
-    status === "waiting"
+    status === "request"
   );
 }
 

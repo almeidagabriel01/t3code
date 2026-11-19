@@ -22,6 +22,10 @@
     "./TestProviderHost": {
       "types": "./src/TestProviderHost.ts",
       "import": "./src/TestProviderHost.ts"
+    },
+    "./turnEndRace": {
+      "types": "./src/turnEndRace.ts",
+      "import": "./src/turnEndRace.ts"
     }
   },
   "scripts": {

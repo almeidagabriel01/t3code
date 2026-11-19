@@ -19,7 +19,7 @@ import {
 import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "../kanban/useKanban";
 import { KanbanDefaultTemplateEditor, TemplateDialog } from "./KanbanDefaultTemplateEditor";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
@@ -77,15 +77,13 @@ function BoardSettings(props: {
 
   return (
     <>
-      <SettingsSection id="kanban-automations" title="Automations">
+      <SettingsSection {...searchableSetting("kanban-automations")}>
         {AUTOMATION_ROWS.map((row) => (
           <SettingsRow
             key={row.key}
             {...(row.key === "definitionOfDone"
               ? searchableSetting("kanban-definition-of-done")
-              : row.key === "threadStarted"
-                ? searchableSetting("kanban-automations")
-                : {})}
+              : {})}
             title={row.label}
             description={row.description}
             control={
@@ -106,8 +104,7 @@ function BoardSettings(props: {
       </SettingsSection>
 
       <SettingsSection
-        id="kanban-templates"
-        title="Card templates"
+        {...searchableSetting("kanban-templates")}
         headerAction={
           <Button
             size="xs"
@@ -122,20 +119,21 @@ function BoardSettings(props: {
       >
         {board.templates.length === 0 ? (
           <SettingsRow
-            {...searchableSetting("kanban-templates")}
+            {...settingCopy("kanban-templates")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="No templates on this board."
           />
         ) : (
-          board.templates.map((template, index) => (
+          board.templates.map((template) => (
             <SettingsRow
               key={template.id}
-              {...(index === 0 ? searchableSetting("kanban-templates") : {})}
               title={
                 <span className="inline-flex items-center gap-2">
                   <TemplateIcon template={template} />
                   {template.name}
                 </span>
               }
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- per-template summary of user data, not a setting
               description={`${template.checklist.length} checklist item${template.checklist.length === 1 ? "" : "s"} · ${PRIORITY_LABELS[template.priority]}`}
               control={
                 <span className="flex gap-1">
@@ -165,8 +163,7 @@ function BoardSettings(props: {
       </SettingsSection>
 
       <SettingsSection
-        id="kanban-labels"
-        title="Labels"
+        {...searchableSetting("kanban-labels")}
         headerAction={
           <Button
             size="xs"
@@ -181,14 +178,14 @@ function BoardSettings(props: {
       >
         {board.labels.length === 0 ? (
           <SettingsRow
-            {...searchableSetting("kanban-labels")}
+            {...settingCopy("kanban-labels")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="No labels on this board."
           />
         ) : (
-          board.labels.map((label, index) => (
+          board.labels.map((label) => (
             <SettingsRow
               key={label.id}
-              {...(index === 0 ? searchableSetting("kanban-labels") : {})}
               title={<LabelChip label={label} />}
               control={
                 <span className="flex items-center gap-1">
@@ -278,10 +275,9 @@ export function KanbanSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="kanban-view" title="Boards">
+      <SettingsSection {...searchableSetting("kanban-view")}>
         <SettingsRow
           {...searchableSetting("kanban-default-layout")}
-          description="How the all-boards page groups cards when it opens. Each project's own board is always by column."
           control={
             <OptionSelect
               label="Global board layout"
@@ -296,13 +292,14 @@ export function KanbanSettingsPanel() {
         />
         {boards.length === 0 ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No boards yet"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="Open a project's board from the sidebar to create it, then configure it here."
           />
         ) : (
           <SettingsRow
-            title="Board to configure"
-            description="Automations, templates and labels belong to a single board."
+            {...settingCopy("kanban-board-to-configure")}
             control={
               <OptionSelect
                 label="Board"
@@ -317,13 +314,11 @@ export function KanbanSettingsPanel() {
           />
         )}
       </SettingsSection>
-      <SettingsSection id="kanban-agents" title="Agent integration">
+      <SettingsSection {...searchableSetting("kanban-agents")}>
         <SettingsRow
           serverScoped
           {...searchableSetting("kanban-agent-tool")}
           settingKeys={["kanbanAgentToolEnabled"]}
-          title="Let agents use the board"
-          description="When off, agents don't see the kanban tool at all."
           control={
             <ScopedSwitch
               settingKeys={["kanbanAgentToolEnabled"]}
@@ -339,8 +334,6 @@ export function KanbanSettingsPanel() {
           serverScoped
           {...searchableSetting("kanban-agent-default-board")}
           settingKeys={["kanbanAgentDefaultBoard"]}
-          title="Default board for agents"
-          description="Which board an agent uses when it names no project and no card."
           control={
             <OptionSelect
               label="Default board for agents"

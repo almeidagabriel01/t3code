@@ -2078,7 +2078,8 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 /**
  * An assistant's connectors join T3's own server. Claude gets them as plain `mcpServers`: they are
  * never added to `allowedTools`, so a read-only assistant still asks before calling one and the
- * runtime mode decides the rest, like any other non-allowlisted tool.
+ * runtime mode decides the rest, like any other non-allowlisted tool. The one exception is a
+ * pre-approved integration: T3's proxy gate already decided, so Claude must not ask again.
  */
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -2103,9 +2104,13 @@ export function claudeMcpQueryOverrides(input: {
           },
     ]),
   );
+  const preApproved = (input.connectors ?? []).flatMap((connector) =>
+    connector.proxy?.preApproved ? [`mcp__${connector.name}__*`] : [],
+  );
   if (session === undefined) {
+    const allowedTools = [...(input.allowedTools ?? []), ...preApproved];
     return {
-      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.allowedTools === undefined && preApproved.length === 0 ? {} : { allowedTools }),
       ...(Object.keys(connectorServers).length === 0 ? {} : { mcpServers: connectorServers }),
     };
   }
@@ -2113,7 +2118,9 @@ export function claudeMcpQueryOverrides(input: {
     ? [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS, CLAUDE_GROUP_MEMBER_T3_MCP_TOOL]
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    allowedTools: Array.from(
+      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...preApproved]),
+    ),
     mcpServers: {
       ...connectorServers,
       "t3-code": {
@@ -8278,127 +8285,90 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 };
-          yield* Effect.all(
-            [
-              emitProviderEvent({
-                type: "provider_turn.updated",
-                driver: CLAUDE_PROVIDER,
-                providerTurn: {
-                  ...providerTurnPayload({
-                    context: input.context,
-                    status: input.status,
-                    completedAt: input.completedAt,
-                  }),
-                  turnTokenUsage: normalizeClaudeTurnTokenUsage(
-                    input.result,
-                    input.context.subagentsByTaskId.size > 0 ||
-                      input.context.subagentsByToolUseId.size > 0,
-                    input.status,
-                    input.context.steeredSegmentUsage,
-                    {
-                      rootModels: input.context.rootModels,
-                      ...(input.result === undefined
-                        ? {}
-                        : {
-                            ledger: addClaudeLedgerUsage(
-                              input.context.steeredLedgerUsage,
-                              resultLedgerUsage.get(input.result),
-                            ),
-                          }),
-                    },
-                  ),
-                },
-              }),
-              // Emit the roster before root settlement so writeFinalRunEvents preserves it.
-              Effect.gen(function* () {
-                const nativeThreadId =
-                  input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
-                if (nativeThreadId !== null) {
-                  if (input.status !== "completed") {
-                    yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
-                    yield* clearNativeThreadTaskIdSet(
-                      wakeEligibleBackgroundTasksByNativeThread,
-                      nativeThreadId,
-                    );
-                    yield* clearNativeThreadTaskIdSet(
-                      opaqueBackgroundTaskReplayTombstonesByNativeThread,
-                      nativeThreadId,
-                    );
-                  }
-                }
-                const roster =
-                  nativeThreadId === null
-                    ? new Map<string, OrchestrationV2PendingBackgroundTask>()
-                    : rosterForNativeThread(
-                        yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                        nativeThreadId,
-                      );
-                const awaitedTaskIds =
-                  nativeThreadId === null
-                    ? new Set<string>()
-                    : taskIdSetForNativeThread(
-                        yield* Ref.get(awaitedBackgroundTasksByNativeThread),
-                        nativeThreadId,
-                      );
-                // A stopped turn that wrote to the transcript moved past the pinned head.
-                const clearConversationHead =
-                  (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
-                  input.context.input.providerThread.nativeConversationHeadRef !== null;
-                const goal =
-                  nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
-                const goalChecked = goalCheckedTurns.delete(input.context.providerTurnId);
-                const terminalReason = input.result?.terminal_reason;
-                const liveQuery = yield* Ref.get(queryContext);
-                if (
-                  nativeThreadId !== null &&
-                  goal?.status === "active" &&
-                  goalChecked &&
-                  input.status === "completed" &&
-                  (terminalReason === undefined || terminalReason === "completed") &&
-                  roster.size === 0 &&
-                  !(
-                    liveQuery?.nativeThreadId === nativeThreadId &&
-                    (yield* liveProcessRunsBackgroundWork(liveQuery, { forGoalCheck: true }))
-                  )
-                ) {
-                  goalsByNativeThread.set(nativeThreadId, {
-                    objective: goal.objective,
-                    status: "complete",
-                    ...(goal.checks === undefined ? {} : { checks: goal.checks }),
-                  });
-                }
-                const providerThread: OrchestrationV2ProviderThread = {
-                  ...input.context.input.providerThread,
-                  providerSessionId: session.id,
-                  ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
-                  ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
-                    ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
-                    : {}),
-                  firstRunOrdinal:
-                    input.context.input.providerThread.firstRunOrdinal ??
-                    input.context.input.runOrdinal,
-                  lastRunOrdinal: input.context.input.runOrdinal,
-                  pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(
-                    roster,
-                    awaitedTaskIds,
-                  ),
-                  status: input.status === "completed" ? "active" : "idle",
-                  updatedAt: input.completedAt,
-                };
-                yield* rememberProviderThread(providerThread);
-                yield* emitProviderEvent({
-                  type: "provider_thread.updated" as const,
-                  driver: CLAUDE_PROVIDER,
-                  providerThread,
-                });
-              }),
-              emitProviderEvent(terminalEvent),
-            ],
-            { concurrency: 1 },
-          );
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
-          );
+          // The server starts the next turn once it sees the terminal event: settle this turn's state,
+          // roster included so writeFinalRunEvents preserves it, and free the slot before reporting it.
+          yield* Effect.gen(function* () {
+            const nativeThreadId =
+              input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
+            if (nativeThreadId !== null) {
+              if (input.status !== "completed") {
+                yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
+                yield* clearNativeThreadTaskIdSet(
+                  wakeEligibleBackgroundTasksByNativeThread,
+                  nativeThreadId,
+                );
+                yield* clearNativeThreadTaskIdSet(
+                  opaqueBackgroundTaskReplayTombstonesByNativeThread,
+                  nativeThreadId,
+                );
+              }
+            }
+            const roster =
+              nativeThreadId === null
+                ? new Map<string, OrchestrationV2PendingBackgroundTask>()
+                : rosterForNativeThread(
+                    yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                    nativeThreadId,
+                  );
+            const awaitedTaskIds =
+              nativeThreadId === null
+                ? new Set<string>()
+                : taskIdSetForNativeThread(
+                    yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                    nativeThreadId,
+                  );
+            // A stopped turn that wrote to the transcript moved past the pinned head.
+            const clearConversationHead =
+              (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
+              input.context.input.providerThread.nativeConversationHeadRef !== null;
+            const goal =
+              nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
+            const goalChecked = goalCheckedTurns.delete(input.context.providerTurnId);
+            const terminalReason = input.result?.terminal_reason;
+            const liveQuery = yield* Ref.get(queryContext);
+            if (
+              nativeThreadId !== null &&
+              goal?.status === "active" &&
+              goalChecked &&
+              input.status === "completed" &&
+              (terminalReason === undefined || terminalReason === "completed") &&
+              roster.size === 0 &&
+              !(
+                liveQuery?.nativeThreadId === nativeThreadId &&
+                (yield* liveProcessRunsBackgroundWork(liveQuery, { forGoalCheck: true }))
+              )
+            ) {
+              goalsByNativeThread.set(nativeThreadId, {
+                objective: goal.objective,
+                status: "complete",
+                ...(goal.checks === undefined ? {} : { checks: goal.checks }),
+              });
+            }
+            const providerThread: OrchestrationV2ProviderThread = {
+              ...input.context.input.providerThread,
+              providerSessionId: session.id,
+              ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
+              ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
+                ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
+                : {}),
+              firstRunOrdinal:
+                input.context.input.providerThread.firstRunOrdinal ??
+                input.context.input.runOrdinal,
+              lastRunOrdinal: input.context.input.runOrdinal,
+              pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(
+                roster,
+                awaitedTaskIds,
+              ),
+              status: input.status === "completed" ? "active" : "idle",
+              updatedAt: input.completedAt,
+            };
+            yield* rememberProviderThread(providerThread);
+            yield* emitProviderEvent({
+              type: "provider_thread.updated" as const,
+              driver: CLAUDE_PROVIDER,
+              providerThread,
+            });
+          });
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
           } else {
@@ -8409,6 +8379,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next.delete(input.context.providerTurnId);
             return next;
           });
+          yield* Ref.update(activeTurn, (current) =>
+            current?.providerTurnId === input.context.providerTurnId ? null : current,
+          );
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver: CLAUDE_PROVIDER,
+            providerTurn: {
+              ...providerTurnPayload({
+                context: input.context,
+                status: input.status,
+                completedAt: input.completedAt,
+              }),
+              turnTokenUsage: normalizeClaudeTurnTokenUsage(
+                input.result,
+                input.context.subagentsByTaskId.size > 0 ||
+                  input.context.subagentsByToolUseId.size > 0,
+                input.status,
+                input.context.steeredSegmentUsage,
+                {
+                  rootModels: input.context.rootModels,
+                  ...(input.result === undefined
+                    ? {}
+                    : {
+                        ledger: addClaudeLedgerUsage(
+                          input.context.steeredLedgerUsage,
+                          resultLedgerUsage.get(input.result),
+                        ),
+                      }),
+                },
+              ),
+            },
+          });
+          yield* emitProviderEvent(terminalEvent);
         });
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
@@ -11281,6 +11284,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return context;
           });
           yield* querySession.messages.pipe(
+            // Integrations read what loaded natively, claude.ai connectors included (D7, D11).
+            Stream.tap((message) =>
+              message.type === "system" && message.subtype === "init"
+                ? mcpSessions.reportLoadedServers(adapterOptions.instanceId, message.mcp_servers)
+                : Effect.void,
+            ),
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {

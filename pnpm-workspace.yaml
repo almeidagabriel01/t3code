@@ -107,6 +107,8 @@ overrides:
   micromark: 4.0.2
   mdast-util-to-hast: 13.2.1
   alchemy: "catalog:"
+  # @cloudflare/unenv-preset@2.16.2 peers on this exact rc; alchemy's ^rc.24 range would take a newer one.
+  unenv: 2.0.0-rc.24
   expo-audio: 58.0.11
   expo-network: 58.0.4
   "@clerk/expo-native-components": 0.4.4
@@ -117,6 +119,7 @@ overrides:
   "@pierre/diffs": 1.7.0-beta.3
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
+  "@expo/ui": 58.0.27
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
@@ -263,6 +266,8 @@ patchedDependencies:
   "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  # Android: DropdownMenu forwards a border to Compose, so menus keep a visible edge in dark themes.
+  "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

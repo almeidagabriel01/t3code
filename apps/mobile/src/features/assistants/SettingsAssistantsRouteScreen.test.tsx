@@ -23,6 +23,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     archivedTeams: [] as unknown[],
     archiveTeam: vi.fn(),
     restoreTeam: vi.fn(),
+    integrations: null as unknown,
   },
 }));
 const assistant = (id: string, name: string, extra: object = {}) => ({
@@ -59,6 +60,10 @@ const defaults = () => ({
     },
   ],
 });
+vi.mock("./AssistantTaskRows", () => ({
+  AssistantTaskRows: () => null,
+  useAssistantTaskSections: () => ({ pinned: [], open: [], snoozed: [], settled: [] }),
+}));
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: (props: { label: string; onPress: () => void }) => (
     <button aria-label={props.label} onClick={props.onPress} />
@@ -86,8 +91,10 @@ vi.mock("./useAssistantFlows", () => ({
   }),
 }));
 vi.mock("react-native", () => ({
-  View: (props: { children?: ReactNode; accessibilityLabel?: string }) => (
-    <div aria-label={props.accessibilityLabel}>{props.children}</div>
+  View: (props: { children?: ReactNode; accessibilityLabel?: string; testID?: string }) => (
+    <div aria-label={props.accessibilityLabel} data-testid={props.testID}>
+      {props.children}
+    </div>
   ),
   Pressable: (props: {
     accessibilityLabel?: string;
@@ -111,6 +118,7 @@ vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
       ? { mood: "idle", detail: "Idle", since: null }
       : (mocks.presence[thread.id] ?? { mood: "idle", detail: "Idle", since: null }),
 }));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
@@ -173,16 +181,33 @@ vi.mock("./AssistantSandboxSection", () => ({
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.openWork }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
+vi.mock("../../state/integrations", () => ({ useIntegrationsState: () => mocks.integrations }));
+vi.mock("./AssistantFormFields", () => ({}));
+vi.mock("../../components/ui/RowPressable", () => ({ RowPressable: Children }));
+vi.mock("../../components/ui/ListRowLayout", () => ({ ListRowLayout: () => null }));
+vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
+
+// A shell whose status follows the presence a test gives its thread.
+const shellOf = (id: string) => ({
+  environmentId: "hub",
+  id,
+  hasPendingApprovals: mocks.presence[id]?.mood === "needs",
+  hasPendingUserInput: false,
+  pendingSubagentRequest: null,
+  pendingGuestMessageCount: 0,
+  runtime: mocks.presence[id]?.mood === "working" ? { status: "running" } : null,
+});
 vi.mock("../../state/entities", () => ({
   useProjects: () => [{ environmentId: "hub", id: "p1", title: "Website" }],
   useThreadShell: (ref: { threadId: string } | null) =>
-    ref === null ? null : { id: ref.threadId },
+    ref === null ? null : shellOf(ref.threadId),
   useQuietThreadShells: () =>
-    (mocks.entries ?? defaults()).active.map((entry) => ({
-      environmentId: "hub",
-      id: (entry as ReturnType<typeof assistant>).assistant.threadId,
-    })),
+    (mocks.entries ?? defaults()).active.map((entry) =>
+      shellOf((entry as ReturnType<typeof assistant>).assistant.threadId),
+    ),
 }));
+vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set() }));
+vi.mock("../threads/threadListV2", () => ({ threadHasUnseenCompletion: () => false }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({
     savedConnectionsById: { lab: { environmentLabel: "Lab" }, hub: { environmentLabel: "Hub" } },
@@ -199,6 +224,14 @@ vi.mock("../../state/assistants", () => ({
     };
   },
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
+  useAssistantStatus: () => ({
+    of: (_environmentId: string, assistant: { threadId: string | null } | null): Presence =>
+      (assistant?.threadId != null ? mocks.presence[assistant.threadId] : undefined) ?? {
+        mood: "idle",
+        detail: "Idle",
+        since: null,
+      },
+  }),
   useAssistantTasks: () => [],
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
     mocks.spendQuery(environmentId, assistantId);
@@ -227,6 +260,7 @@ beforeEach(() => {
   mocks.presence = {};
   mocks.environmentIds = ["hub"];
   mocks.hasDefault = true;
+  mocks.integrations = null;
   for (const fn of [
     mocks.spendQuery,
     mocks.openEditor,
@@ -243,6 +277,46 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("assistants page", () => {
+  it("shows the integrations each assistant gets, warning on those needing attention", () => {
+    const view = (name: string, status: string) => ({
+      name,
+      catalogId: name === "custom" ? null : name,
+      auth: "oauth",
+      status,
+      availability: "all",
+    });
+    mocks.integrations = {
+      catalog: [
+        { id: "linear", name: "Linear" },
+        { id: "gmail", name: "Gmail" },
+        { id: "notion", name: "Notion" },
+      ],
+      integrations: [
+        view("linear", "connected"),
+        view("gmail", "needs-sign-in"),
+        view("notion", "not-connected"),
+        view("custom", "error"),
+      ],
+    };
+    mocks.entries = {
+      active: [
+        assistant("a1", "Jarvis", { integrations: { mode: "all" } }),
+        assistant("a2", "Plain", { integrations: { mode: "selected", names: ["gmail"] } }),
+      ],
+      archived: [],
+      teams: [],
+    };
+    render();
+    const jarvis = byLabel("Jarvis, All projects")!.textContent;
+    expect(jarvis).toContain("Linear · Connected");
+    expect(jarvis).toContain("Gmail · Needs sign-in");
+    expect(jarvis).toContain("custom · Error");
+    expect(jarvis).not.toContain("Notion");
+    const plain = byLabel("Plain, All projects")!.textContent;
+    expect(plain).toContain("Gmail · Needs sign-in");
+    expect(plain).not.toContain("Linear");
+  });
+
   it.each([
     ["exceeded", ", Limit reached"],
     ["warn", ", Near limit"],
@@ -266,11 +340,12 @@ describe("assistants page", () => {
       ],
       archived: [assistant("a5", "Old", { archivedAt: "2026-01-01T00:00:00Z" })],
       teams: [
-        { environmentId: "hub", team: { id: "g1", name: "Growth", memberIds: ["a1"] } },
+        { environmentId: "hub", team: { id: "g1", name: "Growth", memberIds: ["a1", "a4"] } },
         { environmentId: "hub", team: { id: "g2", name: "Empty", memberIds: [] } },
       ],
     };
     mocks.presence["t-a4"] = { mood: "needs", detail: "Needs your approval", since: null };
+    mocks.presence["t-a1"] = { mood: "working", detail: "Reading", since: null };
     render();
     const text = container.textContent ?? "";
     const order = ["Needs you", "Growth", "Empty", "Website", "Unassigned", "Archived"].map(
@@ -281,6 +356,14 @@ describe("assistants page", () => {
     expect(text).toContain("No members yet.");
     expect(byLabel("Scout, Website")).not.toBeNull();
     expect(text).toContain("Needs your approval");
+    // Cards and group headers say their status in a thread row's words.
+    expect(
+      byLabel("Asker, All projects")?.querySelector('[data-testid="assistant-status"]')
+        ?.textContent,
+    ).toBe("Approval");
+    const groupStatus = container.querySelectorAll('[data-testid="group-status"]');
+    // Asker waits under "Needs you", yet its group still says so.
+    expect([...groupStatus].map((node) => node.textContent)).toEqual(["Approval"]);
     // A member card names its groups; an unassigned one has none.
     expect(byLabel("Jarvis, All projects")?.textContent).toContain("Growth");
     expect(byLabel("Loose, All projects")?.textContent).not.toContain("Growth");

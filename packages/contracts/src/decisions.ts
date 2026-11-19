@@ -17,6 +17,8 @@ export const DECISION_OPTION_LABEL_MAX_LENGTH = 80;
 export const DECISION_OPTION_CONSEQUENCE_MAX_LENGTH = 200;
 export const DECISION_MAX_OPTIONS = 10;
 export const DECISION_ANSWER_TEXT_MAX_LENGTH = 2_000;
+export const DECISION_MAX_STEPS = 12;
+export const DECISION_STEP_MAX_LENGTH = 300;
 
 export const DecisionId = TrimmedNonEmptyString.pipe(Schema.brand("DecisionId"));
 export type DecisionId = typeof DecisionId.Type;
@@ -30,6 +32,14 @@ export const DecisionOption = Schema.Struct({
   ),
 });
 export type DecisionOption = typeof DecisionOption.Type;
+
+/** `manual` is a to-do for the user: it holds no work and answering it wakes no agent. */
+export const DecisionKind = Schema.Literals(["choice", "manual"]);
+export type DecisionKind = typeof DecisionKind.Type;
+
+export const DecisionSteps = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(DECISION_STEP_MAX_LENGTH)),
+).check(Schema.isMinLength(1), Schema.isMaxLength(DECISION_MAX_STEPS));
 
 export const DecisionStatus = Schema.Literals(["open", "answered", "expired", "withdrawn"]);
 export type DecisionStatus = typeof DecisionStatus.Type;
@@ -60,6 +70,10 @@ export const Decision = Schema.Struct({
   ),
   /** An option id. */
   recommended: Schema.optional(Schema.String),
+  /** Absent reads as `choice`, as from older servers. */
+  kind: Schema.optionalKey(DecisionKind),
+  /** What the user does, in order; also appended to `context` for older clients. */
+  steps: Schema.optionalKey(DecisionSteps),
   expiresAt: Schema.optional(IsoDateTime),
   /** `withdrawn` is the agent taking it back or the user dismissing it. */
   status: DecisionStatus,
@@ -104,6 +118,10 @@ export type DecisionsAnswerInput = typeof DecisionsAnswerInput.Type;
 /** The user declines to answer; the agent is told so, never that it was approved. */
 export const DecisionsDismissInput = Schema.Struct({ decisionId: DecisionId });
 export type DecisionsDismissInput = typeof DecisionsDismissInput.Type;
+
+/** Only an answered `manual` decision reopens; nothing is sent to the agent. */
+export const DecisionsReopenInput = Schema.Struct({ decisionId: DecisionId });
+export type DecisionsReopenInput = typeof DecisionsReopenInput.Type;
 
 export class DecisionError extends Schema.TaggedError<DecisionError>()("DecisionError", {
   reason: Schema.Literals(["not_found", "not_open", "invalid", "storage"]),

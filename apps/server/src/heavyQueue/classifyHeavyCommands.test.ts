@@ -4,6 +4,7 @@ import type { ProcessOwner } from "@t3tools/shared/ProcessOwners";
 
 import {
   classifyHeavyCommands,
+  DETACHED_REASON,
   HEAVY_MEMORY_BYTES,
   LINGER_MS,
   type Tracked,
@@ -53,12 +54,14 @@ const classify = (input: {
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
   readonly owners?: ReadonlyArray<ProcessOwner>;
   readonly entries?: ReadonlyArray<HeavyQueueEntry>;
+  readonly serverPid?: number;
   readonly now?: number;
   readonly previous?: ReadonlyMap<string, Tracked>;
 }) =>
   classifyHeavyCommands({
     owners: [agent(10)],
     entries: [],
+    serverPid: 1,
     now: 100_000,
     previous: new Map(),
     ...input,
@@ -215,6 +218,130 @@ describe("classifyHeavyCommands", () => {
     expect(summary(classify({ processes, entries }))).toEqual(expected);
   });
 
+  // Outside the server's tree; pid 0 stands for launchd, whose pid 1 the fixtures give the server.
+  const SCRIPT = [
+    proc(70, 0, "sh", {}, "sh mac-all.sh"),
+    proc(71, 70, "bash", {}, "/bin/bash ./real.sh"),
+  ];
+  it.each([
+    {
+      name: "lists a detached script's heavy command once, with the tree beneath it",
+      processes: [
+        ...SCRIPT,
+        proc(72, 71, "node", { cpu: 20 }, "npm exec playwright test"),
+        proc(73, 72, "sh", {}, "sh -c playwright test"),
+        proc(74, 73, "node", { cpu: 80 }, "node /w/node_modules/.bin/playwright test"),
+        proc(75, 74, "node", { cpu: 300, rss: GIB }),
+      ],
+      expected: [{ source: "detached", pid: 72, threadId: null, cpu: 4, memory: GIB }],
+    },
+    {
+      name: "reads a node script's program past the interpreter and its flags",
+      processes: [
+        proc(80, 0, "node", { cpu: 200 }, "/usr/bin/node --max-old-space-size=8192 /w/.bin/tsc"),
+      ],
+      expected: [{ source: "detached", pid: 80, threadId: null, cpu: 2, memory: 0 }],
+    },
+    {
+      name: "leaves out a detached heavy command while it is light",
+      processes: [...SCRIPT, proc(72, 71, "node", { cpu: 20 }, "npm exec playwright test")],
+      expected: [],
+    },
+    {
+      name: "leaves out a busy process whose command is not heavy work",
+      processes: [proc(80, 0, "Google Chrome", { cpu: 400, rss: 3 * GIB })],
+      expected: [],
+    },
+    {
+      name: "reads only a process's own program, not words its argv lost quotes around",
+      processes: [
+        proc(80, 0, "ssh", { cpu: 100 }, "ssh pc cd /w && npm test"),
+        proc(81, 0, "claude", { cpu: 100 }, "claude -p fix it; npm test"),
+      ],
+      expected: [],
+    },
+    {
+      name: "leaves out heavy tools an app runs as helpers",
+      processes: [
+        proc(60, 0, "Code Helper (Plugin)"),
+        proc(61, 60, "tsgo", { cpu: 200, rss: 2 * GIB }, "/x/tsgo --lsp --stdio"),
+      ],
+      expected: [],
+    },
+    {
+      name: "keeps an agent's command an agent's, and never a young one as detached",
+      processes: [
+        SERVER,
+        CLAUDE,
+        WRAPPER,
+        proc(12, 11, "vitest", { cpu: 400 }),
+        proc(13, 11, "vitest", { cpu: 400, runMs: 1_000 }),
+        ...SCRIPT,
+        proc(72, 71, "vitest", { cpu: 100 }),
+      ],
+      expected: [
+        { source: "agent", pid: 12, threadId: "t-agent", cpu: 4, memory: 0 },
+        { source: "detached", pid: 72, threadId: null, cpu: 1, memory: 0 },
+      ],
+    },
+    {
+      name: "never lists T3's own work outside an owner",
+      processes: [SERVER, proc(5, 1, "git", { cpu: 200 }, "git commit -m checkpoint")],
+      expected: [],
+    },
+    {
+      name: "never lists the launcher that runs this T3, nor its other children",
+      serverPid: 91,
+      processes: [
+        proc(89, 0, "zsh", {}, "-zsh"),
+        proc(90, 89, "node", { cpu: 100 }, "node /w/node_modules/.bin/vp run dev:desktop"),
+        proc(91, 90, "node", { cpu: 100 }, "node apps/server/src/bin.ts"),
+        proc(92, 90, "node", { cpu: 100 }, "node /w/node_modules/.bin/tsc --watch"),
+      ],
+      owners: [],
+      expected: [],
+    },
+    {
+      name: "leaves a hooked session's queue job to its queue row",
+      processes: [
+        proc(70, 0, "claude"),
+        proc(71, 70, "node", {}, "t3 heavy -- vp test"),
+        proc(72, 71, "vitest", { cpu: 400 }),
+      ],
+      entries: [entry({ pid: 71 })],
+      expected: [
+        { source: "queue", pid: 71, threadId: "t-agent", cpu: undefined, memory: undefined },
+      ],
+    },
+    {
+      name: "counts a queue job's build daemon in its row, not as detached work",
+      processes: [
+        proc(70, 0, "claude"),
+        proc(71, 70, "node", {}, "t3 heavy -- ./gradlew assembleRelease"),
+        proc(80, 0, "java", { cpu: 100 }, "java org.gradle.launcher.daemon.bootstrap.GradleDaemon"),
+        proc(81, 80, "sh", {}, "sh -c tsc -b"),
+        proc(82, 81, "node", { cpu: 300 }, "node /w/node_modules/.bin/tsc -b"),
+      ],
+      entries: [entry({ pid: 71, daemons: [80, 81, 82] })],
+      expected: [
+        { source: "queue", pid: 71, threadId: "t-agent", cpu: undefined, memory: undefined },
+      ],
+    },
+  ])("$name", ({ processes, expected, ...rest }) => {
+    expect(summary(classify({ processes, ...rest }))).toEqual(expected);
+  });
+
+  it("gives a detached command its reason and no Stop", () => {
+    const result = classify({
+      processes: [...SCRIPT, proc(72, 71, "vitest", { cpu: 100 }, "vitest run")],
+    });
+    expect(
+      result.commands.map(({ stoppable, reason, name }) => ({ stoppable, reason, name })),
+    ).toEqual([{ stoppable: false, reason: DETACHED_REASON, name: "Tests" }]);
+    expect(result.trees.has("72:1072")).toBe(false);
+    expect(result.tracked.has("72:1072")).toBe(true);
+  });
+
   it("marks server-held queue work as not stoppable and names rows readably", () => {
     const result = classify({
       processes: [
@@ -231,6 +358,24 @@ describe("classifyHeavyCommands", () => {
       { name: "Checkpoint", stoppable: false, startedAt: "2026-01-01T00:00:01.000Z" },
       { name: "Tests", stoppable: true, startedAt: "1970-01-01T00:00:01.012Z" },
     ]);
+  });
+
+  it("says where a queue row runs, and gives a Linux row none of the wrapper's usage", () => {
+    const usage = { cpu: 0.04, memory: 30e6, peakCpu: 0.1, peakMemory: 40e6 };
+    const result = classify({
+      processes: [SERVER],
+      entries: [
+        entry({ id: "mac", pid: 1, server: true, ...usage }),
+        entry({ id: "linux", pid: 2, server: true, runner: "linux", ...usage }),
+      ],
+    });
+    const [mac, linux] = result.commands;
+    expect(mac).not.toHaveProperty("runner");
+    expect(mac).toMatchObject({ cpu: 0, peakCpu: 0.1 });
+    expect(linux).toMatchObject({ runner: "linux" });
+    for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+      expect(linux).not.toHaveProperty(key);
+    }
   });
 
   it("orders direct commands oldest first and records the pids Stop may signal", () => {

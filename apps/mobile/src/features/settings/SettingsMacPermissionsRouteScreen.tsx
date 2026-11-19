@@ -21,6 +21,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { MAC_PERMISSIONS_COPY } from "./macPermissionsCopy";
 
 const PANE_ICONS: Record<MacPermissionPane, AppSymbolName> = {
   "screen-recording": "desktopcomputer",
@@ -41,7 +42,7 @@ function MacEnvironment(props: { readonly environmentId: EnvironmentId; readonly
   const suffix = props.title ? ` · ${props.title}` : "";
   return (
     <View className="gap-5">
-      <ListSection title={`Permissions${suffix}`}>
+      <ListSection title={`${MAC_PERMISSIONS_COPY.permissions}${suffix}`}>
         {permissions === null ? (
           <ListRowLayout
             icon="arrow.clockwise"
@@ -69,7 +70,7 @@ function MacEnvironment(props: { readonly environmentId: EnvironmentId; readonly
           onPress={automationChecked ? query.refresh : () => setAutomationChecked(true)}
         />
       </ListSection>
-      <ListSection title={`Open on the Mac${suffix}`}>
+      <ListSection title={`${MAC_PERMISSIONS_COPY.openOnMac}${suffix}`}>
         {MAC_PERMISSION_ROWS.map((row) => (
           <SettingsActionRow
             key={row.pane}
@@ -98,9 +99,7 @@ export function SettingsMacPermissionsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
-          What macOS lets T3 Code do on the Mac that runs it. Agents can take screenshots, and click
-          or type only after you approve each action. Grant the permissions in System Settings on
-          that Mac.
+          {MAC_PERMISSIONS_COPY.intro}
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

@@ -14,6 +14,7 @@ import {
   resolveProjectSettings,
   resolveSendEnvMode,
   resolveWorktreeCleanup,
+  worktreeCleanupDeletes,
 } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -403,6 +404,25 @@ describe("projectSettingsOverrides patches", () => {
   });
 });
 
+describe("worktreeCleanupDeletes", () => {
+  const off = resolveWorktreeCleanup(
+    applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      worktreeCleanup: { mode: "off" },
+    }),
+    null,
+  );
+  it.each([
+    ["no rule", {}, false],
+    ["delete with threads", { worktreeOnDelete: true }, true],
+    ["merged right away", { worktreeMerged: "right-away" }, true],
+    ["merged after days", { worktreeMerged: "after-days" }, true],
+    ["inactive days", { worktreeAfterDays: 8 }, true],
+    ["settled at 0 days", { worktreeSettledAfterDays: 0 }, true],
+  ] as const)("%s → %s", (_name, patch, expected) => {
+    expect(worktreeCleanupDeletes({ ...off, ...patch })).toBe(expected);
+  });
+});
+
 describe("resolveWorktreeCleanup", () => {
   it("inherits machine rules, disables one project and keeps custom rules isolated", () => {
     const machine = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
@@ -428,8 +448,9 @@ describe("resolveWorktreeCleanup", () => {
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnDelete: false,
-      worktreeOnMerge: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "off",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "any-local-files",
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
@@ -459,7 +480,7 @@ describe("resolveWorktreeCleanup", () => {
       storageCleanup: { worktreeAfterDays: 8, worktreeSettledAfterDays: 0, worktreeOnDelete: true },
     });
     const custom = applyServerSettingsPatch(initial, {
-      worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
+      worktreeCleanup: { mode: "custom", rules: { worktreeMerged: "after-days" } },
     });
     const edited = applyServerSettingsPatch(custom, {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
@@ -468,8 +489,9 @@ describe("resolveWorktreeCleanup", () => {
       worktreeAfterDays: 15,
       worktreeSettledAfterDays: 0,
       worktreeOnDelete: true,
-      worktreeOnMerge: true,
-      worktreeUnchanged: false,
+      worktreeMerged: "after-days",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "uncommitted-changes",
     });
     expect(
