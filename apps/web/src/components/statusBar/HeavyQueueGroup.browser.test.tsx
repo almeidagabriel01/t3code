@@ -5,7 +5,9 @@ import {
   type HeavyCommandsState,
   type HeavyQueueEntry,
   type HeavyQueueState,
+  type LinkedEnvironmentResources,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -32,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   commands: { commands: [], cpuCount: 8 } as HeavyCommandsState,
   stop: { canStop: true, stop: vi.fn() },
   openThread: vi.fn(),
+  /** Linked environments the server reports; set, it also grants orchestration read. */
+  linked: null as ReadonlyArray<LinkedEnvironmentResources> | null,
 }));
 
 vi.mock("../../state/heavyQueue", async () => ({
@@ -53,8 +57,22 @@ vi.mock("../ProjectFavicon", () => ({
 }));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
-  useEnvironmentScope: () => false,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) =>
+    mocks.linked !== null && scope === "orchestration:read",
 }));
+vi.mock("../../state/server", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../state/server")>();
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const pending = Atom.make(AsyncResult.initial<never, never>(true));
+  return {
+    ...original,
+    serverEnvironment: {
+      ...original.serverEnvironment,
+      hostResources: () => pending,
+      linkedEnvironmentResources: () => Atom.make(AsyncResult.success(mocks.linked ?? [])),
+    },
+  };
+});
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "env",
@@ -103,6 +121,7 @@ function setup(
     mocks.actions[key].mockReset();
   }
   mocks.openThread.mockReset();
+  mocks.linked = null;
   mocks.actions.canChange = true;
   mocks.actions.canRoute = true;
   mocks.actions.canRouteAll = true;
@@ -689,6 +708,53 @@ describe("MachineBar", () => {
     await expect.element(screen.getByText("T3 total")).toBeVisible();
     expect(screen.container.textContent).toContain("2.00 GB");
     expect(screen.container.textContent?.match(/25%/g)).toHaveLength(2);
+  });
+});
+
+describe("MachineBar linked environments", () => {
+  const minute = Date.parse("2026-01-01T12:00:00.000Z");
+  const linked = (
+    status: LinkedEnvironmentResources["status"],
+    msAgo: number,
+  ): LinkedEnvironmentResources => ({
+    environmentId: "env-vps" as EnvironmentId,
+    label: "VPS",
+    status,
+    since: DateTime.makeUnsafe(minute - msAgo),
+    reading: {
+      readAt: DateTime.makeUnsafe(minute - msAgo),
+      cpuUtilization: 0.4,
+      cpuCount: 4,
+      availableMemoryBytes: 2 * GIB,
+      totalMemoryBytes: 8 * GIB,
+      threadsRunning: 2,
+      threadsWaiting: 0,
+      subagentsRunning: 1,
+      heavy: { running: 1, slots: 2, waiting: 0 },
+    },
+  });
+
+  it("shows a linked environment's live reading and what runs there", async () => {
+    setup([], { machine: MACHINE });
+    mocks.linked = [linked("online", 0)];
+    // The rows read the minute clock on their first render, so the clock is faked before it.
+    using _timers = fakeTimers({ now: new Date(minute) });
+    await using screen = await render(machineBar());
+    const text = screen.container.textContent ?? "";
+    expect(text).toMatch(/VPS.*40%.*2\.0 GB.*free.*1\/2.*2 running · 1 subagents/s);
+    expect(screen.getByLabelText("VPS online").elements()).not.toHaveLength(0);
+  });
+
+  it("shows an offline link since its last answer, never its old numbers as live", async () => {
+    setup([], { machine: MACHINE });
+    mocks.linked = [linked("offline", 5 * 60_000)];
+    using _timers = fakeTimers({ now: new Date(minute) });
+    await using screen = await render(machineBar());
+    const text = screen.container.textContent ?? "";
+    expect(text).toContain("Offline · 5m ago");
+    expect(text).not.toContain("40%");
+    expect(text).not.toContain("running ·");
+    expect(screen.getByLabelText("VPS offline").elements()).not.toHaveLength(0);
   });
 });
 

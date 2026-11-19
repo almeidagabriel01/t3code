@@ -1,4 +1,5 @@
 import {
+  linkedMachineRow,
   machineBar,
   type MachineBarRow,
   type MachineGauge as MachineGaugeModel,
@@ -11,6 +12,7 @@ import {
 import { LaptopIcon, ServerIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
+import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useHeavyQueue } from "../../state/heavyQueue";
 import { useEnvironmentQuery } from "../../state/query";
@@ -216,8 +218,10 @@ function MachineGauge({
   );
 }
 
-function MachineSlots({ row }: { readonly row: MachineBarRow }) {
-  return row.slots === null ? (
+function MachineSlots({ row }: { readonly row: Pick<MachineBarRow, "slots" | "queueOff"> }) {
+  return row.slots === null && row.queueOff === null ? (
+    <span />
+  ) : row.slots === null ? (
     <Reading hint={row.queueOff ?? ""} className="justify-end">
       <span className="text-2xs text-muted-foreground">Off</span>
     </Reading>
@@ -232,6 +236,49 @@ const LINUX_STATUS = (online: boolean | null) =>
     : online
       ? { text: "online", dot: "bg-success" }
       : { text: "offline", dot: "bg-destructive" };
+
+/** Linux or a linked environment: live gauges, or why there are none. */
+function RemoteMachine({
+  name,
+  row,
+  activity = null,
+}: {
+  readonly name: string;
+  readonly row: Omit<MachineBarRow, "runner">;
+  readonly activity?: string | null;
+}) {
+  return (
+    <>
+      <MachineName
+        Icon={ServerIcon}
+        name={name}
+        status={{ ...LINUX_STATUS(row.online), hint: row.statusHint ?? "" }}
+      />
+      {row.offline === null ? (
+        <>
+          <MachineGauge gauge={row.cpu} />
+          <MachineGauge gauge={row.memory} unit="free" />
+        </>
+      ) : (
+        <Reading hint={row.offline.hint} className="col-span-2 min-w-0">
+          <span
+            className={cn(
+              "truncate text-2xs",
+              row.online === false ? "text-destructive-foreground" : "text-muted-foreground",
+            )}
+          >
+            {/* The error goes in the tooltip: a long one would starve the names' column. */}
+            {row.offline.text}
+          </span>
+        </Reading>
+      )}
+      <MachineSlots row={row} />
+      {activity === null ? null : (
+        <span className="col-span-4 truncate pl-6 text-2xs text-muted-foreground">{activity}</span>
+      )}
+    </>
+  );
+}
 
 /** T3's own history, refreshed while the bar shows it. */
 function useT3History(environmentId: EnvironmentId) {
@@ -253,8 +300,9 @@ function useT3History(environmentId: EnvironmentId) {
 }
 
 /**
- * This Mac and, while the Runner reports it, Linux: CPU, free memory and slots per machine. A
- * condition that holds the queue colours the gauge it is about, worded in that gauge's tooltip.
+ * This Mac, Linux while the Runner reports it, and each linked environment: CPU, free memory and
+ * slots per machine. A condition that holds the queue colours the gauge it is about, worded in that
+ * gauge's tooltip.
  */
 export function MachineBar({
   environmentId,
@@ -272,6 +320,11 @@ export function MachineBar({
   );
   const buckets = useT3History(environmentId);
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
+  const linkedData = useEnvironmentQuery(
+    canRead ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} }) : null,
+  ).data;
+  const now = useNowMinuteMs();
+  const linked = (linkedData ?? []).map((entry) => linkedMachineRow(entry, now));
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <div
@@ -307,34 +360,11 @@ export function MachineBar({
         </>
       )}
 
-      {linux === null ? null : (
-        <>
-          <MachineName
-            Icon={ServerIcon}
-            name="Linux"
-            status={{ ...LINUX_STATUS(linux.online), hint: linux.statusHint ?? "" }}
-          />
-          {linux.offline === null ? (
-            <>
-              <MachineGauge gauge={linux.cpu} />
-              <MachineGauge gauge={linux.memory} unit="free" />
-            </>
-          ) : (
-            <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
-              <span
-                className={cn(
-                  "truncate text-2xs",
-                  linux.online === false ? "text-destructive-foreground" : "text-muted-foreground",
-                )}
-              >
-                {/* The error goes in the tooltip: a long one would starve the names' column. */}
-                {linux.offline.text}
-              </span>
-            </Reading>
-          )}
-          <MachineSlots row={linux} />
-        </>
-      )}
+      {linux === null ? null : <RemoteMachine name="Linux" row={linux} />}
+
+      {linked.map((row) => (
+        <RemoteMachine key={row.environmentId} name={row.name} row={row} activity={row.activity} />
+      ))}
     </div>
   );
 }
