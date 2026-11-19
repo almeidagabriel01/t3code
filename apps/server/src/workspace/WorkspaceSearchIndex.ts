@@ -15,9 +15,11 @@ import type {
   SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -49,6 +51,7 @@ const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const HIDDEN_SCAN_BATCH_SIZE = 64;
+const HIDDEN_SCAN_TIMEOUT = "30 seconds";
 
 /**
  * Regenerable folders search never walks into. fff also leaves out dotfiles (outside git)
@@ -171,6 +174,8 @@ export class WorkspaceSearchIndex extends Context.Service<
       input: Omit<ProjectSearchContentsInput, "cwd">,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
     readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
+    /** Resolves once the hidden-entry scan started so far has settled. */
+    readonly awaitHiddenScan: () => Effect.Effect<void>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
@@ -342,10 +347,11 @@ async function walkEntries(
   cwd: string,
   roots: ReadonlyArray<string>,
   limit: number,
+  signal: AbortSignal,
 ): Promise<ProjectEntry[]> {
   const entries: ProjectEntry[] = [];
   const pending = [...roots];
-  while (pending.length > 0 && entries.length < limit) {
+  while (pending.length > 0 && entries.length < limit && !signal.aborted) {
     const listed = await Promise.all(
       pending.splice(0, HIDDEN_SCAN_BATCH_SIZE).map((directory) =>
         NodeFSP.readdir(NodePath.join(cwd, directory), { withFileTypes: true }).then(
@@ -547,14 +553,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // What fff leaves out: ignored files in git (`--directory` stops at wholly ignored folders,
   // which are walked unless heavy), and dotfiles plus ignored files outside git.
   const scanHiddenEntries = Effect.fn("WorkspaceSearchIndex.scanHiddenEntries")(function* () {
-    if (variant !== "paths") return [];
     const [tracked, untracked] = yield* Effect.all(
       [listIgnored(["--cached"]), listIgnored(["--others", "--directory", "--no-empty-directory"])],
       { concurrency: "unbounded" },
     );
     if (tracked === undefined || untracked === undefined) {
-      const walked = yield* Effect.promise(() =>
-        walkEntries(cwd, [""], WORKSPACE_INDEX_MAX_ENTRIES),
+      const walked = yield* Effect.promise((signal) =>
+        walkEntries(cwd, [""], WORKSPACE_INDEX_MAX_ENTRIES, signal),
       );
       const indexed = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
@@ -579,8 +584,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       listed.push({ path, kind: "directory", ignored: true });
       if (!hasHeavyDirectorySegment(path)) walkRoots.push(path);
     }
-    const walked = yield* Effect.promise(() =>
-      walkEntries(cwd, walkRoots, Math.max(0, WORKSPACE_INDEX_MAX_ENTRIES - listed.length)),
+    const walked = yield* Effect.promise((signal) =>
+      walkEntries(cwd, walkRoots, Math.max(0, WORKSPACE_INDEX_MAX_ENTRIES - listed.length), signal),
     );
     return [...listed, ...walked.map((entry) => ({ ...entry, ignored: true }))];
   });
@@ -613,7 +618,39 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.value;
   });
 
-  let hiddenEntries: ReadonlyArray<ProjectEntry> = yield* scanHiddenEntries();
+  // Searches answer from the last finished scan; requests during a scan rerun it once after.
+  const scope = yield* Effect.scope;
+  let hiddenEntries: ReadonlyArray<ProjectEntry> = [];
+  let hiddenScanSettled = Deferred.makeUnsafe<void>();
+  yield* Deferred.succeed(hiddenScanSettled, undefined);
+  let hiddenScanRunning = false;
+  let hiddenScanRequested = 0;
+  const runHiddenScans = Effect.gen(function* () {
+    let scannedFor = 0;
+    while (scannedFor < hiddenScanRequested) {
+      scannedFor = hiddenScanRequested;
+      const scanned = yield* scanHiddenEntries().pipe(Effect.timeoutOption(HIDDEN_SCAN_TIMEOUT));
+      if (Option.isSome(scanned)) hiddenEntries = scanned.value;
+      else yield* Effect.logWarning("Hidden workspace entry scan timed out", { cwd });
+    }
+  });
+  const startHiddenScan = Effect.fn("WorkspaceSearchIndex.startHiddenScan")(function* () {
+    if (variant !== "paths") return;
+    hiddenScanRequested += 1;
+    if (hiddenScanRunning) return;
+    hiddenScanRunning = true;
+    const settled = (hiddenScanSettled = Deferred.makeUnsafe<void>());
+    yield* runHiddenScans.pipe(
+      Effect.ensuring(
+        Effect.suspend(() => {
+          hiddenScanRunning = false;
+          return Deferred.succeed(settled, undefined);
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+  });
+  yield* startHiddenScan();
 
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
@@ -645,7 +682,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    hiddenEntries = yield* scanHiddenEntries();
+    yield* startHiddenScan();
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -763,7 +800,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     };
   });
 
-  return WorkspaceSearchIndex.of({ list, refresh, search, searchContents });
+  const awaitHiddenScan = () => Effect.suspend(() => Deferred.await(hiddenScanSettled));
+
+  return WorkspaceSearchIndex.of({ awaitHiddenScan, list, refresh, search, searchContents });
 });
 
 export const WORKSPACE_SEARCH_INDEX_VARIANTS = ["paths", "content"] as const;

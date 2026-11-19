@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -22,7 +23,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const layerTest = Layer.empty.pipe(
-  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(
+    // The index map stays reachable so tests can await its background hidden-entry scan.
+    Layer.effect(WorkspaceEntries.WorkspaceEntries, WorkspaceEntries.make).pipe(
+      Layer.provideMerge(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+      Layer.provide(WorkspacePaths.layer),
+    ),
+  ),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
@@ -479,6 +486,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       query: string,
       options?: { limit?: number; kind?: "file" | "directory" },
     ) {
+      const root = yield* (yield* WorkspacePaths.WorkspacePaths).normalizeWorkspaceRoot(cwd);
+      const indexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+      yield* Effect.gen(function* () {
+        yield* (yield* WorkspaceSearchIndex.WorkspaceSearchIndex).awaitHiddenScan();
+      }).pipe(
+        Effect.provide(indexes.get(WorkspaceSearchIndex.workspaceSearchIndexKey(root, "paths"))),
+      );
       const result = yield* searchWorkspaceEntries({
         cwd,
         query,
