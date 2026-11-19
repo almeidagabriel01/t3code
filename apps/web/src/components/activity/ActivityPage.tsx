@@ -127,8 +127,11 @@ export function ActivityPage() {
   });
 
   // Assistants, group members and subagents stay off the thread rows; they work in this section.
-  const listedKeys = new Set(entries.map((entry) => entry.key));
-  const working = useWorkingRows().filter((row) => !listedKeys.has(row.item.key));
+  const working = useWorkingRows();
+  // An assistant's task is also a project thread; its working row says who and where.
+  const workingKeys = new Set(working.map((row) => row.item.key));
+  const rankedRows = (rank: ActivityRank) =>
+    entries.filter((entry) => entry.rank === rank && !(rank === 1 && workingKeys.has(entry.key)));
   const workingEntries = working.flatMap((row): ActivityEntry[] =>
     row.item.shell === null ? [] : [{ key: row.item.key, thread: row.item.shell, rank: 1 }],
   );
@@ -139,8 +142,7 @@ export function ActivityPage() {
   const selected =
     [...entries, ...workingEntries].find((entry) => entry.key === selectedKey) ?? null;
   const summary = RANKS.map(({ rank, summary: label }) => {
-    const count =
-      entries.filter((entry) => entry.rank === rank).length + (rank === 1 ? working.length : 0);
+    const count = rankedRows(rank).length + (rank === 1 ? working.length : 0);
     return count > 0 ? `${count} ${label}` : null;
   })
     .filter((part) => part !== null)
@@ -205,7 +207,7 @@ export function ActivityPage() {
             </p>
           ) : (
             RANKS.map(({ rank, heading, dot }) => {
-              const group = entries.filter((entry) => entry.rank === rank);
+              const group = rankedRows(rank);
               const consumers = rank === 1 ? working : [];
               return group.length + consumers.length === 0 ? null : (
                 <section key={rank} aria-label={heading} className="flex flex-col gap-1">

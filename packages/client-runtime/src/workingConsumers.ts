@@ -42,11 +42,14 @@ export function consumerOfThread(shell: WorkingShell, owner: ThreadOwner): Worki
   const assistantId = owner.kind === "assistant" ? idAfterEnvironment(owner.assistantKey) : null;
   const groupId =
     owner.kind === "assistant" && owner.teamKey !== null ? idAfterEnvironment(owner.teamKey) : null;
-  // Work a linked environment runs for a thread lists under that thread, as a subagent does.
+  // Work a linked environment runs for a project thread lists under it, as a subagent does; for
+  // an assistant's thread it is that assistant's own work on another machine.
   const parentThreadId =
     shell.lineage.relationshipToParent === "subagent"
       ? shell.lineage.parentThreadId
-      : (shell.delegatedFrom?.threadId ?? null);
+      : assistantId === null
+        ? (shell.delegatedFrom?.threadId ?? null)
+        : null;
   return {
     kind:
       parentThreadId !== null
@@ -91,12 +94,13 @@ export function workingItems<S extends WorkingShell>(input: {
   const covered = new Set<string>();
   for (const shell of input.shells) {
     if (shell.archivedAt !== null || shell.sideChatOf != null) continue;
-    if (!sidebarStatusIsRunning(resolveSidebarThreadStatus(shell))) continue;
     const consumer = consumerOfThread(shell, input.ownerOf(shell));
     if (consumer.kind === "thread") continue;
+    // A member whose thread waits on the user is a Needs you item, not a second working row.
     if (consumer.groupId !== null) {
       covered.add(`${shell.environmentId}:${consumer.groupId}:${consumer.assistantId}`);
     }
+    if (!sidebarStatusIsRunning(resolveSidebarThreadStatus(shell))) continue;
     items.push({
       key: `${shell.environmentId}:${shell.id}`,
       consumer,

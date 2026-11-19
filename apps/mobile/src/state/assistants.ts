@@ -184,8 +184,13 @@ const workingRowsAtom = Atom.make((get) => {
     shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell.title]),
   );
   return workingRows(items, {
-    assistant: (environmentId, id) => assistants.get(`${environmentId}:${id}`),
-    group: (environmentId, id) => teams.get(`${environmentId}:${id}`),
+    // Work routed to a linked machine names an assistant that lives on another environment.
+    assistant: (environmentId, id) =>
+      assistants.get(`${environmentId}:${id}`) ??
+      active.find((entry) => entry.assistant.id === id)?.assistant.name,
+    group: (environmentId, id) =>
+      teams.get(`${environmentId}:${id}`) ??
+      activeTeams.find((entry) => entry.team.id === id)?.team.name,
     thread: (environmentId, id) => titles.get(`${environmentId}:${id}`),
     environment: (environmentId) =>
       presentations.get(environmentId as EnvironmentId)?.entry.target.label,

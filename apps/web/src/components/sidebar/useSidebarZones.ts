@@ -92,8 +92,15 @@ function toWorkingRows(
   const teams = byKey(activeTeams, (entry) => `${entry.environmentId}:${entry.team.id}`);
   const threads = byKey(shells, (shell) => `${shell.environmentId}:${shell.id}`);
   return workingRows(working, {
-    assistant: (environmentId, id) => assistants.get(`${environmentId}:${id}`)?.assistant.name,
-    group: (environmentId, id) => teams.get(`${environmentId}:${id}`)?.team.name,
+    // Work routed to a linked machine names an assistant that lives on another environment.
+    assistant: (environmentId, id) =>
+      (
+        assistants.get(`${environmentId}:${id}`) ??
+        active.find((entry) => entry.assistant.id === id)
+      )?.assistant.name,
+    group: (environmentId, id) =>
+      (teams.get(`${environmentId}:${id}`) ?? activeTeams.find((entry) => entry.team.id === id))
+        ?.team.name,
     thread: (environmentId, id) => threads.get(`${environmentId}:${id}`)?.title,
     environment: (environmentId) =>
       presentations.get(environmentId as EnvironmentId)?.entry.target.label,

@@ -132,6 +132,40 @@ describe("workingItems", () => {
       parentThreadId: "plain",
     });
   });
+
+  it("reads an assistant's work routed to a linked environment as the assistant's, on that machine", () => {
+    const routed = shell("routed", {
+      environmentId: "vps",
+      delegatedFrom: { environmentId: "mac", threadId: "assistant:ada:1" },
+    });
+    const all = [...shells, routed];
+    const [item] = workingItems({
+      shells: all,
+      ownerOf: threadOwnerResolver({
+        shells: all,
+        taskAssistantByThreadKey: new Map(),
+        teamKeyByThreadKey: new Map(),
+        activeAssistantKeys: new Set(["mac:ada"]),
+      }),
+      teams: [],
+    }).filter((entry) => entry.key === "vps:routed");
+    expect(item?.consumer).toMatchObject({
+      kind: "assistant",
+      environmentId: "vps",
+      assistantId: "ada",
+      parentThreadId: null,
+    });
+  });
+
+  it("does not add a running member whose thread waits on the user", () => {
+    const asking = shell("assistant:bo:g-1", { hasPendingApprovals: true });
+    const items = workingItems({
+      shells: [asking],
+      ownerOf: () => ({ kind: "assistant", assistantKey: "mac:bo", teamKey: "mac:dev" }),
+      teams: [{ environmentId: "mac", team: { id: "dev", chat: { runningMemberIds: ["bo"] } } }],
+    });
+    expect(items).toEqual([]);
+  });
 });
 
 describe("workingConsumerLine", () => {
