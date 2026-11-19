@@ -1800,3 +1800,62 @@ it.effect("r5 MCP body consumption reaches Worker summary and forget purges summ
     ),
   );
 });
+
+it.effect("the first sweep strips inherited lineage from a saved remember, once", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* Service.MemoryService;
+    const store = yield* Store.MemoryStore;
+    const worker = yield* Worker.MemoryWorker;
+    const seen = M.MemoryId.make(id(9900));
+    yield* service.upsert(
+      {
+        memorySpaceId: space,
+        memoryId: seen,
+        operationId: M.MemoryOperationId.make(id(9901)),
+        expectedHeads: [],
+        scope: { kind: "user" },
+        assertionKind: "inference",
+        payload: { text: "seen", evidence: [], derivedFromMemoryRevisions: [] },
+        baseBoundary: null,
+      },
+      Effect.void,
+    );
+    const seenRevision = (yield* store.loadAggregate(space, seen)).heads[0]!;
+    const saved = yield* service.remember(
+      { memorySpaceId: space, text: "We deploy on Fridays", scope: "user" },
+      Effect.void,
+      { environmentId, threadId },
+    );
+    // What a remember saved before explicit writes stopped inheriting the read lineage.
+    yield* sql`UPDATE memory_payloads SET body_json=json_set(body_json,'$.derivedFromMemoryRevisions',json_array(${seenRevision})),dependencies_json=json_array(${seenRevision}) WHERE memory_id=${saved.receipt.memoryId}`;
+    const legacyHead = (yield* store.loadAggregate(space, saved.receipt.memoryId)).heads[0];
+    yield* worker.sweepDue();
+    const repaired = yield* store.loadAggregate(space, saved.receipt.memoryId);
+    assert.notStrictEqual(repaired.heads[0], legacyHead);
+    assert.deepStrictEqual(
+      repaired.revisions.find((pair) => pair.revision.revisionId === repaired.heads[0])?.payload
+        ?.derivedFromMemoryRevisions,
+      [],
+    );
+    yield* worker.sweepDue();
+    assert.deepStrictEqual((yield* store.loadAggregate(space, saved.receipt.memoryId)).heads, [
+      repaired.heads[0]!,
+    ]);
+    yield* service.forget(
+      {
+        memorySpaceId: space,
+        memoryId: seen,
+        operationId: M.MemoryOperationId.make(id(9902)),
+        expectedHeads: [seenRevision],
+      },
+      Effect.void,
+    );
+    assert.strictEqual(
+      (yield* service.read({ memorySpaceId: space, memoryId: saved.receipt.memoryId }, Effect.void))
+        .status,
+      "active",
+    );
+  }).pipe(Effect.provide(live())),
+);

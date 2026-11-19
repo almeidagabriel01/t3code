@@ -123,6 +123,21 @@ const make = Effect.gen(function* () {
   let continuationScanDueAt = 0;
   let continuationScanKey: string | undefined;
   let retentionDueAt = 0;
+  let lineageRepairDone = false;
+  // Once per process: strip inherited read lineage from remembers saved before explicit writes
+  // stopped inheriting it. Idempotent, so a crash mid-way just repeats on the next start.
+  const repairRememberLineage = Effect.fn("MemoryWorker.repairRememberLineage")(function* () {
+    if (lineageRepairDone) return;
+    const hub = (yield* query(settings.getSettings)).memoryHub;
+    if (hub.mode === "disabled" || !hub.memorySpaceId) return;
+    lineageRepairDone = true;
+    const result = yield* service.repairRememberLineage(hub.memorySpaceId, Effect.void);
+    if (result.repaired.length || result.skipped.length)
+      yield* Effect.logInfo("Memory remember lineage repair", {
+        repaired: result.repaired.length,
+        bodyPurged: result.skipped.length,
+      });
+  });
   const started = yield* Ref.make(false);
   const query = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.mapError(workerError));
   // Memory runs on its own cheap model; the new-thread default may be unsupported here.
@@ -1059,6 +1074,11 @@ const make = Effect.gen(function* () {
   });
   const sweepDue = Effect.fn("MemoryWorker.sweepDue")(
     function* () {
+      yield* repairRememberLineage().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Memory remember lineage repair failed", { code: safeCode(cause) }),
+        ),
+      );
       yield* sweepStage("catch-up", catchUp());
       yield* sweepStage("deferred", deferred());
       const now = yield* Clock.currentTimeMillis;
