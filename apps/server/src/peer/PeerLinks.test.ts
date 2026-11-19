@@ -35,6 +35,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import {
   descriptorOf,
   layerLinkingEnvironment,
+  linkTo,
   servePeer,
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
@@ -530,6 +531,58 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
       const expired = yield* probe(a).pipe(Effect.flip);
       expect(expired.code).toBe("capability_denied");
       expect(expired.message).toContain("expired");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("keeps a link alive while its peer answers, and says when the peer refuses it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* linkTo(a.links, b);
+      const day = Duration.toMillis(Duration.days(1));
+      const stored = () =>
+        a.links.get(box.environmentId).pipe(Effect.map((link) => Option.getOrThrow(link)));
+
+      // Only a link's own session may ask; an outside agent's or none is refused alike.
+      const outsideAgent = yield* b.auth.issueMcpClientSession({
+        label: "Outside agent",
+        access: "auto",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      for (const authorization of [undefined, `Bearer ${outsideAgent.token}`]) {
+        const response = yield* HttpClient.get(`${b.url}/api/peer-link/session`, {
+          headers: authorization === undefined ? {} : { authorization },
+        }).pipe(Effect.provide(FetchHttpClient.layer), Effect.orDie);
+        expect(response.status).toBe(401);
+        expect(response.headers["cache-control"]).toBe("no-store");
+      }
+
+      yield* TestClock.adjust(Duration.days(20));
+      const [first] = yield* a.links.renewAll;
+      expect(first?.outcome).toBe("renewed");
+      expect((yield* stored()).expiresAt.epochMilliseconds).toBe(50 * day);
+
+      // Past the expiry signed into its token, the peer still takes the link and slides it.
+      yield* TestClock.adjust(Duration.days(25));
+      expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["renewed"]);
+      expect((yield* stored()).expiresAt.epochMilliseconds).toBe(75 * day);
+      yield* probe(a);
+
+      const [session] = yield* linkedSessions(b);
+      yield* b.auth.revokeSession(session!.sessionId);
+      expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["rejected"]);
+      const refused = yield* stored();
+      expect(refused.lastError).toContain("no longer accepts this link");
+      expect(refused.expiresAt.epochMilliseconds).toBe(75 * day);
+
+      // A link from before fencing waits for a new pairing code; renewing never sends its token.
+      yield* a.sql`UPDATE peer_environment_links SET fenced = 0`;
+      yield* Ref.set(b.bearers, []);
+      expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["skipped"]);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

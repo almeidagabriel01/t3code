@@ -197,13 +197,13 @@ export class AutonomyService extends Context.Service<
       AutonomyError
     >;
     /**
-     * A notice from T3 Code itself, not from an assistant: Activity (when a thread can carry it)
-     * and the user's chat. The same `key` again sends nothing more.
+     * A notice from T3 Code itself, not from an assistant: Activity (when a thread and its project
+     * can carry it) and the user's chat. The same `key` again sends nothing more.
      */
     readonly tellUser: (input: {
       readonly key: string;
       readonly text: string;
-      readonly projectId: ProjectId;
+      readonly projectId?: ProjectId;
       readonly threadId: ThreadId | null;
     }) => Effect.Effect<void>;
     /**
@@ -1653,7 +1653,7 @@ const make = Effect.gen(function* () {
   const tellUser: AutonomyService["Service"]["tellUser"] = Effect.fn("AutonomyService.tellUser")(
     function* (input) {
       const config = yield* settings;
-      if (input.threadId !== null) {
+      if (input.threadId !== null && input.projectId !== undefined) {
         yield* decisions.request({
           fromThreadId: input.threadId,
           projectId: input.projectId,

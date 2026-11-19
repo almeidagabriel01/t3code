@@ -231,6 +231,7 @@ import * as AssistantTasks from "./assistants/AssistantTasks.ts";
 import * as TaskEventNotices from "./assistants/TaskEventNotices.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as SessionRenewal from "./auth/SessionRenewal.ts";
 import * as NeedsUser from "./autonomy/NeedsUser.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
@@ -1081,6 +1082,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Keeps links and paired clients alive while in use, and warns before one lapses.
+  SessionRenewal.layer,
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),

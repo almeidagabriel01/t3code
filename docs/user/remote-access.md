@@ -360,7 +360,13 @@ an address you trust: the code is sent there.
 - The link shows up in that machine's **Settings → Sharing & access** like any
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
-- Links last 30 days. Link again with a new pairing code to renew one.
+- A link renews itself while both machines can reach each other, and lapses
+  after 30 days without contact. When one stops renewing, its row shows how
+  many days are left and, with a chat channel set up, T3 Code tells you there.
+  Link again with a new pairing code to bring a lapsed or refused link back.
+- Links and pairings live in T3 Code's data folder (`~/.t3`), so reinstalling
+  the app keeps them. If that folder is deleted, get a new pairing code on the
+  other machine and link again.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
@@ -380,8 +386,12 @@ When the app connects to more than one environment, choose one at the top of the
 page. A desktop app with **Local environment** off can manage a background
 service on the same machine this way, including its T3 Connect link.
 
-A session with an open connection stays listed after its access credential
-expires.
+A session renews itself while its device keeps connecting, and expires after
+30 days without contact. A token issued with a shorter `--ttl` never renews
+and ends at that time. A session with an open connection stays listed after its access
+credential expires. When a paired desktop, phone or tablet has not connected
+for a while and is about to expire, T3 Code tells you through your chat
+channel, once.
 
 To choose a token's permissions, pass `--scope` once for each scope you want:
 

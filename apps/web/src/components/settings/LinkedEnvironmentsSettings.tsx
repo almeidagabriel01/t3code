@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { peerLinkHealth, peerLinkStatusText } from "@t3tools/client-runtime/state/peerLinks";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -118,16 +118,7 @@ function LinkedEnvironmentRow({
       failureToast("Could not forget the link", String(squashAtomCommandFailure(result)));
     }
   };
-  const status =
-    health.kind === "expired"
-      ? "Expired. Link it again with a new pairing code."
-      : health.kind === "unreachable"
-        ? (health.detail ?? "Not answering right now.")
-        : health.kind === "failing"
-          ? health.detail
-          : health.expiresInDays !== null
-            ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`
-            : "Reachable";
+  const status = peerLinkStatusText(health);
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -136,13 +127,13 @@ function LinkedEnvironmentRow({
             <ConnectionStatusDot
               tooltipText={status}
               dotClassName={
-                health.kind === "reachable"
-                  ? health.expiresInDays === null
-                    ? "bg-success"
-                    : "bg-warning"
-                  : health.kind === "expired" || health.kind === "failing"
-                    ? "bg-destructive"
-                    : "bg-muted-foreground/30"
+                health.kind === "expired" || health.kind === "failing"
+                  ? "bg-destructive"
+                  : health.expiresInDays !== null
+                    ? "bg-warning"
+                    : health.kind === "reachable"
+                      ? "bg-success"
+                      : "bg-muted-foreground/30"
               }
               pingClassName={null}
             />

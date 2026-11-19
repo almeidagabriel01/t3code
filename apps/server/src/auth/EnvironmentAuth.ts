@@ -84,6 +84,8 @@ export interface McpClientSession {
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
   readonly peerLink: boolean;
+  /** When the session lapses unless used again; using it slides this later. */
+  readonly expiresAt: DateTime.DateTime;
 }
 
 export interface AuthenticatedSession {
@@ -1327,6 +1329,7 @@ export const make = Effect.gen(function* () {
                 ? (session.runtimeModeCeiling ?? "approval-required")
                 : "read-only",
               peerLink: session.peerLink === true,
+              expiresAt: session.expiresAt,
             } satisfies McpClientSession)
           : Effect.fail(
               new ServerAuthInvalidCredentialError({
