@@ -198,16 +198,21 @@ it.effect("scans hidden entries in the background and coalesces refreshes", () =
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
         Effect.provide(git.layer),
       );
-      expect((yield* searchIndex.search("env", 10, "file")).entries).toEqual([]);
+      expect(yield* searchIndex.search("env", 10, "file")).toMatchObject({
+        entries: [],
+        incomplete: true,
+      });
+      expect((yield* searchIndex.list()).incomplete).toBe(true);
       yield* Deferred.await(git.calls.started);
       yield* searchIndex.refresh();
       yield* searchIndex.refresh();
       yield* Deferred.succeed(gate, undefined);
       yield* searchIndex.awaitHiddenScan();
 
-      expect((yield* searchIndex.search("env", 10, "file")).entries).toEqual([
-        { path: ".env", kind: "file", ignored: true },
-      ]);
+      const settled = yield* searchIndex.search("env", 10, "file");
+      expect(settled.entries).toEqual([{ path: ".env", kind: "file", ignored: true }]);
+      expect(settled.incomplete).toBeUndefined();
+      expect((yield* searchIndex.list()).incomplete).toBeUndefined();
       // The first scan plus one rerun for both refreshes, two `git ls-files` each.
       expect(git.calls.count).toBe(4);
     }),

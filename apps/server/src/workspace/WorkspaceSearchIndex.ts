@@ -630,6 +630,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   yield* Deferred.succeed(hiddenScanSettled, undefined);
   let hiddenScanRunning = false;
   let hiddenScanRequested = 0;
+  let hiddenScanDone = variant !== "paths";
+  const incomplete = () => (hiddenScanDone ? {} : { incomplete: true });
   const runHiddenScans = Effect.gen(function* () {
     let scannedFor = 0;
     while (scannedFor < hiddenScanRequested) {
@@ -649,6 +651,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       Effect.ensuring(
         Effect.suspend(() => {
           hiddenScanRunning = false;
+          hiddenScanDone = true;
           return Deferred.succeed(settled, undefined);
         }),
       ),
@@ -707,6 +710,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
+        ...incomplete(),
         entries,
         truncated:
           incompleteBeforeQuery ||
@@ -749,7 +753,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       rankHiddenEntries(hiddenEntries, query, limit + 1, kind, imageOnly),
       limit,
     );
-    return { ...merged, truncated: incompleteBeforeQuery || merged.truncated };
+    return {
+      ...merged,
+      ...incomplete(),
+      truncated: incompleteBeforeQuery || merged.truncated,
+    };
   });
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
