@@ -386,6 +386,7 @@ function QueueRow({
   const cpuLabel = jobPriority(entry).label;
   const reason = state.reasons[entry.id];
   const cost = jobCost(state, entry);
+  const order = running ? undefined : state.order?.[entry.id]?.text;
   const orphan = running ? null : orphanLine(entry, state.reclaimMinutes, now);
   const classLabel = cost === null ? null : `${cost.label} · `;
   const machine = onLinux
@@ -419,6 +420,7 @@ function QueueRow({
           ),
         },
     ...(cost === null ? [] : [{ label: "Class", value: `${cost.label} · ${cost.why}` }]),
+    ...(order === undefined ? [] : [{ label: "Order", value: order }]),
     {
       label: "Priority",
       value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, cpuLabel]

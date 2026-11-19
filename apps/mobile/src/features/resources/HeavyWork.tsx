@@ -472,6 +472,7 @@ function QueueRow(props: {
   const priority = jobPriority(entry);
   const reason = state.reasons[entry.id];
   const cost = jobCost(state, entry);
+  const order = running ? undefined : state.order?.[entry.id]?.text;
   const orphan = running ? null : orphanLine(entry, state.reclaimMinutes, now);
   const classLabel = cost === null ? "" : `${cost.label} · `;
   const phase = entry.phase === undefined ? null : RUNNER_PHASE_LABEL[entry.phase];
@@ -503,6 +504,7 @@ function QueueRow(props: {
       ? { label: "Running", value: ran }
       : { label: "Waiting", value: orphan ?? `${ordinal(position ?? 0)} in line · ${waited}` },
     ...(cost === null ? [] : [{ label: "Class", value: `${cost.label} · ${cost.why}` }]),
+    ...(order === undefined ? [] : [{ label: "Order", value: order }]),
     {
       label: "Priority",
       value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, priority.label]
