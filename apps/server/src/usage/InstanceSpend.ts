@@ -27,8 +27,19 @@ import * as UsageService from "./UsageService.ts";
 const PERIOD_DAYS = 30;
 const DAY_MS = 86_400_000;
 
+// ponytail: local mirror of the contract's ConsumerRef until t3/fork2-consumer-contract lands.
+type ConsumerRef = { readonly kind: "thread" | "assistant" | "groupMember" | "subagent" } & Record<
+  string,
+  unknown
+>;
+
+/** Per-instance rows kept on the wire; the rest only count in the per-kind totals. */
+export const TOP_CONSUMERS = 8;
+
 export interface SpendTurn {
   readonly providerInstanceId: string;
+  /** Who ran the turn; absent for callers that only need instance totals. */
+  readonly consumer?: ConsumerRef;
   readonly model: string | null;
   readonly at: string;
   readonly usage: (TurnTokenUsage & { readonly usageStatus: string }) | null;
@@ -51,21 +62,28 @@ export function aggregateInstanceSpend(input: {
       { budget, bounds: budgetPeriodBounds({ ...budget, now: input.now }) },
     ]),
   );
-  type Row = { today: number; period: number; budget: number; partial: boolean };
-  const byInstance = new Map<string, Row>(
-    [...budgets.keys()].map((id) => [id, { today: 0, period: 0, budget: 0, partial: false }]),
-  );
+  type Spent = { today: number; period: number };
+  type Row = Spent & {
+    budget: number;
+    partial: boolean;
+    consumers: Map<string, Spent & { consumer: ConsumerRef }>;
+    kinds: Map<ConsumerRef["kind"], Spent>;
+  };
+  const emptyRow = (): Row => ({
+    today: 0,
+    period: 0,
+    budget: 0,
+    partial: false,
+    consumers: new Map(),
+    kinds: new Map(),
+  });
+  const byInstance = new Map<string, Row>([...budgets.keys()].map((id) => [id, emptyRow()]));
   for (const turn of input.turns) {
     const at = Date.parse(turn.at);
     const bounds = budgets.get(turn.providerInstanceId)?.bounds;
     const inBudget = bounds !== undefined && at >= bounds.startMs;
     if (!Number.isFinite(at) || at > input.now || (at < since && !inBudget)) continue;
-    const row = byInstance.get(turn.providerInstanceId) ?? {
-      today: 0,
-      period: 0,
-      budget: 0,
-      partial: false,
-    };
+    const row = byInstance.get(turn.providerInstanceId) ?? emptyRow();
     byInstance.set(turn.providerInstanceId, row);
     const cost =
       turn.usage === null || turn.usage.usageStatus !== "complete" || turn.model === null
@@ -77,8 +95,21 @@ export function aggregateInstanceSpend(input: {
     }
     if (inBudget) row.budget += cost;
     if (at < since) continue;
+    const isToday = day.format(at) === today;
     row.period += cost;
-    if (day.format(at) === today) row.today += cost;
+    if (isToday) row.today += cost;
+    if (turn.consumer === undefined) continue;
+    const key = consumerKey(turn.consumer);
+    const consumer = row.consumers.get(key) ?? { consumer: turn.consumer, today: 0, period: 0 };
+    // Turns arrive oldest first, so the newest thread of an assistant names the row.
+    consumer.consumer = turn.consumer;
+    row.consumers.set(key, consumer);
+    const kind = row.kinds.get(turn.consumer.kind) ?? { today: 0, period: 0 };
+    row.kinds.set(turn.consumer.kind, kind);
+    for (const spent of [consumer, kind]) {
+      spent.period += cost;
+      if (isToday) spent.today += cost;
+    }
   }
   return {
     instances: [...byInstance].map(([providerInstanceId, row]) => ({
@@ -96,8 +127,32 @@ export function aggregateInstanceSpend(input: {
             ),
           }
         : {}),
+      ...(row.kinds.size === 0
+        ? {}
+        : {
+            consumers: [...row.consumers.values()]
+              .sort((a, b) => b.period - a.period || b.today - a.today)
+              .slice(0, TOP_CONSUMERS)
+              .map(({ consumer, today, period }) => ({
+                consumer,
+                todayUsd: today,
+                periodUsd: period,
+              })),
+            consumerKinds: [...row.kinds].map(([kind, spent]) => ({
+              kind,
+              todayUsd: spent.today,
+              periodUsd: spent.period,
+            })),
+          }),
     })),
   };
+}
+
+/** Every generation of an assistant, and every request thread of a group member, is one consumer. */
+function consumerKey(consumer: ConsumerRef): string {
+  return consumer.kind === "assistant" || consumer.kind === "groupMember"
+    ? `${consumer.kind}:${String(consumer.assistantId)}`
+    : String(consumer.threadId);
 }
 
 const TurnUsage = Schema.fromJsonString(

@@ -75,3 +75,46 @@ it("marks partial when usage is missing or unpriced but still sums what is price
   assert.isTrue(result.instances[0]!.partial);
   assert.closeTo(result.instances[0]!.todayUsd, 0.002, 1e-9);
 });
+
+it("splits an instance's spend by consumer, folding assistant generations and capping the list", () => {
+  const base = { environmentId: "env", providerInstanceId: "a" };
+  const thread = (id: string) => ({ kind: "thread" as const, threadId: id, ...base });
+  const result = aggregateInstanceSpend({
+    turns: [
+      turn("a", "2026-10-20T12:00:00Z", {
+        consumer: { kind: "assistant", threadId: "assistant:j:1", assistantId: "j", ...base },
+      }),
+      turn("a", "2026-10-28T01:00:00Z", {
+        consumer: { kind: "assistant", threadId: "assistant:j:2", assistantId: "j", ...base },
+      }),
+      turn("a", "2026-10-28T01:00:00Z", {
+        consumer: { kind: "subagent", threadId: "child", parentThreadId: "t0", ...base },
+      }),
+      ...Array.from({ length: 9 }, (_, n) =>
+        turn("a", "2026-10-27T12:00:00Z", { consumer: thread(`t${n}`) }),
+      ),
+      turn("a", "2026-10-28T01:00:00Z"),
+    ],
+    pricing,
+    now,
+    timeZone: "UTC",
+  });
+  const a = result.instances[0] as (typeof result.instances)[number] & {
+    consumers: ReadonlyArray<{
+      consumer: { threadId: string };
+      todayUsd: number;
+      periodUsd: number;
+    }>;
+    consumerKinds: ReadonlyArray<{ kind: string; todayUsd: number; periodUsd: number }>;
+  };
+  assert.closeTo(a.periodUsd, 0.026, 1e-9);
+  assert.strictEqual(a.consumers.length, 8);
+  assert.strictEqual(a.consumers[0]!.consumer.threadId, "assistant:j:2");
+  assert.closeTo(a.consumers[0]!.periodUsd, 0.004, 1e-9);
+  assert.closeTo(a.consumers[0]!.todayUsd, 0.002, 1e-9);
+  assert.strictEqual(a.consumers[1]!.consumer.threadId, "child");
+  const kinds = Object.fromEntries(a.consumerKinds.map((row) => [row.kind, row.periodUsd]));
+  assert.closeTo(kinds.thread!, 0.018, 1e-9);
+  assert.closeTo(kinds.assistant!, 0.004, 1e-9);
+  assert.closeTo(kinds.subagent!, 0.002, 1e-9);
+});
