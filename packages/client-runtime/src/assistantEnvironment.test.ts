@@ -138,6 +138,7 @@ describe("assistantEnvironmentPicker", () => {
       linksEnabled: true,
     });
     expect(picker.options.map((option) => option.value)).toEqual([null, "local", devbox, "auto"]);
+    expect(picker.options[1]?.description).toBe(C.groupLocalDescription);
   });
 });
 

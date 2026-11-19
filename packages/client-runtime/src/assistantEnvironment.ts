@@ -19,6 +19,7 @@ export const ASSISTANT_ENVIRONMENT_COPY = {
   pickerFooter: "Where the threads and tasks it starts run. Work already running stays put.",
   local: "Local",
   localDescription: "This assistant's own machine",
+  groupLocalDescription: "The group's own machine",
   auto: "Auto",
   autoDescription: "The least busy machine when work starts",
   assistantInherit: "Local (default)",
@@ -148,7 +149,7 @@ export function assistantEnvironmentPicker(
       "local",
       C.local,
       value === "local" || (!group && value === null),
-      C.localDescription,
+      group ? C.groupLocalDescription : C.localDescription,
     ),
   ];
   if (linksEnabled) {
