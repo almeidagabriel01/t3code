@@ -919,22 +919,15 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     };
   }
   const ask = decision.asks[id];
-  const asked =
-    ask === undefined
-      ? entries
-      : entries.map((e) =>
-          e.id === id
-            ? {
-                ...e,
-                ask: {
-                  reason: ask,
-                  deadlineAt: new Date(
-                    now + configFor(doc, e.cwd).runnerAskMinutes * 60_000,
-                  ).toISOString(),
-                },
-              }
-            : e,
-        );
+  const moved = decision.moved[id];
+  const asked = entries.map((e) => {
+    if (e.id !== id) return e;
+    // A job moved for "When Linux is full" stays on this Mac once Linux frees up.
+    if (moved !== undefined) return { ...e, route: "mac" as const, routeReason: moved };
+    if (ask === undefined) return e;
+    const deadlineAt = now + configFor(doc, e.cwd).runnerAskMinutes * 60_000;
+    return { ...e, ask: { reason: ask, deadlineAt: new Date(deadlineAt).toISOString() } };
+  });
   // Counted on the machine it waits for, as the Resource Manager groups rows.
   const runner = decision.routes[id] ?? "mac";
   const machineOf = (e: HeavyQueueEntry) =>

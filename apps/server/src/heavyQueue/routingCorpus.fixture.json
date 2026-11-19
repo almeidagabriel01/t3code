@@ -3,7 +3,7 @@
     "Verdicts are decided by hand from context.md and design.md; never regenerate them by running the code.",
     "exclusive: the queue kind (admission's EXCLUSIVE words anywhere in the line) stays on this Mac as before.",
     "Judged parts: the line's work parts (heavy calls; when none, every program it runs), each from the folder its cd's leave it in; a readable script or sh -c text one of them runs is judged the same way, one level down. A -c text made by $(...) is judged only when it runs.",
-    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
+    "Per part, the first match of: mac-tool (resolved program on the Mac tool list), native-build (a native toolchain that builds or runs code for the machine it runs on: cargo build/test/run/check/clippy…, go build/test/run/vet…, swift, rustc, make, cmake, ninja, meson, clang, gcc, cc, ld, xcodebuild, codesign, lipo), mac-state (a git write, a package install), serves-port (a dev server, a dev/start/serve/preview/storybook script or task runner task, a --ui runner), watches (--watch, or -w on a test runner or tsc, or a watch segment in a script or task name), mac-docker (a docker or podman subcommand: its images and containers live in this Mac's daemon), pinned (an Always-on-this-Mac pattern matches its text), mac-env (its folder is outside any checkout; an unreadable script outside its checkout; an argument, --flag= value or value it gets in its environment (K=V before it, env K=V, an earlier export) naming an absolute, .. or ~ path outside its checkout, /dev excepted), mac-port (an argument or environment value naming a loopback address whose port listens on this Mac; in this corpus only 5733 listens).",
     "The first part in source order with a reason decides; otherwise linux. Never a reason: redirects, cd targets, glue, read-only git, Python, sourced files, pipes, stdin, &, syntax the parser cannot follow, an unreadable script inside the checkout, the retired Can-run-on-Linux list.",
     "Subjects: the program (plus the subcommand that decides), the pattern, or the resolved path.",
     "Sanitized: home is /Users/dev, session and scratch ids are ID (a literal <id> would parse as a redirect), commit messages are msg, Python heredoc bodies are pass, company projects are left out."
@@ -54,8 +54,8 @@
         "/private/tmp/claude-501/ID/ID/scratchpad/compile.cjs": "const path = require(\"node:path\");\nconst root = process.cwd();\nconst req = require(\"node:module\").createRequire(path.join(root, \"package.json\"));\nconst babel = req(\"@babel/core\");\nconst cfg = req(\"./babel.config.js\")({ cache: () => {} });\nconst presets = cfg.presets.map(([n, o]) => n === \"babel-preset-expo\" ? [req.resolve(n), o] : [n, o]);\nconst out = babel.transformFileSync(path.join(root, process.argv[2]), { babelrc: false, configFile: false, cwd: root, presets,\n  caller: { name: \"metro\", bundler: \"metro\", platform: \"ios\", isDev: false, isServer: false, isNodeModule: false, supportsStaticESM: true, supportsReactCompiler: true } });\nconst code = out.code; const i = code.indexOf(process.argv[3]);\nconsole.log(code.slice(i, i + 1600));\n"
       },
       "observed": "unknown",
-      "expect": "linux",
-      "why": "node running a scratch file is glue"
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/compile.cjs",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84/apps/mobile/src; python3 - <<'EOF'\npass\nEOF\ncd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84; files=(apps/mobile/src/state/use-composer-drafts.ts apps/mobile/src/state/use-composer-drafts.test.ts apps/mobile/src/features/threads/thread-list-v2-items.tsx apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.test.tsx apps/mobile/src/features/layout/workspace/WorkspaceThreadSidebar.tsx apps/mobile/src/features/layout/workspace/open-conversation-key.ts apps/mobile/src/features/layout/workspace/open-conversation-key.test.ts); { ./node_modules/.bin/vp fmt \"${files[@]}\"; ./node_modules/.bin/vp fmt --check \"${files[@]}\"; echo \"FMT_EXIT $?\"; ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\"; echo \"LINT_EXIT $?\"; } 2>&1 | grep -v \"t3 heavy\\|^note:\" | tail -8",
@@ -146,7 +146,8 @@
       "line": "F=(apps/server/src/heavyQueue/heavyCli.test.ts apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/heavyHook.ts apps/server/src/heavyQueue/heavyHook.test.ts); vp lint --no-ignore \"${F[@]}\" 2>&1 | tail -3; for f in \"${F[@]}\"; do cat \"$f\" | vp fmt --stdin-filepath=\"$f\" > /private/tmp/claude-501/x.fmt 2>/dev/null; cmp -s \"$f\" /private/tmp/claude-501/x.fmt && echo \"ok $f\" || { [ -s /private/tmp/claude-501/x.fmt ] && cp /private/tmp/claude-501/x.fmt \"$f\" && echo \"formatted $f\"; }; done",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-route-pipes-li-b5cb766cc69f7a8c",
       "observed": "unknown",
-      "expect": "linux"
+      "expect": "mac-env:/private/tmp/claude-501/x.fmt",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "sh -c 'for f in src/features/resources/HeavyWork.test.tsx src/features/resources/ProcessSections.tsx src/features/resources/ResourceManagerRouteScreen.tsx src/features/resources/resourceManagerCopy.ts; do pnpm exec vp fmt --stdin-filepath=$f < $f > /tmp/fmtout 2>/dev/null; cmp -s /tmp/fmtout $f && echo \"OK $f\" || { echo \"DIFF $f\"; diff $f /tmp/fmtout | head -20; }; done' 2>&1 | grep -v \"^\\[t3 heavy\\]\\|^\\[remoto\\]\"",
@@ -159,8 +160,8 @@
       "line": "mkdir -p ~/.t3/shared && git show 5908ae8994:packages/contracts/src/heavyQueue.ts > ~/.t3/shared/front-heavyQueue-contract.ts && files=(packages/client-runtime/src/state/heavyQueueModel.ts packages/client-runtime/src/state/heavyQueueModel.test.ts); ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\" 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -v \"^note\\|t3 heavy\" | tail -5; echo \"LINT_EXIT ${pipestatus[1]}\"",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980",
       "observed": "unknown",
-      "expect": "linux",
-      "why": "~/.t3 only in glue and a redirect"
+      "expect": "mac-env:/Users/dev/.t3/shared",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; grep -iE \"warn|error|✖|problems|Found\" $S/lint.txt | grep -v \"t3 heavy\" | head; files=(${(f)\"$(git diff --name-only)\"}); for f in \"${files[@]}\"; do vp fmt --stdin-filepath=\"$f\" < \"$f\" 2>/dev/null | cmp -s - \"$f\" || echo \"FMT DIFF: $f\"; done; echo fmt-ok",
@@ -1111,8 +1112,8 @@
       "line": "npm run watch:css",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "linux",
-      "why": "a watch script serves nothing"
+      "expect": "watches:npm watch:css",
+      "why": "a watch script never ends, like --watch"
     },
     {
       "line": "pnpm dev",
@@ -1219,7 +1220,20 @@
       "line": "./gradlew assembleDebug",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "pinned:gradlew"
+      "expect": "mac-tool:gradlew",
+      "why": "every program on the Always-on-this-Mac defaults is a Mac-only tool, as xcodebuild is"
+    },
+    {
+      "line": "gradle :app:assembleDebug",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:gradle"
+    },
+    {
+      "line": "cd apps/mobile/android && ./gradlew app:installDebug",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:gradlew"
     },
     {
       "line": "vp run mobile:install ios",
@@ -1388,6 +1402,240 @@
       "observed": "synthetic",
       "expect": "linux",
       "why": "an unexported variable never reaches the command"
+    },
+    {
+      "line": "true 2>&1 | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "2026-11-18 req-9f35d9fc9e3d00d0",
+      "expect": "linux",
+      "why": "a part that reads a local pipe still runs there: the pipe goes with it"
+    },
+    {
+      "line": "vp test run src/heavyQueue/shims.test.ts 2>&1 | tail -25",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "echo a | vp test run src/heavyQueue/shims.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "the input goes with the command"
+    },
+    {
+      "line": "cat list.txt | xargs vp lint",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm -F web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "pnpm --filter web run dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "npm -w web run dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:npm dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "yarn workspace web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:yarn dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "vp run --filter web dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vp dev",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "vite --port 5174",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vite",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "pnpm --filter web add zod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-state:pnpm add",
+      "why": "a flag's value before the subcommand is not the subcommand"
+    },
+    {
+      "line": "sudo make install",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "sudo -u root make install",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "sudo -E env CI=1 make",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "native-build:make",
+      "why": "sudo is a prefix: the program it runs decides"
+    },
+    {
+      "line": "npm run serve-static-build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a script that builds is no server, whatever word leads its name"
+    },
+    {
+      "line": "pnpm start:prod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm start:prod",
+      "why": "a server word with no finite step after it serves"
+    },
+    {
+      "line": "pnpm run storybook",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:pnpm storybook",
+      "why": "storybook opens a port like dev, start, serve and preview"
+    },
+    {
+      "line": "npm run storybook:dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:npm storybook:dev"
+    },
+    {
+      "line": "turbo run storybook --filter=web",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:turbo storybook"
+    },
+    {
+      "line": "pnpm test:watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:pnpm test:watch",
+      "why": "a watch step anywhere in a script's name never ends"
+    },
+    {
+      "line": "yarn watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:yarn watch"
+    },
+    {
+      "line": "pnpm serve-static-build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a server word followed by a build step builds"
+    },
+    {
+      "line": "pnpm run build-storybook",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a script led by build builds"
+    },
+    {
+      "line": "pnpm storybook:build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm run watchman-check",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "only a whole watch segment watches"
+    },
+    {
+      "line": "npx expo start --dev-client --port 8082 --clear",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:expo start",
+      "why": "a dev server runs until stopped: never a queue slot, on either machine"
+    },
+    {
+      "line": "vite",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vite"
+    },
+    {
+      "line": "next dev --turbo",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:next dev"
+    },
+    {
+      "line": "npx react-native start --reset-cache",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:react-native start"
+    },
+    {
+      "line": "metro serve",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:metro serve"
+    },
+    {
+      "line": "start-storybook -p 6006",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:start-storybook"
+    },
+    {
+      "line": "vite build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a build ends"
+    },
+    {
+      "line": "bash -lc 'xcodebuild test'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-tool:xcodebuild",
+      "why": "the text a shell runs says why before the pattern that matches it"
+    },
+    {
+      "line": "fastlane beta",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "mac-tool:fastlane",
+      "why": "fastlane signs and ships with this Mac's keychain"
+    },
+    {
+      "line": "pnpm -w add zod",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-state:pnpm add",
+      "why": "pnpm's -w is the workspace root and takes no value"
     }
   ]
 }

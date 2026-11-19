@@ -232,10 +232,14 @@ work queue, and each section says what the two do together.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
-    `expo start`, a `dev`, `start` or `serve` script or `turbo`/`nx` task, or a
-    test runner's `--ui`.
-  - **Watches this Mac's files**: `--watch`, or `-w` on a test runner or `tsc`.
-    On Linux it would watch a copy your edits never reach.
+    `expo start`, `react-native start`, `storybook dev`, a `dev`, `start`,
+    `serve`, `preview` or `storybook` script or `turbo`/`nx` task, or a test
+    runner's `--ui`.
+  - **Watches this Mac's files**: `--watch`, `-w` on a test runner or `tsc`, or
+    a `watch` script. On Linux it would watch a copy your edits never reach.
+
+  A server or watcher runs until you stop it, so it starts here at once and
+  never takes a slot in the queue.
   - **Uses this Mac's Docker**: `docker` and `podman` commands, whose images
     and containers live in this Mac's daemon.
   - **Talks to a port open here**: an argument or variable names `localhost`,

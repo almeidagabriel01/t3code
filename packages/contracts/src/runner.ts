@@ -78,6 +78,8 @@ export const RUNNER_DEFAULTS = {
     "simctl",
     "emulator",
     "adb",
+    "gradle",
+    "gradlew",
     "instruments",
     "pod",
     "pbcopy",
@@ -89,6 +91,8 @@ export const RUNNER_DEFAULTS = {
     "agent-device",
     // It measures this Mac.
     "hyperfine",
+    // It signs and ships with this Mac's keychain and Xcode.
+    "fastlane",
   ] as ReadonlyArray<string>,
   runnerMacOnly: [
     "xcodebuild",

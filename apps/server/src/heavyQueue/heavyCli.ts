@@ -69,9 +69,11 @@ import {
   DEFAULT_MACHINE_CONFIG,
   askedLinux,
   eligibilityOf,
+  neverEnds,
   INSTALL_FAILED,
   linkAttempts,
   linkMachine,
+  needsBrowser,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -196,7 +198,16 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
 };
 
 export type HeavyLaunch =
-  | { readonly kind: "direct"; readonly service?: true }
+  | {
+      readonly kind: "direct";
+      readonly service?: true;
+      /** What runs instead of the command as written: a server an agent sent to `remoto`. */
+      readonly run?: {
+        readonly cwd: string;
+        readonly program: string;
+        readonly args: ReadonlyArray<string>;
+      };
+    }
   | {
       readonly kind: "queue";
       readonly cwd: string;
@@ -228,10 +239,20 @@ export const heavyLaunch = (
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
   const line = jobLine(job.program, job.args);
-  // A dev server or a watcher never ends: it would hold a slot for good, so it runs outside.
-  // Asked for Linux, it is queued instead, so it ends saying why it can't run there.
-  if (command.where !== "linux" && costOf({ label: line, line }, null, 0).class === "service") {
-    return { kind: "direct", service: true };
+  // A dev server or a watcher never ends: it would hold a slot for good, and its port serves this
+  // Mac, so it runs here outside the queue (a `remoto` one too). Asked for Linux, it is queued
+  // instead, so it ends saying why it can't run there.
+  if (
+    command.where !== "linux" &&
+    (costOf({ label: line, line }, null, 0).class === "service" ||
+      neverEnds(line, readAt?.(job.cwd)))
+  ) {
+    const { cwd: at, program, args } = job;
+    return {
+      kind: "direct",
+      service: true,
+      ...(job.remoto ? { run: { cwd: at, program, args } } : {}),
+    };
   }
   const mode = modeAt(job.cwd);
   // `--runner linux` queues even then: the queue cancels it with why instead of a Mac run.
@@ -242,10 +263,8 @@ export const heavyLaunch = (
     return { kind: "direct" };
   }
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
-  if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
-    return { kind: "direct" };
-  }
-  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
+  if (!job.remoto && isQueued(line, readAt?.(job.cwd))) return { kind: "direct" };
+  const commit = job.remoto ? null : commitRoute(line, job.cwd);
   if (commit === "direct") return { kind: "direct" };
   return {
     kind: "queue",
@@ -662,8 +681,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     );
   }
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
+    const { run } = launch.kind === "direct" ? launch : {};
     // The shell reports a folder it cannot enter itself, as it would without T3.
-    runDirect(program, args, process.env);
+    if (run !== undefined && enterFolder(run.cwd)) runDirect(run.program, run.args, process.env);
+    else runDirect(program, args, process.env);
     return;
   }
   // A repeated request (same tool call, same agent retry) lands on the same job.
@@ -1511,8 +1532,13 @@ const runLinuxPart = async (
   if (root === null || program === undefined) {
     return toMac(macReasonText({ code: "mac-env", subject: cwd }));
   }
-  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
-  const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
+  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`). No program
+  // starts with `-`: that is an option that missed its command's, never Linux's to lack.
+  const absent = program.startsWith("-")
+    ? `${program}: not a command`
+    : program.includes("/")
+      ? notFoundHere(program, cwd, root)
+      : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
@@ -1547,6 +1573,7 @@ const runLinuxPart = async (
   let since = 0;
   // This call's own start marker there: parallel calls of one job each list what they wrote.
   const call = `${id}-${process.pid}`;
+  let browser = needsBrowser([command.program, ...command.args], cwd, root, readText);
   const fault = (seen: FaultSeen) => {
     const found = faultOf(seen, unreachable ?? failure ?? lastError, {
       command: labelOf(program, args),
@@ -1616,6 +1643,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
+      browser,
       ...(bringsBack ? { startMarker: call } : {}),
       ...(input === undefined ? {} : { input }),
       ...(inputStart === null ? {} : { inputStart }),
@@ -1666,8 +1694,25 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install, worktree, spentInput: spent } = await run.done;
+  const first = await run.done;
+  let { outcome, progress, platform, install, worktree, spentInput: spent } = first;
   spentInput ||= spent;
+  // Sent without Chromium, it needed one: once more there, with it. Never this Mac's to run.
+  if (
+    !stopped &&
+    !spentInput &&
+    first.browserMissing &&
+    outcome.kind === "finished" &&
+    outcome.code !== 0
+  ) {
+    jobNote("[t3 heavy] Linux: this command needs Chromium, running it again with it\n");
+    browser = true;
+    recorded = null;
+    failure = null;
+    run = start();
+    ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+    spentInput ||= spent;
+  }
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     // The first run read the input: a rerun would get none.
@@ -1682,7 +1727,7 @@ const runLinuxPart = async (
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return fallBack(
-        { kind: "install", subject: install, line: INSTALL_FAILED },
+        { kind: "install", subject: install, line: `${INSTALL_FAILED}: ${install}` },
         outcome.code ?? 1,
       );
     }

@@ -5,14 +5,31 @@
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-const DEV_SERVER = /^(dev|start|serve|watch|preview)([:._-].*)?$|(^|[:._-])watch([:._-]|$)/;
 /** Options that pick a workspace package (`pnpm --filter web dev`): their value is no script. */
 const SELECTOR_FLAGS = new Set(["--filter", "-F", "--workspace"]);
 const RUN = /^(run|run-script)$/;
-const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
+const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
+/** A finite step a script's name may also name: `serve-static-build` builds and ends. */
+const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
+/**
+ * A script or task that never ends: a watch segment anywhere in its name watches; a server word
+ * leading it with no finite step after serves.
+ */
+export const scriptCode = (name: string): "watches" | "serves-port" | null => {
+  const [head = "", ...rest] = name.split(/[:._-]/);
+  if (head === "watch" || rest.includes("watch")) return "watches";
+  const serves = DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
+  return serves ? "serves-port" : null;
+};
+export const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
   next: /^(dev|start)$/,
   expo: /^start$/,
+  wrangler: /^dev$/,
+  storybook: /^(dev)?$/,
+  "start-storybook": /^/,
+  "react-native": /^start$/,
+  metro: /^(serve|start)?$/,
 };
 export const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
@@ -45,7 +62,7 @@ const isDevServer = (
     return true;
   }
   if (!PACKAGE_MANAGERS.has(target.program)) return false;
-  return DEV_SERVER.test(RUN.test(first) ? second : first);
+  return scriptCode(RUN.test(first) ? second : first) !== null;
 };
 
 /** Never finishes by itself: a dev server or a watcher (`--watch`, `vitest watch`). */

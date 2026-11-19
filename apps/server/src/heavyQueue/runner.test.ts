@@ -28,6 +28,7 @@ import {
   matchesAny,
   mayPublish,
   nextHealth,
+  needsBrowser,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -874,21 +875,45 @@ describe("When Linux is full", () => {
     expect(plan.reasons.a).toMatch(REASON[expected]);
   });
 
+  // Backlog per slot, the job's own place included; a machine that can't start it now counts one.
   it.each([
-    // [name, maxRunning, Mac jobs, Linux jobs, health, route]
-    ["0/0 is a tie: the Mac", 3, 0, 0, OVERLOADED, "mac"],
-    ["2/4 against 1/2 is a tie: the Mac", 4, 2, 1, OVERLOADED, "mac"],
-    ["3/4 against 1/2: Linux", 4, 3, 1, OVERLOADED, "linux"],
-  ] as const)("balance: %s", (_, maxRunning, mac, linux, health, route) => {
+    // [name, maxRunning, Mac jobs, policy, route]
+    ["Mac has room", 3, 0, "balance", "mac"],
+    ["no room, but 1/4 waits against Linux's 1/2", 4, 4, "balance", "mac"],
+    ["the same queue under mac: no room, Linux", 4, 4, "mac", "linux"],
+    ["1/2 against 1/2 is a tie: Linux", 2, 2, "balance", "linux"],
+    ["1/1 against 1/2: Linux", 1, 1, "balance", "linux"],
+  ] as const)("balance by wait: %s", (_, maxRunning, mac, policy, route) => {
     const plan = planRoutes(
       input(
-        [...macJobs(mac), ...linuxJobs(linux), a()],
-        { runnerWhere: "linux", runnerLinuxFull: "balance" },
-        { health, maxRunning, runnerOn: true },
+        [...macJobs(mac), ...linuxJobs(2), a()],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health: READ, maxRunning, runnerOn: true },
       ),
     );
     expect(plan.routes.a).toBe(route);
-    expect(plan.reasons.a).toBe(route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING);
+    if (policy === "balance") {
+      const reason = route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING;
+      expect(plan.reasons.a?.split(" · ")[0]).toBe(reason);
+    }
+  });
+
+  // A move is for good: only a Mac short of slots alone may take it, never one holding it back.
+  it.each([
+    ["memory pressure", { ...CALM, pressureLevel: 2 }],
+    ["the job's own memory", { ...CALM, availableMemoryBytes: 7 * GIB }],
+  ] as const)("free Mac slots holding the job back for %s: no move", (_, sample) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...macJobs(1), ...linuxJobs(2), a()],
+          { runnerWhere: "linux", runnerLinuxFull: policy },
+          { health: READ, maxRunning: 3, runnerOn: true, sample },
+        ),
+      );
+      expect(plan.routes.a).toBe("linux");
+      expect(plan.moved).toEqual({});
+    }
   });
 
   it.each([
@@ -1839,7 +1864,6 @@ describe("patterns and eligibility", () => {
     "npx vite build",
     "pnpm run build",
     "./scripts/ci.sh",
-    "npm run watch:css",
     "cargo fmt --check",
     "go mod tidy",
     "pnpm exec playwright test --base-url http://localhost:4173",
@@ -2361,9 +2385,52 @@ describe("an install unfinished in a fresh Linux copy", () => {
       null,
     ],
     ["  ✓ Electron failed to install correctly reruns once", null],
+    // An installer's own error, miette style.
+    [
+      "  × failed to create directory '/home/dev/runs/a/node_modules/.pnpm/electron@44.10.1/node_modules/electron/dist': File exists (os error 17)",
+      "electron",
+    ],
     ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);
+  });
+});
+
+describe("whether a Linux run needs Chromium", () => {
+  const FILES: Record<string, string> = {
+    "/w/package.json": JSON.stringify({
+      scripts: {
+        "ci:local": "node scripts/ci-local/run.mjs",
+        "test:e2e": "playwright test",
+        test: "vitest run",
+      },
+    }),
+    "/w/apps/web/package.json": JSON.stringify({
+      devDependencies: { "@vitest/browser-playwright": "5.0.5" },
+    }),
+    "/w/apps/server/package.json": JSON.stringify({ dependencies: { "playwright-core": "1" } }),
+    "/w/apps/broken/package.json": "{",
+  };
+  const read = (path: string) => FILES[path] ?? null;
+  it.each([
+    ["npx playwright test --list", "/w", true],
+    ["npm run ci:local", "/w", false],
+    ["pnpm test:e2e", "/w", true],
+    ["npm run test:e2e", "/w", true],
+    ["node scripts/x.mjs", "/w", false],
+    ["vitest --browser.enabled", "/w", true],
+    // The root's tests depend on no browser.
+    ["pnpm test", "/w", false],
+    ["vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["pnpm exec vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["vp test run apps/web/src/a.browser.test.tsx", "/w", true],
+    ["vp test run src/preview/ServerBrowser.test.ts", "/w/apps/server", true],
+    ["vp test run src/a.test.ts", "/w/apps/other", false],
+    ["vp test run src/a.test.ts", "/w/apps/broken", false],
+    ["vp lint src/a.ts", "/w/apps/web", false],
+    ["vp lint playwright.config.ts", "/w", false],
+  ] as const)("%s from %s: %s", (line, cwd, needs) => {
+    expect(needsBrowser(line.split(" "), cwd, "/w", read)).toBe(needs);
   });
 });
 
@@ -2433,10 +2500,14 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // Commands that left the group (setsid, a daemon) still carry the copy's tag.
+    expect(script).toContain("grep -qzs '^REMOTO_RUN=app-1a2b3c4d:'");
+    expect(script).toContain("kill -KILL $(tagged)");
+    expect(remoteStopScript("app.1-2", null, 5)).toContain("'^REMOTO_RUN=app\\.1-2:'");
     // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
     const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
     expect(group).toContain('kill -TERM -- "-$p"');
-    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid/);
+    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid|REMOTO_RUN/);
     expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
     // `kill -- -1` would reach every process there.
     for (const pgid of [0, 1, -3, 1.5]) {

@@ -88,8 +88,10 @@ const SCRIPT_NAMES = [
   "ci",
   "verify",
 ];
-const FORMAT_NAMES = ["fmt", "format"];
-const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$`);
+/** Scripts and programs that touch only the files they are given: light with a list of them. */
+const FORMAT_NAMES = ["fmt", "format", "lint"];
+const LINTERS = new Set(["oxlint", "eslint"]);
+const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
 const SCRIPT_RUNNERS = ["vpr", "make", "just"];
 
 /** Every program `heavyWords` can call heavy but `node` and `git`: a queue job's PATH shims. */
@@ -120,6 +122,7 @@ const PREFIXES = new Set([
   "timeout",
   "nohup",
   "eval",
+  "sudo",
 ]);
 
 const base = (word: string) => word.split("/").pop() ?? word;
@@ -138,6 +141,28 @@ const PREFIX_VALUE_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   time: new Set(["-f", "--format", "-o", "--output"]),
   exec: new Set(["-a"]),
   caffeinate: new Set(["-t", "-w"]),
+  sudo: new Set([
+    "-u",
+    "--user",
+    "-g",
+    "--group",
+    "-C",
+    "--close-from",
+    "-D",
+    "--chdir",
+    "-h",
+    "--host",
+    "-p",
+    "--prompt",
+    "-r",
+    "--role",
+    "-t",
+    "--type",
+    "-T",
+    "--command-timeout",
+    "-U",
+    "--other-user",
+  ]),
 };
 
 /** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */
@@ -247,9 +272,18 @@ const fileListsOf = ({ commands, loops }: ParsedLine): ReadonlySet<string> => {
 };
 
 /**
- * Whether the script `words[at]` names is heavy. A formatter given its files one by one (or one
- * file on stdin) touches only those, so it is light; without them it walks the whole tree.
+ * A formatter or linter given its files one by one (or one file on stdin) touches only those, so it
+ * is light; without them it walks the whole tree.
  */
+const onlyFiles = (
+  files: ReadonlyArray<string>,
+  flags: ReadonlyArray<string>,
+  lists: ReadonlySet<string>,
+) =>
+  flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag)) ||
+  (files.length > 0 && files.every((file) => isFile(file) || lists.has(file)));
+
+/** Whether the script `words[at]` names is heavy. */
 const heavyScript = (
   words: ReadonlyArray<string>,
   at: number,
@@ -258,10 +292,7 @@ const heavyScript = (
 ) => {
   const script = words[at];
   if (script === undefined || !SCRIPT.test(script)) return false;
-  if (!FORMAT.test(script)) return true;
-  const files = words.slice(at + 1);
-  const stdin = flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag));
-  return !(stdin || (files.length > 0 && files.every((file) => isFile(file) || lists.has(file))));
+  return !FORMAT.test(script) || !onlyFiles(words.slice(at + 1), flags, lists);
 };
 
 const heavyWords = (
@@ -273,7 +304,7 @@ const heavyWords = (
   const [first, second] = words;
   // A dev server or a watcher never ends: it is load on this Mac, never a job that holds a slot.
   if (keepsRunning(program, words, flags)) return false;
-  if (DIRECT.has(program)) return true;
+  if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
   const sub = SUBCOMMANDS[program];
   if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {

@@ -167,7 +167,8 @@ export const RUNNER_LINUX_FULL_LABEL: Record<RunnerLinuxFullPolicy, string> = {
 export const RUNNER_LINUX_FULL_DESCRIPTION: Record<RunnerLinuxFullPolicy, string> = {
   wait: "Jobs wait for a free Linux slot.",
   mac: "When Linux is full and this Mac has room, the job runs here.",
-  balance: "When Linux is full, the job runs on whichever machine has the shorter queue.",
+  balance:
+    "When Linux is full and this Mac's wait is shorter, the job waits here even with no room now. It does not go back.",
 };
 
 export const RUNNER_FAILED_POLICY_LABEL: Record<RunnerFailedPolicy, string> = {

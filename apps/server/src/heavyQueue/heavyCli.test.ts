@@ -641,11 +641,11 @@ describe("t3 heavy", () => {
     it("runs a call that turns out to need this Mac as its own Mac job, never rerunning the line", async () => {
       const { dir, env } = setup(echoArgs);
       const marker = NodePath.join(dir, "marker");
-      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp lint a.ts`;
+      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp check a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(
-        `vp on mac: test run /etc/hosts\nvp|lint|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
+        `vp on mac: test run /etc/hosts\nvp|check|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
       );
       expect(run.stderr()).toContain(
         "Uses a file only this Mac has: /etc/hosts; running this call on this Mac",
@@ -655,10 +655,10 @@ describe("t3 heavy", () => {
 
     it("judges the variables a line set for a call like its arguments", async () => {
       const { dir, env } = setup(echoArgs);
-      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp lint a.ts`;
+      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp check a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: lint a.ts\n");
+      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: check a.ts\n");
       expect(run.stderr()).toContain("Uses a file only this Mac has: /etc/t3home");
     });
 
@@ -670,10 +670,10 @@ describe("t3 heavy", () => {
         NodeFS.writeFileSync(NodePath.join(dir, "src", file), "");
       const real = NodeFS.realpathSync(dir);
       const lint =
-        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp lint "${files[@]}"';
+        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp check "${files[@]}"';
       const linted = heavyHere(dir, ["/bin/bash", "-c", lint], env, ["--"], dir);
       expect(await linted.exited).toBe(0);
-      expect(linted.stdout()).toBe(`vp|lint|src/a.ts|src/b.ts| in ${real}\n`);
+      expect(linted.stdout()).toBe(`vp|check|src/a.ts|src/b.ts| in ${real}\n`);
       const cased = heavyHere(
         dir,
         [
@@ -714,7 +714,7 @@ describe("t3 heavy", () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} exit=3\\n' >&2; exit 3`,
       );
-      const line = 'vp lint a.ts; echo "status $?"; exit 5';
+      const line = 'vp check a.ts; echo "status $?"; exit 5';
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(5);
       expect(run.stdout()).toBe("status 3\n");
@@ -997,11 +997,11 @@ describe("t3 heavy", () => {
     it.each([
       ["vp test run < in.txt", "vp|test|run|input\n"],
       ["echo x | vp test run", "vp|test|run|x\n"],
-      ["echo x | vp lint --stdin-filepath=a.ts", "vp|lint|--stdin-filepath=a.ts|x\n"],
-      ['while read f; do vp lint "$f"; done < files.txt', "vp|lint|a.ts|b.ts\nvp|lint|b.ts|\n"],
+      ["echo x | vp check --stdin-filepath=a.ts", "vp|check|--stdin-filepath=a.ts|x\n"],
+      ['while read f; do vp check "$f"; done < files.txt', "vp|check|a.ts|b.ts\nvp|check|b.ts|\n"],
       [
-        "printf 'a.ts\\nb.ts\\n' | while read f; do vp lint \"$f\"; done",
-        "vp|lint|a.ts|\nvp|lint|b.ts|\n",
+        "printf 'a.ts\\nb.ts\\n' | while read f; do vp check \"$f\"; done",
+        "vp|check|a.ts|\nvp|check|b.ts|\n",
       ],
     ])("hands Linux the stdin of %j", async (line, expected) => {
       const { dir, env } = setup(
@@ -1021,10 +1021,10 @@ describe("t3 heavy", () => {
     // Linux already read the pipe it was handed, so a rerun here would get none; a file it read by
     // position is still all here.
     it.each([
-      ["cat in.txt | vp lint --stdin-filepath=a.ts", "code 127\n", true],
+      ["cat in.txt | vp check --stdin-filepath=a.ts", "code 127\n", true],
       [
-        "vp lint --stdin-filepath=a.ts < in.txt",
-        "vp on mac: lint --stdin-filepath=a.ts\ncode 0\n",
+        "vp check --stdin-filepath=a.ts < in.txt",
+        "vp on mac: check --stdin-filepath=a.ts\ncode 0\n",
         false,
       ],
     ])("%s after Linux lacked its tool", async (call, output, spent) => {
@@ -1081,13 +1081,34 @@ describe("t3 heavy", () => {
         );
         expect(run.stderr()).toContain("Dependency install on Linux failed");
         expect(
-          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+          run
+            .stderr()
+            .includes("Linux couldn't run this: Dependency install on Linux failed: electron"),
         ).toBe(fails === 2);
         expect(faults(dir).map((fault) => fault.cause)).toEqual(
           fails === 2 ? ["linux-install:electron"] : [],
         );
       },
     );
+
+    // Sent without Chromium (`REMOTO_BROWSER=0`), a run Playwright found no browser for goes once
+    // more there with it: Linux lacked a download, never this Mac's to run.
+    it("a run that needed Chromium runs again on Linux with it", async () => {
+      const { dir, env } = setup(
+        [
+          `echo "$REMOTO_BROWSER" >> "$0.browser"`,
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `if [ "$REMOTO_BROWSER" = 0 ]; then echo "browserType.launch: Executable doesn't exist at /x/ms-playwright/chromium/chrome" >&2; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+          "echo linux-ok",
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("linux-ok\n");
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.browser"), "utf8")).toBe("0\n1\n");
+      expect(faults(dir)).toEqual([]);
+    });
 
     // `./node_modules/.bin/effect-tsgo` from a package whose bins live at the root. A bare name
     // may exist on Linux alone, so it goes there and only Linux's own pre-flight can refuse it.
@@ -1103,6 +1124,7 @@ describe("t3 heavy", () => {
         true,
         "command not found on this Mac either: t3-no-such-tool",
       ],
+      ["an option-shaped word", "--help", false, false, "--help: not a command"],
     ])(
       "a program neither machine can run (%s) ends 127 saying why, with no Linux fault",
       async (_, program, project, reaches, reason) => {
@@ -1577,7 +1599,7 @@ describe("t3 heavy", () => {
           "vp",
           [
             `touch "${home}/up-$2"`,
-            `while [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; do sleep 0.05; done`,
+            `while [ -d "${home}" ] && { [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; }; do sleep 0.05; done`,
             command(dir),
           ].join("\n"),
         );
@@ -1596,7 +1618,7 @@ describe("t3 heavy", () => {
         );
         const run = heavyHere(
           dir,
-          ["/bin/sh", "-c", "vp lint a & vp lint b & wait"],
+          ["/bin/sh", "-c", "vp check a & vp check b & wait"],
           { ...env, T3CODE_REMOTO: remoto, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
           ["--"],
           dir,
@@ -1616,7 +1638,7 @@ describe("t3 heavy", () => {
         // `b` ends only once `a`'s results are back here, after `a` listed what changed there.
         const { dir, run } = parallel(
           (mac) =>
-            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
+            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ -d ${mac} ] && [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
         );
         expect(await run.exited).toBe(0);
         expect(run.stderr()).not.toContain("Could not copy");
@@ -1657,7 +1679,7 @@ describe("t3 heavy", () => {
         const { dir, env } = setup(
           [
             `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2`,
-            `while [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
+            `while [ -d "\${0%/*}" ] && [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
           ].join("\n"),
           { runnerDropped: "agent", runnerUnavailable: "mac" },
         );
@@ -2047,6 +2069,57 @@ describe("t3 heavy", () => {
         );
         expect(launch).toEqual({ kind: "direct" });
       }
+    });
+
+    // A server runs until it is stopped: queued, it would hold a Mac slot for good.
+    it.each([
+      ["npx expo start --dev-client --port 8082 --clear", "direct"],
+      ["expo start -c", "direct"],
+      ["vite", "direct"],
+      ["vite dev --port 5174", "direct"],
+      ["next dev", "direct"],
+      ["npx react-native start --reset-cache", "direct"],
+      ["metro serve", "direct"],
+      ["storybook dev -p 6006", "direct"],
+      ["start-storybook -p 6006", "direct"],
+      ["pnpm run storybook", "direct"],
+      ["pnpm -F web dev", "direct"],
+      ["pnpm --filter web start", "direct"],
+      ["npm -w web run serve", "direct"],
+      ["yarn workspace web preview", "direct"],
+      ["pnpm run watch", "direct"],
+      ["vitest --watch", "direct"],
+      ["cd apps/web && pnpm build && pnpm preview", "direct"],
+      ["vite build", "queue"],
+      ["next build", "queue"],
+      ["pnpm serve-static-build", "queue"],
+      ["vp test run", "queue"],
+    ] as const)("%s: %s", (line, kind) => {
+      for (const runner of [true, false]) {
+        const launch = heavyLaunch(
+          { program: SH, args: ["-c", line], where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner }),
+          false,
+        );
+        expect(launch.kind).toBe(kind);
+      }
+    });
+
+    it("runs an agent's remoto call to a server here, outside the queue", () => {
+      const launch = heavyLaunch(
+        { program: SH, args: ["-c", "cd /p && remoto npx expo start"], where: undefined },
+        "/w",
+        "/h",
+        () => ({ enabled: true, runner: true }),
+        false,
+      );
+      expect(launch).toEqual({
+        kind: "direct",
+        service: true,
+        run: { cwd: "/p", program: SH, args: ["-c", "npx expo start"] },
+      });
     });
 
     it("still queues a script with heavy work of its own beside the hand-off", () => {

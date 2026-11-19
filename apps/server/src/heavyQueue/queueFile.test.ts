@@ -19,6 +19,7 @@ import * as Queue from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
+  LINUX_FULL_SHORTER,
   LINUX_SETTLE_MS,
   parseHeartbeat,
   runnerCopyId,
@@ -1926,6 +1927,32 @@ describe("Runner in the queue file", () => {
       });
     },
   );
+
+  it("balance: a job moved to wait on this Mac stays there once Linux frees a slot", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: "balance" })));
+    Queue.setMaxRunning(dir, 2);
+    const macOnly = "vp test run --project ios -- xcodebuild";
+    Queue.enqueue(dir, { ...test("m1"), label: macOnly, forced: true });
+    Queue.enqueue(dir, { ...test("m2"), label: macOnly, forced: true });
+    expect(Queue.tryStart(dir, "m1", NOW)).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "m2", NOW)).toMatchObject({ status: "started" });
+    startOnLinux(dir, ["l1", "l2"]);
+    Queue.enqueue(dir, test("w"));
+    Queue.enqueue(dir, test("c"));
+    // Linux: 2 running and w waiting, a full round; the Mac: half of one.
+    expect(Queue.tryStart(dir, "c", NOW + 3)).toMatchObject({
+      status: "waiting",
+      runner: "mac",
+      reason: expect.stringContaining(LINUX_FULL_SHORTER),
+    });
+    Queue.remove(dir, "l1");
+    // Without the move, w taking that slot leaves Linux half a round: a tie, which stays on Linux.
+    expect(Queue.tryStart(dir, "c", NOW + 4)).toMatchObject({ status: "waiting", runner: "mac" });
+    expect(Queue.read(dir).find((e) => e.id === "c")).toMatchObject({
+      route: "mac",
+      routeReason: LINUX_FULL_SHORTER,
+    });
+  });
 
   it("probe: a Linux waiter ahead counts toward Linux being full", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })));
