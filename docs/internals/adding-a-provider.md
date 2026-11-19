@@ -87,8 +87,9 @@ produce catches them.
 - **A stopped turn still holds the turn slot.** Stop can end a run before its turn is recorded, so
   the server interrupts that turn when it appears. While a stopped turn still runs, the next start
   on that provider thread interrupts it again and waits in the effect queue, not in a worker slot,
-  for about ten seconds from its first wait, then fails with its own error. Free the slot before
-  reporting the turn's end, and refuse with `previous_turn_active` only while a turn is open.
+  for about ten seconds from its first wait, then fails with its own error. Write the turn's own
+  state (thread updates included) and free the slot before reporting the turn's end, and refuse
+  with `previous_turn_active` only while a turn is open.
 - **Work the provider starts on its own.** Background commands, subagents, workflows, and goals can
   finish or start a turn after T3's turn settled. Offer a continuation through
   [`ProviderContinuationRequests`](../../packages/provider-core/src/server/ProviderContinuationRequests.ts)

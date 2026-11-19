@@ -7345,27 +7345,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         nativeTurnId: `turn:${firstInput.attemptId}`,
       });
       const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      let threadSettledFirst = false;
       harness.eventHooks.push((event) =>
         event.type === "provider_turn.updated" &&
         event.providerTurn.id === firstTurnId &&
         event.providerTurn.status === "interrupted"
-          ? harness.runtime
-              .startTurn(
-                makeClaudeTestTurnInput({
-                  threadId: harness.threadId,
-                  providerThread: harness.providerThread,
-                  now,
-                  attemptId: RunAttemptId.make("attempt-claude-slot-next"),
-                  text: "Next.",
-                  attachments: [],
-                  providerTurnOrdinal: 2,
-                  nativeThreadHasTurns: true,
-                }),
-              )
-              .pipe(
-                Effect.exit,
-                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
-              )
+          ? Effect.sync(() => {
+              // The ended turn's thread state lands before its end, never on top of the next turn's.
+              threadSettledFirst = harness.events.some(
+                (earlier) =>
+                  earlier.type === "provider_thread.updated" &&
+                  earlier.providerThread.lastRunOrdinal === firstInput.runOrdinal &&
+                  earlier.providerThread.status === "idle",
+              );
+            }).pipe(
+              Effect.andThen(
+                harness.runtime
+                  .startTurn(
+                    makeClaudeTestTurnInput({
+                      threadId: harness.threadId,
+                      providerThread: harness.providerThread,
+                      now,
+                      attemptId: RunAttemptId.make("attempt-claude-slot-next"),
+                      text: "Next.",
+                      attachments: [],
+                      providerTurnOrdinal: 2,
+                      nativeThreadHasTurns: true,
+                    }),
+                  )
+                  .pipe(
+                    Effect.exit,
+                    Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+                  ),
+              ),
+            )
           : Effect.void,
       );
       yield* harness.runtime.startTurn(firstInput);
@@ -7375,6 +7388,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const exit = yield* Deferred.await(nextStart);
       assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+      assert.isTrue(threadSettledFirst);
     }).pipe(
       Effect.provideService(References.MaxOpsBeforeYield, 8),
       Effect.provide(
