@@ -58,6 +58,7 @@ import {
   makeProviderReplayGate,
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
@@ -754,6 +755,65 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles the thread before it reports the turn's end", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = Array.from(yield* Fiber.join(collected));
+      const ended = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+      );
+      const settled = seen.findLastIndex(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      assert.isAtLeast(ended, 0);
+      assert.isAtLeast(settled, 0);
+      // The next turn starts on the end, so a later idle write would land on top of it.
+      assert.isBelow(settled, ended);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      // The session forks its inbound frame reader when it opens, so it opens under the race's
+      // scheduler, inside startFirst.
+      const opened = yield* Deferred.make<Effect.Success<ReturnType<typeof resumed>>>();
+      const startOn = (session: Effect.Success<ReturnType<typeof resumed>>) =>
+        session.runtime.startTurn(turnInput(session.thread));
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: Stream.unwrap(
+          Effect.map(Deferred.await(opened), (session) => session.runtime.events),
+        ),
+        startFirst: Effect.gen(function* () {
+          const session = yield* resumed([
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+          ]);
+          yield* Deferred.succeed(opened, session);
+          return yield* startOn(session);
+        }),
+        // The script ends the first turn as soon as its prompt is accepted.
+        endFirst: Effect.void,
+        startNext: Effect.flatMap(Deferred.await(opened), startOn),
+      });
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
     }).pipe(Effect.scoped),
   );
 

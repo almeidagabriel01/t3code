@@ -2173,15 +2173,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           yield* completeReasoning(input.context);
           yield* completeAssistant(input.context);
-          yield* emitProviderEvent({
-            type: "provider_turn.updated",
-            driver: CursorAgentSdk.CURSOR_PROVIDER,
-            providerTurn: providerTurnPayload({
-              context: input.context,
-              status: input.status,
-              completedAt,
-            }),
-          });
+          // The server starts the next turn on the terminal event, so this turn's thread state
+          // settles and the slot frees first.
           yield* emitProviderEvent({
             type: "provider_thread.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2195,6 +2188,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               lastRunOrdinal: input.context.input.runOrdinal,
               updatedAt: completedAt,
             },
+          });
+          if (input.status === "interrupted" && input.context.prompt !== undefined) {
+            yield* Ref.set(interruptedPrompt, {
+              agent: input.context.run.agentId,
+              text: input.context.prompt,
+            });
+          }
+          yield* Ref.update(activeTurn, (current) =>
+            current?.providerTurnId === input.context.providerTurnId ? null : current,
+          );
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerTurn: providerTurnPayload({
+              context: input.context,
+              status: input.status,
+              completedAt,
+            }),
           });
           const threadDisposition = input.threadDisposition ?? "reusable";
           yield* emitProviderEvent(
@@ -2223,15 +2234,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 },
-          );
-          if (input.status === "interrupted" && input.context.prompt !== undefined) {
-            yield* Ref.set(interruptedPrompt, {
-              agent: input.context.run.agentId,
-              text: input.context.prompt,
-            });
-          }
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           yield* Deferred.succeed(input.context.completed, undefined);
         });

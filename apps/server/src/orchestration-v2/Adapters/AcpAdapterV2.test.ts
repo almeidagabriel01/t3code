@@ -59,6 +59,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -4136,6 +4137,37 @@ describe("AcpAdapterV2", () => {
       assert.include(silent?.failure?.message, "15 minutes");
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("frees the turn slot before the terminal provider turn update is offered", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePromptInactivityHarness({ environment: () => ({}) });
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: harness.runtime.events.pipe(
+          Stream.tap((event) => Effect.sync(() => seen.push(event))),
+        ),
+        startFirst: harness.startTurn(1),
+        // The mock agent ends its prompt on its own.
+        endFirst: Effect.void,
+        startNext: harness.startTurn(2),
+      });
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      const ended = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+      );
+      // The ended turn's thread state lands before its end, never on top of the next turn's.
+      assert.isTrue(
+        seen
+          .slice(0, ended)
+          .some(
+            (earlier) =>
+              earlier.type === "provider_thread.updated" &&
+              earlier.providerThread.lastRunOrdinal === 1,
+          ),
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

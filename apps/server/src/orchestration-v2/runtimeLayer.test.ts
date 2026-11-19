@@ -7488,7 +7488,29 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
         ["user_message", "run_interrupt_request", "run_interrupt_result"],
       );
       assert.deepEqual(interrupted.providerTurns, []);
+
+      // Stop's snapshot cannot rule out a start that already ran, so it looks the attempt's
+      // turn up after its commit; with no turn that lookup ends without reaching the provider.
+      const outbox = yield* EffectOutbox.EffectOutboxV2.pipe(Effect.provide(EffectOutbox.layer));
+      const effectsOf = (commandId: string) =>
+        outbox
+          .listByCommandId(CommandId.make(commandId))
+          .pipe(
+            Effect.map((effects) => effects.map(({ request, status }) => [request.type, status])),
+          );
+      assert.deepEqual(yield* effectsOf("runtime-layer-pending-interrupt-command"), [
+        ["run-attempt.interrupt", "pending"],
+      ]);
+      assert.isTrue(yield* effectWorker.runOnce);
       assert.isFalse(yield* effectWorker.runOnce);
+      assert.deepEqual(yield* effectsOf("runtime-layer-pending-interrupt-command"), [
+        ["run-attempt.interrupt", "succeeded"],
+      ]);
+      assert.deepEqual(yield* effectsOf("runtime-layer-pending-interrupt-message"), [
+        ["provider-turn.start", "cancelled"],
+      ]);
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(settled.providerTurns, []);
     }),
   );
 });

@@ -12461,6 +12461,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Run ${command.runId} has no active attempt to interrupt.`,
         });
       }
+      // A running run's start may already have a native turn this projection cannot see yet.
+      // A starting one may too: its running write can land while Stop reads, so the
+      // post-commit lookup below runs for every attempt; it is a no-op without a turn.
+      const providerMayHaveStarted = run.status === "running";
       const interruptResultItem: OrchestrationV2TurnItem = {
         id: idAllocator.derive.runSignalTurnItem({
           runId: run.id,
@@ -12480,7 +12484,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_result",
-        message: "Run interrupted before provider start",
+        message: providerMayHaveStarted
+          ? (command.reason ?? RunExecutionService.USER_STOP_REASON)
+          : "Run interrupted before provider start",
       };
       yield* emitEvent({
         type: "turn-item.updated",
@@ -12593,11 +12599,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
+      if (providerThread.providerSessionId !== null) {
+        otherProviderInterrupts.push({
+          id: `effect:${command.commandId}:run-attempt.interrupt:${attempt.id}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "run-attempt.interrupt",
+            providerSessionId: providerThread.providerSessionId,
+            providerThreadId: providerThread.id,
+            attemptId: attempt.id,
+          },
+        });
+      }
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
       return {
-        effectTypes: ["provider-turn.start", "provider-turn.restart"],
-        reason: `Run ${run.id} was interrupted before its provider turn started.`,
+        // Interrupting a start inside the adapter can leave its turn slot claimed; the start
+        // stops on its own once it sees the run ended.
+        effectTypes: providerMayHaveStarted
+          ? ["provider-turn.restart"]
+          : ["provider-turn.start", "provider-turn.restart"],
+        reason: providerMayHaveStarted
+          ? `Run ${run.id} was interrupted while its provider turn was starting.`
+          : `Run ${run.id} was interrupted before its provider turn started.`,
       } satisfies {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
