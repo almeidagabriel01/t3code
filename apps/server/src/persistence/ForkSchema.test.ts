@@ -451,7 +451,7 @@ it.effect("backfills each assistant's default model once from its conversation",
       [null, null],
     );
     assert.isTrue((yield* columnsOf("assistant_teams")).includes("default_environment"));
-    assert.deepStrictEqual(
+    assert.deepStrictEqual<ReadonlyArray<string | null>>(
       ["auto", "env-peer", "", null].map(
         (value) =>
           toAssistantTeam({
@@ -462,7 +462,7 @@ it.effect("backfills each assistant's default model once from its conversation",
             default_environment: value,
             created_at: "t",
             updated_at: "t",
-          }).defaultEnvironment,
+          }).defaultEnvironment ?? null,
       ),
       ["auto", "env-peer", null, null],
     );
