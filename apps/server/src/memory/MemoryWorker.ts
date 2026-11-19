@@ -135,7 +135,7 @@ const make = Effect.gen(function* () {
     if (result.repaired.length || result.skipped.length)
       yield* Effect.logInfo("Memory remember lineage repair", {
         repaired: result.repaired.length,
-        bodyPurged: result.skipped.length,
+        skipped: result.skipped.length,
       });
   });
   const started = yield* Ref.make(false);

@@ -238,10 +238,29 @@ it.effect("repair re-saves remembers that inherited lineage, once, and reports p
       },
       Effect.void,
     );
+    // A thread-evidenced write that named its dependency keeps it: its digest does not match.
+    const evidence = (yield* (yield* MemoryStore.MemoryStore).loadAggregate(
+      Fixture.space,
+      memoryId,
+    )).revisions[0]!.payload!.evidence;
+    const declared = M.MemoryId.make(Fixture.id(937));
+    yield* service.upsert(
+      {
+        ...Fixture.upsert(938),
+        memoryId: declared,
+        assertionKind: "fact",
+        payload: { text: "declared", evidence, derivedFromMemoryRevisions: [seen.revision] },
+      },
+      Effect.void,
+      { environmentId: caller.environmentId, threadId: caller.thread.threadId },
+    );
     expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
       repaired: [memoryId],
       skipped: [],
     });
+    expect(
+      yield* sql`SELECT dependencies_json AS d FROM memory_payloads WHERE memory_id=${declared}`,
+    ).toEqual([{ d: JSON.stringify([seen.revision]) }]);
     expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
       repaired: [],
       skipped: [],
@@ -254,7 +273,10 @@ it.effect("repair re-saves remembers that inherited lineage, once, and reports p
     });
     expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
       repaired: [],
-      skipped: [{ memoryId: derived, reason: "body_purged" }],
+      skipped: [
+        { memoryId: derived, reason: "body_missing" },
+        { memoryId: declared, reason: "body_missing" },
+      ].sort((a, b) => a.memoryId.localeCompare(b.memoryId)),
     });
   }).pipe(Effect.provide(Fixture.layer)),
 );

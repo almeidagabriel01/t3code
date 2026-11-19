@@ -50,12 +50,13 @@ export type MemoryServiceError =
   | Store.MemoryStoreConflict
   | Store.MemoryCapacityError;
 type Permit = Effect.Effect<void, MemoryAccessError>;
-export interface RememberLineageRepair {
+interface RememberLineageRepair {
   readonly repaired: ReadonlyArray<M.MemoryId>;
-  readonly skipped: ReadonlyArray<{
-    readonly memoryId: M.MemoryId;
-    readonly reason: "body_purged";
-  }>;
+  /** `body_missing`: a forget cascade purged the body (or it never arrived); nothing to restore. */
+  readonly skipped: ReadonlyArray<
+    | { readonly memoryId: M.MemoryId; readonly reason: "body_missing" }
+    | { readonly memoryId: M.MemoryId; readonly reason: "failed"; readonly code: string }
+  >;
 }
 export type IntentBinding = {
   memorySpaceId: M.MemorySpaceId | null;
@@ -196,7 +197,7 @@ export class MemoryService extends Context.Service<
     /**
      * Rewrites, as a new clean revision, each active memory whose head is an explicit agent write
      * that inherited its thread's read lineage before explicit writes stopped doing so. Bodies a
-     * forget cascade already purged cannot come back; they are reported as `body_purged`.
+     * forget cascade already purged cannot come back; they are reported as `body_missing`.
      */
     readonly repairRememberLineage: (
       space: M.MemorySpaceId,
@@ -1923,8 +1924,13 @@ const make = Effect.fnUntraced(function* (
       JOIN memory_items i ON i.space=r.space AND i.memory_id=r.memory_id
       WHERE p.space=${space} AND i.status='active' AND json_array_length(p.dependencies_json)>0
       ORDER BY r.memory_id,r.revision_id`);
-    // Read every candidate before writing any, so a failure mid-way leaves nothing half done.
-    const fixes: Array<{ payloadRef: string; resave?: M.MemoryUpsertInput }> = [];
+    // Classify every candidate before writing any. Each fix then commits on its own, so one
+    // failing item is reported and the rest still repair.
+    const fixes: Array<{
+      memoryId: M.MemoryId;
+      payloadRef: string;
+      resave?: M.MemoryUpsertInput;
+    }> = [];
     for (const row of candidates) {
       const revisionId = M.MemoryRevisionId.make(row.revision_id);
       const current = yield* store.loadAggregate(space, M.MemoryId.make(row.memory_id), {
@@ -1948,10 +1954,16 @@ const make = Effect.fnUntraced(function* (
       // carries came from the thread's lineage, so dropping them restores what the agent asked.
       const digest = hash(yield* decode(encodeUpsertRequest({ input: explicit, caller: thread })));
       if (revision.provenance.upsertRequestDigest !== digest) continue;
-      const isHead = current.heads.length === 1 && current.heads[0] === revisionId;
+      // Only the origin environment re-saves, so two machines never mint the same operation id
+      // with different bodies; every environment still clears its own cascade index.
+      const resave =
+        current.heads.length === 1 &&
+        current.heads[0] === revisionId &&
+        revision.provenance.environmentId === environmentId;
       fixes.push({
+        memoryId: revision.memoryId,
         payloadRef: revision.payloadRef,
-        ...(isHead
+        ...(resave
           ? {
               resave: {
                 ...explicit,
@@ -1965,19 +1977,37 @@ const make = Effect.fnUntraced(function* (
       });
     }
     const repaired: M.MemoryId[] = [];
+    const failed: Array<{ memoryId: M.MemoryId; reason: "failed"; code: string }> = [];
     for (const fix of fixes)
-      yield* store.transact(
-        Effect.gen(function* () {
-          // The body keeps its synced dependency list; the local cascade index stops following it.
-          yield* query(
-            sql`UPDATE memory_payloads SET dependencies_json='[]' WHERE space=${space} AND payload_ref=${fix.payloadRef}`,
-          );
-          if (fix.resave) {
-            yield* upsert(fix.resave, permit);
-            repaired.push(fix.resave.memoryId);
-          }
-        }),
-      );
+      yield* store
+        .transact(
+          Effect.gen(function* () {
+            // The body keeps its synced dependency list; the local cascade index stops following it.
+            yield* query(
+              sql`UPDATE memory_payloads SET dependencies_json='[]' WHERE space=${space} AND payload_ref=${fix.payloadRef}`,
+            );
+            if (!fix.resave) return;
+            const stored = yield* upsert(fix.resave, permit);
+            if (stored.receipt.outcome !== "accepted")
+              return yield* new Store.MemoryStoreConflict({
+                code: stored.receipt.failureCode ?? "revision_changed",
+              });
+            repaired.push(fix.memoryId);
+          }),
+        )
+        .pipe(
+          Effect.catchIf(
+            (error) => error._tag !== "MemoryAccessError",
+            (error) =>
+              Effect.sync(() => {
+                failed.push({
+                  memoryId: fix.memoryId,
+                  reason: "failed",
+                  code: "code" in error ? String(error.code) : error._tag,
+                });
+              }),
+          ),
+        );
     const purged = yield* query(sql<{ memory_id: string }>`
       SELECT i.memory_id FROM memory_items i
       WHERE i.space=${space} AND (i.status='blocked'
@@ -1986,10 +2016,13 @@ const make = Effect.fnUntraced(function* (
       ORDER BY i.memory_id`);
     return {
       repaired,
-      skipped: purged.map((row) => ({
-        memoryId: M.MemoryId.make(row.memory_id),
-        reason: "body_purged" as const,
-      })),
+      skipped: [
+        ...failed,
+        ...purged.map((row) => ({
+          memoryId: M.MemoryId.make(row.memory_id),
+          reason: "body_missing" as const,
+        })),
+      ],
     };
   });
   const recall = makeRecall({ sql, environmentId, resolveProjectKey, search });
