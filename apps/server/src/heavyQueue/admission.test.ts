@@ -125,7 +125,10 @@ describe("command kinds and signatures", () => {
     [`vp fmt --stdin-filepath="$f" < "$f" 2>&1 | diff -q - "$f"`, "vp fmt files"],
     ["pnpm exec vp fmt apps/a.ts apps/b.ts", "vp fmt files"],
     ["vp lint --no-ignore a.ts b.ts c.ts", "vp lint files"],
-    [`git commit -m "feat: x" a.ts 2>&1 | tail -8; git log --oneline -2`, "git commit"],
+    [
+      `git commit -m "feat: x" a.ts 2>&1 | tail -8; git log --oneline -2`,
+      "git commit && tail && git log",
+    ],
     [`git commit -q -m "runex fix" apps/a.ts`, "git commit"],
     ["pnpm --filter web run build", "pnpm web run build"],
     ["cd apps/server && vp run typecheck 2>&1 | tail -20", "vp run typecheck"],

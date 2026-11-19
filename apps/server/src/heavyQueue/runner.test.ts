@@ -1686,8 +1686,7 @@ describe("runtime toggles", () => {
 
   it("once a Runner is on, every Mac row says why it stays, beside what it waits for here", () => {
     const entries = [
-      job("run", "git commit -m x", { startedAt: ago(1000) }),
-      job("commit", "git commit -m 'fix: t3 heavy'"),
+      job("run", "xcodebuild -scheme App build", { startedAt: ago(1000) }),
       job("install", "pnpm install"),
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
@@ -1699,14 +1698,11 @@ describe("runtime toggles", () => {
     const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
       planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
         .reasons;
-    const commits = "Changes this Mac's checkout: git commit";
     expect(at({ runnerOn: true })).toEqual({
-      run: commits,
-      commit: `${commits} · a commit is running`,
-      // A running commit holds its own slot, not the standard one; its load is still counted.
-      install: "Changes this Mac's checkout: pnpm install · waiting for room: a job just started",
-      moved: "Moved to this Mac · waiting for room: a job just started",
-      back: "Uses a file only this Mac has: /x · waiting for room: a job just started",
+      run: "Mac-only tool: xcodebuild",
+      install: "Changes this Mac's checkout: pnpm install · the one slot is busy",
+      moved: "Moved to this Mac · the one slot is busy",
+      back: "Uses a file only this Mac has: /x · the one slot is busy",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(
       /^Changes this Mac's checkout/,
@@ -1714,16 +1710,12 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
       install: "Runner off for this project",
     });
-    // With every Runner off, rows read as they always did, but a commit still says why it waits.
-    const hook = "Commit hook runs checks";
+    // With every Runner off, rows say only what they wait for.
     expect(at({}, { runnerEnabled: false })).toEqual({
-      run: hook,
-      commit: `${hook} · a commit is running`,
       install: "the one slot is busy",
       moved: "the one slot is busy",
       back: "the one slot is busy",
     });
-    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
 });
 

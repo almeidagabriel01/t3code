@@ -32,7 +32,6 @@ import {
 } from "./admission.ts";
 import { DEV_PROGRAMS, EXECUTORS, kindOf, PACKAGE_MANAGERS, scriptCode } from "./commandShapes.ts";
 import {
-  commitOnly,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
@@ -173,6 +172,7 @@ export interface MacReason {
     | "pinned"
     | "serves-port"
     | "watches"
+    | "edits-in-place"
     | "mac-docker"
     | "mac-port"
     | "learned";
@@ -195,6 +195,7 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
   watches: "Watches this Mac's files",
+  "edits-in-place": "Edits this Mac's files in place",
   "mac-docker": "Uses this Mac's Docker",
   "mac-port": "Talks to a port open here",
   learned: "Linux couldn't run this before",
@@ -289,17 +290,19 @@ const LINUX_FULL_MAC = "Linux is full: running on this Mac";
 export const LINUX_FULL_SHORTER = "Linux is full: shorter queue on this Mac";
 export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
-/** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
-const COMMIT_HOOK = "Commit hook runs checks";
-
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
 const EXEC = /^(exec|dlx|x)$/;
+/** pnpm, yarn and bun run a bin by name (`pnpm tsc`); these words are their own commands instead. */
+const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
+const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
-const WATCH = /^--watch(All)?(=true)?$/;
+const WATCH = /^--watch(All|-path(=.*)?)?(=true)?$/;
+/** Runners that restart on file changes: watching is what they are for. */
+const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
@@ -388,6 +391,14 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     : PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? "")
       ? 0
       : null;
+  const head = words[0] ?? "";
+  // `pnpm tsc --watch` is `pnpm exec tsc --watch` when no script is named tsc: judge the bin first.
+  if (execAt === null && BIN_RUNNERS.has(program) && head !== "" && !OWN_COMMANDS.test(head)) {
+    const at = part.programAt + 1;
+    const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
+    const bin = programReason({ ...part, values }, macTools);
+    if (bin !== null) return bin;
+  }
   if (execAt !== null) {
     const raw = words[execAt + 1] ?? "";
     program = programName(raw);
@@ -417,7 +428,8 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     (word) => WATCH.test(word) || (word === "-w" && SHORT_WATCH.has(program)),
   );
   if (watch !== undefined) return { code: "watches", subject: `${program} ${watch}` };
-  if (program === "vitest" && /^(watch|dev)$/.test(first)) {
+  if (WATCHERS.has(program)) return { code: "watches", subject: program };
+  if ((program === "vitest" && /^(watch|dev)$/.test(first)) || named === "tsx watch") {
     return { code: "watches", subject: named };
   }
   if (DOCKERS.has(program) && first !== "") {
@@ -623,6 +635,48 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 
+const IN_PLACE: Readonly<Record<string, RegExp>> = {
+  sed: /^(-[^-]*i|--in-place)/,
+  perl: /^-\w*i/,
+  ruby: /^-\w*i/,
+};
+
+/**
+ * An edit into the checkout a text makes when Linux runs it whole: Linux's copy never comes back.
+ * Redirects count only there; beside a heavy call this Mac's shell opens them.
+ */
+const editReason = (
+  part: Part,
+  cwd: string | null,
+  vars: ReadonlyMap<string, string | null>,
+  rootOf: (cwd: string) => string | null,
+  redirects: boolean,
+): MacReason | null => {
+  const root = cwd === null ? null : rootOf(cwd);
+  const intoCheckout = (word: Word) => {
+    const value = cwd === null ? null : literalValue(word, vars, cwd);
+    return root !== null && value !== null && inside(resolvePath(cwd!, value), root);
+  };
+  const { program } = part;
+  const args = part.values.slice(part.programAt + 1);
+  // An editor's files are relative to its folder: outside any checkout it edits nothing of one.
+  const flag =
+    root !== null && IN_PLACE[program] && args.find((word) => IN_PLACE[program]!.test(word));
+  if (flag) return { code: "edits-in-place", subject: `${program} ${flag}` };
+  if (program === "tee") {
+    const file = part.command.words
+      .slice(part.programAt + 1)
+      .find((word) => !word.value.startsWith("-") && intoCheckout(word));
+    if (file !== undefined) return { code: "edits-in-place", subject: `tee ${file.value}` };
+  }
+  if (!redirects) return null;
+  for (const { op, target } of part.command.redirects) {
+    if (target === null || op.includes("<") || op.endsWith("&") || !intoCheckout(target)) continue;
+    return { code: "edits-in-place", subject: `${op.replace(/^\d+/, "")} ${target.value}` };
+  }
+  return null;
+};
+
 /**
  * The first reason a line's work must stay on this Mac. Only the work parts leave (heavy commands
  * and `remoto` calls; with none, every program the job runs), so only they are judged, each from
@@ -634,6 +688,7 @@ const lineReason = (
   start: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
   read: ReadScript | undefined,
+  nested = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
   const parsed = readLine(line, read);
@@ -641,6 +696,8 @@ const lineReason = (
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
   const { parts } = source === line ? parsed : readLine(source, read);
   const work = new Set(workParts(parts));
+  // A text sent whole, or a line with no heavy or `remoto` part, runs whole where it is sent.
+  const whole = nested || !parts.some((part) => part.heavy || part.remoto !== null);
   const cwds = new Map<string, string | null>([["", start]]);
   const vars = new Map<string, string | null>([["HOME", home]]);
   // What reaches a command's environment from earlier in the line; plain `K=V;` does not.
@@ -656,6 +713,10 @@ const lineReason = (
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
+    if (whole || part.remoto !== null) {
+      const edit = editReason(part, cwd, vars, rootOf, whole);
+      if (edit !== null) return edit;
+    }
     if (work.has(part)) {
       // A part naming a folder in another checkout runs from there (`linux-part` does the same).
       const moved =
@@ -702,6 +763,8 @@ const lineReason = (
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
+          // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
+          whole || part.remoto !== null,
         );
         if (inner !== null) return inner;
       }
@@ -1138,8 +1201,7 @@ export const intentOf = (
 ): { readonly intent: RunnerWhere; readonly reason: string; readonly cancel?: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
-    // Only a commit whose hook runs is queued, so the queue can say why it waits.
-    const why = commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK;
+    const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
   const verdict = eligibilityOf(entry, context);
@@ -1222,11 +1284,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Why each job runs on this Mac, shown with what it waits for there. */
   const macWhy: Record<string, string> = {};
 
-  /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
-  const shows = (reason: string) => input.runnerOn === true || reason === COMMIT_HOOK;
+  /** Mac rows say why only once a Runner is on. */
+  const shows = input.runnerOn === true;
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
     alone.delete(entry.id);
-    if (shows(reason)) macWhy[entry.id] = reason;
+    if (shows) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     if (holdsSlot(entry)) macCount += 1;
     // Only what fits spends it, as in `plan`: a waiter too big to start takes no one's room.
@@ -1245,6 +1307,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       admits[entry.id] = { runner: "mac", ungated: false };
     } else macWaiters.push(entry);
   };
+  // A running job keeps saying why it runs on this Mac, as its row did while it waited.
+  for (const entry of macRunning) {
+    const why = (entry as QueuedEntry).routeReason;
+    if (why !== undefined && shows) reasons[entry.id] = why;
+  }
   const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
@@ -1438,7 +1505,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
 
   for (const entry of macRunning) {
     const { intent, reason } = intentOf(entry, input.contextOf(entry.cwd));
-    if (intent === "mac" && shows(reason)) macWhy[entry.id] = reason;
+    if (intent === "mac" && shows) macWhy[entry.id] = reason;
   }
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);

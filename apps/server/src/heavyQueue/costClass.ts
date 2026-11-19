@@ -6,7 +6,7 @@
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
 import { keepsRunning, kindOf } from "./commandShapes.ts";
-import { commitOnly, readLine, workParts, type Part } from "./heavyHook.ts";
+import { localGitOnly, readLine, workParts, type Part } from "./heavyHook.ts";
 
 export type CostClass = "quick" | "standard" | "service";
 export interface Cost {
@@ -104,7 +104,7 @@ export const workPartsOf = (line: string): ReadonlyArray<Part> => {
 };
 
 const classOf = (line: string, durationMs: number | null, quickSeconds: number): Cost => {
-  if (commitOnly(line) !== null) return { class: "quick", why: "staged files" };
+  if (localGitOnly(line)) return { class: "quick", why: "staged files" };
   const parts = workPartsOf(line);
   const service = parts.filter((part) => keepsRunning(part.program, part.words, part.flags));
   if (parts.length > 0 && service.length === parts.length) {

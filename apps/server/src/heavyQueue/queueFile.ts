@@ -894,6 +894,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       ...(workers === null ? {} : { workers }),
       ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
       ...(admit.ungated ? { ungated: true } : {}),
+      // Why "When Linux is full" sent it here, shown while it runs.
+      ...(admit.runner === "mac" && decision.moved[id] !== undefined
+        ? { routeReason: decision.moved[id] }
+        : {}),
       ...(admit.runner === "linux" && (ask !== undefined || route !== undefined)
         ? {
             held: {
@@ -1217,7 +1221,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   const doc = readDoc(dir);
   // The job the hook would queue: `$SHELL -c '<line>'`, built as `t3 heavy` builds it.
   const job = jobOf("/bin/sh", ["-c", line], cwd, NodeOS.homedir());
-  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
+  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args));
   const handedOff = !job.remoto && isQueued(jobLine(job.program, job.args), scriptReader(job.cwd));
   if (commit === "direct" || handedOff) {
     return {
@@ -1240,8 +1244,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       args: job.args,
       cwd: job.cwd,
       createdAt: new Date(now).toISOString(),
-      // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
-      priority: commit === "first" ? "high" : "low",
+      // As `t3 heavy` queues an agent's job, behind the user's own.
+      priority: "low",
       ...(job.remoto ? { where: "linux" as const } : {}),
     },
     scriptReader(job.cwd),
@@ -2001,17 +2005,10 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  const answer = interceptBashCall(
-    hookInput,
-    prefix,
-    modeFor(doc, at),
-    environment,
-    scriptReader(at),
-    { probe: (line) => probe(dir, line, cwd), inT3 },
-  );
-  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
-    ? null
-    : answer;
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at), {
+    probe: (line) => probe(dir, line, cwd),
+    inT3,
+  });
 };
 
 /** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */

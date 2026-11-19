@@ -1947,6 +1947,17 @@ describe("Runner in the queue file", () => {
     },
   );
 
+  it.each([
+    ["mac", "Linux is full: running on this Mac"],
+    ["balance", LINUX_FULL_SHORTER],
+  ] as const)("%s: a job Linux-full sent here keeps its reason while it runs", (policy, why) => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: policy })));
+    startOnLinux(dir, ["a", "b"]);
+    Queue.enqueue(dir, test("c"));
+    expect(Queue.tryStart(dir, "c", NOW + 3)).toMatchObject({ status: "started" });
+    expect(Queue.readPlan(dir, NOW + 4).plan.reasons.c).toBe(why);
+  });
+
   it("balance: a job moved to wait on this Mac stays there once Linux frees a slot", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: "balance" })));
     Queue.setMaxRunning(dir, 2);
@@ -2079,7 +2090,7 @@ describe("Runner in the queue file", () => {
       ).toBeNull();
     });
 
-    it("queues a commit only where a commit hook runs, judged in the folder its cd names", () => {
+    it("runs a commit directly, even where a commit hook runs", () => {
       const dir = queueWith(block(config({ runnerEnabled: false })));
       const parent = tempDir();
       const root = NodePath.join(parent, "repo");
@@ -2090,7 +2101,7 @@ describe("Runner in the queue file", () => {
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toEqual({
         runsOn: "direct",
         position: null,
-        reason: "No commit hook in this repository: runs directly",
+        reason: "A local git write: runs directly",
         startsNow: true,
         linuxFull: false,
         canceled: false,
@@ -2098,16 +2109,14 @@ describe("Runner in the queue file", () => {
         classWhy: "staged files",
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
-      expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();
-      // Its own slot: it starts beside a running job, ahead of an agent's waiting build.
+      // A busy slot does not hold it either.
       Queue.enqueue(dir, test("busy"));
       expect(Queue.tryStart(dir, "busy", NOW)).toMatchObject({ status: "started" });
-      Queue.enqueue(dir, { ...test("build"), priority: "low" });
+      expect(Queue.answerBashCall(dir, commit, PREFIX)).toBeNull();
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toMatchObject({
-        runsOn: "mac",
+        runsOn: "direct",
         startsNow: true,
       });
-      expect(Queue.read(dir).map((e) => e.id)).toEqual(["busy", "build"]);
     });
   });
 });

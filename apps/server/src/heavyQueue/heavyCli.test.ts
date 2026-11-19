@@ -2089,6 +2089,13 @@ describe("t3 heavy", () => {
       ["yarn workspace web preview", "direct"],
       ["pnpm run watch", "direct"],
       ["vitest --watch", "direct"],
+      ["nodemon src/index.ts", "direct"],
+      ["npx nodemon", "direct"],
+      ["pnpm exec tsc -w", "direct"],
+      ["pnpm tsc --watch", "direct"],
+      ["npx tsx watch src/a.ts", "direct"],
+      ["node --watch-path=src src/a.js", "direct"],
+      ["ts-node-dev --respawn src/a.ts", "direct"],
       ["cd apps/web && pnpm build && pnpm preview", "direct"],
       ["vite build", "queue"],
       ["next build", "queue"],
@@ -2136,7 +2143,7 @@ describe("t3 heavy", () => {
       ).toMatchObject({ kind: "queue" });
     });
 
-    it("runs a commit with no hook as written, and queues a hooked one first", () => {
+    it("runs a local git write as written, even where a commit hook runs", () => {
       const parent = tempDir();
       const root = NodePath.join(parent, "repo");
       NodeFS.mkdirSync(root);
@@ -2147,18 +2154,15 @@ describe("t3 heavy", () => {
       expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
       expect(heavyLaunch(direct, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
-      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toMatchObject({
-        kind: "queue",
-        cwd: root,
-        priority: "high",
-      });
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      const rebase = { program: "git", args: ["rebase", "main"], where: undefined };
+      expect(heavyLaunch(rebase, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
     });
 
     const config = { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true };
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
       CHECKOUTS.find((root) => cwd === root || cwd.startsWith(`${root}/`)) ?? null;
-    const COMMITS = "Changes this Mac's checkout: git commit";
     const OUTSIDE = "Uses a file only this Mac has: ";
     /** What the hook, the queue and a Linux attempt each make of an agent's Bash line. */
     const placed = (line: string) => {
@@ -2326,8 +2330,12 @@ describe("t3 heavy", () => {
       // A build goes there too: its output comes back.
       ["vp run build", "linux", "vp run build"],
       // The rest of what keeps work here, each with its reason.
-      ["git commit -m 'fix: t3 heavy'", COMMITS],
-      ['git add a && git commit -m "x" && vp test run', COMMITS],
+      // A commit beside a heavy call runs in this Mac's shell; only the call crosses.
+      [
+        'git add a && git commit -m "x" && vp test run',
+        "linux",
+        'git add a && git commit -m "x" && vp test run',
+      ],
       ["xcodebuild -scheme App test", "Mac-only tool: xcodebuild"],
       // It keeps running: load on this Mac, never a queue job.
       ["vp run dev:desktop", "light"],
@@ -2340,6 +2348,13 @@ describe("t3 heavy", () => {
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],
       ["git commit -n -m wip", "light"],
+      ["git commit -m 'fix: t3 heavy'", "light"],
+      ['git commit -m "x" a.ts', "light"],
+      ["git commit --amend --no-edit", "light"],
+      ["git merge foo", "light"],
+      ["git rebase main", "light"],
+      ["git add a.ts && git commit -m x", "light"],
+      ["git push", "light"],
       ["echo remoto && ls", "light"],
       ["t3 heavy -- vp test run", "queued"],
       ["ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q' -- vp test run", "queued"],

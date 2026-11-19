@@ -44,9 +44,6 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
-  ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
-  // git's own options take a value before the subcommand.
-  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -112,6 +109,12 @@ const LIGHT = [
   "ls -la",
   "git status && git log --format=%H -3",
   "git checkout -b fix-build",
+  // A local git write is quick, even with hooks: it runs here, outside the queue.
+  "git add a && git commit -m 'fix: x'",
+  "git -C apps/web -c user.name=t commit -m x",
+  "git commit --amend --no-edit",
+  "git merge foo",
+  "git rebase main",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
   "git -C web commit -n -m wip",
@@ -163,6 +166,12 @@ const LIGHT = [
   "pnpm exec vp lint src/x.ts",
   "oxlint src/a.ts",
   "npx eslint --fix src/a.ts",
+  // An in-place edit with nothing heavy beside it runs here, outside the queue.
+  `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
+  "perl -pi -e 's/vp test/x/' src/a.ts",
+  "echo 'vp test run' > notes.md",
+  "printf x | tee -a notes.md",
+  "grep 'pnpm exec vp test run' src/a.ts",
   'for f in $(git diff --name-only t3/fork2...HEAD); do command vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f || echo "fmt diff $f"; done; echo fmt-done',
 ];
 

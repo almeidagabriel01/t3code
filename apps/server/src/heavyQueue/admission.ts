@@ -16,7 +16,7 @@ import {
 
 import { kindOf, runTarget } from "./commandShapes.ts";
 import { costOf, filesOf, workPartsOf, type Cost as JobCost } from "./costClass.ts";
-import { commitOnly, heavyRoute } from "./heavyHook.ts";
+import { heavyRoute, localGitOnly } from "./heavyHook.ts";
 
 export interface Sample {
   readonly at: number;
@@ -449,7 +449,7 @@ export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
 /** `costFor` with a hooked commit flagged, as the state publishes it. */
 const queueCostOf = (input: CostInput, entry: CostEntry): HeavyQueueCost => {
   const cost = costFor(input, entry);
-  return commitOnly(entry.line ?? entry.label) !== null ? { ...cost, commit: true } : cost;
+  return localGitOnly(entry.line ?? entry.label) ? { ...cost, commit: true } : cost;
 };
 
 const laneFrom = (cost: HeavyQueueCost): Lane => (cost.commit === true ? "commit" : cost.class);

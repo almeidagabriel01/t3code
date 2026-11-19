@@ -447,7 +447,7 @@ export const HeavyQueueState = Schema.Struct({
    * one admission tries. Absent from older servers, whose order is the queue file's.
    */
   order: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueOrder)),
-  /** Why a waiting entry is not starting, by entry id. */
+  /** Why a waiting entry is not starting, or why a running one runs on this Mac, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),

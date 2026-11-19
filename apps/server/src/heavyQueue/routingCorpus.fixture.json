@@ -227,7 +227,8 @@
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146 && S=/private/tmp/claude-501/ID/ID/scratchpad && T=apps/mobile/src/features/assistants/AssistantGroupChatRouteScreen.test.tsx && cp $T $S/route.test.full && git show HEAD:$T > $T && n=$(grep -n '^vi.mock(\"../../components/ui/useBarInset\"' $T | cut -d: -f1) && sed -i '' \"${n}i\\\\\nvi.mock(\\\"./GroupContextMeter\\\", () => ({ GroupContextMeter: () => null }));\n\" $T && git diff --stat $T && git add apps/mobile/src/features/assistants/GroupContextMeter.tsx apps/mobile/src/features/assistants/GroupContextMeter.test.tsx && git commit -m msg apps/mobile/src/features/assistants/GroupContextMeter.tsx apps/mobile/src/features/assistants/GroupContextMeter.test.tsx apps/mobile/src/features/assistants/GroupComposer.tsx apps/mobile/vite.config.ts $T > $S/commit.log 2>&1; echo rc=$?; cp $S/route.test.full $T; grep -v \"t3 heavy\" $S/commit.log | tail -6",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-mobile-c415c1de8c717146/apps/mobile/src/features/assistants",
       "observed": "Commits run here",
-      "expect": "mac-state:git commit"
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/route.test.full",
+      "why": "a commit is no longer work: it runs in this Mac's shell, outside the queue; the scratch copy is what stays"
     },
     {
       "line": "remoto bash -c 'uname -sn; for i in 1 2 3; do env SSH_CLIENT=\"1.2.3.4 1 22\" SHLVL=0 pnpm exec vp test run src/runHook.test.ts 2>&1 | sed \"s/\\x1b\\[[0-9;]*m//g\" | grep -E \"Tests  |Test Files|FAIL\"; echo \"run$i exit=${PIPESTATUS[0]}\"; done' 2>&1 | grep -v \"^\\[t3 heavy\\]\"",
@@ -271,7 +272,8 @@
       "line": "cd ~/.t3/worktrees/game/jg-gap-pending-tab && python3 - <<'EOF'\npass\nEOF\nnpx eslint src/session/session.ts src/queries/orders.ts && npx tsc -b --noEmit && git add -A -- src && git commit -q --amend --no-edit && git log --oneline -1 && git show --stat HEAD | tail -5",
       "cwd": "/Users/dev/.t3/worktrees/game/jg-e2e-checkout-realtim-127186e2126f4b72",
       "observed": "unknown",
-      "expect": "mac-state:git commit"
+      "expect": "linux",
+      "why": "a commit is no longer work: it runs in this Mac's shell, outside the queue"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-pedido-espera-thread-7aa1ffd173231942/apps/server && pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c \"error TS\"; cd ../.. && pnpm exec vp lint --no-ignore apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts 2>&1 | tail -3; for f in apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts; do pnpm exec vp fmt --check $f 2>&1 | tail -1; done",
@@ -290,7 +292,8 @@
       "line": "python3 - <<'EOF'\npass\nEOF\n(cd packages/contracts && pnpm exec vp test run src/assistantGroups.test.ts 2>&1 | grep -E 'Tests '; pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep -c 'error TS'); f=(packages/contracts/src/assistantGroups.ts packages/contracts/src/assistantGroups.test.ts apps/server/src/assistants/AssistantGroups.ts apps/server/src/assistants/AssistantGroups.test.ts apps/server/src/persistence/ForkSchema.ts apps/server/src/persistence/ForkSchema.test.ts); git commit -q \"${f[@]}\" -m msg 2>&1 | grep -E '✖|error'; git log --oneline -1",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-merge-upstream-v0.1.-5f2d2a071c3e8a86",
       "observed": "Commits run here",
-      "expect": "mac-state:git commit"
+      "expect": "linux",
+      "why": "a commit is no longer work: it runs in this Mac's shell, outside the queue"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-heavy-queue-cost-lan-fb42a93e1b1c0095/apps/server && python3 - <<'EOF'\npass\nEOF\nsource /private/tmp/claude-501/it.env && pnpm exec vp test run src/heavyQueue/runnerExec.linux.test.ts > /private/tmp/claude-501/it.log 2>&1; grep -E \"^ +[×✓]|Tests \" /private/tmp/claude-501/it.log; grep -E \"^AssertionError\" -A3 /private/tmp/claude-501/it.log | head -12",
@@ -567,7 +570,8 @@
       "line": "(cd apps/web && vp run typecheck 2>&1 | grep \"error TS\" | head -3); (cd packages/client-runtime && vp run typecheck 2>&1 | grep \"error TS\" | head -3); git commit -m msg 2>&1 | tail -1",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-team-chat-parity-da5277134d0cde3d",
       "observed": "Commits run here",
-      "expect": "mac-state:git commit"
+      "expect": "linux",
+      "why": "a commit is no longer work: it runs in this Mac's shell, outside the queue"
     },
     {
       "line": "D=~/DEV/Pessoal/t3code-captures/draft-parity; cd $D && node b.mjs \"default\" 2>&1 | tail -2; tail -c 600 /private/tmp/claude-501/ID/ID/tasks/bfec52kw3.output",
@@ -629,7 +633,8 @@
       "line": "(timeout 900 pnpm exec effect-tsgo tsrs --noEmit 2>&1 | grep \" error \"; echo tc_done) | grep -v \"t3 heavy\"; vp lint --no-ignore src/features/resources/HeavyWork.tsx src/features/resources/HeavyWork.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx 2>&1 | grep -v \"t3 heavy\" | tail -3; git commit -q -m msg -- src/features/resources/HeavyWork.tsx src/features/resources/HeavyWork.test.tsx src/features/settings/components/HeavyQueueSection.test.tsx 2>&1 | grep -E \"✖|error\" ; git log --oneline -2 | cat; git status --short",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-limit-toggles--3274f72d1d500da2/apps/mobile",
       "observed": "Commits run here",
-      "expect": "mac-state:git commit"
+      "expect": "linux",
+      "why": "a commit is no longer work: it runs in this Mac's shell, outside the queue"
     },
     {
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; cat > $S/all.sh <<EOF\n#!/bin/bash\ncd /Users/dev/.t3/worktrees/t3code/t3-fork2-heavy-slowdown-275d8be5caf531d5/packages/contracts\necho \"== share test\"; $S/share.sh\necho \"== bench\"; STRESS=10 ROUNDS=12 VARIANTS=\"normal normal2 background nice tier\" ../../scripts/heavy-priority-bench.sh -- ../../node_modules/.bin/effect-tsgo tsrs --noEmit\necho \"== share test again\"; $S/share.sh\nEOF\nchmod +x $S/all.sh; bash -n $S/all.sh && bash -n $S/share.sh && echo syntax-ok",
@@ -1615,6 +1620,256 @@
       "observed": "QA 2026-11-18",
       "expect": "linux",
       "why": "a build ends"
+    },
+    {
+      "line": "nodemon src/index.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:nodemon",
+      "why": "a runner that restarts on file changes watches this Mac's files"
+    },
+    {
+      "line": "npx nodemon --exec 'node a.js'",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "ts-node-dev --respawn src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:ts-node-dev"
+    },
+    {
+      "line": "tsx watch src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:tsx watch"
+    },
+    {
+      "line": "node --watch src/a.js",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:node --watch"
+    },
+    {
+      "line": "node --watch-path=src src/a.js",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:node --watch-path=src"
+    },
+    {
+      "line": "tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "watches:tsc --watch"
+    },
+    {
+      "line": "pnpm tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc --watch",
+      "why": "pnpm, yarn and bun run a bin by name: the reason names the bin"
+    },
+    {
+      "line": "pnpm exec tsc -w",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc -w"
+    },
+    {
+      "line": "npx nodemon",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "yarn nodemon src/index.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "bun tsc -w",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc -w"
+    },
+    {
+      "line": "pnpm -F web tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc --watch"
+    },
+    {
+      "line": "pnpm vite",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "serves-port:vite"
+    },
+    {
+      "line": "pnpm test --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:pnpm --watch",
+      "why": "test is pnpm's own command for the test script, not a bin"
+    },
+    {
+      "line": "pnpm dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "serves-port:pnpm dev",
+      "why": "a script name that is no known bin stays the script"
+    },
+    {
+      "line": "tsx src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "tsx without watch runs once"
+    },
+    {
+      "line": "sed -i '' -e '600,1000s/vp lint/vp check/g' -e '600,1000s/vp|lint|/vp|check|/g' -e '1584s/vp lint/vp check/g' heavyCli.test.ts && grep -n \"lint\" heavyCli.test.ts | sed -n 1,40p",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i",
+      "why": "with no heavy call the whole line is the work: an edit there would land on Linux"
+    },
+    {
+      "line": "perl -pi -e 's/a/b/' src/f.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:perl -pi"
+    },
+    {
+      "line": "ruby -pi -e 'gsub(/a/, \"b\")' src/f.rb",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:ruby -pi"
+    },
+    {
+      "line": "sed -i 's/a/b/' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i"
+    },
+    {
+      "line": "echo x > apps/server/src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:> apps/server/src/a.ts"
+    },
+    {
+      "line": "echo x >> notes.md",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:>> notes.md"
+    },
+    {
+      "line": "printf x | tee -a notes.md",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:tee notes.md"
+    },
+    {
+      "line": "grep 'vp test run' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a quoted pattern is an argument, never a command"
+    },
+    {
+      "line": "echo x > /dev/null 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "/dev/null and 2>&1 write nothing in the checkout"
+    },
+    {
+      "line": "echo x > /tmp/claude-501/out.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a file outside the checkout is no checkout edit"
+    },
+    {
+      "line": "sed -i '' -e 's/a/b/' src/a.ts && vp test run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "beside a heavy call the edit is glue: it runs in this Mac's shell, and only the test goes to Linux"
+    },
+    {
+      "line": "vp test run src/a.test.ts | tee out.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "tee is glue in this Mac's shell"
+    },
+    {
+      "line": "vp test run src/a.test.ts > out.txt 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "this Mac's shell opens a heavy call's redirect"
+    },
+    {
+      "line": "vp test run src/a.test.ts > /dev/null 2>&1",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "bash ./fix.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./fix.sh": "sed -i '' 's/a/b/' src/a.ts\nvp test run src/a.test.ts\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "bash ./gen.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./gen.sh": "vp test run src/a.test.ts > report.txt\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "bash ./log.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./log.sh": "vp test run src/a.test.ts > /tmp/claude-501/t.log 2>&1\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "sh -c \"perl -pi -e 's/a/b/' src/a.ts && vp test run\"",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a job runs this text in this Mac's shell: only the heavy call crosses to Linux, through its shim"
+    },
+    {
+      "line": "remoto sed -i 's/a/b/' src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i"
+    },
+    {
+      "line": "remoto bash ./fix.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./fix.sh": "sed -i '' 's/a/b/' src/a.ts\nvp test run src/a.test.ts\n"
+      },
+      "observed": "QA 2026-11-19",
+      "expect": "edits-in-place:sed -i",
+      "why": "remoto runs the script whole on Linux: its edit would land there"
     },
     {
       "line": "bash -lc 'xcodebuild test'",
