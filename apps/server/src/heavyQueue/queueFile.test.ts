@@ -855,7 +855,7 @@ describe("Runner in the queue file", () => {
     NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
     return root;
   };
-  const test = (id: string, extra: Partial<HeavyQueueEntry> = {}) => ({
+  const test = (id: string, extra: Partial<QueuedEntry> = {}) => ({
     ...entry(id),
     label: "vp test run",
     cwd: checkout(id),
@@ -1197,15 +1197,25 @@ describe("Runner in the queue file", () => {
       test("u", { unconfirmed: true }),
       // Asked for this Mac with `--runner mac`.
       test("m", { where: "mac" }),
+      // Docker in a script's body is Linux's own.
+      test("d", { label: "./s.sh", scripts: { "./s.sh": "docker ps\n" }, route: "mac" }),
     ];
     for (const waiter of waiters) Queue.enqueue(dir, waiter);
     const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null });
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null, d: "mac" });
     expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
-    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null, m: null });
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b", "d"]);
+    expect(routes()).toEqual({
+      r: null,
+      a: "linux",
+      b: "linux",
+      x: null,
+      u: null,
+      m: null,
+      d: "linux",
+    });
     expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
     // With the Runner off for the project, nothing can go to Linux, so nothing claims to.
     const off = queueWith(block(config({ runnerEnabled: false })));

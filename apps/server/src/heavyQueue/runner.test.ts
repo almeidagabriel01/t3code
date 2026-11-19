@@ -1662,6 +1662,22 @@ describe("patterns and eligibility", () => {
           "Uses a file only this Mac has: /Users/me/other/a.test.ts",
         ],
         ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
+        // A script's install and container commands are its copy's own, unlike the line's.
+        [
+          "bash s.sh x",
+          "linux",
+          null,
+          { "s.sh": 'f() { npm ci; }\narr=(a b)\ncase "$1" in x) f ;; esac\n' },
+        ],
+        ["npm ci", "mac-only", "Changes this Mac's checkout: npm ci"],
+        ["./s.sh", "linux", null, { "./s.sh": "docker ps\n" }],
+        ["docker ps", "mac-only", "Uses this Mac's Docker: docker ps"],
+        [
+          "./s.sh",
+          "mac-only",
+          "Serves a port used here: docker compose",
+          { "./s.sh": "docker compose up\n" },
+        ],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >

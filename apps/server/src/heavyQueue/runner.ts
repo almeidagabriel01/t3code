@@ -380,9 +380,14 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
 /**
  * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a native
  * build, a change to this checkout (a git write; an install, whose `node_modules` never comes
- * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs.
+ * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs. In a
+ * script's body, an install or a container command is the copy's own: Linux needs the tool.
  */
-const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
+const programReason = (
+  part: Part,
+  macTools: ReadonlyArray<string>,
+  inScript: boolean,
+): MacReason | null => {
   let { program, words } = part;
   let after = part.values.slice(part.programAt + 1);
   // `pnpm -F web exec vitest`: a flag's value can sit before `exec`.
@@ -423,12 +428,17 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   if (program === "vitest" && /^(watch|dev)$/.test(first)) {
     return { code: "watches", subject: named };
   }
-  if (DOCKERS.has(program) && first !== "") return dockerReason(program, first, after);
+  if (DOCKERS.has(program) && first !== "") {
+    const docker = dockerReason(program, first, after);
+    return inScript && docker?.code === "mac-docker" ? null : docker;
+  }
   if (!PACKAGE_MANAGERS.has(program)) return null;
   const runs = first === "run" || first === "run-script";
   // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
   const install = runs ? undefined : [first, second].find((word) => INSTALLS.test(word));
-  if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
+  if (install !== undefined && !inScript) {
+    return { code: "mac-state", subject: `${program} ${install}` };
+  }
   const script = runs ? second : first;
   return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
 };
@@ -446,8 +456,9 @@ const tieOf = (
   config: RunnerProjectConfig,
   listening: (port: number) => boolean,
   env: ReadonlyArray<string>,
+  inScript: boolean,
 ): MacReason | null => {
-  const own = programReason(part, config.runnerMacTools);
+  const own = programReason(part, config.runnerMacTools, inScript);
   if (own !== null) return own;
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
@@ -564,6 +575,7 @@ const lineReason = (
   start: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript | undefined,
+  inScript = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
   // Route memory's reason waits for the line's own: any of them wins over it.
@@ -624,6 +636,7 @@ const lineReason = (
         config,
         listening,
         env.filter((value) => value !== null),
+        inScript,
       );
       if (mac !== null) return mac;
       if (at !== null) learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
@@ -635,8 +648,9 @@ const lineReason = (
       // A package.json script was read from the line's own folder: elsewhere it is another's.
       const elsewhere =
         part.script?.word.startsWith(PACKAGE_SCRIPT) === true && (moved !== null || cwd !== start);
+      const scriptBody = elsewhere ? undefined : (part.script?.body ?? undefined);
       const body =
-        (elsewhere ? undefined : part.script?.body) ??
+        scriptBody ??
         (built ? undefined : shellTextOf(moved?.values ?? part.values.slice(part.programAt)));
       if (body !== undefined) {
         const root = at === null ? null : rootOf(at);
@@ -646,6 +660,7 @@ const lineReason = (
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
+          inScript || scriptBody !== undefined,
         );
         if (inner?.code === "learned") learned ??= inner;
         else if (inner !== null) return inner;
