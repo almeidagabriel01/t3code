@@ -254,7 +254,7 @@ export function countActivityBadge(entries: readonly ActivityEntry[]): number {
 }
 
 export interface AgentsSectionEntry extends ActivityEntry {
-  /** Run start for working rows, run completion for finished ones; null when the shell has none. */
+  /** When the row last changed for Needs you, run completion for finished ones; null when none. */
   readonly at: string | null;
 }
 
@@ -264,15 +264,15 @@ const ownedByAssistant = (entry: ActivityEntry, assistantTaskKeys: ReadonlySet<s
   isAssistantThreadId(entry.thread.delegatedFrom?.threadId ?? "");
 
 /**
- * The sidebar's Agents section: Activity's rows by rank, newest first in each group. Threads an
- * assistant owns (its launched tasks, by thread key, and its chats' children) are listed under it.
+ * Activity's Needs you and Unread rows, newest first in each group; working rows come from
+ * `workingItems`. Threads an assistant owns (its launched tasks, by thread key, and its chats'
+ * children) are listed under it.
  */
 export function selectAgentsSection(
   entries: readonly ActivityEntry[],
   assistantTaskKeys: ReadonlySet<string> = new Set(),
 ): {
   readonly needsYou: AgentsSectionEntry[];
-  readonly working: AgentsSectionEntry[];
   readonly done: AgentsSectionEntry[];
 } {
   const stamped = (rank: ActivityRank, pick: (entry: ActivityEntry) => string | null) =>
@@ -282,11 +282,6 @@ export function selectAgentsSection(
       .sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
   return {
     needsYou: stamped(0, ({ thread }) => thread.updatedAt ?? thread.latestRun?.startedAt ?? null),
-    working: stamped(
-      1,
-      ({ thread }) =>
-        thread.latestRun?.startedAt ?? thread.latestRun?.requestedAt ?? thread.createdAt,
-    ),
     done: stamped(2, ({ thread }) => thread.latestRun?.completedAt ?? thread.updatedAt ?? null),
   };
 }

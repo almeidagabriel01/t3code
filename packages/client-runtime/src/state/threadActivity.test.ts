@@ -181,7 +181,7 @@ describe("selectAgentsSection", () => {
   });
   it.each([
     {
-      name: "puts what needs the user first, then working, then unread, newest first",
+      name: "puts what needs the user first, then unread, newest first, and leaves working rows out",
       threads: [
         shell("w-old", {
           runtime: { status: "running" },
@@ -207,14 +207,12 @@ describe("selectAgentsSection", () => {
         shell("quiet"),
       ],
       needsYou: ["input", "guest", "approval"],
-      working: ["w-new", "w-none", "w-old"],
       done: ["d-new", "d-old"],
     },
     {
       name: "is empty when nothing runs or finished",
       threads: [shell("quiet")],
       needsYou: [],
-      working: [],
       done: [],
     },
     {
@@ -237,14 +235,12 @@ describe("selectAgentsSection", () => {
       ],
       assistantTaskKeys: new Set(["env:task", "env:task-done"]),
       needsYou: [],
-      working: ["mine"],
       done: [],
     },
-  ])("$name", ({ threads, needsYou, working, done, ...rest }) => {
+  ])("$name", ({ threads, needsYou, done, ...rest }) => {
     const assistantTaskKeys = "assistantTaskKeys" in rest ? rest.assistantTaskKeys : undefined;
     const section = selectAgentsSection(build(threads), assistantTaskKeys);
     expect(section.needsYou.map((entry) => entry.thread.id)).toEqual(needsYou);
-    expect(section.working.map((entry) => entry.thread.id)).toEqual(working);
     expect(section.done.map((entry) => entry.thread.id)).toEqual(done);
   });
 });
