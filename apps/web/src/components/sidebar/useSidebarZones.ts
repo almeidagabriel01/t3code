@@ -11,7 +11,6 @@ import {
 } from "@t3tools/client-runtime/sidebarZones";
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useClientSettings } from "../../hooks/useSettings";
 import {
   useAssistantEntries,
   useAssistantLiveWork,
@@ -20,8 +19,6 @@ import {
 import { useDecisionEntries } from "../../state/decisions";
 import { useQuietThreadShells } from "../../state/entities";
 import { environmentPresentations } from "../../state/presentation";
-
-const NO_KEYS: ReadonlySet<string> = new Set();
 
 /**
  * What waits on the user, who owns each thread, and every assistant's one status
@@ -74,16 +71,6 @@ export function useAssistantStatus() {
  */
 export function useSidebarZones() {
   const { shells, active, activeTeams, ownerOf, items, read } = useAssistantStatus();
-  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
-  // With Teams switched off the assistant's work has nowhere else to be drawn, so Projects keeps it.
-  const ownedThreadKeys = teamsShown
-    ? new Set(
-        shells.flatMap((shell) =>
-          ownerOf(shell).kind === "assistant" ? [`${shell.environmentId}:${shell.id}`] : [],
-        ),
-      )
-    : NO_KEYS;
-
   const ranked = rankAssistants(active, shells, (entry, presence) =>
     read(entry.environmentId, entry.assistant.id, presence),
   );
@@ -107,7 +94,6 @@ export function useSidebarZones() {
   return {
     items,
     ownerOf,
-    ownedThreadKeys,
     layout,
     indicators: { assistant: assistantIndicators, folder: folderIndicators },
   };

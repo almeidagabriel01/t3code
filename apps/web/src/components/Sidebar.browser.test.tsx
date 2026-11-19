@@ -262,6 +262,7 @@ function mockAssistantState(input: {
   readonly tasks?: ReadonlyArray<{
     readonly owner: string;
     readonly shell: EnvironmentThreadShell;
+    readonly dismissed?: boolean;
   }>;
   readonly projectThreads?: ReadonlyArray<EnvironmentThreadShell>;
   /** Assistants whose task list starts open. */
@@ -323,7 +324,7 @@ function mockAssistantState(input: {
           projectId: activeProject.id,
           title: task.shell.title,
           createdAt: "2026-01-01T00:00:00.000Z",
-          dismissedAt: null,
+          dismissedAt: task.dismissed ? "2026-01-03T00:00:00.000Z" : null,
         })),
     ]),
   );
@@ -462,7 +463,7 @@ function mockFiveThreadSidebar() {
 const TASK_COPY = "assistant:local:jarvis/local:task-1";
 
 describe("sidebar teams zone", () => {
-  it("numbers Teams rows before the projects' and draws an assistant's task only under it", async () => {
+  it("numbers Teams rows before the projects' and lists an assistant's task in both", async () => {
     using _state = jarvisWithTask();
     await using screen = await render(sidebarElement());
     await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
@@ -470,9 +471,8 @@ describe("sidebar teams zone", () => {
       screen.container.querySelector(`[data-sidebar-row="${TASK_COPY}"]`),
     );
     expect(copy.getAttribute("data-sidebar-parent")).toBe("assistant:local:jarvis");
-    // The project list leaves the assistant's task out.
-    expect(screen.container.querySelectorAll('[data-thread-item="local:task-1"]')).toHaveLength(0);
-    expect(screen.container.querySelectorAll('[data-sidebar-row="local:task-1"]')).toHaveLength(0);
+    // A task is a project thread too, whoever launched it.
+    expect(screen.container.querySelectorAll('[data-sidebar-row="local:task-1"]')).toHaveLength(1);
 
     using _timers = fakeTimers();
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
@@ -482,8 +482,14 @@ describe("sidebar teams zone", () => {
       [...screen.container.querySelectorAll("[data-jump-hint]")].map((hint) =>
         hint.closest("[data-sidebar-row]")?.getAttribute("data-sidebar-row"),
       );
-    // The assistant's chat, then its task; the project's own thread comes after them.
-    expect(hints()).toEqual(["assistant:local:jarvis", TASK_COPY]);
+    // The assistant's chat and its task, then the same task in its project.
+    expect(hints()).toEqual(["assistant:local:jarvis", TASK_COPY, "local:task-1"]);
+    // One number per thread: the task's two rows share the number Teams gave it.
+    const labels = [...screen.container.querySelectorAll("[data-jump-hint]")].map(
+      (hint) => hint.textContent,
+    );
+    expect(labels[2]).toBe(labels[1]);
+    expect(labels[1]).not.toBe(labels[0]);
     await userEvent.keyboard(`{/${modifier}}`);
     await userEvent.keyboard(`{${modifier}>}1{/${modifier}}`);
     await vi.waitFor(() =>
@@ -494,14 +500,15 @@ describe("sidebar teams zone", () => {
   });
 
   it.each([
-    { archived: false, listedInProject: false },
-    { archived: true, listedInProject: true },
+    { archived: false, dismissed: false, listedUnderAssistant: true },
+    { archived: true, dismissed: false, listedUnderAssistant: false },
+    { archived: false, dismissed: true, listedUnderAssistant: false },
   ])(
-    "an assistant archived=$archived leaves its task in the project list: $listedInProject",
-    async ({ archived, listedInProject }) => {
+    "an assistant archived=$archived keeps its task dismissed=$dismissed in the project list, under it: $listedUnderAssistant",
+    async ({ archived, dismissed, listedUnderAssistant }) => {
       using _state = mockAssistantState({
         assistants: [{ id: "jarvis" }, { id: "nova", archived }],
-        tasks: [{ owner: "nova", shell: taskShell(1) }],
+        tasks: [{ owner: "nova", shell: taskShell(1), dismissed }],
         projectThreads: [threadShell(ProjectId.make("active"), 0)],
         expanded: ["nova"],
       });
@@ -509,12 +516,12 @@ describe("sidebar teams zone", () => {
       await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
       await vi.waitFor(() =>
         expect(screen.container.querySelectorAll('[data-thread-item="local:task-1"]').length).toBe(
-          listedInProject ? 1 : 0,
+          1,
         ),
       );
       expect(
         screen.container.querySelectorAll('[data-sidebar-row="assistant:local:nova/local:task-1"]'),
-      ).toHaveLength(listedInProject ? 0 : 1);
+      ).toHaveLength(listedUnderAssistant ? 1 : 0);
       // The Agents section is gone; Teams and Projects are the only lists.
       expect(screen.container.querySelector('[data-sidebar-row="section:agents"]')).toBeNull();
       expect(screen.container.textContent).not.toContain("Agents");

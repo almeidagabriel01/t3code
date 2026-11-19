@@ -96,9 +96,6 @@ vi.mock("../../state/thread-order", () => ({
   threadArrangementOpenAtom: atoms.open,
 }));
 vi.mock("../../state/use-thread-outbox", () => ({ queuedThreadKeysAtom: atoms.queued }));
-vi.mock("../../state/assistants", () => ({
-  useThreadOwnership: () => ({ ownedThreadKeys: new Set<string>() }),
-}));
 vi.mock("../home/useThreadListActions", () => ({
   useThreadListActions: () => ({ moveThread: vi.fn() }),
 }));

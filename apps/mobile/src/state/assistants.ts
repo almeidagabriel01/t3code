@@ -60,7 +60,7 @@ import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { environmentThreadShells } from "./threads";
-import { buildThreadOwnership, sameKeySet, type ThreadOwnership } from "./threadOwnership";
+import { buildThreadOwnership, type ThreadOwnership } from "./threadOwnership";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -239,16 +239,12 @@ export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArra
 /** Who started each listed thread; read by the project lists, their move planner and Needs you. */
 export const threadOwnershipAtom = Atom.make((get): ThreadOwnership => {
   const entries = get(assistantEntriesAtom);
-  const next = buildThreadOwnership({
+  return buildThreadOwnership({
     shells: get(environmentThreadShells.quietThreadShellsAtom),
     active: entries.active,
     activeTeams: entries.activeTeams,
     tasksByAssistant: get(assistantTasksByAssistantAtom),
   });
-  const previous = Option.getOrNull(get.self<ThreadOwnership>());
-  return previous !== null && sameKeySet(previous.ownedThreadKeys, next.ownedThreadKeys)
-    ? { ...next, ownedThreadKeys: previous.ownedThreadKeys }
-    : next;
 }).pipe(Atom.withLabel("mobile-thread-ownership"));
 
 export function useThreadOwnership(): ThreadOwnership {

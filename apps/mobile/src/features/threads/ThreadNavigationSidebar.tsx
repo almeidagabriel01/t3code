@@ -302,7 +302,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
-    hiddenThreadKeys: zones.ownedThreadKeys,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
