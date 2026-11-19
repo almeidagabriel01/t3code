@@ -70,6 +70,7 @@ import {
   linkAttempts,
   linkMachine,
   linuxFailedNote,
+  linuxRetryNote,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -861,7 +862,7 @@ const waitForStart = async (
     }
     if (start.status === "canceled") {
       process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
-      writeLinuxFailedNote(dir);
+      writeLinuxNote(dir, start.t3Fault ? "t3" : "retry");
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
     if (start.status === "started") {
@@ -889,15 +890,18 @@ const waitForStart = async (
 /** `remoto`'s own code for "the PC is unreachable"; also what a canceled question exits with. */
 const LINUX_UNAVAILABLE_EXIT = 75;
 
-/** Said where T3 itself ends a job with 75, so a command's own 75 never claims a T3 bug. */
-const writeLinuxFailedNote = (dir: string) => {
+/**
+ * Said where T3 itself ends a job for Linux, so a command's own 75 says nothing: `t3` when T3
+ * failed it (a card to file), `retry` when Linux was away or the job was canceled.
+ */
+const writeLinuxNote = (dir: string, kind: "t3" | "retry") => {
   let host = "remoto";
   try {
     host = readDoc(dir).runner?.machine.runnerHost ?? host;
   } catch {
     // An unreadable queue file still gets the note.
   }
-  process.stderr.write(linuxFailedNote(host));
+  process.stderr.write(kind === "t3" ? linuxFailedNote(host) : linuxRetryNote(host));
 };
 
 let healthCheckRunning = false;
@@ -1122,7 +1126,13 @@ type PartOutcome =
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
   | { readonly kind: "command"; readonly reason: string }
   /** Its job asked for Linux, and Linux can't run this part: the job ends with `code`. */
-  | { readonly kind: "refused"; readonly reason: string; readonly code: number };
+  | {
+      readonly kind: "refused";
+      readonly reason: string;
+      readonly code: number;
+      /** Linux's copy or environment failed it (T3's bug), not Linux away or a Mac-only call. */
+      readonly t3Fault: boolean;
+    };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1328,7 +1338,7 @@ const runLinuxAttempt = async (
   if (outcome.kind === "refused") {
     commandFailure = outcome.reason;
     process.stderr.write(`[t3 heavy] ${outcome.reason}.\n`);
-    writeLinuxFailedNote(dir);
+    writeLinuxNote(dir, outcome.t3Fault ? "t3" : "retry");
     return { kind: "exit", code: outcome.code };
   }
   if (outcome.kind === "worktree") {
@@ -1560,6 +1570,7 @@ const runLinuxPart = async (
           kind: "refused",
           reason: `Asked for Linux, but it needs this Mac: ${reason}`,
           code: LINUX_UNAVAILABLE_EXIT,
+          t3Fault: false,
         })
       : queueCall(dir, "mac", [given, ...givenArgs], { reason });
   if (root === null || program === undefined) {
@@ -1633,6 +1644,7 @@ const runLinuxPart = async (
         kind: "refused",
         reason: `Linux couldn't run this: ${lacked.line}`,
         code,
+        t3Fault: true,
       });
     }
     if (spentInput || wroteOutput) {
@@ -1773,7 +1785,7 @@ const runLinuxPart = async (
     if (spentInput || wroteOutput) {
       const spent = spentInput ? "its input went to Linux" : "it already wrote output";
       process.stderr.write(`[t3 heavy] ${why}; ${spent}, so it does not run again.\n`);
-      writeLinuxFailedNote(dir);
+      writeLinuxNote(dir, "t3");
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
     const health = await checkLinux(linkMachine(machine, doc.sample), process.env);
@@ -1785,6 +1797,7 @@ const runLinuxPart = async (
           kind: "refused",
           reason: `Asked for Linux, but ${why}`,
           code: LINUX_UNAVAILABLE_EXIT,
+          t3Fault: false,
         });
       }
       const policy = lost.kind === "dropped" ? config.runnerDropped : config.runnerUnavailable;
@@ -1793,7 +1806,7 @@ const runLinuxPart = async (
       }
       if (policy !== "wait") {
         process.stderr.write(`[t3 heavy] Linux couldn't run this: ${why}.\n`);
-        writeLinuxFailedNote(dir);
+        writeLinuxNote(dir, "retry");
         process.exit(LINUX_UNAVAILABLE_EXIT);
       }
       jobNote(`[t3 heavy] ${why}: waiting for Linux to run this call again.\n`);

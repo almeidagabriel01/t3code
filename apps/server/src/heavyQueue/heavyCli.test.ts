@@ -22,6 +22,7 @@ import {
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   linuxFailedNote,
+  linuxRetryNote,
   type QueuedEntry,
 } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
@@ -29,6 +30,13 @@ import { listRoutes } from "./routeMemory.ts";
 import { READ_ENV } from "./runnerExec.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
+
+/** The note a job's end left the agent: a T3 bug to file, Linux to retry later, or none. */
+const noteOf = (stderr: string) => {
+  const t3 = stderr.includes(linuxFailedNote("remoto"));
+  const retry = stderr.includes(linuxRetryNote("remoto"));
+  return t3 && retry ? "both" : t3 ? "t3" : retry ? "retry" : null;
+};
 const children: NodeChildProcess.ChildProcess[] = [];
 const dirs: string[] = [];
 afterEach(() => {
@@ -237,7 +245,7 @@ describe("t3 heavy", () => {
     // The command's own 75 is not T3 failing it: no note telling the agent to file a T3 bug.
     const tempfail = heavy(dir, [process.execPath, "-e", "process.exit(75)"]);
     expect(await tempfail.exited).toBe(75);
-    expect(tempfail.stderr()).not.toContain("not in your command");
+    expect(noteOf(tempfail.stderr())).toBeNull();
 
     const holder = heavy(dir, [process.execPath, "-e", holdProgram(NodePath.join(dir, "m"), "h")]);
     await holder.until("out", "started h");
@@ -330,6 +338,7 @@ describe("t3 heavy", () => {
     expect(linux.stderr()).toContain(
       "[t3 heavy] The Runner is off for this project and this job asked for Linux.",
     );
+    expect(noteOf(linux.stderr())).toBe("retry");
     expect(Queue.read(dir)).toEqual([]);
 
     Queue.publishRunner(dir, {
@@ -767,7 +776,7 @@ describe("t3 heavy", () => {
       const why =
         "Asked for Linux, but it needs this Mac: Linux couldn't run this before: x, 2100-01-01";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}`);
-      expect(run.stderr()).toContain(linuxFailedNote("remoto"));
+      expect(noteOf(run.stderr())).toBe("retry");
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
       expect(NodeFS.existsSync(NodePath.join(dir, "remoto.count"))).toBe(false);
     });
@@ -1241,6 +1250,7 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(127);
       expect(run.stdout()).toBe("");
       expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}.\n`);
+      expect(noteOf(run.stderr())).toBe("t3");
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({
         code: 127,
         error: `Linux couldn't run this: ${error}`,
@@ -1439,6 +1449,10 @@ describe("t3 heavy", () => {
         expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
         expect(runs(dir)).toBe(linuxRuns);
         if (said !== null) expect(run.stderr()).toContain(said);
+        // Only input or output spent on Linux is T3's failure; offline or dropped is retried.
+        expect(noteOf(run.stderr())).toBe(
+          said === null ? null : said.includes("does not run again") ? "t3" : "retry",
+        );
       },
     );
 
@@ -1662,6 +1676,7 @@ describe("t3 heavy", () => {
         expect(await run.exited).toBe(code);
         expect(run.stdout()).toBe(stdout);
         expect(run.stderr()).toContain(said);
+        expect(noteOf(run.stderr())).toBe("retry");
         expect(Queue.read(dir)).toEqual([]);
       },
     );
@@ -1778,6 +1793,7 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(
         "[t3 heavy] Linux couldn't run this: remoto is not installed, and this job asked for Linux.\n",
       );
+      expect(noteOf(run.stderr())).toBe("t3");
       // An agent's own `remoto` runs here instead, and says so.
       const agent = heavyHere(dir, ["/bin/sh", "-c", "remoto /bin/echo ran on mac"], {
         ...env,

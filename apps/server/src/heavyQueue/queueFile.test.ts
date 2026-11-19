@@ -958,6 +958,7 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW + 120_000)).toEqual({
       status: "canceled",
       reason: "Linux is unavailable and nobody answered in time: canceled",
+      t3Fault: false,
     });
     expect(Queue.read(dir)).toEqual([]);
     expect(Queue.readDoc(dir).events).toEqual([
@@ -1066,7 +1067,7 @@ describe("Runner in the queue file", () => {
         }),
         linkFailures: 3,
       });
-      expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason });
+      expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason, t3Fault: false });
       expect(Queue.read(dir)).toEqual([]);
       expect(Queue.readDoc(dir).events).toEqual([]);
     },

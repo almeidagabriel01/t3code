@@ -485,7 +485,12 @@ export type StartResult =
     }
   | { readonly status: "removed" }
   /** Its question went unanswered and the deadline action is Cancel. */
-  | { readonly status: "canceled"; readonly reason: string };
+  | {
+      readonly status: "canceled";
+      readonly reason: string;
+      /** T3 itself failed its Linux run (`failure`), not Linux being away or a deadline. */
+      readonly t3Fault: boolean;
+    };
 
 type Decided<A> = { readonly doc: QueueDoc; readonly result: A };
 
@@ -651,7 +656,11 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Tell the agent cancels with no question: the requeue already logged the loss.
         events: withRecord(doc.events, entry.ask === undefined ? null : deadlineRecord(entry, now)),
       },
-      result: { status: "canceled", reason: canceled },
+      result: {
+        status: "canceled",
+        reason: canceled,
+        t3Fault: (entry as QueuedEntry).failure !== undefined,
+      },
     };
   }
   const admit = decision.admits[id];

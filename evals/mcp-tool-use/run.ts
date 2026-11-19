@@ -83,7 +83,7 @@ import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestr
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 import { KanbanToolkit } from "../../apps/server/src/mcp/toolkits/kanban/tools.ts";
-import { linuxFailedNote } from "../../apps/server/src/heavyQueue/runner.ts";
+import { linuxFailedNote, linuxRetryNote } from "../../apps/server/src/heavyQueue/runner.ts";
 import { MemoryToolkit } from "../../apps/server/src/mcp/toolkits/memory/tools.ts";
 import { NoteToolkit } from "../../apps/server/src/mcp/toolkits/note/tools.ts";
 import { IntegrationToolkit } from "../../apps/server/src/mcp/toolkits/integration/tools.ts";
@@ -1879,6 +1879,7 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
 /** T3's own text a shell mock prints, by its `{{token}}`: read from source, never copied. */
 const SHELL_TEXT: Readonly<Record<string, string>> = {
   "{{heavy.linuxFailedNote}}": linuxFailedNote("remoto"),
+  "{{heavy.linuxOfflineNote}}": linuxRetryNote("remoto"),
 };
 const shellText = (output: string) =>
   Object.entries(SHELL_TEXT).reduce(

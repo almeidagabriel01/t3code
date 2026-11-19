@@ -1727,8 +1727,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
  * What an agent reads when the queue fails its job for Linux's or T3's reasons: going around the
  * queue hides the work from admission and loads the PC unseen, so the failure goes to T3's board.
  */
+const noSsh = (host: string) =>
+  `Do not get around it by running the work with \`ssh ${host} '…'\` or outside the queue: T3 then can't see or limit it.`;
+
+/** T3 itself failed the job (its copy, worktree, sync or spent input): a bug to file. */
 export const linuxFailedNote = (host: string) =>
-  `[t3 heavy] This failed in T3's queue or on Linux, not in your command. Do not get around it by running the work with \`ssh ${host} '…'\` or outside the queue: T3 then can't see or limit it. Treat it as a T3 bug: unless T3 already filed a problem card for it, file one on the T3 Code project's board (t3_kanban create_card) with this command and the error above, then tell the user the work is blocked on it.\n`;
+  `[t3 heavy] This failed in T3's queue or on Linux, not in your command. ${noSsh(host)} Treat it as a T3 bug: unless T3 already filed a problem card for it, file one on the T3 Code project's board (t3_kanban create_card) with this command and the error above, then tell the user the work is blocked on it.\n`;
+
+/** Linux was offline, dropped the job, or it was canceled or needs this Mac: no bug, no card. */
+export const linuxRetryNote = (host: string) =>
+  `[t3 heavy] Linux couldn't take this job now; that is not a T3 bug, so file no card. ${noSsh(host)} Run it again later, rerun it through the queue with \`--runner mac\` to use this Mac, or ask the user.\n`;
 
 /** Stderr lines `remoto` prints with `REMOTO_MARKERS=1`; people never see them. */
 export const MARKER = "\u001eremoto ";
