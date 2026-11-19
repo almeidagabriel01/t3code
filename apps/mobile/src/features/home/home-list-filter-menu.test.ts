@@ -67,12 +67,23 @@ describe("buildHomeListFilterMenuItems archive action", () => {
 describe("buildHomeListFilterMenuItems project subtitles", () => {
   const mac = EnvironmentId.make("mac");
   const pc = EnvironmentId.make("pc");
-  const environments = [
-    { environmentId: mac, label: "Mac" },
-    { environmentId: pc, label: "PC" },
+  const macDev = EnvironmentId.make("mac-dev");
+  const distinctMachines = [
+    { environmentId: mac, label: "Mac", displayUrl: "http://mac:3773/" },
+    { environmentId: pc, label: "PC", displayUrl: "http://pc:3773/" },
+  ];
+  const sameNamedMachines = [
+    { environmentId: mac, label: "Mac", displayUrl: "http://127.0.0.1:15500/" },
+    { environmentId: macDev, label: "Mac", displayUrl: "http://127.0.0.1:14729/" },
+    { environmentId: pc, label: "PC", displayUrl: "http://pc:3773/" },
   ];
   const cases: ReadonlyArray<{
     readonly name: string;
+    readonly environments?: ReadonlyArray<{
+      environmentId: EnvironmentId;
+      label: string;
+      displayUrl?: string;
+    }>;
     readonly projects: ReadonlyArray<{
       key: string;
       label: string;
@@ -113,9 +124,31 @@ describe("buildHomeListFilterMenuItems project subtitles", () => {
       ],
       subtitles: [undefined, undefined],
     },
+    {
+      name: "machines sharing a name are told apart by address",
+      environments: sameNamedMachines,
+      projects: [
+        { key: "a", label: "Tirss", environmentIds: [mac] },
+        { key: "b", label: "Tirss", environmentIds: [macDev] },
+        { key: "c", label: "Tirss", environmentIds: [pc] },
+      ],
+      subtitles: ["http://127.0.0.1:15500/", "http://127.0.0.1:14729/", "PC"],
+    },
+    {
+      name: "a shared machine name without an address keeps the name",
+      environments: [
+        { environmentId: mac, label: "Mac" },
+        { environmentId: macDev, label: "Mac" },
+      ],
+      projects: [
+        { key: "a", label: "Tirss", environmentIds: [mac] },
+        { key: "b", label: "Tirss", environmentIds: [macDev] },
+      ],
+      subtitles: ["Mac", "Mac"],
+    },
   ];
 
-  it.each(cases)("$name", ({ projects, subtitles }) => {
+  it.each(cases)("$name", ({ environments = distinctMachines, projects, subtitles }) => {
     const section = buildHomeListFilterMenuItems({
       ...base,
       environments,
@@ -123,6 +156,39 @@ describe("buildHomeListFilterMenuItems project subtitles", () => {
       selectedProjectKey: null,
     }).find((item) => item.id === "project");
     if (!section || !("items" in section)) throw new Error("expected the project section");
+    expect(
+      section.items.slice(1).map((item) => ("subtitle" in item ? item.subtitle : undefined)),
+    ).toEqual(subtitles);
+  });
+});
+
+describe("buildHomeListFilterMenuItems environment subtitles", () => {
+  it.each([
+    {
+      name: "distinct names stay plain",
+      environments: [
+        { environmentId: EnvironmentId.make("a"), label: "Mac", displayUrl: "http://a/" },
+        { environmentId: EnvironmentId.make("b"), label: "PC", displayUrl: "http://b/" },
+      ],
+      subtitles: [undefined, undefined],
+    },
+    {
+      name: "shared names show their address",
+      environments: [
+        { environmentId: EnvironmentId.make("a"), label: "Mac", displayUrl: "http://a/" },
+        { environmentId: EnvironmentId.make("b"), label: "Mac", displayUrl: "http://b/" },
+        { environmentId: EnvironmentId.make("c"), label: "PC", displayUrl: "http://c/" },
+      ],
+      subtitles: ["http://a/", "http://b/", undefined],
+    },
+  ])("$name", ({ environments, subtitles }) => {
+    const section = buildHomeListFilterMenuItems({
+      ...base,
+      environments,
+      projects: [],
+      selectedProjectKey: null,
+    }).find((item) => item.id === "environment");
+    if (!section || !("items" in section)) throw new Error("expected the environment section");
     expect(
       section.items.slice(1).map((item) => ("subtitle" in item ? item.subtitle : undefined)),
     ).toEqual(subtitles);
