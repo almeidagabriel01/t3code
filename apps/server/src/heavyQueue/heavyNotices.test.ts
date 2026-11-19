@@ -857,14 +857,16 @@ describe("notices for machine changes", () => {
     ]);
   });
 
-  it("Automatic sending a job to this Mac is planned", () => {
-    expect(titles({ records: [record(startRecord(waiter, "automatic", "mac", NOW))] })).toEqual([
-      {
-        one: "pnpm test went to this Mac",
-        description: "Linux was full, so this Mac took it.",
-        category: "planned",
-        machine: "mac",
-      },
+  // The plan's own reason: Linux may be full, offline, past its limits or the queue paused.
+  it.each([
+    ["This Mac took it: Linux is full", "This Mac took it: Linux is full"],
+    ["Automatic: Linux is unavailable", "Automatic: Linux is unavailable"],
+    ["Automatic: queue paused", "Automatic: queue paused"],
+    [undefined, "Automatic sent it to this Mac."],
+  ] as const)("Automatic sending a job to this Mac because %j is planned", (why, description) => {
+    const start = startRecord(waiter, "automatic", "mac", NOW, why);
+    expect(titles({ records: [record(start)] })).toEqual([
+      { one: "pnpm test went to this Mac", description, category: "planned", machine: "mac" },
     ]);
   });
 
