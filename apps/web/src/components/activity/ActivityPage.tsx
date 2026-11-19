@@ -139,8 +139,15 @@ export function ActivityPage() {
   const projectTitle = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
+  // A finished assistant or subagent leaves the list, but the conversation open beside it stays.
+  const selectedShell = threads.find(
+    (thread) => `${thread.environmentId}:${thread.id}` === selectedKey,
+  );
   const selected =
-    [...entries, ...workingEntries].find((entry) => entry.key === selectedKey) ?? null;
+    [...entries, ...workingEntries].find((entry) => entry.key === selectedKey) ??
+    (selectedShell === undefined || selectedKey === null
+      ? null
+      : { key: selectedKey, thread: selectedShell, rank: 1 });
   const summary = RANKS.map(({ rank, summary: label }) => {
     const count = rankedRows(rank).length + (rank === 1 ? working.length : 0);
     return count > 0 ? `${count} ${label}` : null;
