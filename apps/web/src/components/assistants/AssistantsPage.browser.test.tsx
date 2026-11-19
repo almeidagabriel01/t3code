@@ -180,7 +180,7 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
   await expect.element(section("Needs you").getByText("CFO")).toBeVisible();
   await expect
     .element(section("Needs you").getByTestId("assistant-status"))
-    .toHaveAttribute("aria-label", "Approval");
+    .toHaveAttribute("aria-label", "Needs you");
   expect(section("Leaders").getByTestId("group-status").query()).toBeNull();
   await expect.element(section("Leaders").getByText("Bo")).toBeVisible();
   await expect.element(section("Nobody yet").getByText("No members yet.")).toBeVisible();
@@ -223,8 +223,54 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
   appAtomRegistry.set(assistantTeamDialogAtom, null);
 });
 
+it("a group request the lead could not route makes the lead need you", async () => {
+  publishAssistants(
+    [assistant("bo", "Bo"), assistant("zed", "Zed")],
+    [
+      {
+        ...team("t1", "Leaders", ["bo", "zed"]),
+        leadId: "bo" as AssistantId,
+        chat: {
+          latestSeq: 3,
+          readSeq: 3,
+          unreadCount: 0,
+          working: false,
+          preview: null,
+          pausedTasks: 1,
+          failedTasks: 0,
+          threadIds: [],
+          scopes: [
+            {
+              projectId: null,
+              unreadCount: 0,
+              waiting: true,
+              readSeq: 3,
+              waitingRequest: {
+                requestId: "r1",
+                title: "Fix the bug",
+                reason: "paused",
+                taskReason: "routing_failed",
+                assistantId: null,
+              },
+            },
+          ],
+        },
+      },
+    ],
+  );
+  await using _screen = await openApp();
+  await expect
+    .element(section("Needs you").getByTestId("assistant-status"))
+    .toHaveAttribute("aria-label", "Needs you");
+  await expect.element(section("Needs you").getByText("Bo")).toBeVisible();
+  await expect
+    .element(section("Leaders").getByTestId("group-status"))
+    .toHaveAttribute("aria-label", "Needs you");
+  expect(section("Leaders").getByTestId("assistant-status").query()).toBeNull();
+});
+
 it("opens a group's chat and lists archived groups with a way back", async () => {
-  // A member waiting on the user shows on its group's header, in a thread row's words.
+  // A member waiting on the user shows on its group's header, in the sidebar's words.
   waiting.add("assistant:bo:1");
   fakeTeamEdits.updates = [];
   publishAssistants(
@@ -238,7 +284,7 @@ it("opens a group's chat and lists archived groups with a way back", async () =>
   await expect.element(section("Leaders")).toBeVisible();
   await expect
     .element(section("Leaders").getByTestId("group-status"))
-    .toHaveAttribute("aria-label", "Approval");
+    .toHaveAttribute("aria-label", "Needs you");
   waiting.clear();
   expect(section("Old crew").query()).toBeNull();
   await userEvent.click(section("Leaders").getByRole("button", { name: "Open chat" }));

@@ -320,17 +320,11 @@ export function teamsLayout<
       claimed.add(key);
       return true;
     });
-    const needsYou = countWaits(input.items, {
-      assistantKeys: new Set(
-        members.map((item) => keyOf(item.entry.environmentId, item.entry.assistant.id)),
-      ),
-      teamKey: keyOf(team.environmentId, team.team.id),
-    });
-    const indicator = folderIndicator({
-      needsYou,
-      members: members.map(({ presence }) => ({ mood: presence.mood })),
-      chat: team.team.chat ?? null,
-    });
+    const { needsYou, indicator } = groupIndicator(
+      input.items,
+      team,
+      members.map((item) => ({ id: item.entry.assistant.id, mood: item.presence.mood })),
+    );
     return { team, members, needsYou, indicator };
   });
   const ungrouped = [...byKey].flatMap(([key, item]) => (claimed.has(key) ? [] : [item]));
@@ -365,6 +359,22 @@ export function countWaits(
       (scope.assistantKeys.has(owner.assistantKey) ||
         (scope.teamKey !== undefined && owner.teamKey === scope.teamKey)),
   ).length;
+}
+
+/** A group's waits and indicator, from the given members' statuses and the group's own threads. */
+function groupIndicator(
+  items: ReadonlyArray<{ readonly owner: ThreadOwner }>,
+  team: ZoneTeam,
+  members: ReadonlyArray<{ readonly id: string; readonly mood: AssistantMood }>,
+) {
+  const needsYou = countWaits(items, {
+    assistantKeys: new Set(members.map((member) => keyOf(team.environmentId, member.id))),
+    teamKey: keyOf(team.environmentId, team.team.id),
+  });
+  return {
+    needsYou,
+    indicator: folderIndicator({ needsYou, members, chat: team.team.chat ?? null }),
+  };
 }
 
 /** An assistant row's one indicator from its `assistantStatus` mood: waits on you, failed, held by a usage limit, or working. */
@@ -540,9 +550,38 @@ export function assistantStatus(input: {
   return presence;
 }
 
+/** A team as `assistantStatusOf` reads it: its members, its lead and its chat's waiting tabs. */
+export type StatusTeam = ZoneTeam & {
+  readonly team: ZoneTeam["team"] & { readonly leadId: string | null };
+};
+
+/**
+ * Group requests that wait on the user and belong to this assistant: the member the server names
+ * as the request's owner, else the group's lead (its routing and project questions). Each tab
+ * reports its oldest waiting request only.
+ */
+export function assistantTeamWaits(
+  teams: ReadonlyArray<StatusTeam>,
+  environmentId: string,
+  assistantId: string,
+): number {
+  let waits = 0;
+  for (const { environmentId: teamEnvironmentId, team } of teams) {
+    if (teamEnvironmentId !== environmentId) continue;
+    for (const scope of team.chat?.scopes ?? []) {
+      if (!scope.waiting) continue;
+      const owner = scope.waitingRequest?.assistantId ?? team.leadId;
+      if (owner === assistantId) waits += 1;
+    }
+  }
+  return waits;
+}
+
 /**
  * Every assistant's `assistantStatus` at once, from the shared state both clients hold: `items` is
- * the Needs you list, `read` adjusts a presence in hand, `of` reads an assistant from the shells.
+ * the Needs you list, `needsYou` counts an assistant's waits (listed ones and its groups' requests),
+ * `read` adjusts a presence in hand, `of` reads an assistant from the shells, `indicator` is its
+ * row's mark, and `group` is a group's indicator from the same member statuses.
  */
 export function assistantStatusOf<
   S extends ZoneShell & Parameters<typeof assistantPresenceOf>[2][number],
@@ -553,13 +592,18 @@ export function assistantStatusOf<
   readonly ownerOf: (shell: Pick<S, "environmentId" | "id">) => ThreadOwner;
   readonly sites: ReadonlyArray<AssistantWorkSite>;
   readonly reachable: (environmentId: string) => boolean | null;
+  /** Active teams; a request of theirs that waits on the user makes its owner need you. */
+  readonly teams: ReadonlyArray<StatusTeam>;
 }) {
-  const { shells, sites } = input;
+  const { shells, sites, teams } = input;
   const items = needsYouItems({ shells, decisions: input.decisions, ownerOf: input.ownerOf });
+  const needsYou = (environmentId: string, assistantId: string) =>
+    countWaits(items, { assistantKeys: new Set([keyOf(environmentId, assistantId)]) }) +
+    assistantTeamWaits(teams, environmentId, assistantId);
   const read = (environmentId: string, assistantId: string, presence: AssistantPresence) =>
     assistantStatus({
       presence,
-      needsYou: countWaits(items, { assistantKeys: new Set([keyOf(environmentId, assistantId)]) }),
+      needsYou: needsYou(environmentId, assistantId),
       sites: sites.filter(
         (site) => site.environmentId === environmentId && site.assistantId === assistantId,
       ),
@@ -578,5 +622,17 @@ export function assistantStatusOf<
           assistant.id,
           assistantPresenceOf(assistant, environmentId, shells, limitLabel),
         );
-  return { items, read, of };
+  /** An assistant row's indicator from a status `read` or `of` gave. */
+  const indicator = (environmentId: string, assistantId: string, status: AssistantPresence) =>
+    assistantIndicator({ needsYou: needsYou(environmentId, assistantId), mood: status.mood });
+  const group = (
+    team: ZoneTeam,
+    members: ReadonlyArray<{ readonly id: string; readonly threadId: string | null }>,
+  ) =>
+    groupIndicator(
+      items,
+      team,
+      members.map((member) => ({ id: member.id, mood: of(team.environmentId, member).mood })),
+    ).indicator;
+  return { items, needsYou, read, of, indicator, group };
 }

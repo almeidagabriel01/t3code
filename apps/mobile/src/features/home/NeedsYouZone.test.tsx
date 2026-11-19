@@ -107,6 +107,7 @@ vi.mock("../../state/assistants", async () => {
         ownerOf: ownership().ownerOf,
         sites: [],
         reachable: () => null,
+        teams: [],
       }),
   };
 });

@@ -5,6 +5,7 @@ import {
   assistantIndicator,
   assistantStatus,
   assistantStatusOf,
+  assistantTeamWaits,
   countWaits,
   folderAttention,
   folderIndicator,
@@ -18,6 +19,7 @@ import {
   zoneIndicatorLabel,
   type ZoneShell,
 } from "./sidebarZones.ts";
+import { rankAssistants } from "./assistantList.ts";
 
 const shell = (id: string, extra: Partial<ZoneShell> = {}): ZoneShell => ({
   environmentId: "e",
@@ -558,6 +560,7 @@ describe("assistantStatusOf", () => {
         },
       ] as never,
       reachable: () => reachable,
+      teams: [],
     });
 
   it("reads each assistant from its own waits and tasks", () => {
@@ -584,6 +587,7 @@ describe("assistantStatusOf", () => {
       ownerOf,
       sites: [],
       reachable: () => true,
+      teams: [],
     });
     expect(status.of("e", limited).detail).toBe("Usage limit");
     expect(status.of("e", limited, (resetAt) => `Limit until ${resetAt}`).detail).toBe(
@@ -597,6 +601,98 @@ describe("assistantStatusOf", () => {
       "This environment is disconnected",
       "This environment is disconnected",
     ]);
+  });
+});
+
+describe("a group request that waits on the user", () => {
+  const scope = (
+    waiting: boolean,
+    assistantId?: string | null,
+  ): Pick<AssistantTeamChatScope, "waiting" | "waitingRequest"> => ({
+    waiting,
+    ...(assistantId === undefined
+      ? {}
+      : {
+          waitingRequest: {
+            requestId: "r1",
+            title: "Fix the bug",
+            reason: "paused",
+            taskReason: "routing_failed",
+            assistantId: assistantId === null ? null : AssistantId.make(assistantId),
+          },
+        }),
+  });
+  const team = (scopes: ReadonlyArray<ReturnType<typeof scope>>, environmentId = "e") =>
+    ({
+      environmentId,
+      team: {
+        id: "dev",
+        leadId: "lead",
+        memberIds: ["lead", "qa"],
+        chat: { scopes, pausedTasks: 0, failedTasks: 0, unreadCount: 0 },
+      },
+    }) as never;
+  const idle = (id: string) =>
+    ({
+      ...shell(`assistant:${id}:1`),
+      title: id,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      pendingSubagentRequest: null,
+      pendingGuestMessageCount: 0,
+      queuedMessageCount: 0,
+      blockedOnThreadWait: false,
+      latestRun: null,
+      runtime: null,
+      source: { latestVisibleMessage: null },
+    }) as never;
+  const lead = { id: "lead", name: "lead", threadId: "assistant:lead:1" };
+  const qa = { id: "qa", name: "qa", threadId: "assistant:qa:1" };
+
+  it.each([
+    ["the lead's routing question (no owner named)", [scope(true, null)], "needs", "idle", 1, "e"],
+    ["an older server without the request", [scope(true)], "needs", "idle", 1, "e"],
+    ["the member the server names", [scope(true, "qa")], "idle", "needs", 1, "e"],
+    [
+      "two tabs waiting on the lead",
+      [scope(true, null), scope(true, "lead")],
+      "needs",
+      "idle",
+      1,
+      "e",
+    ],
+    ["a tab that no longer waits", [scope(false, "lead")], "idle", "idle", 0, "e"],
+    ["a group in another environment", [scope(true, null)], "idle", "idle", 1, "other"],
+  ] as const)("%s", (_name, scopes, leadMood, qaMood, groupNeeds, environmentId) => {
+    const teams = [team(scopes, environmentId)];
+    const status = assistantStatusOf({
+      shells: [idle("lead"), idle("qa")],
+      decisions: [],
+      ownerOf: () => ({ kind: "project" }),
+      sites: [],
+      reachable: () => true,
+      teams,
+    });
+    expect([status.of("e", lead).mood, status.of("e", qa).mood]).toEqual([leadMood, qaMood]);
+    if (leadMood === "needs") expect(status.of("e", lead).detail).toBe("Needs you");
+    // The row's count and its place in the list read the same answer as its label.
+    expect(status.needsYou("e", "lead") > 0).toBe(leadMood === "needs");
+    const ranked = rankAssistants(
+      [qa, lead].map((assistant) => ({ environmentId: "e", assistant })),
+      [idle("lead"), idle("qa")],
+      (entry, presence) => status.read(entry.environmentId, entry.assistant.id, presence),
+    );
+    if (leadMood === "needs") expect(ranked[0]!.entry.assistant.id).toBe("lead");
+    expect(status.group(teams[0]!, [lead, qa])?.kind === "needs").toBe(groupNeeds > 0);
+  });
+
+  it("counts one wait per waiting tab it owns", () => {
+    const teams = [team([scope(true, null), scope(true, "lead"), scope(true, "qa")])];
+    expect([
+      assistantTeamWaits(teams, "e", "lead"),
+      assistantTeamWaits(teams, "e", "qa"),
+      assistantTeamWaits(teams, "other", "lead"),
+    ]).toEqual([2, 1, 0]);
   });
 });
 

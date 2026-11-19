@@ -2,9 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { rankAssistants } from "@t3tools/client-runtime/assistantList";
 import { environmentReachable } from "@t3tools/client-runtime/connection";
 import {
-  assistantIndicator,
   assistantStatusOf,
-  countWaits,
   teamsLayout,
   threadOwnerResolver,
   type ZoneIndicator,
@@ -61,6 +59,7 @@ export function useAssistantStatus() {
     sites,
     reachable: (environmentId) =>
       environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
+    teams: activeTeams,
   });
   return { shells, active, activeTeams, ownerOf, ...status };
 }
@@ -70,7 +69,15 @@ export function useAssistantStatus() {
  * thread, and the Teams layout with its indicators. Every zone and count reads this one result.
  */
 export function useSidebarZones() {
-  const { shells, active, activeTeams, ownerOf, items, read } = useAssistantStatus();
+  const {
+    shells,
+    active,
+    activeTeams,
+    ownerOf,
+    items,
+    read,
+    indicator: indicatorOf,
+  } = useAssistantStatus();
   const ranked = rankAssistants(active, shells, (entry, presence) =>
     read(entry.environmentId, entry.assistant.id, presence),
   );
@@ -78,13 +85,7 @@ export function useSidebarZones() {
   const assistantIndicators = new Map<string, ZoneIndicator | null>();
   for (const { entry, presence } of ranked) {
     const key = `${entry.environmentId}:${entry.assistant.id}`;
-    assistantIndicators.set(
-      key,
-      assistantIndicator({
-        needsYou: countWaits(items, { assistantKeys: new Set([key]) }),
-        mood: presence.mood,
-      }),
-    );
+    assistantIndicators.set(key, indicatorOf(entry.environmentId, entry.assistant.id, presence));
   }
   const folderIndicators = new Map(
     layout.folders.map(

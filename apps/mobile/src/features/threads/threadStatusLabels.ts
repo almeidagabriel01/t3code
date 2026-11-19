@@ -1,5 +1,3 @@
-import { ASSISTANT_GROUP_STATUS_LABEL } from "@t3tools/client-runtime/assistantGroupChat";
-import type { AssistantAttention } from "@t3tools/client-runtime/assistantList";
 import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import type { ThreadListV2Status } from "./threadListV2";
@@ -61,33 +59,3 @@ export const DONE_STATUS_LABEL: StatusLabel = {
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
-
-const WORKING_STATUS_LABEL: StatusLabel = { ...STATUS_LABEL_BY_STATUS.working!, label: "Working" };
-const DECISION_STATUS_LABEL: StatusLabel = {
-  label: "Decision",
-  icon: "questionmark.bubble",
-  className: "text-warning-foreground",
-  iconTintClassName: "accent-warning-foreground",
-};
-const PAUSED_STATUS_LABEL: StatusLabel = {
-  label: ASSISTANT_GROUP_STATUS_LABEL.paused,
-  icon: "pause",
-  className: "text-warning-foreground",
-  iconTintClassName: "accent-warning-foreground",
-};
-
-/** An assistant's or a group's status in a thread row's words; working keeps its word here. */
-export function assistantStatusLabel(attention: AssistantAttention): StatusLabel {
-  switch (attention) {
-    case "decision":
-      return DECISION_STATUS_LABEL;
-    case "paused":
-      return PAUSED_STATUS_LABEL;
-    case "working":
-      return WORKING_STATUS_LABEL;
-    case "done":
-      return DONE_STATUS_LABEL;
-    default:
-      return STATUS_LABEL_BY_STATUS[attention]!;
-  }
-}
