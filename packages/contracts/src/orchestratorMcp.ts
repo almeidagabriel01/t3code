@@ -42,6 +42,7 @@ import {
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -209,6 +210,12 @@ const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
     "Model the provider reported running, or null when unavailable. Can differ from the requested `model`.",
 });
 
+/** Set when the call ran in a linked environment it did not name: follow-up tools need this id. */
+const OrchestratorMcpResolvedEnvironment = {
+  environmentId: Schema.optional(EnvironmentId),
+  environmentLabel: Schema.optional(Schema.String),
+};
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
@@ -249,8 +256,20 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  ...OrchestratorMcpResolvedEnvironment,
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
+
+export const OrchestratorMcpThreadLaunchResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  projectId: ProjectId,
+  modelSelection: ModelSelection,
+  runId: Schema.NullOr(RunId),
+  status: Schema.NullOr(OrchestrationV2RunStatus),
+  ...OrchestratorMcpResolvedEnvironment,
+});
+export type OrchestratorMcpThreadLaunchResult = typeof OrchestratorMcpThreadLaunchResult.Type;
 
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,

@@ -250,6 +250,13 @@ export const AssistantIntegrations = Schema.Union([
 export type AssistantIntegrations = typeof AssistantIntegrations.Type;
 export const DEFAULT_ASSISTANT_INTEGRATIONS: AssistantIntegrations = { mode: "all" };
 
+/** Where an assistant's or group's implicit launches run: this server, the least loaded, or a link. */
+export const AssistantEnvironmentPreference = Schema.Union([
+  Schema.Literals(["local", "auto"]),
+  EnvironmentId,
+]);
+export type AssistantEnvironmentPreference = typeof AssistantEnvironmentPreference.Type;
+
 export const Assistant = Schema.Struct({
   id: AssistantId,
   handle: AssistantHandle,
@@ -289,6 +296,8 @@ export const Assistant = Schema.Struct({
   ),
   /** The model its new work starts on when the project names none. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Where launches without an `environmentId` run; null inherits (Local). Absent from older servers. */
+  defaultEnvironment: Schema.optionalKey(Schema.NullOr(AssistantEnvironmentPreference)),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -463,6 +472,8 @@ export const AssistantTeam = Schema.Struct({
   memories: Schema.optionalKey(AssistantTeamMemories),
   /** The model a group request starts on, below the project's own default. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Wins over its members' own default in group threads; null inherits. Absent from older servers. */
+  defaultEnvironment: Schema.optionalKey(Schema.NullOr(AssistantEnvironmentPreference)),
   /** Absent from older servers, which have only `requests`. */
   conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Projects every member may work in, on top of its own; absent from older servers. */
@@ -608,6 +619,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   archived: Schema.optional(Schema.Boolean),
   /** Null clears it. Unlike `modelSelection`, it leaves the current conversation's model alone. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** Null clears it. Running work stays where it is. */
+  defaultEnvironment: Schema.optional(Schema.NullOr(AssistantEnvironmentPreference)),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
 
@@ -787,6 +800,8 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   memories: Schema.optional(AssistantTeamMemories),
   /** Null clears it. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** Null clears it. */
+  defaultEnvironment: Schema.optional(Schema.NullOr(AssistantEnvironmentPreference)),
   conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Replaces the group's projects; the two lists below then apply to it, removals last. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
