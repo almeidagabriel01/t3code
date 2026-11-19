@@ -387,6 +387,24 @@ describe("t3 heavy", () => {
     expect(await nested.exited).toBe(0);
   });
 
+  // A signal sent to `t3 heavy` alone reached only it: `vp run dev` left its server and Vite.
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "a direct run passes %s to its program",
+    async (signal) => {
+      const dir = tempDir();
+      Queue.setEnabled(dir, false);
+      const run = heavy(dir, [
+        process.execPath,
+        "-e",
+        `process.on(${JSON.stringify(signal)},()=>{console.log("got");process.exit(3)});console.log("ready");setInterval(()=>{},1000)`,
+      ]);
+      await run.until("out", "ready");
+      run.child.kill(signal);
+      expect(await run.exited).toBe(3);
+      expect(run.stdout()).toContain("got");
+    },
+  );
+
   it("queue off runs direct with the Runner off, and tracks an ungated job with it on", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "m");

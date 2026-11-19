@@ -684,13 +684,21 @@ const runHook = async (dir: string) => {
 const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
   new Promise<number>((resolve) => {
     const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
+    // A signal sent to this process alone (not the terminal's group) must reach the program, or
+    // it outlives us: `vp run dev` left its server and Vite running.
+    const forward = (signal: NodeJS.Signals) => child.kill(signal);
+    for (const signal of SIGNALS) process.on(signal, forward);
+    const done = (code: number) => {
+      for (const signal of SIGNALS) process.off(signal, forward);
+      resolve(code);
+    };
     child.on("error", (error) => {
       process.stderr.write(
         `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
       );
-      resolve(127);
+      done(127);
     });
-    child.on("exit", (code, signal) => resolve(exitCodeOf(code, signal)));
+    child.on("exit", (code, signal) => done(exitCodeOf(code, signal)));
   });
 
 const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
@@ -869,6 +877,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     );
     if (start === null) {
       // Its parent holds this Mac: run it under that slot rather than wait for a second one.
+      onSignal = () => {};
       runDirect(launch.program, launch.args, { ...environment, [HEAVY_JOB_ENV]: "1" });
       return;
     }
