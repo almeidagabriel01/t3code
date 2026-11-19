@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -59,6 +60,8 @@ interface Setup {
   readonly projects?: Partial<Record<EnvironmentId, ProjectId | "scratch">>;
   readonly load?: Ref.Ref<Partial<Record<EnvironmentId, number>>>;
   readonly sql?: Option.Option<SqlClient.SqlClient>;
+  /** A link that never answers. */
+  readonly silent?: EnvironmentId;
 }
 
 const depsOf = (setup: Setup): RoutingDeps => {
@@ -128,6 +131,7 @@ const depsOf = (setup: Setup): RoutingDeps => {
     } as never),
     remoteDelegation: Option.some({
       remoteProject: (_scope: unknown, id: EnvironmentId, projectId: ProjectId | undefined) => {
+        if (id === setup.silent) return Effect.never;
         // The assistant's home project has no repository, so it maps to Scratch there.
         const there =
           setup.projects?.[id] ??
@@ -330,6 +334,18 @@ it.effect("auto: an expired link or one without the project is never a candidate
         { projectId: ProjectId.make("project-repo") },
       ),
     ).toBe("here");
+  }),
+);
+
+it.effect("auto: a link that does not answer within 3 s is left out", () =>
+  Effect.gen(function* () {
+    const load = yield* Ref.make<Partial<Record<EnvironmentId, number>>>({
+      [here]: 0.9,
+      [peer]: 0.1,
+    });
+    const fiber = yield* Effect.forkChild(outcome({ assistant: "auto", load, silent: peer }));
+    yield* TestClock.adjust("3 seconds");
+    expect(yield* Fiber.join(fiber)).toBe("here");
   }),
 );
 

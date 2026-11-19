@@ -11,7 +11,8 @@ import type * as PeerForwarding from "../peer/PeerForwarding.ts";
 import type * as HostResources from "../resourceTelemetry/HostResources.ts";
 
 const SNAPSHOT_TTL_MS = 15_000;
-const REMOTE_TIMEOUT = Duration.seconds(3);
+/** How long Auto waits on one linked environment before leaving it out. */
+export const REMOTE_TIMEOUT = Duration.seconds(3);
 /** Server settings carry no per-environment weights, so every candidate weighs the same. */
 const WEIGHT = 50;
 

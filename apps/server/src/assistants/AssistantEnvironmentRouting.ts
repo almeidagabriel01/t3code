@@ -16,7 +16,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as HostResources from "../resourceTelemetry/HostResources.ts";
 import { AssistantDirectory } from "./AssistantDirectory.ts";
-import { pickLeastLoaded, type SnapshotCache } from "./AutoEnvironmentPicker.ts";
+import { pickLeastLoaded, REMOTE_TIMEOUT, type SnapshotCache } from "./AutoEnvironmentPicker.ts";
 
 const RECEIPT_TTL_HOURS = 24;
 
@@ -135,6 +135,7 @@ export const resolveLaunchEnvironment = Effect.fn("AssistantEnvironmentRouting.r
     stored.filter((link) => DateTime.isGreaterThan(link.expiresAt, now)),
     (link) =>
       remoteDelegation.value.remoteProject(scope, link.environmentId, localProject).pipe(
+        Effect.timeout(REMOTE_TIMEOUT),
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       ),
