@@ -105,6 +105,7 @@ export function createSidebarSortingStrategy(input: {
   snoozedThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
+  /** In screen pixels: row heights vary with density, so they cannot tell the label's scale. */
   boundaryLabelHeight?: number;
 }): SidebarSortingStrategy {
   if (input.enabled === false) return Object.assign(() => stationary, { overflow: () => 0 });
@@ -147,7 +148,7 @@ export function createSidebarSortingStrategy(input: {
       slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
-    const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
+    const labelHeight = input.boundaryLabelHeight ?? 0;
     const group = groups[target.section];
     const order =
       target.section === "pinned"
