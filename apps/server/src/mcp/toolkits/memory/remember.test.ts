@@ -215,6 +215,50 @@ it.effect("forgetting a memory the thread saw leaves its explicit remembers acti
   }).pipe(Effect.provide(Fixture.layer)),
 );
 
+it.effect("repair re-saves remembers that inherited lineage, once, and reports purged bodies", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* MemoryService.MemoryService;
+    const seen = yield* readIntoLineage(930);
+    const saved = yield* Fixture.call(
+      "memory_remember",
+      { text: "We deploy on Fridays", scope: "project" },
+      caller,
+    );
+    const { memoryId } = yield* decodeReceipt(saved.body);
+    // What a remember saved before explicit writes stopped inheriting the read lineage.
+    yield* sql`UPDATE memory_payloads SET body_json=json_set(body_json,'$.derivedFromMemoryRevisions',json_array(${seen.revision})),dependencies_json=json_array(${seen.revision}) WHERE memory_id=${memoryId}`;
+    const derived = M.MemoryId.make(Fixture.id(935));
+    yield* service.upsert(
+      {
+        ...Fixture.upsert(936),
+        memoryId: derived,
+        payload: { text: "derived", evidence: [], derivedFromMemoryRevisions: [seen.revision] },
+      },
+      Effect.void,
+    );
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [memoryId],
+      skipped: [],
+    });
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [],
+      skipped: [],
+    });
+    yield* forgetSeen(seen, 932);
+    const read = yield* Fixture.call("memory_read", { memorySpaceId: Fixture.space, memoryId });
+    expect(read.body).toMatchObject({
+      status: "active",
+      payload: { text: "We deploy on Fridays" },
+    });
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [],
+      skipped: [{ memoryId: derived, reason: "body_purged" }],
+    });
+  }).pipe(Effect.provide(Fixture.layer)),
+);
+
 const threadCaller = (
   threadId: string,
   capabilities: ReadonlyArray<"memory" | "orchestration">,

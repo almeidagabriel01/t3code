@@ -50,6 +50,13 @@ export type MemoryServiceError =
   | Store.MemoryStoreConflict
   | Store.MemoryCapacityError;
 type Permit = Effect.Effect<void, MemoryAccessError>;
+export interface RememberLineageRepair {
+  readonly repaired: ReadonlyArray<M.MemoryId>;
+  readonly skipped: ReadonlyArray<{
+    readonly memoryId: M.MemoryId;
+    readonly reason: "body_purged";
+  }>;
+}
 export type IntentBinding = {
   memorySpaceId: M.MemorySpaceId | null;
   coordinatorEpoch: number;
@@ -186,6 +193,15 @@ export class MemoryService extends Context.Service<
       permit: Permit,
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<Store.StoredReceipt, MemoryServiceError | MemoryRememberScopeUnavailable>;
+    /**
+     * Rewrites, as a new clean revision, each active memory whose head is an explicit agent write
+     * that inherited its thread's read lineage before explicit writes stopped doing so. Bodies a
+     * forget cascade already purged cannot come back; they are reported as `body_purged`.
+     */
+    readonly repairRememberLineage: (
+      space: M.MemorySpaceId,
+      permit: Permit,
+    ) => Effect.Effect<RememberLineageRepair, MemoryServiceError>;
     readonly recall: (
       input: M.MemoryRecallInput & {
         readonly memorySpaceId: M.MemorySpaceId;
@@ -1148,16 +1164,6 @@ const make = Effect.fnUntraced(function* (
     thread && thread.environmentId !== environmentId
       ? Effect.fail(new MemoryAccessError({ code: "identity_mismatch" }))
       : Effect.void;
-  const requireCompleteLineage = Effect.fn("MemoryService.requireCompleteLineage")(function* (
-    space: M.MemorySpaceId,
-    thread?: M.ScopedThreadRef,
-  ) {
-    yield* requireCaller(thread);
-    const lineage = thread ? yield* store.readThreadLineage(thread, space) : undefined;
-    if (lineage && lineage.state !== "tracked")
-      return yield* new Store.MemoryStoreConflict({ code: "thread_lineage_incomplete" });
-    return lineage;
-  });
   // Called inside the response's writer transaction. Only returned bodies count;
   // one append per call, even for history/search pages with multiple revisions.
   const consume = Effect.fn("MemoryService.consume")(function* (
@@ -1233,30 +1239,14 @@ const make = Effect.fnUntraced(function* (
           return { operationDigest: prior.operationDigest, receipt };
         }
         yield* requireScope(value.scope);
-        const lineage = yield* requireCompleteLineage(value.memorySpaceId, sourceThread);
         const revisionId = M.MemoryRevisionId.make(
           memoryStableUuid(`${value.memorySpaceId}:${value.operationId}:revision`),
         );
-        let payload: M.MemoryPayload = yield* normalizeMemoryDependencies(
-          value.memorySpaceId,
-          value.payload,
-        ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
-        if (lineage) {
-          payload = yield* decode(
-            decodeSummaryPayload(
-              {
-                ...payload,
-                derivedFromMemoryRevisions: [
-                  ...new Set([...payload.derivedFromMemoryRevisions, ...lineage.revisions]),
-                ],
-              },
-              strict,
-            ),
-          );
-          yield* validateSummaryDependencies(value.memorySpaceId, payload).pipe(
-            Effect.provideService(SqlClient.SqlClient, sql),
-          );
-        }
+        // An agent's explicit write states its own dependencies; it never inherits the thread's
+        // read lineage, which only automatic summaries carry (MemoryWorker).
+        const payload = yield* normalizeMemoryDependencies(value.memorySpaceId, value.payload).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         const op: M.MemoryOperation = {
           protocolVersion: 1,
           kind: "upsert",
@@ -1606,7 +1596,6 @@ const make = Effect.fnUntraced(function* (
           });
           return { ...result, status: "pending" as const };
         }
-        yield* requireCompleteLineage(value.memorySpaceId, sourceThread);
         if (current.tombstone || current.pendingForget) return yield* refuse("forgotten");
         if (
           current.heads.length !== 1 ||
@@ -1921,6 +1910,87 @@ const make = Effect.fnUntraced(function* (
     resolveProjectKey,
     upsert,
     stableUuid: memoryStableUuid,
+  });
+  const repairRememberLineage = Effect.fn("MemoryService.repairRememberLineage")(function* (
+    space: M.MemorySpaceId,
+    permit: Permit,
+  ) {
+    yield* permit;
+    yield* requireSharing(space);
+    const candidates = yield* query(sql<{ memory_id: string; revision_id: string }>`
+      SELECT r.memory_id,r.revision_id FROM memory_payloads p
+      JOIN memory_revisions r ON r.space=p.space AND r.payload_ref=p.payload_ref AND r.memory_id=p.memory_id
+      JOIN memory_items i ON i.space=r.space AND i.memory_id=r.memory_id
+      WHERE p.space=${space} AND i.status='active' AND json_array_length(p.dependencies_json)>0
+      ORDER BY r.memory_id,r.revision_id`);
+    // Read every candidate before writing any, so a failure mid-way leaves nothing half done.
+    const fixes: Array<{ payloadRef: string; resave?: M.MemoryUpsertInput }> = [];
+    for (const row of candidates) {
+      const revisionId = M.MemoryRevisionId.make(row.revision_id);
+      const current = yield* store.loadAggregate(space, M.MemoryId.make(row.memory_id), {
+        revisionIds: [revisionId],
+      });
+      const pair = current.revisions.find((p) => p.revision.revisionId === revisionId);
+      const thread = pair?.payload?.evidence.find((e) => e.origin === "thread")?.sourceThread;
+      if (!pair?.payload || !thread) continue;
+      const { revision, payload } = pair;
+      const explicit: M.MemoryUpsertInput = {
+        memorySpaceId: space,
+        operationId: revision.operationId,
+        memoryId: revision.memoryId,
+        expectedHeads: revision.parents,
+        scope: revision.scope,
+        assertionKind: revision.assertionKind,
+        payload: { ...payload, derivedFromMemoryRevisions: [] },
+        baseBoundary: null,
+      };
+      // Only a request that named no dependencies hashes to the stored digest: every edge it
+      // carries came from the thread's lineage, so dropping them restores what the agent asked.
+      const digest = hash(yield* decode(encodeUpsertRequest({ input: explicit, caller: thread })));
+      if (revision.provenance.upsertRequestDigest !== digest) continue;
+      const isHead = current.heads.length === 1 && current.heads[0] === revisionId;
+      fixes.push({
+        payloadRef: revision.payloadRef,
+        ...(isHead
+          ? {
+              resave: {
+                ...explicit,
+                operationId: M.MemoryOperationId.make(
+                  memoryStableUuid(`repair-remember-lineage:${space}:${revisionId}`),
+                ),
+                expectedHeads: [revisionId],
+              },
+            }
+          : {}),
+      });
+    }
+    const repaired: M.MemoryId[] = [];
+    for (const fix of fixes)
+      yield* store.transact(
+        Effect.gen(function* () {
+          // The body keeps its synced dependency list; the local cascade index stops following it.
+          yield* query(
+            sql`UPDATE memory_payloads SET dependencies_json='[]' WHERE space=${space} AND payload_ref=${fix.payloadRef}`,
+          );
+          if (fix.resave) {
+            yield* upsert(fix.resave, permit);
+            repaired.push(fix.resave.memoryId);
+          }
+        }),
+      );
+    const purged = yield* query(sql<{ memory_id: string }>`
+      SELECT i.memory_id FROM memory_items i
+      WHERE i.space=${space} AND (i.status='blocked'
+        AND EXISTS (SELECT 1 FROM json_each(i.availability_json,'$.reasons') r WHERE r.value='dependency_invalidated')
+        OR i.status='active' AND NOT EXISTS (SELECT 1 FROM memory_payloads p WHERE p.space=i.space AND p.payload_ref=i.payload_ref))
+      ORDER BY i.memory_id`);
+    return {
+      repaired,
+      skipped: purged.map((row) => ({
+        memoryId: M.MemoryId.make(row.memory_id),
+        reason: "body_purged" as const,
+      })),
+    };
   });
   const recall = makeRecall({ sql, environmentId, resolveProjectKey, search });
   const commitSummary = makeCommitSummary({
@@ -2747,6 +2817,7 @@ const make = Effect.fnUntraced(function* (
     changes,
     upsert,
     remember,
+    repairRememberLineage,
     recall,
     forget,
     retryForgetExpansion,
