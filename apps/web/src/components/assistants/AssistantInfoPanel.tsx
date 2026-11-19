@@ -579,6 +579,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
         <AssistantEnvironmentField
           environmentId={environmentId}
           value={team.defaultEnvironment}
+          group
           disabled={archived || !flows.canAct}
           onChange={(next) => void flows.setDefaultEnvironment(team, next)}
         />

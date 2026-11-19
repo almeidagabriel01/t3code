@@ -156,7 +156,7 @@ describe("group projects", () => {
     );
     openAssistantGroupSettings({ environmentId: "env" as never, teamId: "t1" as never });
     const trigger = page.getByRole("combobox", { name: "Default environment" });
-    await expect.element(trigger).toHaveTextContent("Local");
+    await expect.element(trigger).toHaveTextContent("Members' defaults");
     await userEvent.click(trigger);
     await userEvent.click(page.getByRole("option", { name: /Auto/ }));
     await userEvent.click(page.getByRole("button", { name: "Save" }));

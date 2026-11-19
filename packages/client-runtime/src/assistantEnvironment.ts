@@ -16,14 +16,17 @@ export interface AssistantEnvironmentLink {
   readonly status: PeerLinkStatus;
 }
 
+/** A group's picker adds "members": no default of its own, so each member's applies. */
+export type AssistantEnvironmentPick = AssistantEnvironmentPreference | "members";
+
 export interface AssistantEnvironmentOption {
-  readonly value: AssistantEnvironmentPreference;
+  readonly value: AssistantEnvironmentPick;
   readonly label: string;
   readonly detail: string | null;
 }
 
 export interface AssistantEnvironmentChoice {
-  readonly selected: AssistantEnvironmentPreference;
+  readonly selected: AssistantEnvironmentPick;
   /** The trigger's text; differs from the selected option's label only while it is disabled. */
   readonly display: string;
   readonly options: ReadonlyArray<AssistantEnvironmentOption>;
@@ -35,6 +38,11 @@ const LOCAL: AssistantEnvironmentOption = {
   value: "local",
   label: "Local",
   detail: "The server this chat runs on",
+};
+const MEMBERS: AssistantEnvironmentOption = {
+  value: "members",
+  label: "Members' defaults",
+  detail: "Each member's own default environment",
 };
 const AUTO: AssistantEnvironmentOption = {
   value: "auto",
@@ -56,9 +64,18 @@ export function assistantEnvironmentChoice(input: {
   /** Assistants only; a group has neither. */
   readonly workspace?: AssistantWorkspace;
   readonly scope?: AssistantScope;
+  readonly group?: boolean;
 }): AssistantEnvironmentChoice {
-  const stored =
-    input.value == null || input.value === input.serverEnvironmentId ? "local" : input.value;
+  const group = input.group === true;
+  const stored: AssistantEnvironmentPick =
+    input.value == null
+      ? group
+        ? "members"
+        : "local"
+      : input.value === input.serverEnvironmentId
+        ? "local"
+        : input.value;
+  const base = group ? [MEMBERS, LOCAL] : [LOCAL];
   if (input.workspace === "sandbox") {
     return {
       selected: "local",
@@ -76,10 +93,11 @@ export function assistantEnvironmentChoice(input: {
     };
   }
   if (!input.linksOffered) {
+    const selected = stored === "members" ? "members" : "local";
     return {
-      selected: "local",
-      display: LOCAL.label,
-      options: [LOCAL],
+      selected,
+      display: (selected === "members" ? MEMBERS : LOCAL).label,
+      options: base,
       disabledReason: "Turn on Linked environments in Settings to pick another machine.",
     };
   }
@@ -91,7 +109,7 @@ export function assistantEnvironmentChoice(input: {
       label: link.label,
       detail: link.status === "unreachable" ? "Not answering now" : null,
     }));
-  const options = [LOCAL, ...linkOptions, AUTO];
+  const options = [...base, ...linkOptions, AUTO];
   let current = options.find((option) => option.value === stored);
   if (current === undefined) {
     const expired = links.find((link) => link.environmentId === stored);
@@ -110,7 +128,12 @@ export function assistantEnvironmentChoice(input: {
   return { selected: stored, display: current.label, options, disabledReason: null };
 }
 
-/** What picking `value` writes: Local clears the stored default, since unset already means Local. */
+/**
+ * What picking `value` writes. An assistant's Local clears it, since unset already means Local;
+ * a group's Local is kept, since unset there means its members' own defaults.
+ */
 export const assistantEnvironmentInput = (
-  value: AssistantEnvironmentPreference,
-): AssistantEnvironmentPreference | null => (value === "local" ? null : value);
+  value: AssistantEnvironmentPick,
+  group = false,
+): AssistantEnvironmentPreference | null =>
+  value === "members" || (value === "local" && !group) ? null : value;

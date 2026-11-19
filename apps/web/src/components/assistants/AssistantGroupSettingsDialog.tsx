@@ -347,6 +347,7 @@ function SettingsForm(props: {
               value={
                 defaultEnvironment === undefined ? team.defaultEnvironment : defaultEnvironment
               }
+              group
               disabled={busy || !teamActions.canAct}
               onChange={setDefaultEnvironment}
             />

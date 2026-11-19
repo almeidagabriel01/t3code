@@ -4,6 +4,7 @@ import {
   ASSISTANT_DEFAULT_ENVIRONMENT_LABEL,
   assistantEnvironmentChoice,
   assistantEnvironmentInput,
+  type AssistantEnvironmentPick,
 } from "@t3tools/client-runtime/assistantEnvironment";
 import type {
   AssistantEnvironmentPreference,
@@ -28,6 +29,8 @@ export function AssistantEnvironmentField(props: {
   readonly value: AssistantEnvironmentPreference | null | undefined;
   readonly workspace?: AssistantWorkspace;
   readonly scope?: AssistantScope;
+  /** A group's picker, where unset means each member's own default. */
+  readonly group?: boolean;
   readonly disabled?: boolean;
   readonly onChange: (value: AssistantEnvironmentPreference | null) => void;
 }) {
@@ -51,6 +54,7 @@ export function AssistantEnvironmentField(props: {
       })) ?? null,
     ...(props.workspace === undefined ? {} : { workspace: props.workspace }),
     ...(props.scope === undefined ? {} : { scope: props.scope }),
+    ...(props.group === true ? { group: true } : {}),
   });
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -58,12 +62,12 @@ export function AssistantEnvironmentField(props: {
         <Label htmlFor={id}>{ASSISTANT_DEFAULT_ENVIRONMENT_LABEL}</Label>
         <p className="text-xs text-muted-foreground">{ASSISTANT_DEFAULT_ENVIRONMENT_DESCRIPTION}</p>
       </div>
-      <Select<AssistantEnvironmentPreference>
+      <Select<AssistantEnvironmentPick>
         value={choice.selected}
         disabled={props.disabled === true || choice.disabledReason !== null}
         onValueChange={(next) => {
           if (next !== null && next !== choice.selected) {
-            props.onChange(assistantEnvironmentInput(next));
+            props.onChange(assistantEnvironmentInput(next, props.group === true));
           }
         }}
       >

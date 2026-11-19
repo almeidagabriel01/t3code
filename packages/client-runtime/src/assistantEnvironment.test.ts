@@ -80,6 +80,24 @@ describe("assistantEnvironmentChoice", () => {
       expected: { selected: "local", display: "Local", options: ["Local", "Auto"] },
     },
     {
+      name: "a group with no default of its own follows its members",
+      input: { value: null, links: [devbox], group: true },
+      expected: {
+        selected: "members",
+        display: "Members' defaults",
+        options: ["Members' defaults", "Local", "devbox", "Auto"],
+      },
+    },
+    {
+      name: "a group's Local is its own choice",
+      input: { value: "local" as const, links: [devbox], group: true },
+      expected: {
+        selected: "local",
+        display: "Local",
+        options: ["Members' defaults", "Local", "devbox", "Auto"],
+      },
+    },
+    {
       name: "while links load a stored link is not called unavailable",
       input: { value: devbox.environmentId, links: null },
       expected: {
@@ -98,7 +116,10 @@ describe("assistantEnvironmentChoice", () => {
       selected: choice.selected,
       display: choice.display,
       options: choice.options.map((option) =>
-        option.value === "local" || option.value === "auto" || option.detail === null
+        option.value === "local" ||
+        option.value === "auto" ||
+        option.value === "members" ||
+        option.detail === null
           ? option.label
           : `${option.label} (${option.detail})`,
       ),
@@ -141,10 +162,13 @@ describe("assistantEnvironmentChoice", () => {
 
 describe("assistantEnvironmentInput", () => {
   it.each([
-    { value: "local" as const, expected: null },
-    { value: "auto" as const, expected: "auto" },
-    { value: devbox.environmentId, expected: devbox.environmentId },
-  ])("$value writes $expected", ({ value, expected }) => {
-    expect(assistantEnvironmentInput(value)).toBe(expected);
+    { value: "local" as const, group: false, expected: null },
+    { value: "auto" as const, group: false, expected: "auto" },
+    { value: devbox.environmentId, group: false, expected: devbox.environmentId },
+    // Unset in a group means its members' defaults, so its Local is stored.
+    { value: "local" as const, group: true, expected: "local" },
+    { value: "members" as const, group: true, expected: null },
+  ])("$value (group: $group) writes $expected", ({ value, group, expected }) => {
+    expect(assistantEnvironmentInput(value, group)).toBe(expected);
   });
 });
