@@ -89,7 +89,7 @@ const make = Effect.fn("HeavyQueueNotices.make")(function* (dir: string) {
           ? null
           : hold === "job-memory" || hold === "job-cpu"
             ? "the job needs more than is free"
-            : heavyHoldText(hold, fresh ? doc.sample : null, doc.maxRunning),
+            : heavyHoldText(hold, fresh ? doc.sample : null, doc.maxRunning, doc.quickSlots),
       linuxOver: plan.linuxOver,
       usualMs: (entry, runner) => QueueFile.usualMs(doc, entry, runner),
       now,

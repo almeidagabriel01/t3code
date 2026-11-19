@@ -728,7 +728,8 @@ function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId |
   const queue = useHeavyQueue(environmentId);
   // Switched off, a pause holds nothing back, so it is not worth a warning.
   const paused = queue.paused && queue.enabled;
-  const count = queue.entries.length;
+  // An orphan holds no place in line, as the CLI's positions count it.
+  const count = queue.entries.filter((entry) => entry.orphanedAt === undefined).length;
   return count === 0 && !paused ? null : (
     <>
       <span className="text-muted-foreground/50">·</span>

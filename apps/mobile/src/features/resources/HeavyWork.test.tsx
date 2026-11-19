@@ -354,6 +354,11 @@ describe("HeavyWorkSection", () => {
         rules: [{ root: "/work/app", priority: "first" }],
         reasons: { b: "letting the last one ramp up" },
         estimates: { c: { cpu: 2, memoryBytes: GIB, durationMs: 60_000 } },
+        // A running row has no place in line, so its stale order never shows.
+        order: {
+          a: { code: "light", text: "light: ahead" },
+          b: { code: "pinned", text: "kept where it was moved" },
+        },
       },
     );
     const view = await mount();
@@ -380,7 +385,7 @@ describe("HeavyWorkSection", () => {
       ].join(""),
     );
     expect(await expand(view.host, "cmd b")).toContain(
-      "Waiting1st in line · 1mPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
+      "Waiting1st in line · 1mOrderkept where it was movedPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
     );
     expect(await expand(view.host, "cmd c")).toContain(
       "Waits forThis MacRun folder~/runs/r9Waiting2nd in line · 1m",
@@ -746,6 +751,40 @@ describe("HeavyWorkSection", () => {
     });
     await view.unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("labels rows with their class and keeps a stopped agent's place with Stop", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) + 3 * 60_000 });
+    setup(
+      [entry("r", { startedAt: NOW }), entry("w"), entry("o", { orphanedAt: Date.parse(NOW) })],
+      {
+        reasons: { w: "all 3 slots busy" },
+        costs: {
+          r: { class: "quick", why: "usually 4 s" },
+          w: { class: "standard", why: "first run" },
+          o: { class: "service", why: "dev server" },
+        },
+      },
+    );
+    const view = await mount();
+    const text = view.host.textContent ?? "";
+    expect(text).toMatch(/Quick · .*Job · 1st · .*all 3 slots busy.*Keeps running · /s);
+    expect(text).toContain("Waiting for the agent to ask again · 7 min left");
+    // Only the waiter in line can start now; the orphan holds no place.
+    expect(view.host.textContent?.match(/Start now/g)).toHaveLength(1);
+    // Stops in order: the running row's menu, the orphan's menu, then the orphan's own Stop row.
+    const stops = [...view.host.querySelectorAll("button")].filter((b) => b.textContent === "Stop");
+    expect(stops).toHaveLength(3);
+    for (const [press, stop] of [1, 2].entries()) {
+      await act(async () => view.button("Stop", stop).click());
+      alertButtons(press).find((b) => b.text === "Remove")!.onPress!();
+    }
+    expect(mocks.commands.cancel).toHaveBeenCalledTimes(2);
+    expect(mocks.commands.cancel).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "o" },
+    });
+    await view.unmount();
   });
 
   // Built from askAnswers, as on the web: only where it may run, never a rerun before Linux confirms.

@@ -10,6 +10,8 @@ import {
   dropTarget,
   formatDuration,
   formatFreeMemory,
+  jobCost,
+  orphanLine,
   heavyCommandKey,
   heavyWork,
   jobPriority,
@@ -46,6 +48,8 @@ describe("jobPriority", () => {
     ["waiting agent job", { priority: "low" }, false, null, ["high-now"]],
     ["waiting user job", { priority: "normal" }, false, null, ["high-now"]],
     ["waiter already released", { priority: "high" }, false, null, []],
+    // The server refuses it: a stopped agent's place keeps its priority until the agent asks again.
+    ["orphaned waiter", { priority: "low", orphanedAt: 1 }, false, null, []],
     ["running agent job at normal QoS", { priority: "low", qos: "normal" }, true, null, ["lower"]],
     [
       "running job lowered",
@@ -96,6 +100,13 @@ describe("moveTarget and dropTarget", () => {
     ["zzz", "up", undefined],
   ] as const)("%s %s -> %s", (id, action, expected) => {
     expect(moveTarget(entries, id, action)).toBe(expected);
+  });
+
+  it("leaves an orphan out of the line: it never moves, and nothing lands next to it", () => {
+    const withOrphan = [...entries, { ...e("o"), orphanedAt: 0 }];
+    expect(moveTarget(withOrphan, "o", "next")).toBeUndefined();
+    expect(moveTarget(withOrphan, "d", "end")).toBeUndefined();
+    expect(dropTarget(withOrphan, "a", "o")).toBeUndefined();
   });
 
   it.each([
@@ -239,6 +250,23 @@ describe("summary and formatting", () => {
           : "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare",
     };
     expect(mac({ paused: hold === "paused", machine: reading, hold, reasons }).note).toBe(text);
+  });
+
+  // The plan's head skips these, so the hold and its reason belong to the waiter after them.
+  it.each([
+    ["an orphaned place", { orphanedAt: 1 }, {}],
+    ["a released waiter", { forced: true }, {}],
+    ["a service", {}, { costs: { top: { class: "service" as const, why: "dev server" } } }],
+  ] as const)("reads the next job's reason past %s at the top", (_name, top, over) => {
+    const text = "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare";
+    const note = mac({
+      entries: [e("r", true), { ...e("top"), ...top }, e("a")],
+      machine,
+      hold: "job-memory",
+      reasons: { a: text },
+      ...over,
+    }).note;
+    expect(note).toBe(`waiting: ${text}`);
   });
 
   it("names a limit without claiming anything waits when nothing does", () => {
@@ -495,6 +523,12 @@ describe("heavyWork", () => {
       expected: { mac: [], linux: ["l"], detached: [] },
     },
     {
+      name: "an orphan sits after every waiter, so their places stay as the queue counts them",
+      entries: [job("o", { orphanedAt: 1 }), job("w1"), job("w2")],
+      commands: [],
+      expected: { mac: ["w1", "w2", "o"], linux: [], detached: [] },
+    },
+    {
       name: "a queue command whose entry already finished shows nothing",
       entries: [],
       commands: [cmd({ source: "queue", entryId: "gone", pid: 32 })],
@@ -578,6 +612,39 @@ describe("macNoteGauge", () => {
   });
 });
 
+describe("jobCost and orphanLine", () => {
+  it.each([
+    ["quick", "staged files", "Quick"],
+    ["standard", "first run", "Job"],
+    ["service", "dev server", "Keeps running"],
+  ] as const)("names the %s class %s", (cls, why, label) => {
+    expect(jobCost({ costs: { a: { class: cls, why } } }, e("a"))).toEqual({
+      class: cls,
+      label,
+      why,
+    });
+  });
+
+  it("says nothing for a row the state has no class for", () => {
+    expect(jobCost({}, e("a"))).toBeNull();
+    expect(jobCost({ costs: {} }, e("a"))).toBeNull();
+  });
+
+  it.each([
+    { name: "a fresh orphan has the whole window", at: 0, expected: "10 min left" },
+    { name: "a part minute counts as one", at: 9 * 60_000 + 1, expected: "1 min left" },
+    { name: "a late read never says zero", at: 11 * 60_000, expected: "1 min left" },
+  ])("$name", ({ at, expected }) => {
+    expect(orphanLine({ ...e("o"), orphanedAt: 0 }, 10, at)).toBe(
+      `Waiting for the agent to ask again · ${expected}`,
+    );
+  });
+
+  it("leaves any other row alone", () => {
+    expect(orphanLine(e("w"), 10, 0)).toBeNull();
+  });
+});
+
 describe("machineBar", () => {
   const GiB = 1024 ** 3;
   const LINUX = {
@@ -637,6 +704,30 @@ describe("machineBar", () => {
     );
     expect(bar.mac.slots).toEqual({ running: 1, slots: 3, hint: "1 of 3 running on this Mac" });
     expect(bar.linux?.slots).toEqual({ running: 2, slots: 2, hint: "2 of 2 running on Linux" });
+  });
+
+  it("counts quick jobs apart from the job slots, and only while one runs", () => {
+    const costs = {
+      q: { class: "quick" as const, why: "usually 4 s" },
+      s: { class: "service" as const, why: "dev server" },
+      // A hooked commit runs in its own slot, not a quick one.
+      c: { class: "quick" as const, why: "staged files", commit: true },
+      cs: { class: "standard" as const, why: "staged files", commit: true },
+    };
+    const busy = state({
+      entries: [e("q", true), e("s", true), e("j", true), e("c", true), e("cs", true)],
+      costs,
+    });
+    const bar = machineBar(busy, null).mac;
+    expect(bar.slots).toMatchObject({ running: 1, slots: 3 });
+    // The section header's "Mac n/m" reads the same count.
+    expect(machineSummaries(busy).mac.running).toBe(1);
+    expect(bar.quick).toEqual({
+      running: 1,
+      slots: 2,
+      hint: "1 of 2 quick jobs running on this Mac",
+    });
+    expect(machineBar(state({ entries: [e("j", true)], costs }), null).mac.quick).toBeNull();
   });
 
   it("reads the Mac from the queue's sample, and the host only without one", () => {

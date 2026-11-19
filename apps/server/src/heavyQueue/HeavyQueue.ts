@@ -26,6 +26,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  costFor,
+  laneOf,
   estimate,
   hasHeadroom,
   learnedCpu,
@@ -38,9 +40,12 @@ import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 import * as RouteMemory from "./routeMemory.ts";
+import { whenLockFree } from "./whenLockFree.ts";
 import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
+/** A release finalizer can't wait forever, but a slow owner must not leave a server entry behind. */
+const REMOVE_LOCK_WAIT_MS = 10_000;
 const STREAM_INTERVAL = "2 seconds";
 
 const failure = (reason: HeavyQueueError["reason"], message: string) =>
@@ -216,9 +221,12 @@ export const bashHook =
   (prefix: string, dir: string = QueueFile.defaultQueueDir()) =>
   (hookInput: unknown) =>
     // readDoc never throws: a missing or corrupt file reads as an empty queue that is on.
-    QueueFile.answerBashCall(dir, hookInput, prefix);
+    QueueFile.answerBashCall(dir, hookInput, prefix, {}, true);
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
+  // A stuck lock owner must not block this server's event loop: one try, then async retries.
+  const lockWait = QueueFile.boundLockWait(0);
+  yield* Effect.addFinalizer(() => Effect.sync(() => QueueFile.boundLockWait(lockWait)));
   const command = `${yield* queuePrefix(dir)} --`;
   const hookCommand = yield* queuePrefix(dir, ["hook"]);
   const settingsPath =
@@ -266,6 +274,18 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
     const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = doc;
     const { historyCommands, headPatienceMinutes } = doc;
+    const { quickSeconds, quickSlots, serviceIdleMinutes, reclaimMinutes } = doc;
+    // The class admission itself uses, with the same inputs and clock.
+    const costs = Object.fromEntries(
+      entries.map((entry) => {
+        const input = { ...doc, now };
+        const cost = costFor(input, entry);
+        return [
+          entry.id,
+          laneOf(input, entry) === "commit" ? { ...cost, commit: true } : cost,
+        ] as const;
+      }),
+    );
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
@@ -288,9 +308,17 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         };
       }
     }
+    // Waiters in the order admission tries them; ones it does not plan (orphans) keep the end.
+    const queued = new Set(plan.ordered);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const listed = [
+      ...entries.filter((entry) => entry.startedAt !== null),
+      ...plan.ordered.flatMap((id) => byId.get(id) ?? []),
+      ...entries.filter((entry) => entry.startedAt === null && !queued.has(entry.id)),
+    ];
     return {
       // A job's full line stays in the file; the row shows its label.
-      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
+      entries: listed.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
         entry.runner === "linux" ? withoutUsage(entry) : entry,
       ),
       estimates,
@@ -306,6 +334,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       unseenMediumMegabytes,
       historyCommands,
       headPatienceMinutes,
+      quickSeconds,
+      quickSlots,
+      serviceIdleMinutes,
+      reclaimMinutes,
+      costs,
+      order: plan.order,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
       room: plan.room && (!fresh || hasHeadroom(sample, doc)),
@@ -333,12 +367,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
   const changed = yield* PubSub.sliding<void>(1);
   const announce = PubSub.publish(changed, undefined);
   const act = (action: string, run: () => QueueFile.MoveResult) =>
-    Effect.try({ try: run, catch: unavailable }).pipe(
+    whenLockFree(run, unavailable).pipe(
       Effect.flatMap((result) => moveFailure(action, result)),
       Effect.tap(() => announce),
     );
   const change = (run: () => void) =>
-    Effect.try({ try: run, catch: unavailable }).pipe(Effect.tap(() => announce));
+    whenLockFree(run, unavailable).pipe(Effect.tap(() => announce));
   /**
    * Runs a route-memory call; a routes.json it had to move aside is logged and reported.
    * Untraced: the calling method's span already covers it.
@@ -347,13 +381,13 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     run: (warn: RouteMemory.Warn) => A,
   ) {
     let warning: string | undefined;
-    const result = yield* Effect.try({
-      try: () =>
+    const result = yield* whenLockFree(
+      () =>
         run((message) => {
           warning = message;
         }),
-      catch: unavailable,
-    });
+      unavailable,
+    );
     if (warning === undefined) return result;
     yield* Effect.logWarning(`Heavy queue: ${warning}`);
     return { ...result, warning };
@@ -368,8 +402,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const id = NodeCrypto.randomUUID();
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     return yield* Effect.acquireUseRelease(
-      Effect.try({
-        try: () =>
+      // Waits on a busy lock off the thread: a slow owner delays the call instead of failing it.
+      whenLockFree(
+        () =>
           QueueFile.enqueue(dir, {
             id,
             pid: process.pid,
@@ -380,15 +415,18 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
             startedAt: null,
             server: true,
           }),
-        catch: unavailable,
-      }),
+        unavailable,
+        null,
+      ),
       () =>
         Effect.gen(function* () {
           while (true) {
-            const start = yield* Effect.try({
-              try: () => QueueFile.tryStart(dir, id),
-              catch: unavailable,
-            });
+            const start = yield* whenLockFree(() => QueueFile.tryStart(dir, id), unavailable).pipe(
+              // A busy lock is one more poll, not a failed wait.
+              Effect.catchIf(QueueFile.isLockBusy, () =>
+                Effect.succeed({ status: "busy" as const }),
+              ),
+            );
             if (start.status === "started") break;
             if (start.status === "removed") {
               return yield* failure("not-found", "The user removed this from the heavy queue.");
@@ -397,7 +435,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
           return yield* effect;
         }),
-      () => Effect.sync(() => QueueFile.remove(dir, id)).pipe(Effect.ignore),
+      () =>
+        // A server-held entry outlives no one but this server: a busy lock must not leave it behind.
+        whenLockFree(() => QueueFile.remove(dir, id), unavailable, REMOVE_LOCK_WAIT_MS).pipe(
+          Effect.ignore({ log: true }),
+        ),
     );
   });
 
@@ -444,20 +486,20 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       id: string,
       priority: "low" | "high",
     ) {
-      const { result, entry } = yield* Effect.try({
-        try: () => QueueFile.setPriority(dir, id, priority),
-        catch: unavailable,
-      });
+      const { result, entry } = yield* whenLockFree(
+        () => QueueFile.setPriority(dir, id, priority),
+        unavailable,
+      );
       yield* moveFailure("changed", result);
       // A server-held slot's pid is T3 itself, never lowered.
       if (entry?.startedAt !== null && entry?.server !== true && platform === "darwin") {
         yield* setTreePriority(entry!.pid, priority).pipe(
           Effect.mapError((error) => unavailable(error)),
         );
-        yield* Effect.try({
-          try: () => QueueFile.setQos(dir, id, priority === "high" ? "normal" : "background"),
-          catch: unavailable,
-        });
+        yield* whenLockFree(
+          () => QueueFile.setQos(dir, id, priority === "high" ? "normal" : "background"),
+          unavailable,
+        );
       }
       yield* announce;
     }),
@@ -474,7 +516,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       act("moved", () => QueueFile.route(dir, id, runner, force)),
     ),
     routeAll: Effect.fn("HeavyQueue.routeAll")((runner: HeavyRunner) =>
-      Effect.try({ try: () => QueueFile.routeAll(dir, runner), catch: unavailable }).pipe(
+      whenLockFree(() => QueueFile.routeAll(dir, runner), unavailable).pipe(
         Effect.tap(() => announce),
       ),
     ),

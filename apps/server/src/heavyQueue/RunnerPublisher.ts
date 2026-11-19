@@ -27,6 +27,7 @@ import { devWorktreeCleanupBlocked } from "../devWorktreeCleanupGuard.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
+import { whenLockFree } from "./whenLockFree.ts";
 import { runnerCopyId, type RunnerBlock } from "./runner.ts";
 import { checkLinux, drainLostRuns, removeRunnerCopy } from "./runnerExec.ts";
 
@@ -99,7 +100,7 @@ export const drainCopyRemovals = async (
     if (result === "removed") done.push(entry);
     if (result === "unreachable") break;
   }
-  QueueFile.settleCopyRemovals(dir, done);
+  await QueueFile.whenLockFreeAsync(() => QueueFile.settleCopyRemovals(dir, done));
   return done.length;
 };
 
@@ -132,7 +133,10 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
         const text = fingerprint(block);
         // Unchanged settings never touch the file; ownership is re-checked on each write.
         if (text === lastPublished && owner) return;
-        owner = QueueFile.publishRunner(dir, block);
+        owner = yield* whenLockFree(
+          () => QueueFile.publishRunner(dir, block),
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        );
         if (owner) lastPublished = text;
       });
 
@@ -151,10 +155,10 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
         if (!always && checkedHost === block.machine.runnerHost) return;
         checkedHost = block.machine.runnerHost;
         const reading = yield* Effect.promise(() => check(block.machine, process.env));
-        yield* Effect.try({
-          try: () => QueueFile.recordHealth(dir, reading),
-          catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
-        }).pipe(Effect.ignore);
+        yield* whenLockFree(
+          () => QueueFile.recordHealth(dir, reading),
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        ).pipe(Effect.ignore);
         if (reading.ok && QueueFile.readDoc(dir).lostRuns.length > 0)
           yield* Effect.tryPromise({
             try: () => drainLostRuns(dir, block.machine, process.env),

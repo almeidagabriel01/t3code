@@ -344,7 +344,7 @@ describe("HeavyQueueSection", () => {
     setup({ lightJobMegabytes: 256 });
     const view = await mount();
     const sizing = view.host.querySelector('section[aria-label="Job sizing"]')!;
-    expect(sizing.querySelectorAll("input")).toHaveLength(5);
+    expect(sizing.querySelectorAll("input")).toHaveLength(9);
     expect(view.host.textContent).toContain("unless it usually uses under 256 MB.");
     const resets = [...sizing.querySelectorAll("button")].filter((b) =>
       b.textContent?.startsWith("Use the default"),
@@ -367,6 +367,15 @@ describe("HeavyQueueSection", () => {
     ["Memory guess for a new medium job", "unseenMediumMegabytes", "setAdmissionLimits", 1024],
     ["Commands remembered", "historyCommands", "setAdmissionLimits", 200],
     ["Let smaller jobs pass for", "headPatienceMinutes", "setAdmissionLimits", 10],
+    ["Quick job length", "quickSeconds", "setAdmissionLimits", 45],
+    ["Quick jobs at once", "quickSlots", "setAdmissionLimits", 3],
+    [
+      "Idle job counts as running in the background after",
+      "serviceIdleMinutes",
+      "setAdmissionLimits",
+      20,
+    ],
+    ["Keep a stopped agent's place for", "reclaimMinutes", "setAdmissionLimits", 15],
   ] as const)("sets this Mac's %s within its limits", async (label, key, command, next) => {
     setup({ [key]: next - 1 });
     const view = await mount();

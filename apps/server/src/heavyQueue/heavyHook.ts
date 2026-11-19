@@ -3,10 +3,30 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
+import { EXECUTORS, keepsRunning, PACKAGE_MANAGERS, withoutPick } from "./commandShapes.ts";
 import { parseLine, type Command, type ParsedLine, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
 const BASH_MAX_TIMEOUT_MS = 600_000;
+/** Claude Code's longest Bash limit for a background call: a queued wait never kills the command. */
+const BACKGROUND_TIMEOUT_MS = 7_200_000;
+
+/** Where a queued line would go and whether it starts at once, as the queue sees it right now. */
+export interface BashProbe {
+  readonly startsNow: boolean;
+  readonly runsOn: "mac" | "linux" | "direct";
+  readonly position: number | null;
+  readonly reason: string | null;
+}
+
+const waitNote = (probe: BashProbe, inT3: boolean) => {
+  const machine = probe.runsOn === "linux" ? "Linux" : "this Mac";
+  const where = `${probe.position === null ? "" : `position ${probe.position}, `}${probe.reason ?? "waiting its turn"}`;
+  const how = inT3
+    ? "call t3_background_wait with this task's id, then read its output"
+    : "Claude Code tells you when it finishes; read its output then";
+  return `[t3 heavy] Queued on ${machine} (${where}). It runs in the background so the wait never times out: ${how}. Running it again does not move it up.`;
+};
 /** Set in a queue job's environment: commands inside it already hold a slot. */
 export const HEAVY_JOB_ENV = "T3CODE_HEAVY_JOB";
 
@@ -76,8 +96,6 @@ const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop
 export const entryOf = <T>(table: Readonly<Record<string, T>>, name: string): T | undefined =>
   Object.hasOwn(table, name) ? table[name] : undefined;
 
-export const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-export const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 /** pnpm, yarn and bun run a bin by name (`pnpm vitest`) when the word is none of their own commands. */
 const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
 const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
@@ -88,7 +106,7 @@ const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
  */
 export const pmBinAt = (program: string, words: ReadonlyArray<string>) => {
   const [first] = words;
-  if (!RUNNERS.has(program) || first === undefined) return null;
+  if (!PACKAGE_MANAGERS.has(program) || first === undefined) return null;
   if (/^(exec|dlx|x)$/.test(first)) return 1;
   return BIN_RUNNERS.has(program) && !OWN_COMMANDS.test(first) ? 0 : null;
 };
@@ -98,7 +116,7 @@ const SCRIPT_RUNNERS = ["vpr", "make", "just"];
 export const SHIMMED = new Set([
   ...DIRECT,
   ...Object.keys(SUBCOMMANDS),
-  ...RUNNERS,
+  ...PACKAGE_MANAGERS,
   ...EXECUTORS,
   ...SCRIPT_RUNNERS,
 ]);
@@ -221,20 +239,12 @@ export const FOLDER_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   make: ["-C", "--directory"],
 };
 
-/** Options whose value picks the packages a call runs in (`pnpm -F web vitest`), never a word. */
-const PICK_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  pnpm: ["-F", "--filter", "--filter-prod"],
-};
-
 /** Program and subcommand words with assignments, prefixes, flags and folder values removed. */
 const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
-  const folderFlags = [
-    ...(entryOf(FOLDER_FLAGS, program) ?? []),
-    ...(entryOf(PICK_FLAGS, program) ?? []),
-  ];
+  const folderFlags = entryOf(FOLDER_FLAGS, program) ?? [];
   return {
     at,
     program,
@@ -309,7 +319,9 @@ const heavyWords = (
   flags: ReadonlyArray<string>,
   lists: ReadonlySet<string>,
 ): boolean => {
-  const [first, second] = words;
+  const [first] = words;
+  // A dev server or a watcher never ends: it is load on this Mac, never a job that holds a slot.
+  if (keepsRunning(program, words, flags)) return false;
   if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
   const sub = entryOf(SUBCOMMANDS, program);
   if (sub !== undefined) return first !== undefined && sub.includes(first);
@@ -320,17 +332,20 @@ const heavyWords = (
   if (SCRIPT_RUNNERS.includes(program)) {
     return heavyScript(words, 0, flags, lists);
   }
-  if (!RUNNERS.has(program) || first === undefined) return false;
-  const binAt = pmBinAt(program, words);
+  if (!PACKAGE_MANAGERS.has(program)) return false;
+  const own = withoutPick(program, words, flags);
+  const [script, bin] = own;
+  if (script === undefined) return false;
+  const binAt = pmBinAt(program, own);
   if (binAt === 1) {
-    return second !== undefined && heavyWords(base(second), words.slice(2), flags, lists);
+    return bin !== undefined && heavyWords(base(bin), own.slice(2), flags, lists);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
-  if (first === "t" || heavyScript(words, 0, flags, lists)) return true;
-  if (binAt === 0 && heavyWords(base(first), words.slice(1), flags, lists)) return true;
+  if (script === "t" || heavyScript(own, 0, flags, lists)) return true;
+  if (binAt === 0 && heavyWords(base(script), own.slice(1), flags, lists)) return true;
   // `npm --prefix x run build`: a flag's value can sit before `run`.
-  const runAt = words.findIndex((word) => word === "run" || word === "run-script");
-  return runAt >= 0 && heavyScript(words, runAt + 1, flags, lists);
+  const runAt = own.findIndex((word) => word === "run" || word === "run-script");
+  return runAt >= 0 && heavyScript(own, runAt + 1, flags, lists);
 };
 
 // `case` patterns, so the filter runs on shell builtins alone. A word starts after a non-name
@@ -345,7 +360,7 @@ const END = "[!A-Za-z0-9_-]";
 const PROGRAMS = [
   ...DIRECT,
   ...Object.keys(SUBCOMMANDS),
-  ...RUNNERS,
+  ...PACKAGE_MANAGERS,
   ...SCRIPT_RUNNERS,
   "remoto",
   // Scripts: the queue reads them (`bash x.sh`, `./verify`).
@@ -623,7 +638,7 @@ const literalDir = (word: Word | undefined): string | null => {
   const { value } = word;
   if (value === "" || value.startsWith("-") || /[*?[]/.test(value)) return null;
   // Quoted, `~` is a folder named `~`; `~user` is another home.
-  if (value.startsWith("~") && (!word.tilde || !/^~(\/|$)/.test(value))) return null;
+  if (value.startsWith("~") && !word.tildes.includes(0)) return null;
   return value;
 };
 
@@ -704,6 +719,10 @@ export const queueBashCall = (
     readonly runner?: boolean;
     /** Reads a script the line runs, from the folder the line starts in. */
     readonly readScript?: ReadScript;
+    /** Asks the queue about the line: only one that starts now stays in the foreground. */
+    readonly probe?: (command: string) => BashProbe;
+    /** Called from a T3 session, whose agents wait with `t3_background_wait`. */
+    readonly inT3?: boolean;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
@@ -724,6 +743,10 @@ export const queueBashCall = (
     typeof hookInput.tool_use_id === "string" && hookInput.tool_use_id !== ""
       ? ` --request-id ${shellQuote(hookInput.tool_use_id)}`
       : "";
+  // A wrong guess either way is safe: a foreground call that waits keeps today's 600 s limit, and
+  // a background one that starts at once just ends sooner.
+  const probed = options.probe?.(command) ?? null;
+  const background = toolInput.run_in_background === true || (probed !== null && !probed.startsNow);
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse" as const,
@@ -731,11 +754,15 @@ export const queueBashCall = (
       updatedInput: {
         ...toolInput,
         command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
-        // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
-        ...(toolInput.run_in_background === true
-          ? {}
+        // Waiting counts toward the Bash timeout: a call that waits goes to the background, whose
+        // limit is long enough for any queue.
+        ...(background
+          ? { run_in_background: true, timeout: Math.max(currentTimeout, BACKGROUND_TIMEOUT_MS) }
           : { timeout: Math.max(currentTimeout, BASH_MAX_TIMEOUT_MS) }),
       },
+      ...(background && probed !== null && toolInput.run_in_background !== true
+        ? { additionalContext: waitNote(probed, options.inT3 === true) }
+        : {}),
     },
   };
 };
@@ -759,12 +786,14 @@ export const interceptBashCall = (
   mode: { readonly enabled: boolean; readonly runner?: boolean },
   environment: Readonly<Record<string, string | undefined>> = {},
   readScript?: ReadScript,
+  ask: { readonly probe?: (command: string) => BashProbe; readonly inT3?: boolean } = {},
 ) =>
   heavyRoute(mode) === "direct"
     ? null
     : queueBashCall(hookInput, queuePrefix, environment, {
         runner: mode.runner === true,
         ...(readScript === undefined ? {} : { readScript }),
+        ...ask,
       });
 
 export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

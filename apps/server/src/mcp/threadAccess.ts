@@ -129,7 +129,7 @@ export const assertTargetWithinLimits = (
   );
 
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
-export const isLiveCallerShell = (
+const isLiveCallerShell = (
   shell: Pick<
     OrchestrationV2ThreadShell,
     "archivedAt" | "activeRunId" | "providerInstanceId" | "pendingBackgroundTasks"
@@ -145,17 +145,54 @@ export const isLiveCallerShell = (
     ) ??
       false));
 
+/**
+ * Also live: a run the provider queued by waking itself (a background task's notice), since it calls
+ * tools before T3 starts that run. A held queue (after Stop) or a user's queued message is not.
+ */
+export const isLiveCaller = Effect.fn("mcp.isLiveCaller")(function* (
+  threads: ThreadManagement.ThreadManagementService["Service"],
+  shell: OrchestrationV2ThreadShell | null,
+  providerInstanceId: ProviderInstanceId | undefined,
+) {
+  if (isLiveCallerShell(shell, providerInstanceId)) return true;
+  if (
+    shell === null ||
+    shell.archivedAt !== null ||
+    shell.providerInstanceId !== providerInstanceId ||
+    shell.latestRunId == null ||
+    shell.latestRunStartedAt != null ||
+    shell.latestRunCompletedAt != null
+  ) {
+    return false;
+  }
+  const { runs } = yield* threads.getThreadRecords(shell.id, ["runs"], {
+    runIds: [shell.latestRunId],
+  });
+  const run = runs.find((candidate) => candidate.id === shell.latestRunId);
+  if (run === undefined || run.status !== "queued" || run.queueHeld === true) return false;
+  const { messages } = yield* threads.getThreadRecords(shell.id, ["messages"], {
+    messageIds: [run.userMessageId],
+  });
+  const message = messages.find((candidate) => candidate.id === run.userMessageId);
+  return message?.createdBy === "agent" && message.creationSource === "provider";
+});
+
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
-export function assertLiveCaller({ caller, scope }: Caller) {
+export function assertLiveCaller({ caller, scope, threads }: Caller) {
   if (caller === undefined) return Effect.void;
-  return isLiveCallerShell(caller, scope.thread?.providerInstanceId)
-    ? Effect.void
-    : Effect.fail(
-        new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "The calling provider no longer owns an active thread run.",
-        }),
-      );
+  return isLiveCaller(threads, caller, scope.thread?.providerInstanceId).pipe(
+    Effect.mapError(unavailable),
+    Effect.flatMap((live) =>
+      live
+        ? Effect.void
+        : Effect.fail(
+            new OrchestratorMcpFailure({
+              code: "parent_not_active",
+              message: "The calling provider no longer owns an active thread run.",
+            }),
+          ),
+    ),
+  );
 }
 
 export const assertFullAccess = (context: Caller, message: string) =>
