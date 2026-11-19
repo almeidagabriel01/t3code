@@ -17,6 +17,7 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -87,6 +88,7 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const RENDERER_HANG_PROMPT_DELAY_MS = 10_000;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
 
 type DesktopWindowRuntimeServices =
@@ -97,6 +99,7 @@ type DesktopWindowRuntimeServices =
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
   | ElectronApp.ElectronApp
+  | ElectronDialog.ElectronDialog
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -286,6 +289,7 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
@@ -722,6 +726,14 @@ export const make = Effect.gen(function* () {
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
     let rendererRecoveryTimestamps: number[] = [];
+    let rendererHangFiber: Fiber.Fiber<void, never> | undefined;
+    let userRequestedRendererRecovery = false;
+    const endRendererHang = () => {
+      if (rendererHangFiber === undefined) return;
+      const hangFiber = rendererHangFiber;
+      rendererHangFiber = undefined;
+      runFork(Fiber.interrupt(hangFiber));
+    };
     const clearDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber === undefined) {
         return;
@@ -803,8 +815,55 @@ export const make = Effect.gen(function* () {
         );
       },
     );
+    // The backend and agents run outside the renderer, so reloading a hung window keeps them alive.
+    const promptRendererHang = Effect.gen(function* () {
+      yield* Effect.sleep(RENDERER_HANG_PROMPT_DELAY_MS);
+      if (window.isDestroyed()) return;
+      yield* logWindowWarning("main window renderer stayed unresponsive", {
+        afterMs: RENDERER_HANG_PROMPT_DELAY_MS,
+      });
+      const { response } = yield* electronDialog.showMessageBox(
+        {
+          type: "warning",
+          buttons: ["Reload Window", "Wait"],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+          message: "T3 Code is not responding",
+          detail: "Reloading restarts only this window. Your agents keep running.",
+        },
+        window,
+      );
+      if (response !== 0 || window.isDestroyed()) return;
+      yield* logWindowWarning("reloading unresponsive main window at the user's request");
+      userRequestedRendererRecovery = true;
+      window.webContents.forcefullyCrashRenderer();
+    }).pipe(
+      Effect.catch((error) =>
+        logWindowWarning("unresponsive window prompt failed", { error: error.message }),
+      ),
+    );
+    window.webContents.on("unresponsive", () => {
+      // Electron repeats this event during one hang; "Wait" re-arms on the next repeat.
+      if (rendererHangFiber !== undefined || window.isDestroyed()) return;
+      const hangFiber: Fiber.Fiber<void, never> = runFork(
+        promptRendererHang.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (rendererHangFiber === hangFiber) rendererHangFiber = undefined;
+            }),
+          ),
+        ),
+      );
+      rendererHangFiber = hangFiber;
+    });
+    window.webContents.on("responsive", endRendererHang);
     window.webContents.on("render-process-gone", (_event, details) => {
+      const userRequested = userRequestedRendererRecovery;
+      userRequestedRendererRecovery = false;
+      endRendererHang();
       const recoverable =
+        userRequested ||
         details.reason === "crashed" ||
         details.reason === "oom" ||
         details.reason === "killed" ||
@@ -819,10 +878,11 @@ export const make = Effect.gen(function* () {
           const shouldRecover =
             recoverable &&
             !window.isDestroyed() &&
-            rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
+            (userRequested || rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS);
           yield* logWindowWarning("main window render process gone", {
             reason: details.reason,
             exitCode: details.exitCode,
+            userRequested,
             recovering: shouldRecover,
           });
           if (!shouldRecover) {
@@ -895,6 +955,7 @@ export const make = Effect.gen(function* () {
       if (!backendHasStarted) mainClosedDuringStartup = true;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      endRendererHang();
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
