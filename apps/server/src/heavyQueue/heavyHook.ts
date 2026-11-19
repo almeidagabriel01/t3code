@@ -824,13 +824,14 @@ const spanEnd = (line: string, end: number) => {
 
 /**
  * The line without an agent's `remoto` words: T3 decides where work runs. `keepCommands` keeps
- * those before a command: a Linux attempt sends that call as the agent chose.
+ * those that run a command (not only `VAR=value`): a Linux attempt sends it as the agent chose.
  */
 const withoutRemoto = (line: string, keepCommands = false) =>
   readLine(line)
     .parts.flatMap((part) =>
       part.remoto === null ||
-      (keepCommands && !/^[A-Za-z_]\w*=/.test(part.values[part.remoteAt] ?? ""))
+      (keepCommands &&
+        part.values.slice(part.remoteAt).some((value) => !/^[A-Za-z_]\w*=/.test(value)))
         ? []
         : [part.remoto],
     )

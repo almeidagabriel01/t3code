@@ -1635,7 +1635,8 @@ const runCall = (
   // The agent's own `remoto` in a Linux job, its words expanded here: its call goes as chosen. A
   // shell text that runs here, as a line would, sends each of its calls as chosen.
   if (environment[HEAVY_JOB_ENV] === "1" && linuxJob !== undefined && given === "remoto") {
-    const [program, ...rest] = args;
+    // `remoto A=1 vp test`: the variable reaches the command there, as `env` passes it.
+    const [program, ...rest] = /^[A-Za-z_]\w*=/.test(args[0] ?? "") ? ["env", ...args] : args;
     const text = program === undefined ? null : lineOf(program, rest);
     if (text !== null && runsHere(text, scriptReader(process.cwd()))) {
       return runHere(program!, rest, false, { [REMOTO_ENV]: "1" });

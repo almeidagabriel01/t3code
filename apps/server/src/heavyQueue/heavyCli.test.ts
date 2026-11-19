@@ -607,6 +607,7 @@ describe("t3 heavy", () => {
       ['remoto bash -c "$(cat O/body.sh)"', "mac", "bash|-c|echo body-ran| in R\n"],
       ["remoto bash O/body.sh", "mac", "bash|-c|echo body-ran|O/body.sh| in R\n"],
       ["remoto vp test run /etc/hosts", "mac", "vp|test|run|/etc/hosts| in R\n"],
+      ["remoto A=1 vp test run /etc/hosts", "mac", "env|A=1|vp|test|run|/etc/hosts| in R\n"],
       ["remoto sh -c 'vp test run /etc/hosts'", "mac", "vp|test|run|/etc/hosts| in R\n"],
       [
         "remoto vp test run a && vp check /etc/hosts",
