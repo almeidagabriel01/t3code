@@ -58,7 +58,7 @@ vi.mock("../ProjectFavicon", () => ({
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   useEnvironmentScope: (_environmentId: unknown, scope: string) =>
-    mocks.linked !== null && scope === "orchestration:read",
+    mocks.linked !== null && (scope === "orchestration:read" || scope === "access:read"),
 }));
 vi.mock("../../state/server", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../state/server")>();

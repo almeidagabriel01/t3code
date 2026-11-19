@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
+  AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -162,13 +163,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("reads linked environments' machines with the scope this machine's reading needs", () => {
-    for (const method of [
-      WS_METHODS.serverGetHostResources,
-      WS_METHODS.serverGetLinkedEnvironmentResources,
-    ]) {
-      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
-    }
+  it("reads linked environments' machines only with the scopes that see this host and its links", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverGetHostResources)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(rpcRequiredScopes(WS_METHODS.serverGetLinkedEnvironmentResources, undefined)).toEqual([
+      AuthOrchestrationReadScope,
+      AuthAccessReadScope,
+    ]);
+    expect(rpcRequiredScopes(WS_METHODS.peerLinksList, undefined)).toEqual([AuthAccessReadScope]);
   });
 
   it("rejects unknown RPC method names", () => {

@@ -10,6 +10,7 @@ import {
   type MachineGauge,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
+  AuthAccessReadScope,
   AuthOrchestrationReadScope,
   type EnvironmentId,
   type HeavyQueueState,
@@ -203,8 +204,11 @@ export function MachineBar(props: {
     canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
   );
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
+  const canReadLinks = useEnvironmentScope(environmentId, AuthAccessReadScope);
   const linkedData = useEnvironmentQuery(
-    canRead ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} }) : null,
+    canRead && canReadLinks
+      ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} })
+      : null,
   ).data;
   const now = useNowMinuteMs();
   const linked = (linkedData ?? []).map((entry) => linkedMachineRow(entry, now));

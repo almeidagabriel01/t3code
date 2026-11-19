@@ -5,6 +5,7 @@ import {
   type MachineGauge as MachineGaugeModel,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
+  AuthAccessReadScope,
   AuthDiagnosticsReadScope,
   AuthOrchestrationReadScope,
   type EnvironmentId,
@@ -320,8 +321,11 @@ export function MachineBar({
   );
   const buckets = useT3History(environmentId);
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
+  const canReadLinks = useEnvironmentScope(environmentId, AuthAccessReadScope);
   const linkedData = useEnvironmentQuery(
-    canRead ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} }) : null,
+    canRead && canReadLinks
+      ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} })
+      : null,
   ).data;
   const now = useNowMinuteMs();
   const linked = (linkedData ?? []).map((entry) => linkedMachineRow(entry, now));
