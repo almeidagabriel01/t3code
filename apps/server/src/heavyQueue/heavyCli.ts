@@ -152,7 +152,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let requestId: string | undefined;
   let routeReason: string | undefined;
   let now = false;
-  let help = false;
+  let help: string | undefined;
   const options = [
     "--queue-dir",
     "--name",
@@ -171,7 +171,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     foreign(rest[0])
   ) {
     if (HELP.has(rest[0]!)) {
-      help = true;
+      help = rest[0];
       rest = rest.slice(1);
       continue;
     }
@@ -195,10 +195,11 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
+  // `<command> --help`, the prefix the agent tools hand out, asks for help after the separator.
+  if (rest.length === 1 && HELP.has(rest[0]!)) [help, rest] = [rest[0], []];
   return {
     dir,
-    // `<command> --help`, the prefix the agent tools hand out, asks for help after the separator.
-    help: help || HELP.has(rest[0] ?? ""),
+    help,
     name,
     priority,
     where,
@@ -668,15 +669,21 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
   const { dir, name, priority, where, now, help, requestId, routeReason, program, args } =
     parseHeavyArgs(argv);
-  if (help) {
-    process.stdout.write(USAGE);
-    process.exit(0);
-  }
   // A usage error exits before the queue sees it, so it never becomes a job or a problem card.
   const refuse = (reason: string): never => {
     process.stderr.write(reason);
     return process.exit(2);
   };
+  if (help !== undefined && program === undefined) {
+    process.stdout.write(USAGE);
+    process.exit(0);
+  }
+  // Help with a command would run nothing yet exit 0, which a script reads as the command passing.
+  if (help !== undefined) {
+    return refuse(
+      `[t3 heavy] \`${help}\` shows this usage and runs nothing; to pass it to the command, put it after \`--\`: t3 heavy -- ${program} ${help}\n${USAGE}`,
+    );
+  }
   const refusal = commandRefusal(program, args);
   if (refusal !== null || program === undefined) return refuse(refusal ?? "");
   const launch = heavyLaunch(
