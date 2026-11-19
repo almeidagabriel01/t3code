@@ -332,6 +332,47 @@ export type HeavyQueueCost = typeof HeavyQueueCost.Type;
 export const fillsStandardSlot = (cost: HeavyQueueCost | undefined) =>
   cost?.commit !== true && (cost?.class ?? "standard") === "standard";
 
+/**
+ * Why a waiter sits where it does in its machine's line: started or moved by hand first, then a
+ * long wait, then light work, shorter usual runs, first runs and jobs that run alone.
+ */
+export const HeavyQueueOrderCode = Schema.Literals([
+  "forced",
+  "pinned",
+  "aged",
+  "light",
+  "shorter",
+  "first-run",
+  "runs-alone",
+]);
+export type HeavyQueueOrderCode = typeof HeavyQueueOrderCode.Type;
+
+export const HeavyQueueOrder = Schema.Struct({
+  code: HeavyQueueOrderCode,
+  /** Short and plain, ready to show: "light: ahead", "waited 20 min: moved up". */
+  text: Schema.String,
+});
+export type HeavyQueueOrder = typeof HeavyQueueOrder.Type;
+
+export const heavyOrderText = (code: HeavyQueueOrderCode, waitedMs: number): string => {
+  switch (code) {
+    case "forced":
+      return "started by hand: runs now";
+    case "pinned":
+      return "kept where it was moved";
+    case "aged":
+      return `waited ${Math.floor(waitedMs / 60_000)} min: moved up`;
+    case "light":
+      return "light: ahead";
+    case "shorter":
+      return "shorter runs go first";
+    case "first-run":
+      return "first run: after known ones";
+    case "runs-alone":
+      return "runs alone: goes last";
+  }
+};
+
 export const HeavyQueueState = Schema.Struct({
   /** Usual usage of each waiting entry that has history, by entry id. */
   estimates: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueEstimate)),
@@ -383,6 +424,11 @@ export const HeavyQueueState = Schema.Struct({
   ),
   /** Each entry's cost class and why, by entry id; absent from older servers. */
   costs: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueCost)),
+  /**
+   * Why each waiter sits where it does, by entry id; `entries` lists waiters in this order, the
+   * one admission tries. Absent from older servers, whose order is the queue file's.
+   */
+  order: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueOrder)),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
