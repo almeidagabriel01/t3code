@@ -186,7 +186,6 @@ export const HeavyRunnerLinuxOver = Schema.Struct({
 });
 export type HeavyRunnerLinuxOver = typeof HeavyRunnerLinuxOver.Type;
 
-/** Linux as the heartbeat last saw it; `online` is null until the first check. */
 /**
  * Heavy work on Linux no queue job holds: one cgroup (a container, an ssh session, a service) past
  * half a core or 1 GiB. Origin fields are set when known.
@@ -219,6 +218,7 @@ export const HeavyRunnerLinuxOutside = Schema.Struct({
 });
 export type HeavyRunnerLinuxOutside = typeof HeavyRunnerLinuxOutside.Type;
 
+/** Linux as the heartbeat last saw it; `online` is null until the first check. */
 export const HeavyRunnerLinux = Schema.Struct({
   host: Schema.String,
   online: Schema.NullOr(Schema.Boolean),
