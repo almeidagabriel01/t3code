@@ -510,7 +510,7 @@ it.effect.each(["grantedScopes", "reauthorize", "both"] as const)(
     }).pipe(Effect.provide(Fixture.layer)),
 );
 
-it.effect("r4 tracked MCP writes inherit injected context and forget purges them", () =>
+it.effect("explicit MCP writes do not inherit read lineage, so its forget leaves them", () =>
   Effect.gen(function* () {
     const service = yield* MemoryService.MemoryService;
     const store = yield* Store.MemoryStore;
@@ -540,7 +540,7 @@ it.effect("r4 tracked MCP writes inherit injected context and forget purges them
     expect(
       saved.revisions.find((p) => p.revision.revisionId === saved.heads[0])?.payload
         ?.derivedFromMemoryRevisions,
-    ).toEqual([rA]);
+    ).toEqual([]);
     yield* service.forget(
       {
         memorySpaceId: Fixture.space,
@@ -550,7 +550,7 @@ it.effect("r4 tracked MCP writes inherit injected context and forget purges them
       },
       Effect.void,
     );
-    expect(yield* sql`SELECT 1 FROM memory_payloads WHERE memory_id=${s.memoryId}`).toHaveLength(0);
+    expect(yield* sql`SELECT 1 FROM memory_payloads WHERE memory_id=${s.memoryId}`).toHaveLength(1);
   }).pipe(Effect.provide(Fixture.layer)),
 );
 

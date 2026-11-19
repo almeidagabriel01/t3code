@@ -122,6 +122,17 @@ const hasBrokenColorManager = (readHyprctlVersionJson: () => string): boolean =>
   }
 };
 
+// Lets hang diagnostics read the stuck frame's JavaScript stack (WebFrameMain.collectJavaScriptCallStack).
+const JS_CALL_STACK_FEATURE = "DocumentPolicyIncludeJSCallStacksInCrashReports";
+
+/** Chromium keeps only the last --enable-features value, so this returns the merged list. */
+export function resolveEnableFeaturesSwitch(enableFeatures: string | null): string | null {
+  if (featureListNames(enableFeatures).includes(JS_CALL_STACK_FEATURE)) return null;
+  return enableFeatures === null
+    ? JS_CALL_STACK_FEATURE
+    : `${enableFeatures},${JS_CALL_STACK_FEATURE}`;
+}
+
 export function resolveLinuxDisableFeaturesSwitch(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly ozonePlatform: string | null;

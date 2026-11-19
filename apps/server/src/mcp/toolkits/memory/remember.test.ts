@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
+import * as MemoryStore from "../../../memory/MemoryStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as Fixture from "./handlers.testkit.ts";
@@ -124,6 +125,159 @@ it.effect("remember refuses project scope without project memory and unknown rep
         .isError,
     ).toBe(true);
     expect((yield* Fixture.call("memory_remember", { text: "x" })).result.isError).toBe(true);
+  }).pipe(Effect.provide(Fixture.layer)),
+);
+
+// The thread reads memory X, so X (and what it derives from) is in the thread's lineage.
+const readIntoLineage = (n: number) =>
+  Effect.gen(function* () {
+    const service = yield* MemoryService.MemoryService;
+    const store = yield* MemoryStore.MemoryStore;
+    const memoryId = M.MemoryId.make(Fixture.id(n));
+    yield* service.upsert(
+      {
+        ...Fixture.upsert(n + 1),
+        memoryId,
+        payload: { text: `seen ${n}`, evidence: [], derivedFromMemoryRevisions: [] },
+      },
+      Effect.void,
+    );
+    const revision = (yield* store.loadAggregate(Fixture.space, memoryId)).heads[0]!;
+    expect(
+      (yield* Fixture.call("memory_read", { memorySpaceId: Fixture.space, memoryId }, caller))
+        .result.isError,
+    ).not.toBe(true);
+    return { memoryId, revision };
+  });
+const forgetSeen = (seen: { memoryId: M.MemoryId; revision: M.MemoryRevisionId }, n: number) =>
+  Effect.gen(function* () {
+    yield* (yield* MemoryService.MemoryService).forget(
+      {
+        memorySpaceId: Fixture.space,
+        memoryId: seen.memoryId,
+        operationId: M.MemoryOperationId.make(Fixture.id(n)),
+        expectedHeads: [seen.revision],
+      },
+      Effect.void,
+    );
+  });
+
+it.effect.each(["forgotten", "blocked", "overflow", "unknown"] as const)(
+  "remember saves when the thread's lineage holds a %s revision",
+  (state) =>
+    Effect.gen(function* () {
+      yield* seedThread;
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* MemoryStore.MemoryStore;
+      const seen = yield* readIntoLineage(910);
+      if (state === "forgotten") yield* forgetSeen(seen, 912);
+      if (state === "blocked")
+        yield* sql`UPDATE memory_items SET status='blocked' WHERE memory_id=${seen.memoryId}`;
+      if (state === "overflow")
+        yield* store.appendThreadLineage(
+          { environmentId: caller.environmentId, threadId: caller.thread.threadId },
+          Fixture.space,
+          Array.from({ length: 101 }, (_, n) => M.MemoryRevisionId.make(Fixture.id(1000 + n))),
+        );
+      if (state === "unknown")
+        yield* sql`INSERT INTO orchestration_events VALUES (2,'00000000-0000-4000-8000-0000000000e2','remember-thread','context-transfer.created','{"targetThreadId":"remember-thread","sourceThreadId":"other"}','2026-01-01T00:00:01.000Z',2,'thread')`;
+      const saved = yield* Fixture.call(
+        "memory_remember",
+        { text: "We deploy on Fridays", scope: "project" },
+        caller,
+      );
+      expect(saved.result.isError, JSON.stringify(saved.body)).not.toBe(true);
+      const receipt = yield* decodeReceipt(saved.body);
+      expect(receipt.outcome).toBe("accepted");
+      const head = (yield* store.loadAggregate(Fixture.space, receipt.memoryId)).revisions[0];
+      expect(head?.payload?.derivedFromMemoryRevisions).toEqual([]);
+    }).pipe(Effect.provide(Fixture.layer)),
+);
+
+it.effect("forgetting a memory the thread saw leaves its explicit remembers active", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    const sql = yield* SqlClient.SqlClient;
+    const seen = yield* readIntoLineage(920);
+    const saved = yield* Fixture.call(
+      "memory_remember",
+      { text: "We deploy on Fridays", scope: "project" },
+      caller,
+    );
+    const { memoryId } = yield* decodeReceipt(saved.body);
+    yield* forgetSeen(seen, 922);
+    const read = yield* Fixture.call("memory_read", { memorySpaceId: Fixture.space, memoryId });
+    expect(read.body).toMatchObject({
+      status: "active",
+      payload: { text: "We deploy on Fridays" },
+    });
+    expect(yield* sql`SELECT 1 FROM memory_payloads WHERE memory_id=${memoryId}`).toHaveLength(1);
+  }).pipe(Effect.provide(Fixture.layer)),
+);
+
+it.effect("repair re-saves remembers that inherited lineage, once, and reports purged bodies", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* MemoryService.MemoryService;
+    const seen = yield* readIntoLineage(930);
+    const saved = yield* Fixture.call(
+      "memory_remember",
+      { text: "We deploy on Fridays", scope: "project" },
+      caller,
+    );
+    const { memoryId } = yield* decodeReceipt(saved.body);
+    // What a remember saved before explicit writes stopped inheriting the read lineage.
+    yield* sql`UPDATE memory_payloads SET body_json=json_set(body_json,'$.derivedFromMemoryRevisions',json_array(${seen.revision})),dependencies_json=json_array(${seen.revision}) WHERE memory_id=${memoryId}`;
+    const derived = M.MemoryId.make(Fixture.id(935));
+    yield* service.upsert(
+      {
+        ...Fixture.upsert(936),
+        memoryId: derived,
+        payload: { text: "derived", evidence: [], derivedFromMemoryRevisions: [seen.revision] },
+      },
+      Effect.void,
+    );
+    // A thread-evidenced write that named its dependency keeps it: its digest does not match.
+    const evidence = (yield* (yield* MemoryStore.MemoryStore).loadAggregate(
+      Fixture.space,
+      memoryId,
+    )).revisions[0]!.payload!.evidence;
+    const declared = M.MemoryId.make(Fixture.id(937));
+    yield* service.upsert(
+      {
+        ...Fixture.upsert(938),
+        memoryId: declared,
+        assertionKind: "fact",
+        payload: { text: "declared", evidence, derivedFromMemoryRevisions: [seen.revision] },
+      },
+      Effect.void,
+      { environmentId: caller.environmentId, threadId: caller.thread.threadId },
+    );
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [memoryId],
+      skipped: [],
+    });
+    expect(
+      yield* sql`SELECT dependencies_json AS d FROM memory_payloads WHERE memory_id=${declared}`,
+    ).toEqual([{ d: JSON.stringify([seen.revision]) }]);
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [],
+      skipped: [],
+    });
+    yield* forgetSeen(seen, 932);
+    const read = yield* Fixture.call("memory_read", { memorySpaceId: Fixture.space, memoryId });
+    expect(read.body).toMatchObject({
+      status: "active",
+      payload: { text: "We deploy on Fridays" },
+    });
+    expect(yield* service.repairRememberLineage(Fixture.space, Effect.void)).toEqual({
+      repaired: [],
+      skipped: [
+        { memoryId: derived, reason: "body_missing" },
+        { memoryId: declared, reason: "body_missing" },
+      ].sort((a, b) => a.memoryId.localeCompare(b.memoryId)),
+    });
   }).pipe(Effect.provide(Fixture.layer)),
 );
 
