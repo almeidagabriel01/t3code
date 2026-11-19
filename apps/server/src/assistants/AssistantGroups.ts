@@ -99,6 +99,7 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { routesAssistantGroups } from "@t3tools/provider-core/server/driver";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -1315,7 +1316,10 @@ const make = Effect.gen(function* () {
   const requestThreads = (requestId: string) =>
     sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
 
-  /** Switches a thread's model now; "busy" while a turn on another provider is still ending. */
+  /**
+   * Switches a thread's model now; "busy" while a turn on another provider is still ending or
+   * the process runs work its agent waits on. `applyPendingModel` retries when that ends.
+   */
   const switchModel = Effect.fn("AssistantGroups.switchModel")(function* (
     threadId: string,
     target: ModelSelection,
@@ -1651,7 +1655,17 @@ const make = Effect.gen(function* () {
             Effect.logDebug("assistant groups: request thread not settled yet", {
               threadId: row.thread_id,
               cause,
-            }),
+            }).pipe(
+              // Refused (awaited work, a live run): held, so the run or work that ends retries it.
+              Effect.andThen(nowIso),
+              Effect.flatMap(
+                (heldAt) => sql`
+                  UPDATE assistant_group_request_threads
+                  SET settle_held_at = COALESCE(settle_held_at, ${heldAt})
+                  WHERE thread_id = ${row.thread_id}`,
+              ),
+              Effect.ignore,
+            ),
           ),
         );
     }
@@ -3359,6 +3373,30 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  // ponytail: in memory, so a drain across a restart is missed; the restart continuation turn
+  // then retries instead. Only this transition retries, so a user's own active turn stays put.
+  const providerThreadsAwaitingWork = new Set<string>();
+  /** Awaited work ending is what a settle or a model move refused over it was waiting for. */
+  const awaitedWorkEnded = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationV2DomainEvent, { readonly type: "provider-thread.updated" }>,
+  ) {
+    if (!isAssistantGroupThreadId(event.threadId)) return;
+    if ((event.payload.pendingBackgroundTasks ?? []).some(wakesAgentWhenDone)) {
+      providerThreadsAwaitingWork.add(event.payload.id);
+      return;
+    }
+    if (!providerThreadsAwaitingWork.delete(event.payload.id)) return;
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const owner = yield* threadRowOf(event.threadId);
+        if (owner?.request_id == null) return;
+        yield* applyPendingModel(owner.thread_id);
+        yield* closeRequestIfDone(owner.request_id, true);
+        yield* pump(owner.team_id);
+      }),
+    );
+  });
+
   const settleLaunch: AssistantGroups["Service"]["settleLaunch"] = Effect.fn(
     "AssistantGroups.settleLaunch",
   )(function* (threadId) {
@@ -3518,6 +3556,7 @@ const make = Effect.gen(function* () {
         if (isAssistantGroupThreadId(event.threadId)) yield* syncWaitingThread(event.threadId);
         return;
       }
+      if (event.type === "provider-thread.updated") return yield* awaitedWorkEnded(event);
       if (event.type === "subagent.updated") {
         if (event.payload.origin !== "provider_native") return;
         if (!isAssistantGroupThreadId(event.threadId)) return;

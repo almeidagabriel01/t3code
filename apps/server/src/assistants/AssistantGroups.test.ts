@@ -86,6 +86,8 @@ interface FakeThread {
   deletedAt: string | null;
   settledOverride: "settled" | null;
   modelSelection: ModelSelection;
+  /** Background work its agent waits on, which the Orchestrator refuses to settle over. */
+  awaitedWork?: boolean;
 }
 interface FakeRun {
   id: string;
@@ -282,7 +284,10 @@ const harness = (options: Options = {}) => {
           const busy = (runs.get(command.threadId) ?? []).some((run) =>
             ["running", "waiting"].includes(run.status),
           );
-          if (busy && thread.modelSelection.instanceId !== command.modelSelection!.instanceId) {
+          const otherProvider =
+            thread.modelSelection.instanceId !== command.modelSelection!.instanceId;
+          // Another provider ends the process, and with it work the agent waits on.
+          if ((busy || thread.awaitedWork === true) && otherProvider) {
             return Effect.fail(
               new Orchestrator.OrchestratorProviderSelectionBusyError({
                 commandId: command.commandId as never,
@@ -335,7 +340,9 @@ const harness = (options: Options = {}) => {
         const live = (runs.get(input.threadId) ?? []).some((run) =>
           ["queued", "running"].includes(run.status),
         );
-        if (thread === undefined || live) return Effect.fail(new Boom());
+        if (thread === undefined || live || thread.awaitedWork === true) {
+          return Effect.fail(new Boom());
+        }
         thread.settledOverride = "settled";
         dispatched.push({ type: "thread.settle", ...input });
         return Effect.succeed({ sequence: 1 });
@@ -1944,6 +1951,36 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a model change refused over awaited work lands when the member's wake turn ends", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "Tests are running in the background");
+    h.fakeThreads.get(ada)!.awaitedWork = true;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+
+    // The work finishes and wakes Ada; the move waited for that turn to end.
+    h.fakeThreads.get(ada)!.awaitedWork = false;
+    h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+    yield* groups.handleRunEvent({
+      type: "run.updated",
+      payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status: "completed" },
+    } as never as OrchestrationV2DomainEvent);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
   const h = harness({
@@ -6588,6 +6625,66 @@ it.effect(
       );
       assert.deepEqual(commands("thread.unsettle"), [ada, beto, ada, beto]);
       assert.equal(h.sent.at(-1)!.threadId, ada);
+
+      // Ada ends her turn waiting on background work, so her conversation refuses to settle.
+      h.fakeThreads.get(ada)!.awaitedWork = true;
+      yield* h.finish(3, "completed", "Running the tests in the background");
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto, beto]);
+      h.fakeThreads.get(ada)!.awaitedWork = false;
+      // The work wakes Ada; the turn that wake starts settles what was refused.
+      h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+      yield* Effect.forEach(["running", "completed"], (status) =>
+        groups.handleRunEvent({
+          type: status === "running" ? "run.created" : "run.updated",
+          payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status },
+        } as never as OrchestrationV2DomainEvent),
+      );
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto, beto, ada]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { name: "its wake turn ends", via: "wake", requestDone: true, settles: true },
+  { name: "the awaited work ends with no turn", via: "roster", requestDone: true, settles: true },
+  { name: "the work ends in an open request", via: "roster", requestDone: false, settles: false },
+] as const)(
+  "a conversation refused settling over awaited work settles when $name: $settles",
+  ({ via, requestDone, settles }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto plan it" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      const roster = (awaited: boolean) =>
+        groups.handleRunEvent({
+          type: "provider-thread.updated",
+          threadId: ada,
+          payload: {
+            id: "provider-thread:ada",
+            pendingBackgroundTasks: awaited
+              ? [{ taskId: "tests", kind: "command", awaited: true }]
+              : [],
+          },
+        } as never as OrchestrationV2DomainEvent);
+      const settled = () =>
+        h.dispatched.filter((command) => command.type === "thread.settle").map((c) => c.threadId);
+      yield* roster(true);
+      h.fakeThreads.get(ada)!.awaitedWork = true;
+      yield* h.finish(0, "completed", "Tests are running in the background");
+      if (requestDone) yield* h.finish(1, "completed", "Beto's part");
+      assert.notInclude(settled(), ada);
+
+      h.fakeThreads.get(ada)!.awaitedWork = false;
+      if (via === "roster") yield* roster(false);
+      else {
+        h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+        yield* groups.handleRunEvent({
+          type: "run.updated",
+          payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status: "completed" },
+        } as never as OrchestrationV2DomainEvent);
+      }
+      assert.equal(settled().includes(ada), settles);
     }).pipe(Effect.provide(h.layer));
   },
 );

@@ -17,12 +17,12 @@ import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
   continuationFailedBeforePrompt,
-  isAwaitedWork,
   isRestartContinuationSource,
   cancelledBeforeStart,
   isRestartNoteSource,
@@ -97,7 +97,7 @@ function hasOpenAwaitedWork(
     const work = cancelledTurnItemWork(item);
     return (
       work !== undefined &&
-      isAwaitedWork(work) &&
+      wakesAgentWhenDone(work) &&
       awaitingProviderThreadId(item, projection.runs) === providerThread.id
     );
   });
@@ -105,7 +105,7 @@ function hasOpenAwaitedWork(
     openItem ||
     (providerThread.ownerNodeId === null &&
       (providerThread.pendingBackgroundTasks ?? []).some((task) =>
-        isAwaitedWork(cancelledRosterTaskWork(task)),
+        wakesAgentWhenDone(cancelledRosterTaskWork(task)),
       ))
   );
 }

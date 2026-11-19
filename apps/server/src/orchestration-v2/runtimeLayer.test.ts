@@ -4871,6 +4871,177 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // A group request that finishes settles its members' threads right after their last turn.
+  it.effect.each([
+    ["thread.settle", "command", true, false],
+    ["thread.settle", "command", false, true],
+    ["thread.settle", "background_task", false, true],
+    // Claude's background Agent and Workflow are subagent items that wake the agent unasked.
+    ["thread.settle", "subagent", false, false],
+    // A delegated child runs in its own thread and session, so closing this one loses nothing.
+    ["thread.settle", "delegate", false, true],
+    ["thread.metadata.update", "command", true, false],
+    ["thread.archive", "command", true, true],
+  ] as const)(
+    "%s with a %s, awaited: %s, keeps the session: %s",
+    ([commandType, kind, awaited, detaches]) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-awaited-${commandType}-${kind}-${awaited}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Awaited background work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message`),
+          text: "Run the tests in the background and wait for them.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const run = initial.runs[0]!;
+        const providerThread = initial.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        const providerSessionId = ProviderSessionId.make(`${threadId}:session`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:session`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerSessionId,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                status: "ready",
+                cwd: process.cwd(),
+                model: modelSelection.model,
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:roster`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...providerThread,
+                providerSessionId,
+                pendingBackgroundTasks:
+                  kind === "subagent" || kind === "delegate"
+                    ? []
+                    : [{ taskId: "be0fc333p", kind, ...(awaited ? { awaited } : {}) }],
+                updatedAt: now,
+              },
+            },
+            ...(kind === "subagent" || kind === "delegate"
+              ? [
+                  {
+                    id: EventId.make(`${threadId}:subagent`),
+                    type: "turn-item.updated" as const,
+                    threadId,
+                    runId: run.id,
+                    occurredAt: now,
+                    payload: {
+                      id: TurnItemId.make(`${threadId}:subagent`),
+                      threadId,
+                      runId: run.id,
+                      nodeId: null,
+                      providerThreadId: providerThread.id,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      status: "running" as const,
+                      title: "Audit the tests",
+                      startedAt: now,
+                      completedAt: null,
+                      updatedAt: now,
+                      type: "subagent" as const,
+                      subagentId: NodeId.make(`${threadId}:subagent`),
+                      origin:
+                        kind === "delegate" ? ("app_owned" as const) : ("provider_native" as const),
+                      driver,
+                      providerInstanceId: modelSelection.instanceId,
+                      childThreadId:
+                        kind === "delegate" ? ThreadId.make(`${threadId}:child`) : null,
+                      prompt: "Audit the tests.",
+                      result: null,
+                    },
+                  },
+                ]
+              : []),
+            {
+              id: EventId.make(`${threadId}:completed`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        const commandId = CommandId.make(`${threadId}:${commandType}`);
+        const result = yield* orchestrator
+          .dispatch(
+            commandType === "thread.metadata.update"
+              ? {
+                  type: commandType,
+                  commandId,
+                  threadId,
+                  worktreePath: `${process.cwd()}/other-worktree`,
+                }
+              : { type: commandType, commandId, threadId },
+          )
+          .pipe(Effect.result);
+        const detached = [
+          ...(yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect)),
+        ].flatMap((stored) =>
+          stored.event.type === "provider-session.detached"
+            ? [stored.event.payload.providerSessionId]
+            : [],
+        );
+        assert.deepEqual(detached, detaches ? [providerSessionId] : []);
+        assert.equal(
+          result._tag === "Success" ? "Success" : result.failure._tag,
+          detaches ? "Success" : "OrchestratorThreadAwaitingBackgroundWorkError",
+        );
+        const refused = {
+          "thread.settle": "be settled",
+          "thread.metadata.update": "move to another worktree",
+          "thread.archive": "",
+        }[commandType];
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure.message,
+            `"Awaited background work" is waiting on background work, so it can't ${refused} yet. Let the work finish, press Stop to end it, or archive the thread.`,
+          );
+        }
+      }),
+  );
+
   it.effect("settles a thread its own agent settled once the turn completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -1315,6 +1315,7 @@ const make = Effect.gen(function* () {
         // A notification can start between the projection read and the guarded dispatch.
         Effect.catchTags({
           OrchestratorDispatchError: () => Effect.succeed(false),
+          OrchestratorThreadAwaitingBackgroundWorkError: () => Effect.succeed(false),
           OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
         }),
       );
