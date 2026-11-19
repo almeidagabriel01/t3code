@@ -128,7 +128,155 @@ describe("DesktopTelemetryPublisher", () => {
   );
 });
 
+const layerHistoryElectronApp = (
+  input: {
+    readonly metrics?: ReadonlyArray<Electron.ProcessMetric>;
+    readonly appListeners?: Map<string, (...args: ReadonlyArray<unknown>) => void>;
+  } = {},
+) =>
+  Layer.mock(ElectronApp.ElectronApp)({
+    getAppMetrics: Effect.succeed(input.metrics ?? []),
+    on: (eventName, listener) =>
+      Effect.sync(() => {
+        input.appListeners?.set(eventName, listener as (...args: ReadonlyArray<unknown>) => void);
+      }),
+  });
+
 describe("DesktopRendererHistory", () => {
+  it.effect("records the stack, process metrics and GPU loss of a hung main window", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-renderer-hang-",
+      });
+      const metric = (pid: number, type: Electron.ProcessMetric["type"]) =>
+        ({
+          pid,
+          type,
+          creationTime: 0,
+          memory: { workingSetSize: 1_000, peakWorkingSetSize: 2_000 },
+          cpu: { percentCPUUsage: 12.34, cumulativeCPUUsage: 99.6, idleWakeupsPerSecond: 0 },
+        }) satisfies Electron.ProcessMetric;
+      const metrics = [metric(50, "GPU"), metric(7_001, "Tab")];
+      const appListeners = new Map<string, (...args: ReadonlyArray<unknown>) => void>();
+      const decodeRow = Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+      );
+      type Row = { readonly [key: string]: unknown };
+      const persisted: Row[] = [];
+      let milestone:
+        | { readonly matches: (row: Row) => boolean; readonly written: Deferred.Deferred<Row> }
+        | undefined;
+      const awaitRow = (matches: (row: Row) => boolean) =>
+        Effect.gen(function* () {
+          const existing = persisted.find(matches);
+          if (existing !== undefined) return existing;
+          const written = yield* Deferred.make<Row>();
+          milestone = { matches, written };
+          return yield* Deferred.await(written);
+        });
+      const layerFile = Layer.succeed(FileSystem.FileSystem, {
+        ...fileSystem,
+        writeFile: (filePath, bytes, options) =>
+          fileSystem.writeFile(filePath, bytes, options).pipe(
+            Effect.tap(() =>
+              decodeRow(new TextDecoder().decode(bytes).trim()).pipe(
+                Effect.orDie,
+                Effect.flatMap((row) =>
+                  Effect.sync(() => {
+                    persisted.push(row);
+                    if (milestone?.matches(row)) {
+                      Deferred.doneUnsafe(milestone.written, Effect.succeed(row));
+                    }
+                  }),
+                ),
+              ),
+            ),
+          ),
+      });
+      const layer = DesktopRendererHistory.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              DesktopEnvironment.DesktopEnvironment,
+              DesktopEnvironment.DesktopEnvironment.of({
+                logDir: directory,
+              } as DesktopEnvironment.DesktopEnvironment["Service"]),
+            ),
+            layerFile,
+            layerHistoryElectronApp({ metrics, appListeners }),
+          ),
+        ),
+      );
+      const contents = (id: number, collectJavaScriptCallStack: () => Promise<unknown>) =>
+        Object.assign(new NodeEvents.EventEmitter(), {
+          id,
+          getOSProcessId: () => 7_001,
+          isDestroyed: () => false,
+          mainFrame: { collectJavaScriptCallStack },
+        }) as unknown as Electron.WebContents & NodeEvents.EventEmitter;
+      const looping = contents(1, () => Promise.resolve(`at spin\n${"x".repeat(10_000)}`));
+      // A frame running no JavaScript never settles the promise, as in the incident.
+      const idle = contents(2, () => new Promise(() => {}));
+
+      yield* Effect.gen(function* () {
+        const history = yield* DesktopRendererHistory.DesktopRendererHistory;
+        yield* history.register(looping, { surface: "main" });
+        yield* history.register(idle, { surface: "main" });
+
+        looping.emit("unresponsive");
+        const unresponsive = yield* awaitRow(
+          (row) => row.event === "unresponsive" && row.webContentsId === 1,
+        );
+        assert.deepEqual(unresponsive.processes, [
+          { type: "GPU", pid: 50, cpuPercent: 12.3, cpuSeconds: 100, workingSetBytes: 1_024_000 },
+          {
+            type: "Tab",
+            pid: 7_001,
+            cpuPercent: 12.3,
+            cpuSeconds: 100,
+            workingSetBytes: 1_024_000,
+          },
+        ]);
+        const stack = yield* awaitRow(
+          (row) => row.event === "unresponsive-stack" && row.webContentsId === 1,
+        );
+        assert.equal(stack.jsStackStatus, "collected");
+        assert.equal(String(stack.jsStack).length, 4_096);
+        assert.isTrue(String(stack.jsStack).startsWith("at spin"));
+
+        idle.emit("unresponsive");
+        yield* awaitRow((row) => row.event === "unresponsive" && row.webContentsId === 2);
+        yield* TestClock.adjust(Duration.seconds(5));
+        const timedOut = yield* awaitRow(
+          (row) => row.event === "unresponsive-stack" && row.webContentsId === 2,
+        );
+        assert.equal(timedOut.jsStackStatus, "timeout");
+        assert.equal(timedOut.jsStackWaitMs, 5_000);
+
+        yield* TestClock.adjust(Duration.seconds(30));
+        yield* history.recordMetrics(metrics);
+        const gpu = yield* awaitRow((row) => row.event === "gpu-sample");
+        assert.deepEqual(gpu.gpu, {
+          type: "GPU",
+          pid: 50,
+          cpuPercent: 12.3,
+          cpuSeconds: 100,
+          workingSetBytes: 1_024_000,
+        });
+
+        appListeners.get("child-process-gone")?.(
+          {},
+          { type: "GPU", reason: "crashed", exitCode: 9 },
+        );
+        const gone = yield* awaitRow((row) => row.event === "child-process-gone");
+        assert.equal(gone.processType, "GPU");
+        assert.equal(gone.reason, "crashed");
+        assert.equal(gone.exitCode, 9);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "persists surface identity and memory through renderer replacement and destruction",
     () =>
@@ -230,6 +378,7 @@ describe("DesktopRendererHistory", () => {
                 } as DesktopEnvironment.DesktopEnvironment["Service"]),
               ),
               layerFile,
+              layerHistoryElectronApp(),
             ),
           ),
         );
@@ -398,6 +547,7 @@ describe("DesktopRendererHistory", () => {
               } as DesktopEnvironment.DesktopEnvironment["Service"]),
             ),
             layerFile,
+            layerHistoryElectronApp(),
           ),
         ),
       );

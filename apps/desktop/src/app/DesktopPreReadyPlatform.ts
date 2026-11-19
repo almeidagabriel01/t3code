@@ -70,6 +70,12 @@ export const make = Effect.gen(function* () {
         : null;
     const linux =
       platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
+    const enableFeatures = DesktopEarlyElectronStartup.resolveEnableFeaturesSwitch(
+      readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
+    );
+    if (enableFeatures !== null) {
+      Electron.app.commandLine.appendSwitch("enable-features", enableFeatures);
+    }
 
     if (linux !== null) {
       DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({

@@ -2,13 +2,16 @@ import type * as Electron from "electron";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeRotatingLogFileWriter } from "../app/DesktopObservability.ts";
 
 export interface RendererIdentity {
@@ -36,6 +39,33 @@ interface RendererMemory {
   readonly peakWorkingSetBytes: number;
 }
 
+// A process-wide snapshot. `cpuPercent` covers the interval since the previous getAppMetrics call.
+interface ProcessSummary {
+  readonly type: Electron.ProcessMetric["type"];
+  readonly pid: number;
+  readonly cpuPercent: number;
+  readonly cpuSeconds: number | null;
+  readonly workingSetBytes: number;
+}
+
+interface RecordHeader {
+  readonly version: 1;
+  readonly mainPid: number;
+  readonly mainSessionStartedAtUnixMs: number;
+  readonly timestampUnixMs: number;
+}
+
+type AppRecord = RecordHeader &
+  (
+    | { readonly event: "gpu-sample"; readonly gpu: ProcessSummary }
+    | {
+        readonly event: "child-process-gone";
+        readonly processType: Electron.Details["type"];
+        readonly reason: Electron.Details["reason"];
+        readonly exitCode?: number;
+      }
+  );
+
 interface RendererRecord {
   readonly version: 1;
   readonly mainPid: number;
@@ -48,6 +78,7 @@ interface RendererRecord {
     | "sample"
     | "render-process-gone"
     | "unresponsive"
+    | "unresponsive-stack"
     | "responsive"
     | "destroyed";
   readonly webContentsId: number;
@@ -59,7 +90,14 @@ interface RendererRecord {
   readonly memory: RendererMemory | null;
   readonly reason?: Electron.RenderProcessGoneDetails["reason"];
   readonly exitCode?: number;
+  readonly processes?: ReadonlyArray<ProcessSummary>;
+  readonly jsStackStatus?: "collected" | "unavailable" | "timeout" | "failed";
+  readonly jsStack?: string;
+  // A V8 interrupt answers only while script runs, so a late stack may come from later work.
+  readonly jsStackWaitMs?: number;
 }
+
+type HistoryRecord = RendererRecord | AppRecord;
 
 interface TrackedRenderer {
   readonly webContents: Electron.WebContents;
@@ -68,20 +106,35 @@ interface TrackedRenderer {
   creationTimeMs: number | null;
   memory: RendererMemory | null;
   gone: boolean;
+  collectingStack: boolean;
   readonly removeListeners: () => void;
 }
 
 const nonnegative = (value: number): number | null =>
   Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 
+// A stack the frame never reports (no JavaScript running) must not hold the episode open.
+const JS_STACK_TIMEOUT = Duration.seconds(5);
+const JS_STACK_MAX_CHARS = 4_096;
+
+const summarizeProcess = (metric: Electron.ProcessMetric): ProcessSummary => ({
+  type: metric.type,
+  pid: metric.pid,
+  cpuPercent: Math.round(nonnegative(metric.cpu.percentCPUUsage * 10) ?? 0) / 10,
+  cpuSeconds:
+    metric.cpu.cumulativeCPUUsage === undefined ? null : nonnegative(metric.cpu.cumulativeCPUUsage),
+  workingSetBytes: nonnegative(metric.memory.workingSetSize * 1024) ?? 0,
+});
+
 const make = Effect.fn("DesktopRendererHistory.make")(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const path = yield* Path.Path;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const clock = yield* Clock.Clock;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const mainSessionStartedAtUnixMs = clock.currentTimeMillisUnsafe();
-  const records = yield* Queue.sliding<RendererRecord>(256);
+  const records = yield* Queue.sliding<HistoryRecord>(256);
   const active = new Map<number, TrackedRenderer>();
   let accepting = true;
   const writer = yield* makeRotatingLogFileWriter({
@@ -96,7 +149,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     ),
   );
 
-  const writeRecord = (record: RendererRecord) =>
+  const writeRecord = (record: HistoryRecord) =>
     writer.writeText(`${JSON.stringify(record)}\n`).pipe(Effect.ignore);
   const writerFiber = yield* Effect.forever(
     Effect.uninterruptibleMask((restore) =>
@@ -137,17 +190,21 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     }
     return renderer.pid === null ? "unavailable" : "last-known";
   };
+  const header = (): RecordHeader => ({
+    version: 1,
+    mainPid: process.pid,
+    mainSessionStartedAtUnixMs,
+    timestampUnixMs: clock.currentTimeMillisUnsafe(),
+  });
   const record = (
     renderer: TrackedRenderer,
     event: RendererRecord["event"],
     details?: Electron.RenderProcessGoneDetails,
+    diagnostics?: Pick<RendererRecord, "processes" | "jsStackStatus" | "jsStack" | "jsStackWaitMs">,
   ): void => {
     const rendererPidSource = readPid(renderer);
     Queue.offerUnsafe(records, {
-      version: 1,
-      mainPid: process.pid,
-      mainSessionStartedAtUnixMs,
-      timestampUnixMs: clock.currentTimeMillisUnsafe(),
+      ...header(),
       event,
       webContentsId: renderer.webContents.id,
       ...renderer.identity,
@@ -163,8 +220,53 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
               ? { exitCode: Math.round(details.exitCode) }
               : {}),
           }),
+      ...diagnostics,
     });
   };
+
+  type StackDiagnostics = Pick<RendererRecord, "jsStackStatus" | "jsStack">;
+  const readStack = (renderer: TrackedRenderer) =>
+    Effect.tryPromise({
+      try: () =>
+        renderer.webContents.mainFrame.collectJavaScriptCallStack() as Promise<string | void>,
+      catch: () => "failed" as const,
+    }).pipe(
+      Effect.map((stack): StackDiagnostics =>
+        typeof stack === "string"
+          ? { jsStackStatus: "collected", jsStack: stack.slice(0, JS_STACK_MAX_CHARS) }
+          : { jsStackStatus: "unavailable" },
+      ),
+      Effect.timeoutOption(JS_STACK_TIMEOUT),
+      Effect.map(Option.getOrElse((): StackDiagnostics => ({ jsStackStatus: "timeout" }))),
+      Effect.orElseSucceed((): StackDiagnostics => ({ jsStackStatus: "failed" })),
+    );
+  const onRendererUnresponsive = Effect.fn("DesktopRendererHistory.onRendererUnresponsive")(
+    function* (renderer: TrackedRenderer) {
+      // Only the app's own window: previews hang often, carry third-party stacks, and would crowd it out.
+      if (renderer.identity.surface !== "main") return record(renderer, "unresponsive");
+      const processes = yield* electronApp.getAppMetrics.pipe(
+        Effect.map((metrics) => metrics.map(summarizeProcess)),
+        Effect.catchCause(() => Effect.undefined),
+      );
+      record(renderer, "unresponsive", undefined, processes === undefined ? {} : { processes });
+      if (renderer.collectingStack) return;
+      renderer.collectingStack = true;
+      const startedAtMs = clock.currentTimeMillisUnsafe();
+      const stack = yield* readStack(renderer).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            renderer.collectingStack = false;
+          }),
+        ),
+      );
+      if (accepting) {
+        record(renderer, "unresponsive-stack", undefined, {
+          ...stack,
+          jsStackWaitMs: clock.currentTimeMillisUnsafe() - startedAtMs,
+        });
+      }
+    },
+  );
 
   const register = (webContents: Electron.WebContents, identity: RendererIdentity) =>
     Effect.sync(() => {
@@ -209,7 +311,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         record(renderer, "render-process-gone", details);
       };
       // A hung page keeps its process, so only these show when it stopped and came back.
-      const onUnresponsive = () => record(renderer, "unresponsive");
+      const onUnresponsive = () => runFork(onRendererUnresponsive(renderer));
       const onResponsive = () => record(renderer, "responsive");
       const onDestroyed = () => {
         record(renderer, "destroyed");
@@ -223,6 +325,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         creationTimeMs: null,
         memory: null,
         gone: false,
+        collectingStack: false,
         removeListeners: () => {
           webContents.removeListener("dom-ready", onDomReady);
           webContents.removeListener("devtools-opened", onDevToolsOpened);
@@ -255,6 +358,14 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
       if (sampledAtUnixMs - lastSampledAtUnixMs < 30_000) return;
       lastSampledAtUnixMs = sampledAtUnixMs;
       const byPid = new Map(metrics.map((metric) => [metric.pid, metric]));
+      const gpu = metrics.find((metric) => metric.type === "GPU");
+      if (gpu !== undefined) {
+        Queue.offerUnsafe(records, {
+          ...header(),
+          event: "gpu-sample",
+          gpu: summarizeProcess(gpu),
+        });
+      }
       for (const renderer of active.values()) {
         const pidSource = readPid(renderer);
         // A last-known PID may already have been reused by another process.
@@ -278,6 +389,19 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         () => Effect.void,
       ),
     );
+  yield* electronApp.on(
+    "child-process-gone",
+    (_event: Electron.Event, details: Electron.Details) => {
+      if (!accepting) return;
+      Queue.offerUnsafe(records, {
+        ...header(),
+        event: "child-process-gone",
+        processType: details.type,
+        reason: details.reason,
+        ...(Number.isFinite(details.exitCode) ? { exitCode: Math.round(details.exitCode) } : {}),
+      });
+    },
+  );
   const shutdown = Effect.sync(() => {
     accepting = false;
     for (const renderer of active.values()) renderer.removeListeners();
