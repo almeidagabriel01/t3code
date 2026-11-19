@@ -86,7 +86,14 @@ describe("workingItems", () => {
       // An assistant's work routed to a linked machine is the assistant's, on that machine.
       ["vps:routed", ref("assistant", "routed", "vps", { assistantId: "ada" }), "ada"],
       ["mac:task", ref("assistant", "task", "mac", { assistantId: "ada" }), "ada"],
-      ["vps:live-child", ref("subagent", "live-child", "vps", { parentThreadId: "plain" }), null],
+      [
+        "vps:live-child",
+        ref("subagent", "live-child", "vps", {
+          parentThreadId: "plain",
+          parentEnvironmentId: "vps",
+        }),
+        null,
+      ],
       [
         `mac:${group}`,
         ref("groupMember", group, "mac", { assistantId: "ada", groupId: "dev" }),
@@ -120,6 +127,7 @@ describe("workingItems", () => {
       kind: "subagent",
       environmentId: "vps",
       parentThreadId: "plain",
+      parentEnvironmentId: "mac",
     });
   });
 
@@ -133,7 +141,9 @@ describe("workingConsumerLine", () => {
   const names = {
     assistant: (_: string, id: string) => (id === "ada" ? "Ada" : undefined),
     group: (_: string, id: string) => (id === "dev" ? "Backend" : undefined),
-    thread: (_: string, id: string) => (id === "plain" ? "Fix login" : undefined),
+    // The parent of a delegated task lives on the machine that delegated it.
+    thread: (env: string, id: string) =>
+      env === "mac" && id === "plain" ? "Fix login" : undefined,
     environment: (id: string) => (id === "vps" ? "VPS" : undefined),
   };
 
@@ -145,10 +155,23 @@ describe("workingConsumerLine", () => {
       "gone",
       "Assistant · Group · VPS",
     ],
-    [{ kind: "subagent", parentThreadId: "plain" }, "ada", "Subagent of Ada · VPS"],
-    [{ kind: "subagent", parentThreadId: "plain" }, null, "Subagent of Fix login · VPS"],
     [
-      { kind: "subagent", parentThreadId: "other", environmentId: "mac" },
+      { kind: "subagent", parentThreadId: "plain", parentEnvironmentId: "vps" },
+      "ada",
+      "Subagent of Ada · VPS",
+    ],
+    [
+      { kind: "subagent", parentThreadId: "plain", parentEnvironmentId: "mac" },
+      null,
+      "Subagent of Fix login · VPS",
+    ],
+    [
+      {
+        kind: "subagent",
+        parentThreadId: "other",
+        parentEnvironmentId: "mac",
+        environmentId: "mac",
+      },
       null,
       "Subagent of a thread",
     ],

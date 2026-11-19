@@ -1,6 +1,8 @@
 import {
+  AssistantTeamId,
+  consumerRefFromThread,
+  type ConsumerRef,
   isAssistantGroupThreadId,
-  type ResourceTelemetryConsumer,
   type ResourceTelemetrySnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -11,7 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import { consumerOf, withConsumers } from "./Owners.ts";
+import { withConsumers } from "./Owners.ts";
 
 /** Names the consumer behind each agent process; telemetry starts before orchestration, so this runs on read. */
 export class ResourceConsumers extends Context.Service<
@@ -27,7 +29,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const sql = yield* SqlClient.SqlClient;
   const environmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
-  const cache = new Map<string, ResourceTelemetryConsumer>();
+  const cache = new Map<string, ConsumerRef>();
 
   const groupOf = Effect.fn("ResourceConsumers.groupOf")(function* (threadId: ThreadId) {
     if (!isAssistantGroupThreadId(threadId)) return null;
@@ -35,13 +37,14 @@ const make = Effect.gen(function* () {
       SELECT team_id FROM assistant_group_request_threads WHERE thread_id = ${threadId}
       UNION ALL
       SELECT team_id FROM assistant_group_threads WHERE thread_id = ${threadId}`;
-    return rows[0]?.team_id ?? null;
+    const teamId = rows[0]?.team_id;
+    return teamId === undefined ? null : AssistantTeamId.make(teamId);
   });
 
   const resolve = Effect.fn("ResourceConsumers.resolve")(function* (threadId: ThreadId) {
     const thread = yield* orchestrator.getThreadShell(threadId);
     if (thread === null) return null;
-    return consumerOf({ thread, groupId: yield* groupOf(threadId), environmentId });
+    return consumerRefFromThread(thread, environmentId, yield* groupOf(threadId));
   });
 
   return ResourceConsumers.of({

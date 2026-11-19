@@ -4,10 +4,9 @@ import {
   EnvironmentId,
   NonNegativeInt,
   PositiveInt,
-  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ConsumerRef } from "./consumer.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
@@ -502,19 +501,6 @@ export const ResourceAttributionSnapshot = Schema.Struct({
 });
 export type ResourceAttributionSnapshot = typeof ResourceAttributionSnapshot.Type;
 
-// Local stand-in for the shared consumer contract; replaced by it once that lands.
-/** Who an agent process works for and on which machine; the server resolves it, clients only read it. */
-export const ResourceTelemetryConsumer = Schema.Struct({
-  kind: Schema.Literals(["thread", "assistant", "groupMember", "subagent"]),
-  threadId: ThreadId,
-  assistantId: Schema.optionalKey(TrimmedNonEmptyString),
-  groupId: Schema.optionalKey(TrimmedNonEmptyString),
-  parentThreadId: Schema.optionalKey(ThreadId),
-  environmentId: EnvironmentId,
-  providerInstanceId: ProviderInstanceId,
-});
-export type ResourceTelemetryConsumer = typeof ResourceTelemetryConsumer.Type;
-
 /** A root process T3 started for an agent conversation or the device hub; clients walk `childPids` from it. */
 export const ResourceTelemetryOwner = Schema.Union([
   Schema.Struct({
@@ -522,7 +508,7 @@ export const ResourceTelemetryOwner = Schema.Union([
     pid: PositiveInt,
     threadId: TrimmedNonEmptyString,
     /** Absent from older servers and while the thread cannot be read. */
-    consumer: Schema.optionalKey(ResourceTelemetryConsumer),
+    consumer: Schema.optionalKey(ConsumerRef),
   }),
   Schema.Struct({ kind: Schema.Literal("device-hub"), pid: PositiveInt }),
 ]);

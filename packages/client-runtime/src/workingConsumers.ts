@@ -42,8 +42,7 @@ const idAfterEnvironment = (key: string) => key.slice(key.indexOf(":") + 1);
 
 /**
  * `consumerRefFromThread`, told who owns the thread: an assistant's launched task and its work
- * routed to a linked machine are the assistant's, and a linked machine's task for a project
- * thread lists under that thread, as a subagent does.
+ * routed to a linked machine are the assistant's; its local subagents stay subagents.
  */
 function consumerOf(shell: WorkingShell, owner: ThreadOwner): ConsumerRef {
   const groupId =
@@ -51,18 +50,14 @@ function consumerOf(shell: WorkingShell, owner: ThreadOwner): ConsumerRef {
       ? AssistantTeamId.make(idAfterEnvironment(owner.teamKey))
       : null;
   const ref = consumerRefFromThread(shell, shell.environmentId, groupId);
+  const localSubagent = ref.kind === "subagent" && ref.parentEnvironmentId === ref.environmentId;
+  if (owner.kind !== "assistant" || localSubagent) return ref;
   const { threadId, environmentId, providerInstanceId } = ref;
   const base = { threadId, environmentId, providerInstanceId };
-  if (ref.kind === "subagent") return ref;
-  if (owner.kind === "assistant") {
-    const assistantId = AssistantId.make(idAfterEnvironment(owner.assistantKey));
-    return groupId === null
-      ? { kind: "assistant", ...base, assistantId }
-      : { kind: "groupMember", ...base, assistantId, groupId };
-  }
-  return shell.delegatedFrom == null
-    ? ref
-    : { kind: "subagent", ...base, parentThreadId: shell.delegatedFrom.threadId };
+  const assistantId = AssistantId.make(idAfterEnvironment(owner.assistantKey));
+  return groupId === null
+    ? { kind: "assistant", ...base, assistantId }
+    : { kind: "groupMember", ...base, assistantId, groupId };
 }
 
 export interface WorkingItem<S extends WorkingShell = WorkingShell> {
@@ -157,7 +152,7 @@ export function workingConsumerLine(
       : (names.assistant(environmentId, item.ownerAssistantId) ?? "Assistant");
   const who =
     consumer.kind === "subagent"
-      ? `Subagent of ${assistant ?? names.thread(environmentId, consumer.parentThreadId) ?? "a thread"}`
+      ? `Subagent of ${assistant ?? names.thread(consumer.parentEnvironmentId, consumer.parentThreadId) ?? "a thread"}`
       : assistant;
   const group =
     consumer.kind === "groupMember"

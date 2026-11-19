@@ -1,15 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  ProviderInstanceId,
-  type ResourceTelemetryConsumer,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, type ConsumerRef, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { ProcessOwners, registerOwner } from "@t3tools/shared/ProcessOwners";
 
 import * as ProcessOwnersLive from "../process/processOwners.ts";
-import { consumerOf, liveOwners, withConsumers } from "./Owners.ts";
+import { liveOwners, withConsumers } from "./Owners.ts";
 
 const proc = (pid: number) => ({ identity: { pid, startTimeMs: 1 } });
 
@@ -95,86 +90,8 @@ describe("registerOwner", () => {
 
 const environmentId = EnvironmentId.make("mac");
 const providerInstanceId = ProviderInstanceId.make("codex");
-const lineage = (id: string, parent?: string, relationshipToParent?: "fork" | "subagent") => ({
-  parentThreadId: parent === undefined ? null : ThreadId.make(parent),
-  relationshipToParent: relationshipToParent ?? null,
-  rootThreadId: ThreadId.make(parent ?? id),
-});
-
-describe("consumerOf", () => {
-  const delegatedFrom = {
-    environmentId: EnvironmentId.make("vps"),
-    threadId: ThreadId.make("remote-parent"),
-    title: "Parent",
-  };
-  it.each([
-    ["a plain thread", "t1", lineage("t1"), null, null, { kind: "thread" }],
-    [
-      "a fork reads as its own thread",
-      "t2",
-      lineage("t2", "t1", "fork"),
-      null,
-      null,
-      { kind: "thread" },
-    ],
-    [
-      "a subagent",
-      "t3",
-      lineage("t3", "t1", "subagent"),
-      null,
-      null,
-      { kind: "subagent", parentThreadId: "t1" },
-    ],
-    [
-      "a task delegated from a linked environment",
-      "t4",
-      lineage("t4"),
-      delegatedFrom,
-      null,
-      { kind: "subagent", parentThreadId: "remote-parent" },
-    ],
-    [
-      "an assistant",
-      "assistant:ana:2",
-      lineage("assistant:ana:2"),
-      null,
-      null,
-      { kind: "assistant", assistantId: "ana" },
-    ],
-    [
-      "a group member",
-      "assistant:ana:g-0123456789abcdef",
-      lineage("assistant:ana:g-0123456789abcdef"),
-      null,
-      "team:1",
-      { kind: "groupMember", assistantId: "ana", groupId: "team:1" },
-    ],
-    [
-      "a group member whose group row is missing",
-      "assistant:ana:g-0123456789abcdef",
-      lineage("assistant:ana:g-0123456789abcdef"),
-      null,
-      null,
-      { kind: "groupMember", assistantId: "ana" },
-    ],
-  ] as const)("%s", (_name, id, threadLineage, delegated, groupId, expected) => {
-    expect(
-      consumerOf({
-        thread: {
-          id: ThreadId.make(id),
-          providerInstanceId,
-          lineage: threadLineage,
-          ...(delegated === null ? {} : { delegatedFrom: delegated }),
-        },
-        groupId,
-        environmentId,
-      }),
-    ).toEqual({ threadId: id, environmentId, providerInstanceId, ...expected });
-  });
-});
-
 describe("withConsumers", () => {
-  const consumer = (threadId: string): ResourceTelemetryConsumer => ({
+  const consumer = (threadId: string): ConsumerRef => ({
     kind: "thread",
     threadId: ThreadId.make(threadId),
     environmentId,
@@ -183,7 +100,7 @@ describe("withConsumers", () => {
 
   it.effect("tags agents, keeps the rest, and looks each live process up once", () =>
     Effect.gen(function* () {
-      const cache = new Map<string, ResourceTelemetryConsumer>();
+      const cache = new Map<string, ConsumerRef>();
       const lookups: string[] = [];
       const resolve = (threadId: ThreadId) =>
         Effect.sync(() => {

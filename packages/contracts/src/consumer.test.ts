@@ -12,6 +12,8 @@ const providerInstanceId = ProviderInstanceId.make("claude-work");
 const root = ThreadId.make("thread-root");
 const groupThread = ThreadId.make("assistant:jarvis:g-0123456789abcdef");
 const team = AssistantTeamId.make("team:ops");
+const vps = EnvironmentId.make("env-vps");
+const remoteParent = ThreadId.make("remote-parent");
 
 const thread = (
   id: string,
@@ -21,6 +23,10 @@ const thread = (
   id: ThreadId.make(id),
   providerInstanceId,
   lineage: { parentThreadId, relationshipToParent, rootThreadId: root },
+});
+const delegated = (id: string) => ({
+  ...thread(id),
+  delegatedFrom: { environmentId: vps, threadId: remoteParent, title: "Parent" },
 });
 
 describe("consumerRefFromThread", () => {
@@ -44,7 +50,13 @@ describe("consumerRefFromThread", () => {
       "subagent",
       thread("thread-child", "subagent"),
       null,
-      { kind: "subagent", parentThreadId: root },
+      { kind: "subagent", parentThreadId: root, parentEnvironmentId: environmentId },
+    ],
+    [
+      "task delegated from a linked environment",
+      delegated("thread-delegated"),
+      null,
+      { kind: "subagent", parentThreadId: remoteParent, parentEnvironmentId: vps },
     ],
     [
       "subagent without a parent reads as a thread",
