@@ -3,6 +3,7 @@
  * the queue, so `runner.ts`, `admission.ts` and `costClass.ts` all read it without a cycle.
  */
 import type { HeavyQueueEntry } from "@t3tools/contracts";
+import { parseLine } from "./shellLine.ts";
 
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 /** Options that pick a workspace package (`pnpm --filter web dev`): their value is no script. */
@@ -84,7 +85,36 @@ export const keepsRunning = (
 
 export type Kind = "exclusive" | "heavy" | "medium";
 
-const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev app/i;
+/** `simctl` subcommands that only read: every other one boots or drives a simulator. */
+const SIMCTL_READS = new Set(["list", "help", "getenv", "get_app_container", "listapps"]);
+const LAUNCHERS = new Set(["env", "time", "remoto", "nohup", "sudo", "command", "exec"]);
+
+/**
+ * A command that boots or drives a device: `xcrun simctl boot`, `emulator -avd X`, `expo run:ios`.
+ * `sh -c '<line>'` is read through; a word that only names a device (`echo emulator`) is not one.
+ */
+const drivesDevice = (line: string, depth = 0): boolean =>
+  parseLine(line).commands.some((command) => {
+    const values = command.words.map((word) => word.value);
+    const at = values.findIndex(
+      (value) => !LAUNCHERS.has(value) && !value.startsWith("-") && !/^\w+=/.test(value),
+    );
+    const program = values[at]?.split("/").pop()?.toLowerCase() ?? "";
+    const rest = values.slice(at + 1);
+    if (/^(ba|z|da)?sh$/.test(program)) {
+      const text = rest[rest.findIndex((value) => /^-[a-z]*c$/.test(value)) + 1];
+      return depth < 1 && text !== undefined && drivesDevice(text, depth + 1);
+    }
+    const words = rest.filter((value) => !value.startsWith("-"));
+    if (program === "simctl" || (program === "xcrun" && words[0] === "simctl")) {
+      return !SIMCTL_READS.has(words[program === "simctl" ? 0 : 1] ?? "list");
+    }
+    if (program === "emulator")
+      return rest.some((value) => value === "-avd" || value.startsWith("@"));
+    const target = runTarget(program, words);
+    return target.program === "expo" && /^run(:|$)/.test(target.words[0] ?? "");
+  });
+
 const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
 const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i;
 /** The folders of a word naming a file (`a/b/x.ts` keeps `x.ts`). */
@@ -99,7 +129,7 @@ export const kindOf = (
   entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
 ): Kind => {
   const line = entry.line ?? entry.label;
-  if (entry.server === true || EXCLUSIVE.test(line)) return "exclusive";
+  if (entry.server === true || drivesDevice(line)) return "exclusive";
   // A file is judged by its own name: `src/build/x.ts` builds nothing.
   const named = line.replace(FILE_FOLDERS, "");
   if (HEAVY.test(named)) return "heavy";
