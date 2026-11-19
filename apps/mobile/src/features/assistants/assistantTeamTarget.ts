@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import type { AssistantEnvironmentValue } from "@t3tools/client-runtime/assistantEnvironment";
 import type { AssistantTeamId, EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -13,6 +14,8 @@ export interface AssistantTeamTarget {
   readonly section?: "routines";
   /** Group settings' unsaved default model, picked on its own route; null clears it. */
   readonly defaultModelDraft?: ModelSelection | null;
+  /** Its unsaved "runs on" choice; null inherits each member's own. */
+  readonly defaultEnvironmentDraft?: AssistantEnvironmentValue;
 }
 
 /** Which team the edit screen shows; routes carry no params, like the assistant form. */
@@ -21,16 +24,34 @@ export const assistantTeamTargetAtom = Atom.make<AssistantTeamTarget | null>(nul
   Atom.withLabel("mobile-assistant-team-target"),
 );
 
-export function setGroupDefaultModelDraft(defaultModelDraft: ModelSelection | null) {
+type GroupSettingsDraft = Pick<
+  AssistantTeamTarget,
+  "defaultModelDraft" | "defaultEnvironmentDraft"
+>;
+
+function setGroupSettingsDraft(draft: GroupSettingsDraft) {
   const target = appAtomRegistry.get(assistantTeamTargetAtom);
   if (target === null) return;
   // Dropping the section keeps the row's layout shift from scrolling the form back to Routines.
   appAtomRegistry.set(assistantTeamTargetAtom, {
     environmentId: target.environmentId,
     teamId: target.teamId,
-    defaultModelDraft,
+    ...(target.defaultModelDraft === undefined
+      ? {}
+      : { defaultModelDraft: target.defaultModelDraft }),
+    ...(target.defaultEnvironmentDraft === undefined
+      ? {}
+      : { defaultEnvironmentDraft: target.defaultEnvironmentDraft }),
+    ...draft,
   });
 }
+
+export const setGroupDefaultModelDraft = (defaultModelDraft: ModelSelection | null) =>
+  setGroupSettingsDraft({ defaultModelDraft });
+
+export const setGroupDefaultEnvironmentDraft = (
+  defaultEnvironmentDraft: AssistantEnvironmentValue,
+) => setGroupSettingsDraft({ defaultEnvironmentDraft });
 
 /** Opens the team form or chat from Settings and Home. */
 export function useOpenAssistantTeam() {

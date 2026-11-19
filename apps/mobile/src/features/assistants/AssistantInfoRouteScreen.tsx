@@ -14,6 +14,10 @@ import {
   assistantWorkingHereLabel,
   assistantWorkingNow,
 } from "@t3tools/client-runtime/assistantLiveWork";
+import {
+  defaultEnvironmentOf,
+  supportsDefaultEnvironment,
+} from "@t3tools/client-runtime/assistantEnvironment";
 import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime/autonomy";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
@@ -43,6 +47,11 @@ import {
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import {
+  AssistantEnvironmentRow,
+  namesLink,
+  useAssistantEnvironmentPicker,
+} from "./AssistantEnvironmentPicker";
 import { assistantStatusText, moodTextClass } from "./assistantPresenceLabels";
 import {
   AssistantAvatar,
@@ -129,6 +138,7 @@ function useProjectName(environmentId: EnvironmentId) {
 function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
+  const navigation = useNavigation();
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
   const openTeam = useOpenAssistantTeam();
@@ -153,6 +163,13 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
   );
   const thread = shells.find(
     (shell) => shell.environmentId === environmentId && shell.id === assistant.threadId,
+  );
+  const runsOnValue = defaultEnvironmentOf(assistant) ?? null;
+  const runsOn = useAssistantEnvironmentPicker(
+    environmentId,
+    { subject: "assistant", workspace: assistant.workspace, scope: assistant.scope },
+    runsOnValue,
+    namesLink(runsOnValue),
   );
   const titleOf = (threadId: string) =>
     shells.find((shell) => shell.environmentId === environmentId && shell.id === threadId)?.title ??
@@ -242,6 +259,18 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
       )}
       <ListSection title="Access">
         <Field label="Tool access" value={toolAccessLabel(assistant.toolAccess)} />
+        {supportsDefaultEnvironment(assistant) ? (
+          <AssistantEnvironmentRow
+            picker={runsOn}
+            disabled={archived || !flows.canAct}
+            onPress={() =>
+              navigation.navigate("SettingsAssistantEnvironment", {
+                environmentId,
+                assistantId: assistant.id,
+              })
+            }
+          />
+        ) : null}
         <Field
           label="Asks before acting"
           value={assistantAskBeforeActingLabel(assistant.askBeforeActing)}

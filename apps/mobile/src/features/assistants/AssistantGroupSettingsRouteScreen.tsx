@@ -1,5 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import {
+  ASSISTANT_ENVIRONMENT_COPY,
+  assistantTeamEnvironmentFields,
+  defaultEnvironmentOf,
+  supportsDefaultEnvironment,
+} from "@t3tools/client-runtime/assistantEnvironment";
 import { assistantGroupLatestSeq } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   ASSISTANT_TEAM_INSTRUCTIONS_MAX_CHARS,
@@ -32,6 +38,11 @@ import {
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { modelDisplayName, SettingsModelPicker } from "../settings/components/SettingsModelPicker";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import {
+  AssistantEnvironmentRow,
+  namesLink,
+  useAssistantEnvironmentPicker,
+} from "./AssistantEnvironmentPicker";
 import { FieldHeader, TextField } from "./AssistantFormFields";
 import { GroupProjectsSection } from "./GroupProjectsSection";
 import { GroupRoutinesSection } from "./GroupRoutinesSection";
@@ -76,6 +87,7 @@ export function AssistantGroupSettingsRouteScreen() {
       team={team}
       section={target.section}
       defaultModelDraft={target.defaultModelDraft}
+      defaultEnvironmentDraft={target.defaultEnvironmentDraft}
     />
   );
 }
@@ -115,8 +127,9 @@ function SettingsForm(props: {
   readonly team: AssistantTeam;
   readonly section: AssistantTeamTarget["section"];
   readonly defaultModelDraft: AssistantTeamTarget["defaultModelDraft"];
+  readonly defaultEnvironmentDraft: AssistantTeamTarget["defaultEnvironmentDraft"];
 }) {
-  const { environmentId, team, section, defaultModelDraft } = props;
+  const { environmentId, team, section, defaultModelDraft, defaultEnvironmentDraft } = props;
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -142,11 +155,22 @@ function SettingsForm(props: {
     projectIds.length !== team.projectIds.length ||
     projectIds.some((id) => !team.projectIds.includes(id));
   const defaultModel = draftDefaultModel(defaultModelDraft, team);
+  const runsOnValue =
+    defaultEnvironmentDraft === undefined
+      ? (defaultEnvironmentOf(team) ?? null)
+      : defaultEnvironmentDraft;
+  const runsOn = useAssistantEnvironmentPicker(
+    environmentId,
+    { subject: "group" },
+    runsOnValue,
+    namesLink(runsOnValue),
+  );
   const changed =
     instructions.trim() !== (team.instructions ?? "") ||
     JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
     projectsChanged ||
-    defaultModelDraft !== undefined;
+    defaultModelDraft !== undefined ||
+    defaultEnvironmentDraft !== undefined;
   const converseDisabled = busy || working || !groupActions.canConverse;
 
   const save = async () => {
@@ -158,6 +182,9 @@ function SettingsForm(props: {
       memories: kept.slice(0, ASSISTANT_TEAM_MEMORIES_MAX),
       ...(projectsChanged ? { projectIds } : {}),
       ...(defaultModelDraft === undefined ? {} : { defaultModelSelection: defaultModelDraft }),
+      ...(defaultEnvironmentDraft === undefined
+        ? {}
+        : assistantTeamEnvironmentFields(defaultEnvironmentDraft)),
     });
     setBusy(false);
     if (reply.ok) navigation.goBack();
@@ -255,6 +282,22 @@ function SettingsForm(props: {
             </ListSection>
           </View>
         )}
+        {supportsDefaultEnvironment(team) ? (
+          <View className="gap-2">
+            <FieldHeader
+              label={ASSISTANT_ENVIRONMENT_COPY.rowLabel}
+              description={ASSISTANT_ENVIRONMENT_COPY.pickerFooter}
+            />
+            <ListSection>
+              <AssistantEnvironmentRow
+                picker={runsOn}
+                icon="server.rack"
+                disabled={busy || !teamActions.canAct}
+                onPress={() => navigation.navigate("SettingsGroupEnvironment")}
+              />
+            </ListSection>
+          </View>
+        ) : null}
         {error === null ? null : (
           <Text
             accessibilityRole="alert"

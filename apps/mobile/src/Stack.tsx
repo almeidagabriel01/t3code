@@ -149,6 +149,11 @@ import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTea
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
 import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
+import {
+  AssistantEnvironmentPickerRouteScreen,
+  GroupEnvironmentPickerRouteScreen,
+} from "./features/assistants/AssistantEnvironmentPicker";
+import { ASSISTANT_ENVIRONMENT_COPY } from "@t3tools/client-runtime/assistantEnvironment";
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { IntegrationRouteScreen } from "./features/integrations/IntegrationRouteScreen";
@@ -438,6 +443,14 @@ const SETTINGS_SCREENS = {
   SettingsGroupDefaultModel: createNativeStackScreen({
     screen: GroupDefaultModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
+  }),
+  SettingsAssistantEnvironment: createNativeStackScreen({
+    screen: AssistantEnvironmentPickerRouteScreen,
+    options: settingsPage(ASSISTANT_ENVIRONMENT_COPY.pickerTitle),
+  }),
+  SettingsGroupEnvironment: createNativeStackScreen({
+    screen: GroupEnvironmentPickerRouteScreen,
+    options: settingsPage(ASSISTANT_ENVIRONMENT_COPY.pickerTitle),
   }),
   SettingsMemoryModel: createNativeStackScreen({
     screen: MemoryModelPickerRouteScreen,

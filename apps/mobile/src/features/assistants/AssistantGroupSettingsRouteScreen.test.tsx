@@ -10,6 +10,7 @@ const { mocks, Children } = vi.hoisted(() => ({
       teamId: string | null;
       section?: "routines";
       defaultModelDraft?: unknown;
+      defaultEnvironmentDraft?: unknown;
     },
     scrollTo: vi.fn(),
     teams: [] as unknown[],
@@ -50,14 +51,28 @@ vi.mock("../../components/ui/ListActionRow", () => ({
   ),
 }));
 vi.mock("../../components/ui/ListRow", () => ({
-  ListRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
-    <button aria-label="Group default model" disabled={props.disabled} onClick={props.onPress}>
+  ListRow: (props: { label: string; detail?: string; disabled?: boolean; onPress: () => void }) => (
+    <button
+      aria-label={props.label === "Runs on" ? "Runs on" : "Group default model"}
+      data-detail={props.detail}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
       {props.label}
     </button>
   ),
 }));
 vi.mock("../../lib/modelOptions", () => ({ buildModelOptions: () => [] }));
-vi.mock("../../state/entities", () => ({ useEnvironmentServerConfig: () => null }));
+vi.mock("../../state/entities", () => ({
+  useEnvironmentServerConfig: () => ({
+    environment: { capabilities: { peerLinks: true } },
+    settings: { linkedEnvironmentsEnabled: true },
+  }),
+}));
+vi.mock("../../components/ui/SelectionRow", () => ({ SelectionRow: () => null }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/peerLinks", () => ({ peerLinkEnvironment: { list: () => null } }));
+vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: undefined }) }));
 vi.mock("../settings/components/SettingsModelPicker", () => ({
   modelDisplayName: (_options: unknown, selection: { model: string }) => selection.model,
   SettingsModelPicker: (props: {
@@ -106,6 +121,7 @@ vi.mock("./assistantTeamTarget", () => ({
   setGroupDefaultModelDraft: (defaultModelDraft: unknown) => {
     mocks.target = { ...mocks.target!, defaultModelDraft };
   },
+  setGroupDefaultEnvironmentDraft: () => {},
 }));
 vi.mock("./GroupRoutinesSection", () => ({ GroupRoutinesSection: () => null }));
 vi.mock("./GroupProjectsSection", () => ({
@@ -274,6 +290,36 @@ describe("group settings", () => {
     mocks.teams = [{ environmentId: "hub", team: team({ defaultModelSelection: undefined }) }];
     await render();
     expect(container.textContent).not.toContain("Default model");
+  });
+
+  it.each([
+    { draft: "auto", label: "Auto" },
+    { draft: null, label: "Each member's default" },
+  ])("sends the picked machine ($label) with Save", async ({ draft, label }) => {
+    mocks.teams = [{ environmentId: "hub", team: team({ defaultEnvironment: "local" }) }];
+    await render();
+    const row = () => container.querySelector<HTMLButtonElement>('button[aria-label="Runs on"]')!;
+    expect(row().dataset.detail).toBe("Local");
+    await act(async () => row().click());
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsGroupEnvironment");
+    mocks.target = { environmentId: "hub", teamId: "t1", defaultEnvironmentDraft: draft };
+    await render();
+    expect(row().dataset.detail).toBe(label);
+    await press("Save");
+    expect(mocks.update).toHaveBeenCalledWith({
+      teamId: "t1",
+      instructions: "Be brief.",
+      memories: ["Budget is 5k"],
+      defaultEnvironment: draft,
+    });
+  });
+
+  it("an unset group reads as each member's default and holds without write access", async () => {
+    mocks.canAct = false;
+    await render();
+    const row = container.querySelector<HTMLButtonElement>('button[aria-label="Runs on"]')!;
+    expect(row.dataset.detail).toBe("Each member's default");
+    expect(row.disabled).toBe(true);
   });
 
   it("the picker starts on the draft and picks into it", async () => {

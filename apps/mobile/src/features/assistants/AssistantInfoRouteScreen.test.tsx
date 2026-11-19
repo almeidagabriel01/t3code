@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   workingNow: [] as unknown[],
   working: new Set<string>(),
   canAct: true,
+  linksEnabled: false,
   canGoBack: true,
   goBack: vi.fn(),
   navigate: vi.fn(),
@@ -102,7 +103,16 @@ vi.mock("../../state/assistants", () => ({
     data: assistantId === null ? null : { spent: 3 },
   }),
 }));
+vi.mock("../../components/ui/SelectionRow", () => ({ SelectionRow: () => null }));
+vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/peerLinks", () => ({ peerLinkEnvironment: { list: () => null } }));
+vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: undefined }) }));
 vi.mock("../../state/entities", () => ({
+  useEnvironmentServerConfig: () => ({
+    environment: { capabilities: { peerLinks: true } },
+    settings: { linkedEnvironmentsEnabled: mocks.linksEnabled },
+  }),
   useProjects: () => [
     { environmentId: "hub", id: "web", title: "Web" },
     { environmentId: "hub", id: "api", title: "API" },
@@ -259,6 +269,7 @@ beforeEach(() => {
     archived: [],
     teams: [team()],
     environmentIds: ["hub"],
+    linksEnabled: false,
     chat: groupChat([]),
     workingNow: [],
     working: new Set(),
@@ -289,6 +300,7 @@ describe("Assistant info", () => {
     expect(section("Groups")).toEqual(["Crew"]);
     expect(section("Access")).toEqual([
       "Tool access | access:read-only",
+      "Runs on | Local (default)",
       "Asks before acting | On",
       `Model | ${formatModelSlugName("claude-opus-5-5")}`,
       "When it finds a problem | Fix small things",
@@ -310,9 +322,36 @@ describe("Assistant info", () => {
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", expect.objectContaining({ id: "ada" }));
     await press("Work");
     expect(mocks.openWork).toHaveBeenCalledWith("hub", "ada");
+    await press("Runs on");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistantEnvironment", {
+      environmentId: "hub",
+      assistantId: "ada",
+    });
     await press("Archive assistant");
     expect(mocks.flows.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "ada" }));
   });
+
+  it.each([
+    {
+      extra: { workspace: "sandbox" },
+      row: "Runs on | A sandboxed assistant always works in its sandbox. | Sandbox",
+    },
+    {
+      extra: { scope: "project" },
+      row: "Runs on | A project assistant always works on its own machine. | Local",
+    },
+  ])(
+    "a $extra assistant shows why its machine is fixed and does not open",
+    async ({ extra, row }) => {
+      mocks.assistants = [assistant("ada", "Ada", { ...extra, defaultEnvironment: "auto" })];
+      mocks.linksEnabled = true;
+      using _screen = showAssistant();
+      expect(section("Access")).toContain(row);
+      expect(
+        container.querySelector<HTMLButtonElement>('button[aria-label="Runs on"]')?.disabled,
+      ).toBe(true);
+    },
+  );
 
   it("an all-projects lead with nothing running", () => {
     using _screen = showAssistant("bo");
@@ -321,6 +360,7 @@ describe("Assistant info", () => {
     expect(section("Groups")).toEqual(["Crew | Lead"]);
     expect(section("Access")).toEqual([
       "Tool access | access:read-only",
+      "Runs on | Local (default)",
       "Asks before acting | Off",
       "When it finds a problem | Offer to fix",
     ]);
