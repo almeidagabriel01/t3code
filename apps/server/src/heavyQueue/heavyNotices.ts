@@ -603,7 +603,7 @@ export const startRecord = (
   runner: HeavyRunner,
   now: number,
 ): HeavyEventRecord | null => {
-  if (intent === "automatic" && runner === "linux") return recordOf(entry, { kind: "hybrid" }, now);
+  if (intent === "automatic" && runner === "mac") return recordOf(entry, { kind: "hybrid" }, now);
   if (intent !== "linux" || runner !== "mac") return null;
   const cause =
     entry.dropped === true
@@ -892,10 +892,10 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         group: "hybrid",
         category: "planned",
         tone: "info",
-        machine: "linux",
-        one: `${name} went to Linux`,
-        many: (n) => `${jobs(n)} went to Linux`,
-        description: "Automatic sends each job to Linux first.",
+        machine: "mac",
+        one: `${name} went to this Mac`,
+        many: (n) => `${jobs(n)} went to this Mac`,
+        description: "Linux was full, so this Mac took it.",
       });
   }
 };
