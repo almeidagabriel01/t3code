@@ -2514,20 +2514,34 @@ describe("OpenCodeAdapterV2", () => {
         });
         yield* harness.startTurn();
         const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        let threadSettledFirst = false;
         yield* harness.runtime.events.pipe(
-          Stream.filter(
+          Stream.takeUntil(
             (event) =>
               event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
           ),
-          Stream.take(1),
-          Stream.runForEach(() =>
-            Effect.withFiber((fiber) => {
+          Stream.runForEach((event) => {
+            if (
+              event.type !== "provider_turn.updated" ||
+              event.providerTurn.status !== "completed"
+            ) {
+              seen.push(event);
+              return Effect.void;
+            }
+            // The ended turn's thread state lands before its end, never on top of the next turn's.
+            threadSettledFirst = seen.some(
+              (earlier) =>
+                earlier.type === "provider_thread.updated" &&
+                earlier.providerThread.nativeConversationHeadRef?.nativeId === promptId,
+            );
+            return Effect.withFiber((fiber) => {
               consumers.add(fiber);
               return Effect.exit(harness.startTurn()).pipe(
                 Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
               );
-            }),
-          ),
+            });
+          }),
           Effect.forkScoped,
         );
         yield* Effect.promise(() =>
@@ -2547,7 +2561,9 @@ describe("OpenCodeAdapterV2", () => {
             }),
           );
         }
-        return yield* Deferred.await(nextStart);
+        const exit = yield* Deferred.await(nextStart);
+        assert.isTrue(threadSettledFirst);
+        return exit;
       }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
       assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
     }).pipe(
