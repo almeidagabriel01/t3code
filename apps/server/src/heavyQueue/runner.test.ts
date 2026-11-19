@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  ASKED_MAC_NEEDLESSLY,
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
@@ -1830,6 +1831,21 @@ describe("patterns and eligibility", () => {
           : null,
     };
     expect(intentOf(job("a", label), context)).toEqual(expected);
+  });
+
+  // `--runner mac` is kept; with nothing here needing it, the row says so and how to undo it.
+  it.each([
+    ["vp test run src/heavyQueue", undefined, ASKED_MAC_NEEDLESSLY],
+    ["vp test run src/heavyQueue", "needs the Mac's keychain", "needs the Mac's keychain"],
+    ["xcodebuild -scheme App test", undefined, "Mac-only tool: xcodebuild"],
+  ] as const)("%s with --runner mac and reason %j stays here", (label, routeReason, reason) => {
+    const context = input([], { runnerWhere: "automatic" }).contextOf("/work/a");
+    const entry = {
+      ...job("a", label),
+      where: "mac" as const,
+      ...(routeReason && { routeReason }),
+    };
+    expect(intentOf(entry, context)).toEqual({ intent: "mac", reason });
   });
 
   // Shapes of the eight jobs a strained Mac held while Linux idled, and their counter-cases.

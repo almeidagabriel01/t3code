@@ -336,10 +336,12 @@ const dockerReason = (
     (word, index) =>
       PUBLISHES.test(word) || (/^--net(work)?$/.test(word) && rest[index + 1] === "host"),
   );
-  if ((compose !== null && sub === "up") || (sub === "run" && publishes)) {
+  // An `up` that ends with its containers is a run: it serves nothing here.
+  const ends = rest.some((word) => /^--(abort-on-container-exit|exit-code-from)(=|$)/.test(word));
+  if ((compose !== null && sub === "up" && !ends) || (sub === "run" && publishes)) {
     return { code: "serves-port", ...named };
   }
-  return (compose === null ? /^(build|buildx|run)$/ : /^(build|run)$/).test(sub)
+  return (compose === null ? /^(build|buildx|run)$/ : /^(build|run|up)$/).test(sub)
     ? null
     : { code: "mac-docker", ...named };
 };
@@ -475,10 +477,10 @@ const tieOf = (
     return port === undefined ? null : { code: "mac-port", subject: `localhost:${port}` };
   };
   for (const word of part.command.words.slice(part.programAt)) {
-    // A script read with the job travels as its text; one that couldn't be read is only here.
+    // A script read with the job travels as its text; one unread or written by the line is here.
     if (
       word.value === script?.word
-        ? script.body !== null
+        ? script.body !== null && script.written !== true
         : word === part.command.words[part.programAt]
     ) {
       continue;
@@ -1078,6 +1080,10 @@ const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
 export const askedLinux = (entry: HeavyQueueEntry) =>
   entry.where === "linux" && !isCall(entry) && (entry as QueuedEntry).linuxOnly === true;
 
+/** `--runner mac` with no reason given, on work Linux could run: kept here, and said so. */
+export const ASKED_MAC_NEEDLESSLY =
+  "Asked for this Mac, but nothing here needs it: drop --runner mac so the PC can take it";
+
 const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
 
 /**
@@ -1109,8 +1115,7 @@ export const intentOf = (
   return mac(
     verdict.reason ??
       (entry.where === "mac"
-        ? ((entry as QueuedEntry).routeReason ??
-          macReasonText({ code: "pinned", subject: "--runner mac" }))
+        ? ((entry as QueuedEntry).routeReason ?? ASKED_MAC_NEEDLESSLY)
         : "Runner set to this Mac"),
   );
 };

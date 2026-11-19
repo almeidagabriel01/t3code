@@ -363,8 +363,15 @@ export interface Part {
   readonly queued: boolean;
   /** The heavy part inside a nested `sh -c '<line>'`, which makes this part heavy too. */
   readonly nested: Part | null;
-  /** The shell script it runs, by its path word, and its text (null when it couldn't be read). */
-  readonly script: { readonly word: string; readonly body: string | null } | null;
+  /**
+   * The shell script it runs, by its path word, and its text (null when it couldn't be read).
+   * `written`: the line itself writes it from a heredoc, so no copy of it exists when it is queued.
+   */
+  readonly script: {
+    readonly word: string;
+    readonly body: string | null;
+    readonly written?: boolean;
+  } | null;
 }
 
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
@@ -505,16 +512,39 @@ const partOf = (command: Command, lists: ReadonlySet<string>, read?: ReadScript)
 };
 
 /** Every simple command of a line in source order, and why it cannot be followed exactly. */
+const scriptKey = (word: string) => word.replace(/^(\.\/)+/, "");
+
+/** Files the line writes from a heredoc (`cat > f <<EOF`): running one runs that text. */
+const writtenScripts = (commands: ReadonlyArray<Command>) => {
+  const written = new Map<string, string>();
+  for (const { redirects } of commands) {
+    const body = redirects.find((redirect) => redirect.body !== undefined)?.body;
+    const target = redirects.find((redirect) => /^\d*(>|>\|)$/.test(redirect.op))?.target;
+    if (body !== undefined && target != null && target.vars.length === 0) {
+      written.set(scriptKey(target.value), body);
+    }
+  }
+  return written;
+};
+
 export const readLine = (
   line: string,
   read?: ReadScript,
 ): { readonly unsafe: string | null; readonly parts: Part[] } => {
   const parsed = parseLine(line);
   const lists = fileListsOf(parsed);
+  const written = writtenScripts(parsed.commands);
+  const readAll: ReadScript | undefined =
+    written.size === 0 ? read : (word) => written.get(scriptKey(word)) ?? read?.(word) ?? null;
   return {
     unsafe: parsed.unsafe,
     parts: parsed.commands
-      .map((command) => partOf(command, lists, read))
+      .map((command) => partOf(command, lists, readAll))
+      .map((part) =>
+        part.script !== null && written.has(scriptKey(part.script.word))
+          ? { ...part, script: { ...part.script, written: true } }
+          : part,
+      )
       .toSorted((a, b) => a.command.start - b.command.start),
   };
 };

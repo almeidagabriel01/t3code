@@ -1512,6 +1512,147 @@
       "observed": "synthetic",
       "expect": "linux",
       "why": "case 32: this Mac's shell opens the file and its bytes reach Linux on stdin, wherever it lives"
+    },
+    {
+      "line": "./portao.sh sql",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./portao.sh": "f() { psql -f \"$1\"; }\narr=(a b)\ncase \"$1\" in\n  sql) f schema.sql ;;\n  agente) (cd agente && uv run pytest -q) ;;\nesac\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a function, an array and a case in the body are no reason"
+    },
+    {
+      "line": "./portao.sh agente",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./portao.sh": "f() { psql -f \"$1\"; }\narr=(a b)\ncase \"$1\" in\n  sql) f schema.sql ;;\n  agente) (cd agente && uv run pytest -q) ;;\nesac\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a function, an array and a case in the body are no reason"
+    },
+    {
+      "line": "./sql-em-etapas.sh 1 2",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./sql-em-etapas.sh": "etapa() { echo \"$1\"; }\npassos=(1 2 3)\nfor p in \"${passos[@]}\"; do etapa \"$p\"; done\ndocker compose run --rm db psql -f etapas.sql\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "the body decides: a compose run in a script is the Linux copy's own"
+    },
+    {
+      "line": "./sql-em-etapas.sh 1 2",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./sql-em-etapas.sh": "etapa() { echo \"$1\"; }\npassos=(1 2 3)\nfor p in \"${passos[@]}\"; do etapa \"$p\"; done\ndocker compose up db\n"
+      },
+      "observed": "synthetic",
+      "expect": "serves-port:docker compose",
+      "why": "the body decides: compose up serves a port"
+    },
+    {
+      "line": "./scripts/verify.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./scripts/verify.sh": "eval \"$(direnv export bash)\"\nvp test run\n"
+      },
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "eval in a body is no reason"
+    },
+    {
+      "line": "AG=/Users/dev/.t3/worktrees/t3code/t3-example/agente; . $AG/.env && docker compose -f e2e.yml run --rm e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a compose run; the sourced .env is this shell's"
+    },
+    {
+      "line": "AG=/Users/dev/agente; . $AG/.env && docker compose -f e2e.yml run --rm e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "sourced files are never a reason: this Mac's shell reads the .env and passes the call its variables"
+    },
+    {
+      "line": "cd agente && uv run pytest -q",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "Python is no reason"
+    },
+    {
+      "line": ".venv/bin/pytest -q tests",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a venv the copy lacks fails there and is learned"
+    },
+    {
+      "line": "cat > scripts/check.sh <<'EOF'\nxcodebuild -scheme App test\nEOF\nbash scripts/check.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-tool:xcodebuild",
+      "why": "a heredoc the line writes and runs is judged by its text"
+    },
+    {
+      "line": "cat > scripts/check.sh <<'EOF'\nset -e\nvp test run\nEOF\nbash scripts/check.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a heredoc the line writes and runs is judged by its text"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=a.ts < a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "input in the checkout"
+    },
+    {
+      "line": "vp fmt a.ts b.ts && vp lint a.ts b.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "formatter and linter"
+    },
+    {
+      "line": "docker compose -f e2e.yml up --abort-on-container-exit",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an up that ends by itself serves nothing here"
+    },
+    {
+      "line": "docker compose -f e2e.yml up --exit-code-from e2e",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "an up that ends by itself serves nothing here"
+    },
+    {
+      "line": "docker compose -f e2e.yml up",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "serves-port:docker compose",
+      "why": "an up that keeps running serves its ports"
+    },
+    {
+      "line": "../../node_modules/.bin/effect-tsgo tsrs --noEmit",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example/apps/server",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "a shim in the checkout travels with it"
+    },
+    {
+      "line": "cat > /private/tmp/claude-501/ID/ID/scratchpad/x.sh <<'EOF'\nvp test run\nEOF\nbash /private/tmp/claude-501/ID/ID/scratchpad/x.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/x.sh",
+      "why": "a script the line writes outside the checkout exists only here, whatever its text (#164 would carry it)"
     }
   ]
 }
