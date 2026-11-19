@@ -1918,6 +1918,7 @@ describe("patterns and eligibility", () => {
     ["mac-tool", "xcodebuild", "Mac-only tool: xcodebuild"],
     ["mac-env", "~/.t3/userdata", "Uses a file only this Mac has: ~/.t3/userdata"],
     ["mac-state", "git commit", "Changes this Mac's checkout: git commit"],
+    ["mac-repo", "git push", "Uses this Mac's git repository: git push"],
     ["pinned", "--runner mac", "Pinned to this Mac: --runner mac"],
     ["serves-port", "vite", "Serves a port used here: vite"],
     [

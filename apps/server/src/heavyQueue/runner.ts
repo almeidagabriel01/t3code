@@ -169,6 +169,7 @@ export interface MacReason {
     | "native-build"
     | "mac-env"
     | "mac-state"
+    | "mac-repo"
     | "pinned"
     | "serves-port"
     | "watches"
@@ -192,6 +193,7 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   "native-build": "Builds native code for this Mac",
   "mac-env": "Uses a file only this Mac has",
   "mac-state": "Changes this Mac's checkout",
+  "mac-repo": "Uses this Mac's git repository",
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
   watches: "Watches this Mac's files",
@@ -290,7 +292,7 @@ export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
-  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
+  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|pull|fetch)$/;
 const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
 /** A finite step a script's name may also name: `serve-static-build` builds and ends. */
 const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
@@ -427,6 +429,8 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     return { code: "mac-tool", subject: named };
   }
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
+  // A push changes no checkout, but Linux's copy has no `.git` and none of this Mac's credentials.
+  if (named === "git push") return { code: "mac-repo", subject: named };
   if (entryOf(DEV_PROGRAMS, program)?.test(first) === true) {
     return { code: "serves-port", subject: named };
   }

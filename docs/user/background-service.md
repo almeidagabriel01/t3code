@@ -229,6 +229,8 @@ work queue, and each section says what the two do together.
     path outside the project, such as `~/.t3`, `~/Library` or another checkout.
   - **Changes this Mac's checkout**: installs, and git commands that write
     when Linux would run them (with `remoto`, for example).
+  - **Uses this Mac's git repository**: `git push`, which needs this Mac's
+    repository and credentials; Linux's copy has neither.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
@@ -250,7 +252,7 @@ work queue, and each section says what the two do together.
     whole (one with no heavy call, or one sent with `remoto`). Beside a heavy
     call the edit runs here and only the heavy call goes to Linux.
 
-  An eleventh reason is learned: **Linux couldn't run this before** (see **If a
+  A twelfth reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.

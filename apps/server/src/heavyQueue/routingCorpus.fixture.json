@@ -1945,6 +1945,27 @@
       "observed": "QA 2026-11-19",
       "expect": "linux",
       "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "git push",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-repo:git push",
+      "why": "a push changes no checkout: it needs this Mac's repository and its credentials"
+    },
+    {
+      "line": "git push origin HEAD",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-repo:git push",
+      "why": "a push changes no checkout: it needs this Mac's repository and its credentials"
+    },
+    {
+      "line": "git pull --rebase",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "mac-state:git pull",
+      "why": "a pull changes this Mac's checkout"
     }
   ]
 }
