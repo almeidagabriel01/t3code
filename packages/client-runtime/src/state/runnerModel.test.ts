@@ -320,6 +320,7 @@ describe("Runner copy and mode fields", () => {
     ["runnerMacFirstAfter", "linux", false, "Only applies when Where jobs run is Mac first."],
     ["runnerLinuxCommands", "linux", true, "Only applies while Everything is off."],
     ["runnerBringBack", "mac", false, null],
+    ["runnerHost", "linux", true, null],
   ] as const)("why %s does nothing under %s, Everything %s: %s", (key, where, everything, idle) => {
     expect(runnerModeFieldIdle(key, where, everything)).toBe(idle);
   });
