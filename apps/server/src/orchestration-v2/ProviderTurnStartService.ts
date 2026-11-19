@@ -111,6 +111,25 @@ const refusedBeforePrompt = (error: unknown): boolean =>
 const STOPPED_TURN_WAIT_MS = 10_000;
 const STOPPED_TURN_RETRY_MS = 250;
 const STOPPED_TURN_FORGET_MS = 60_000;
+
+/** Anchors a waiting run's window at its first wait; "stuck" once that window has passed. */
+export const stoppedTurnWait = (
+  firstWaitAt: Map<RunId, number>,
+  runId: RunId,
+  now: number,
+): "wait" | "stuck" => {
+  const since = firstWaitAt.get(runId) ?? now;
+  if (now - since >= STOPPED_TURN_WAIT_MS) {
+    firstWaitAt.delete(runId);
+    return "stuck";
+  }
+  // A start cancelled while waiting never returns; drop anchors no live wait could still use.
+  for (const [waiting, at] of firstWaitAt) {
+    if (now - at >= STOPPED_TURN_FORGET_MS) firstWaitAt.delete(waiting);
+  }
+  firstWaitAt.set(runId, since);
+  return "wait";
+};
 const STOPPED_ATTEMPT_STATUSES: ReadonlySet<OrchestrationV2RunAttempt["status"]> = new Set([
   "interrupted",
   "failed",
@@ -303,16 +322,7 @@ export const layer: Layer.Layer<
           return "free" as const;
         }
         const now = DateTime.toEpochMillis(yield* DateTime.now);
-        const since = firstWaitAt.get(input.runId) ?? now;
-        if (now - since >= STOPPED_TURN_WAIT_MS) {
-          firstWaitAt.delete(input.runId);
-          return "stuck" as const;
-        }
-        // A start cancelled while waiting never returns; drop anchors no live wait could still use.
-        for (const [runId, at] of firstWaitAt) {
-          if (now - at >= STOPPED_TURN_FORGET_MS) firstWaitAt.delete(runId);
-        }
-        firstWaitAt.set(input.runId, since);
+        if (stoppedTurnWait(firstWaitAt, input.runId, now) === "stuck") return "stuck" as const;
         for (const turn of stopped) {
           if (interruptsInFlight.has(turn.id)) continue;
           interruptsInFlight.add(turn.id);
