@@ -83,7 +83,6 @@ import {
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
 import { AgentScope } from "@t3tools/shared/AgentScope";
-import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -8861,6 +8860,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // Called with the root idle: the next turn to attach is the wake or a prompt folding it in.
+        // Only work the agent awaits; a stop while idle came from the user, not a reason to resume.
         const holdForWake = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
@@ -8869,13 +8869,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
             nativeThreadId,
           ).get(message.task_id);
-          if (task === undefined) return;
-          const awaited = taskIdSetForNativeThread(
-            yield* Ref.get(awaitedBackgroundTasksByNativeThread),
-            nativeThreadId,
-          ).has(task.taskId);
-          if (!wakesAgentWhenDone({ kind: task.kind, awaited })) return;
-          const held = awaited ? { ...task, awaited: true as const } : task;
+          if (
+            task === undefined ||
+            message.status === "stopped" ||
+            !taskIdSetForNativeThread(
+              yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+              nativeThreadId,
+            ).has(task.taskId)
+          )
+            return;
+          const held = { ...task, awaited: true as const };
           const report = yield* opaqueTaskWakeReport(nativeThreadId, message);
           yield* Ref.update(wakeHeldTasksByNativeThread, (current) =>
             new Map(current).set(
@@ -11096,8 +11099,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             rosterForNativeThread(
               yield* Ref.get(pendingBackgroundTasksByNativeThread),
               live.nativeThreadId,
-            ).size > 0 ||
-            (yield* heldWakeTasks(live.nativeThreadId)).size > 0
+            ).size > 0
           ) {
             return true;
           }
