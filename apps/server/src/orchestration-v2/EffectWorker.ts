@@ -437,6 +437,7 @@ export const layerExecutor: Layer.Layer<
                         })
                       : Effect.void,
                 ),
+                // No stopped-turn wait: this start already awaited the terminal, and a deferral would replay it.
                 Effect.andThen(
                   providerTurnStart.start({
                     threadId: effect.threadId,
