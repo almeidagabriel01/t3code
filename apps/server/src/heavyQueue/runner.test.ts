@@ -2918,22 +2918,27 @@ describe("the order admission tries waiters in", () => {
       build: "normal",
       test: "normal",
       expected: ["test", "build"],
+      buildCode: "shorter",
     },
     {
       name: "the user's own build leads a shorter agent test",
       build: "first",
       test: "normal",
       expected: ["build", "test"],
+      buildCode: "first",
     },
     {
       name: "a last test trails a longer build",
       build: "normal",
       test: "last",
       expected: ["build", "test"],
+      buildCode: "shorter",
     },
-  ] as const)("$name", ({ build, test, expected }) => {
+  ] as const)("$name", ({ build, test, expected, buildCode }) => {
     const entries = [job("test", "vp test run"), job("build", "vp run build")];
     const lane = (entry: HeavyQueueEntry) => (entry.id === "build" ? build : test);
-    expect(planRoutes(input(entries, {}, { history, lane })).ordered).toEqual(expected);
+    const plan = planRoutes(input(entries, {}, { history, lane }));
+    expect(plan.ordered).toEqual(expected);
+    expect(plan.order.build?.code).toBe(buildCode);
   });
 });

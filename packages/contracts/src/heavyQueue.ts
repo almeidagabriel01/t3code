@@ -340,6 +340,7 @@ const ORDER_CODES = Schema.Literals([
   "forced",
   "pinned",
   "aged",
+  "first",
   "light",
   "shorter",
   "first-run",
@@ -377,6 +378,8 @@ export const heavyOrderText = (
       return "kept where it was moved";
     case "aged":
       return `waited ${Math.floor(waitedMs / 60_000)} min: moved up`;
+    case "first":
+      return "yours or its project's: ahead of agent jobs";
     case "light":
       return "light: ahead";
     case "shorter":

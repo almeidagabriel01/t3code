@@ -354,6 +354,11 @@ describe("HeavyWorkSection", () => {
         rules: [{ root: "/work/app", priority: "first" }],
         reasons: { b: "letting the last one ramp up" },
         estimates: { c: { cpu: 2, memoryBytes: GIB, durationMs: 60_000 } },
+        // A running row has no place in line, so its stale order never shows.
+        order: {
+          a: { code: "light", text: "light: ahead" },
+          b: { code: "pinned", text: "kept where it was moved" },
+        },
       },
     );
     const view = await mount();
@@ -380,7 +385,7 @@ describe("HeavyWorkSection", () => {
       ].join(""),
     );
     expect(await expand(view.host, "cmd b")).toContain(
-      "Waiting1st in line · 1mPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
+      "Waiting1st in line · 1mOrderkept where it was movedPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
     );
     expect(await expand(view.host, "cmd c")).toContain(
       "Waits forThis MacRun folder~/runs/r9Waiting2nd in line · 1m",

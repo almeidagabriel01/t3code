@@ -572,6 +572,7 @@ describe("HeavyWorkSection", () => {
         w: { class: "standard", why: "first run" },
         o: { class: "service", why: "dev server" },
       },
+      order: { w: { code: "first-run", text: "first run: after known ones" } },
     });
     using _timers = fakeTimers({ now: new Date(3 * 60_000) });
     await using screen = await render(group());
@@ -585,6 +586,7 @@ describe("HeavyWorkSection", () => {
     expect(mocks.actions.cancel).toHaveBeenCalledWith("o", false);
     await expand(screen, "pnpm w");
     await expect.element(screen.getByText("Job · first run")).toBeVisible();
+    await expect.element(screen.getByText("first run: after known ones")).toBeVisible();
   });
 
   it("offers an orphan no start, move or route, only Stop", async () => {

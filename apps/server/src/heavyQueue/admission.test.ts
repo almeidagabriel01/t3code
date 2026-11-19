@@ -547,6 +547,13 @@ describe("admission plan", () => {
           holding: true,
         },
         {
+          name: "14.8% free under pressure: a first commit, guessed at 512 MB, starts",
+          entries: [build, entry("c", 'git commit -m "first"')],
+          change: { sample: strained(0.148), history },
+          admit: "c",
+          holding: true,
+        },
+        {
           name: "11% free under pressure: the commit would eat into half the floor",
           entries: [build, entry("c", commit)],
           change: { sample: strained(0.11), history },
@@ -1423,6 +1430,11 @@ describe("admission order", () => {
       name: "a job waiting past the patience moves up ahead of shorter ones",
       entries: [entry("test", "vp test run"), entry("build", "vp run build", null, 6 * MIN)],
       expected: ["build:aged", "test:shorter"],
+    },
+    {
+      name: "a waiting dev server is not light work: it takes no slot, so it waits as a first run",
+      entries: [entry("dev", "vp run dev"), entry("test", "vp test run")],
+      expected: ["test:shorter", "dev:first-run"],
     },
     {
       name: "a light job never ages past other light work",

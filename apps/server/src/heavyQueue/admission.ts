@@ -457,7 +457,7 @@ const laneFrom = (cost: HeavyQueueCost): Lane => (cost.commit === true ? "commit
 export const laneOf = (input: CostInput, entry: CostEntry): Lane =>
   laneFrom(queueCostOf(input, entry));
 
-const ORDER_BAND: Readonly<Record<Exclude<HeavyQueueOrderCode, "other">, number>> = {
+const ORDER_BAND: Readonly<Record<Exclude<HeavyQueueOrderCode, "other" | "first">, number>> = {
   forced: 0,
   pinned: 0,
   aged: 0,
@@ -490,13 +490,13 @@ export const admissionOrder = (
     return runner === undefined ? entry : { ...entry, runner };
   };
   const ranked = waiting.map((entry, index) => {
-    const cost = laneOf(input, bound(entry));
-    const light = cost === "quick" || cost === "commit";
+    const slot = laneOf(input, bound(entry));
+    const light = slot === "quick" || slot === "commit";
     const rank = lane(entry);
     const late = rank === "last";
     const aged = !light && waited(entry) >= (late ? 2 : 1) * patience;
     const usual = medianDuration(usualRuns(input, bound(entry)));
-    const code: Exclude<HeavyQueueOrderCode, "other"> = aged
+    const cost: Exclude<HeavyQueueOrderCode, "other" | "first"> = aged
       ? "aged"
       : light
         ? "light"
@@ -507,11 +507,14 @@ export const admissionOrder = (
             : "shorter";
     const key = [
       rank === "first" ? 0 : late && !aged ? 2 : 1,
-      ORDER_BAND[code],
-      code === "shorter" ? usual! : 0,
+      ORDER_BAND[cost],
+      cost === "shorter" ? usual! : 0,
       Date.parse(entry.createdAt),
       index,
     ];
+    // Aged and light already say why it leads; otherwise the user's or project's rule does.
+    const code: Exclude<HeavyQueueOrderCode, "other"> =
+      rank === "first" && !aged && !light ? "first" : cost;
     return { entry, code, key };
   });
   const before = (a: ReadonlyArray<number>, b: ReadonlyArray<number>) => {
