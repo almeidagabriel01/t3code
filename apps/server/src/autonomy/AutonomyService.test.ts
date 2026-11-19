@@ -2313,7 +2313,8 @@ it.effect("tells the user as T3 Code, in Activity when a thread carries it, once
         threadId: "t1" as never,
       });
     }
-    yield* service.tellUser({ ...notice, key: "k2", projectId: "p1" as never, threadId: null });
+    // A notice about no project, as for a linked environment, goes to the chat only.
+    yield* service.tellUser({ ...notice, key: "k2", threadId: null });
     const rows = yield* outboxRows;
     assert.deepEqual(
       rows.map((row) => [row.message.senderName, row.message.text]),
