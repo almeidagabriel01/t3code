@@ -5579,6 +5579,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
         const requestedContinuations = yield* Ref.make(new Set<string>());
+        /** One continuation per native thread until a turn attaches; false when one is queued. */
+        const claimContinuation = (nativeThreadId: string) =>
+          Ref.modify(requestedContinuations, (current) =>
+            current.has(nativeThreadId)
+              ? ([false, current] as const)
+              : ([true, new Set(current).add(nativeThreadId)] as const),
+          );
+        const releaseContinuationClaim = (nativeThreadId: string) =>
+          Ref.update(requestedContinuations, (current) => {
+            if (!current.has(nativeThreadId)) return current;
+            const updated = new Set(current);
+            updated.delete(nativeThreadId);
+            return updated;
+          });
         const absorbedWakes = yield* Ref.make(new Set<string>());
         const heldProposedPlansByToolUseId = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
@@ -6060,14 +6074,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(nativeThreadId);
               return updated;
             });
-            yield* Ref.update(requestedContinuations, (current) => {
-              if (!current.has(nativeThreadId)) {
-                return current;
-              }
-              const updated = new Set(current);
-              updated.delete(nativeThreadId);
-              return updated;
-            });
+            yield* releaseContinuationClaim(nativeThreadId);
             yield* forgetAbsorbedWake(nativeThreadId);
           });
 
@@ -8808,15 +8815,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
-          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            if (current.has(wakeInput.nativeThreadId)) {
-              return [false, current] as const;
-            }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
-            return [true, updated] as const;
-          });
-          if (!shouldOffer) {
+          if (!(yield* claimContinuation(wakeInput.nativeThreadId))) {
             return;
           }
           const detail =
@@ -8893,11 +8892,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE);
             if (!(yield* stillHeld)) return;
             const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(nativeThreadId);
-            // A wake Claude opened is already queued as a continuation; its turn releases the hold.
-            if (
-              route !== undefined &&
-              !(yield* Ref.get(requestedContinuations)).has(nativeThreadId)
-            ) {
+            // A wake Claude opened holds the claim, so its continuation and this prompt never both run.
+            if (route !== undefined && (yield* claimContinuation(nativeThreadId))) {
               yield* Effect.logWarning("orchestration-v2.claude-wake-turn-never-opened", {
                 providerSessionId: input.providerSessionId,
                 nativeThreadId,
@@ -11701,6 +11697,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               const admittedMessage = yield* withFreshMemory(userMessage, turnInput);
               yield* attachTurn;
+              // A prompted wake continuation holds the claim too; leaving it would block later wakes.
+              yield* releaseContinuationClaim(nativeThreadId);
               yield* startUserTurnForWakeReports(nativeThreadId);
               yield* Effect.uninterruptibleMask((restore) =>
                 restore(
@@ -11722,11 +11720,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.gen(function* () {
                 yield* attachTurn;
                 const drained = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
-                yield* Ref.update(requestedContinuations, (current) => {
-                  const updated = new Set(current);
-                  updated.delete(nativeThreadId);
-                  return updated;
-                });
+                yield* releaseContinuationClaim(nativeThreadId);
                 const wakeAbsorbed = (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
                 yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {

@@ -12860,12 +12860,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("neither holds nor prompts for awaited work stopped while the root is idle", () =>
+  it.effect("starts one wake when Claude opens it after the deadline prompt", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { harness } = yield* awaitedTaskNotifiedWhileIdle("stopped");
-        yield* TestClock.adjust("4 minutes");
-        assert.lengthOf(harness.continuationRequests, 0);
+        const { harness } = yield* awaitedTaskNotifiedWhileIdle("completed");
+
+        yield* TestClock.adjust("2 minutes");
+        yield* harness.awaitContinuation(1);
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.deepStrictEqual(
+          harness.continuationRequests.map((request) => request.delivery),
+          ["message_text"],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -12877,6 +12883,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each(["stopped", "released"] as const)(
+    "neither holds nor prompts for awaited work the user ends while the root is idle (%s)",
+    (ending) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { harness } = yield* awaitedTaskNotifiedWhileIdle(
+            ending === "stopped" ? "stopped" : "completed",
+          );
+          if (ending === "released") {
+            const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+            if (awaitBackgroundTasks === undefined) {
+              throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+            }
+            const released = yield* awaitBackgroundTasks({
+              providerThread: harness.providerThread,
+              taskIds: [WAKE_TASK_ID],
+              awaited: false,
+            });
+            assert.deepStrictEqual(released.matched, [WAKE_TASK_ID]);
+          }
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          yield* TestClock.adjust("4 minutes");
+          assert.lengthOf(harness.continuationRequests, 0);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect.each([true, false])(
