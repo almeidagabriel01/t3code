@@ -4,11 +4,13 @@ import {
   type ResourceUsage,
 } from "@t3tools/client-runtime/state/resourceTree";
 import {
+  linkedMachineRow,
   machineBar,
   type MachineBarRow,
   type MachineGauge,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
+  AuthAccessReadScope,
   AuthOrchestrationReadScope,
   type EnvironmentId,
   type HeavyQueueState,
@@ -18,6 +20,7 @@ import { Pressable, View } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -67,8 +70,9 @@ function Gauge(props: {
   );
 }
 
-function Slots(props: { readonly row: MachineBarRow }) {
+function Slots(props: { readonly row: Pick<MachineBarRow, "slots" | "queueOff"> }) {
   const { slots } = props.row;
+  if (slots === null && props.row.queueOff === null) return null;
   if (slots === null)
     return (
       <Text textRole="footnote" className="text-foreground-muted">
@@ -98,14 +102,17 @@ function Slots(props: { readonly row: MachineBarRow }) {
 const T3_TOTAL_HINT = "T3 Code and the agents, terminals and devices it runs.";
 
 function MachineRow(props: {
-  readonly row: MachineBarRow;
+  readonly row: Omit<MachineBarRow, "runner">;
+  readonly name: string;
+  readonly icon: AppSymbolName;
+  /** Linux and linked environments show their connection; This Mac is always here. */
+  readonly remote: boolean;
   readonly hint?: string | null;
   readonly children?: ReactNode;
 }) {
-  const { row } = props;
+  const { row, name, icon } = props;
   const [open, setOpen] = useState(false);
-  const { name, icon } = MACHINE[row.runner];
-  const status = row.runner === "linux" ? LINUX_STATUS(row.online) : null;
+  const status = props.remote ? LINUX_STATUS(row.online) : null;
   const hints = [
     row.statusHint,
     row.cpu?.hint,
@@ -123,7 +130,11 @@ function MachineRow(props: {
         status?.text,
         row.cpu === null ? null : `CPU ${row.cpu.value}`,
         row.memory === null ? null : `${row.memory.value} free`,
-        row.slots === null ? "Off" : `${row.slots.running} of ${row.slots.slots} running`,
+        row.slots !== null
+          ? `${row.slots.running} of ${row.slots.slots} running`
+          : row.queueOff === null
+            ? null
+            : "Off",
         warned ? "warning" : null,
       ]
         .filter(Boolean)
@@ -179,7 +190,7 @@ function MachineRow(props: {
   );
 }
 
-/** This Mac and, while the Runner reports it, Linux: CPU, free memory and slots per machine. */
+/** This Mac, Linux while the Runner reports it, and each linked environment: CPU, free memory and slots. */
 export function MachineBar(props: {
   readonly environmentId: EnvironmentId;
   readonly state: HeavyQueueState;
@@ -193,11 +204,24 @@ export function MachineBar(props: {
     canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
   );
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
+  const canReadLinks = useEnvironmentScope(environmentId, AuthAccessReadScope);
+  const linkedData = useEnvironmentQuery(
+    canRead && canReadLinks
+      ? serverEnvironment.linkedEnvironmentResources({ environmentId, input: {} })
+      : null,
+  ).data;
+  const now = useNowMinuteMs();
+  const linked = (linkedData ?? []).map((entry) => linkedMachineRow(entry, now));
   const { t3 } = props;
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <View accessibilityRole="list" accessibilityLabel="Machines">
-      <MachineRow row={mac} hint={t3 == null ? null : T3_TOTAL_HINT}>
+      <MachineRow
+        {...MACHINE.mac}
+        remote={false}
+        row={mac}
+        hint={t3 == null ? null : T3_TOTAL_HINT}
+      >
         {t3 == null ? null : (
           <Text
             textRole="footnote"
@@ -208,7 +232,22 @@ export function MachineBar(props: {
           </Text>
         )}
       </MachineRow>
-      {linux === null ? null : <MachineRow row={linux} />}
+      {linux === null ? null : <MachineRow {...MACHINE.linux} remote row={linux} />}
+      {linked.map((row) => (
+        <MachineRow
+          key={row.environmentId}
+          name={row.name}
+          icon={MACHINE.linux.icon}
+          remote
+          row={row}
+        >
+          {row.activity === null ? null : (
+            <Text textRole="footnote" numberOfLines={1} className="pl-6 text-foreground-muted">
+              {row.activity}
+            </Text>
+          )}
+        </MachineRow>
+      ))}
     </View>
   );
 }

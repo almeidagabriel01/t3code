@@ -8,6 +8,7 @@ import {
   type HeavyRunnerLinux,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -30,6 +31,7 @@ const { mocks } = vi.hoisted(() => ({
       runtime?: { status: string } | null;
     }>,
     host: null as unknown,
+    linked: null as unknown,
     hostError: null as string | null,
     telemetry: null as unknown,
     devices: null as unknown,
@@ -129,13 +131,21 @@ vi.mock("../../state/use-atom-command", () => ({
     (mocks.commands[command.id] ??= vi.fn(async () => ({ _tag: "Success", value: undefined }))),
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (atom: "host" | "telemetry" | "devices" | null) => ({
+  useEnvironmentQuery: (atom: "host" | "linked" | "telemetry" | "devices" | null) => ({
     data: atom === null ? undefined : mocks[atom],
     error: atom === "host" ? mocks.hostError : null,
   }),
 }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { hostResources: () => "host", resourceTelemetry: () => "telemetry" },
+  serverEnvironment: {
+    hostResources: () => "host",
+    linkedEnvironmentResources: () => "linked",
+    resourceTelemetry: () => "telemetry",
+  },
+}));
+vi.mock("../../lib/clock", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/clock")>()),
+  useNowMinuteMs: () => Date.parse("2026-01-01T10:00:00.000Z"),
 }));
 vi.mock("../../state/device", () => ({
   deviceEnvironment: {
@@ -273,6 +283,7 @@ const LINUX: HeavyRunnerLinux = {
   slots: 2,
   running: 1,
   load1: 1.2,
+  cpuPercent: 20,
   cpuCount: 6,
   availableMemoryBytes: 8 * GIB,
   totalMemoryBytes: 16 * GIB,
@@ -331,6 +342,7 @@ afterEach(() => {
   mocks.shells = [];
   mocks.commands = {};
   mocks.host = null;
+  mocks.linked = null;
   mocks.telemetry = null;
   mocks.devices = null;
   mocks.terminals = [];
@@ -1187,6 +1199,57 @@ describe("ResourceManagerRouteScreen", () => {
     await act(async () => mac.click());
     for (const hint of hints) expect(mac.textContent).toContain(hint);
     expect(view.host.querySelector('[aria-label^="Linux"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it("shows each linked environment live, or offline since its last answer with its numbers only as old", async () => {
+    mocks.environments = [
+      { environmentId: "env", label: "Studio", connection: { phase: "connected" } },
+    ];
+    const reading = (readAt: string) => ({
+      readAt: DateTime.makeUnsafe(readAt),
+      cpuUtilization: 0.4,
+      cpuCount: 4,
+      availableMemoryBytes: 2 * GIB,
+      totalMemoryBytes: 8 * GIB,
+      threadsRunning: 2,
+      threadsWaiting: 0,
+      subagentsRunning: 0,
+      heavy: { running: 1, slots: 2, waiting: 0 },
+    });
+    mocks.linked = [
+      {
+        environmentId: "env-vps",
+        label: "VPS",
+        status: "online",
+        since: DateTime.makeUnsafe("2026-01-01T09:00:00.000Z"),
+        reading: reading(NOW),
+      },
+      {
+        environmentId: "env-box",
+        label: "Box",
+        status: "offline",
+        since: DateTime.makeUnsafe("2026-01-01T09:55:00.000Z"),
+        reading: reading("2026-01-01T09:55:00.000Z"),
+      },
+    ];
+    setup([], {});
+    const view = await screen();
+    const vps = view.host.querySelector<HTMLElement>('[aria-label^="VPS"]')!;
+    expect(vps.getAttribute("aria-label")).toBe(
+      "VPS, online, CPU 40%, 2.0 GB free, 1 of 2 running",
+    );
+    expect(vps.textContent).toContain("2 running");
+    await act(async () => vps.click());
+    expect(vps.textContent).toContain("VPS · online for 1h 0m");
+    const box = view.host.querySelector<HTMLElement>('[aria-label^="Box"]')!;
+    expect(box.getAttribute("aria-label")).toBe("Box, offline");
+    expect(box.textContent).toContain("Offline · 5m ago");
+    expect(box.textContent).not.toContain("40%");
+    await act(async () => box.click());
+    expect(box.textContent).toContain(
+      "Not answering right now. · CPU 40% · 2.0 GB free of 8.0 GB · 5m ago",
+    );
     await view.unmount();
   });
 

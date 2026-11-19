@@ -312,6 +312,8 @@ const UNGUARDED_RPC_SCOPES = {
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
   // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
+  // Host readings from each link; it also names the links, so `rpcRequiredScopes` adds access read.
+  [WS_METHODS.serverGetLinkedEnvironmentResources]: AuthOrchestrationReadScope,
   // Lists every host process holding a port, not just this server's.
   [WS_METHODS.serverListListeningPorts]: AuthDiagnosticsReadScope,
   // Runs git (including a fetch) in a folder on the host.
@@ -478,6 +480,8 @@ export function rpcRequiredScopes(
     return [AuthMemoryReadScope, AuthOrchestrationReadScope];
   if (method === WS_METHODS.memoryImportProvider)
     return [AuthMemoryWriteScope, AuthFilesystemReadScope];
+  if (method === WS_METHODS.serverGetLinkedEnvironmentResources)
+    return [AuthOrchestrationReadScope, AuthAccessReadScope];
   if (payload === undefined) return [scope];
   if (method === WS_METHODS.serverUpdateSettings)
     return requiredScopesForServerSettingsUpdate(payload as ServerSettingsUpdateInput);
