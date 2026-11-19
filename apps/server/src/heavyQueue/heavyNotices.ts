@@ -482,7 +482,8 @@ export const meaningfulLines = (text: string) =>
 const FAILURE = /\bFAIL\b|\bERR_[A-Z0-9_]+|\bERR!|[A-Za-z]*Error\b|\berror TS\d+/;
 const WARNING = /^(?:(?:npm|pnpm|yarn|node)\s+)?warn(?:ing)?\b|^\(node:\d+\)\s|^[\w.-]*Warning:/i;
 /** A warning that still reports a failure, such as cargo's `warning: build failed`. */
-const FAILED = /\b(?:fail(?:s|ed|ure)?|fatal|error)\b/i;
+const FAILED =
+  /\b(?:fail(?:s|ed|ure)?|fatal|errors?|abort(?:ing|ed)?|refus(?:e|ed|ing)|cannot|can't|unable|denied|exit(?:ing)? with code)\b/i;
 
 /** A line that is only a warning: it never names what failed, whatever the exit code says. */
 const warningOnly = (line: string) =>

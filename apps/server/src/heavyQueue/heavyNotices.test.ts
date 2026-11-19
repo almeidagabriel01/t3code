@@ -1281,6 +1281,22 @@ describe("errorLineOf", () => {
       "warning: build failed, waiting for other jobs to finish...",
     ],
     ["a count of warnings", "Warnings: 0, Errors: 1\n", null, "Warnings: 0, Errors: 1"],
+    // A warning-shaped line that reports a failure stays; the pure warnings after it are skipped.
+    ...[
+      "warning: could not open file, aborting",
+      "warning: unable to access 'https://x/': Permission denied",
+      "WARNING: cannot connect to Docker daemon",
+      "warning: can't find module",
+      "Warning: no tests found, exiting with code 1",
+      "warning: lockfile out of date, refusing to install (--frozen-lockfile)",
+      "warning: install aborted",
+      "warning: 3 errors suppressed",
+    ].map((line): [string, string, null, string] => [
+      line,
+      `${line}\nnpm warn deprecated glob@7.2.3\nDeprecationWarning: x\n(node:1) ExperimentalWarning: y\nwarning: unused variable\n`,
+      null,
+      line,
+    ]),
   ])("%s", (_case, text, failure, last) => {
     expect(errorLineOf(text)).toEqual({ failure, last });
   });
