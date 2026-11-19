@@ -55,6 +55,7 @@ import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 function Hero(props: {
   readonly face: ReactNode;
@@ -135,6 +136,7 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
   const selectDetail = useSelectWorkspaceDetail();
   const shells = useThreadShells();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const work = useAssistantLiveWork();
   const nowMs = useNowMinuteMs();
   const { teams } = useAssistantEntries();
@@ -144,7 +146,7 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
     assistant.budget === null ? null : assistant.id,
   ).data;
   const archived = assistant.archivedAt !== null;
-  const presence = status.of(environmentId, assistant);
+  const presence = status.of(environmentId, assistant, limitLabel);
   const workingNow = archived ? [] : assistantWorkingNow(work, environmentId, assistant.id);
   const projects = assistantInfoProjects(assistant, workingNow, nameOf);
   const groups = assistantInfoGroups(
@@ -286,6 +288,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
   const openTeam = useOpenAssistantTeam();
   const shells = useThreadShells();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const { active, archived: archivedAssistants } = useAssistantEntries();
   const chat = useAssistantGroupChat(environmentId, team.id);
   const nameOf = useProjectName(environmentId);
@@ -313,7 +316,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
               key: member.id,
               assistant: member.assistant ?? removedAssistantFace(member.id),
               mood: member.assistant
-                ? assistantFace(status.of(environmentId, member.assistant))
+                ? assistantFace(status.of(environmentId, member.assistant, limitLabel))
                 : "sleeping",
             }))}
           />
@@ -368,7 +371,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
       <ListSection title="Members">
         {members.map((member) => {
           const memberAssistant = member.assistant;
-          const presence = status.of(environmentId, memberAssistant);
+          const presence = status.of(environmentId, memberAssistant, limitLabel);
           const leading = (
             <AssistantAvatar
               assistant={memberAssistant ?? removedAssistantFace(member.id)}

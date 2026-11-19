@@ -155,10 +155,10 @@ const mood = (working: string[], needs: string[] = []) =>
     ["ada", "bo", "cy"].map((id) => [
       id,
       needs.includes(id)
-        ? { face: "waiting" as const, section: "needs" as const }
+        ? { face: "waiting" as const, section: "needs" as const, label: "Needs you" }
         : working.includes(id)
-          ? { face: "working" as const, section: "working" as const }
-          : { face: "idle" as const, section: "idle" as const },
+          ? { face: "working" as const, section: "working" as const, label: "Working" }
+          : { face: "idle" as const, section: "idle" as const, label: "Idle" },
     ]),
   );
 const tree = (actions: ReadonlyArray<MenuAction>): unknown[] =>
@@ -231,8 +231,8 @@ describe("presenceMenuActions", () => {
     ({ inline, expected }) => {
       const owner = { ...sender("jarvis", 0), firstMessageId: "", lastMessageId: "" };
       const looks = new Map([
-        ["jarvis", { face: "working" as const, section: "working" as const }],
-        ["ada", { face: "idle" as const, section: "idle" as const }],
+        ["jarvis", { face: "working" as const, section: "working" as const, label: "Working" }],
+        ["ada", { face: "idle" as const, section: "idle" as const, label: "Idle" }],
       ]);
       const task = { assistantId: "jarvis", state: "running" as const, dismissed: false };
       const actions = presenceMenuActions([owner, sender("ada", 1)], looks, true, task, inline);
