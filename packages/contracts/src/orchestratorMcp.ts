@@ -212,7 +212,10 @@ const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
 
 /** Set when the call ran in a linked environment it did not name: follow-up tools need this id. */
 const OrchestratorMcpResolvedEnvironment = {
-  environmentId: Schema.optional(EnvironmentId),
+  environmentId: Schema.optional(EnvironmentId).annotate({
+    description:
+      "Set when your default environment chose where it runs. Pass this environmentId to follow-up tools for it.",
+  }),
   environmentLabel: Schema.optional(Schema.String),
 };
 

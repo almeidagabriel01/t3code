@@ -22,6 +22,12 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import {
+  resolveLaunchEnvironment,
+  type ResolvedLaunch,
+  routingDeps,
+} from "../assistants/AssistantEnvironmentRouting.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
@@ -383,6 +389,34 @@ const takesLinkedEnvironment = (tool: Tool.Any) => {
 /** Tools that start work in the environment they name, which a sandboxed assistant may only aim at its sandbox. */
 const SANDBOX_HELD_TOOLS: ReadonlySet<string> = new Set(["t3_thread_launch"]);
 
+/** Tools that, without `environmentId`, start work where the calling assistant's default says. */
+const IMPLICIT_ENVIRONMENT_TOOLS: ReadonlySet<string> = new Set(["t3_thread_launch"]);
+
+interface LaunchParams {
+  readonly projectId?: ProjectId;
+  readonly scratch?: boolean;
+  readonly clientRequestId?: string;
+  readonly attachments?: ReadonlyArray<unknown>;
+}
+
+/** The call as it goes to the environment a default chose: its project there, never one from here. */
+const implicitCall = Effect.fn("McpToolAccess.implicitCall")(function* (
+  params: object,
+  implicit: NonNullable<ResolvedLaunch["implicit"]>,
+  localEnvironmentId: EnvironmentId,
+) {
+  const { projectId: _here, scratch: _scratch, ...rest } = params as LaunchParams;
+  if ((rest.attachments?.length ?? 0) > 0) {
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `Your default environment is ${implicit.label}, and a launch there cannot carry attachments. Pass environmentId=${localEnvironmentId} to launch here with them.`,
+    });
+  }
+  return implicit.projectId === undefined
+    ? { ...rest, scratch: true }
+    : { ...rest, projectId: implicit.projectId };
+});
+
 const linksUnavailable = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "This environment cannot reach linked environments.",
@@ -402,6 +436,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+  const routing = yield* routingDeps;
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -417,7 +452,25 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const target = PeerForwarding.remoteTarget(scope, environmentId);
+        let target = PeerForwarding.remoteTarget(scope, environmentId);
+        let call: object = params;
+        let implicit: ResolvedLaunch["implicit"];
+        if (IMPLICIT_ENVIRONMENT_TOOLS.has(name)) {
+          const named = params as LaunchParams;
+          const resolved = yield* resolveLaunchEnvironment(routing, {
+            scope,
+            threads: yield* ThreadManagement.ThreadManagementService,
+            explicit: environmentId,
+            clientRequestId: named.clientRequestId,
+            projectId: named.projectId,
+            scratch: named.scratch,
+          });
+          target = resolved.environmentId;
+          implicit = resolved.implicit;
+          if (implicit !== undefined) {
+            call = yield* implicitCall(params, implicit, scope.environmentId);
+          }
+        }
         // A sandboxed assistant starts work only in its sandbox, here or forwarded.
         if (SANDBOX_HELD_TOOLS.has(name)) {
           const refusal = yield* sandboxRefusal(assistantDirectory, {
@@ -451,9 +504,15 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         }
         if (target === undefined) return yield* here(params);
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
+        yield* (remote as RemoteCheck<typeof call>)(call);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
+        const result = yield* forwarding.value.call(scope, tool, target, {
+          ...call,
+          environmentId: target,
+        });
+        return implicit === undefined
+          ? result
+          : { ...(result as object), environmentId: target, environmentLabel: implicit.label };
       });
   }
   return handlers as Toolkit.HandlersFrom<Tools>;

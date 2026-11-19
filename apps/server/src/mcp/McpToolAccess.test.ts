@@ -657,7 +657,10 @@ const DefaultLaunchToolkit = Toolkit.make(
   }),
 );
 /** A host assistant: `supervised` is its direct chat, `plan` its group thread. */
-const defaultServer = (assistant: EnvironmentId | "local" | null, team: EnvironmentId | null = null) =>
+const defaultServer = (
+  assistant: EnvironmentId | "local" | null,
+  team: EnvironmentId | null = null,
+) =>
   McpHttpServer.toolkitRegistration(
     DefaultLaunchToolkit,
     McpToolAccess.toLayer(DefaultLaunchToolkit, {
@@ -696,7 +699,9 @@ const defaultServer = (assistant: EnvironmentId | "local" | null, team: Environm
     Layer.provide(
       Layer.mock(RemoteDelegation.RemoteDelegation)({
         remoteProject: (_scope, _environmentId, projectId) =>
-          Effect.succeed(projectId === undefined ? undefined : ProjectId.make(`there-${projectId}`)),
+          Effect.succeed(
+            projectId === undefined ? undefined : ProjectId.make(`there-${projectId}`),
+          ),
       }),
     ),
     Layer.provide(
@@ -705,7 +710,11 @@ const defaultServer = (assistant: EnvironmentId | "local" | null, team: Environm
           Effect.succeed(
             threadId === supervisedThreadId || threadId === planThreadId
               ? Option.some({
-                  assistant: { workspace: "host", scope: "all", defaultEnvironment: assistant } as never,
+                  assistant: {
+                    workspace: "host",
+                    scope: "all",
+                    defaultEnvironment: assistant,
+                  } as never,
                   current: threadId === supervisedThreadId,
                   ...(threadId === planThreadId
                     ? { team: { defaultEnvironment: team } as never }
@@ -739,14 +748,42 @@ it.effect.each([
     "t3_thread_launch in environment-other",
   ],
   ["... even when it names this one", peer, null, supervised, { environmentId: here }, "here"],
-  ["the default with no project goes to its Scratch there", peer, null, supervised, { scratch: true }, "t3_thread_launch in env-peer scratch"],
-  ["a group thread uses the group's default", null, peer, plan, {}, "t3_thread_launch in env-peer there-project:mcp-test"],
+  [
+    "the default with no project goes to its Scratch there",
+    peer,
+    null,
+    supervised,
+    { scratch: true },
+    "t3_thread_launch in env-peer scratch",
+  ],
+  [
+    "a group thread uses the group's default",
+    null,
+    peer,
+    plan,
+    {},
+    "t3_thread_launch in env-peer there-project:mcp-test",
+  ],
   ["... before the member's own", peer, "local" as never, plan, {}, "here"],
   ["the member's direct chat ignores the group's", null, peer, supervised, {}, "here"],
   ["a thread that is no assistant's ignores defaults", peer, null, fullAccess, {}, "here"],
   ["a call that came over a link ignores the default", peer, null, linkedClient, {}, "here"],
-  ["attachments to an implicit remote launch are refused", peer, null, supervised, { attachments: ["a"] }, "invalid_request"],
-  ["an unlinked default is refused, never run here", EnvironmentId.make("env-gone"), null, supervised, {}, "invalid_request"],
+  [
+    "attachments to an implicit remote launch are refused",
+    peer,
+    null,
+    supervised,
+    { attachments: ["a"] },
+    "invalid_request",
+  ],
+  [
+    "an unlinked default is refused, never run here",
+    EnvironmentId.make("env-gone"),
+    null,
+    supervised,
+    {},
+    "invalid_request",
+  ],
 ] as const)("default environment: %s", ([, assistant, team, scope, args, expected]) =>
   call("t3_thread_launch", scope, args).pipe(
     Effect.map((outcome) => expect(outcome).toBe(expected)),
