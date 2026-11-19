@@ -1018,7 +1018,6 @@ describe("t3 heavy", () => {
         false,
       ],
       ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
-      ["bare remoto, no command", ["remoto"], "/w", "remoto", [], false],
     ] as const;
     const modes = [
       ["queue on, Runner on", true, true],
@@ -1066,6 +1065,7 @@ describe("t3 heavy", () => {
         true,
         "remoto runs a command; `-x` is not one",
       ],
+      ["bare remoto alone", ["remoto"], true, "remoto <command> [args...]"],
       ["wrapped option", [SH, "-c", "--help"], false, "`--help` is not a command"],
       ["quoted option", [SH, "-c", "'-x' a"], false, "`-x` is not a command"],
     ] as const;
