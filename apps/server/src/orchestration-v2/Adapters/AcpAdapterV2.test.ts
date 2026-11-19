@@ -48,6 +48,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
@@ -4137,6 +4138,34 @@ describe("AcpAdapterV2", () => {
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("frees the turn slot before the terminal provider turn update is offered", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePromptInactivityHarness({ environment: () => ({}) });
+      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+        ),
+        Stream.take(1),
+        Stream.runForEach(() =>
+          harness.startTurn(2).pipe(
+            Effect.exit,
+            Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn(1);
+      const exit = yield* Deferred.await(nextStart);
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+    }).pipe(
+      Effect.provideService(References.MaxOpsBeforeYield, 3),
+      Effect.provide(layerTest),
+      Effect.scoped,
+    ),
   );
 
   it.effect(
