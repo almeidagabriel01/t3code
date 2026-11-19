@@ -114,22 +114,33 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 const HELP = new Set(["--help", "-h"]);
 const USAGE =
   "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n";
+const REMOTO_USAGE = "Usage: remoto <command> [args...]\n";
 
 /**
- * Why a command cannot be queued, or null. No program starts with `-`, so a first word that does
- * is an option that missed the queue's own; a shell line is judged by its first word.
+ * What to tell the caller when a command cannot be queued, or null. No program starts with `-`,
+ * so a first word that does is an option that missed its place; a shell line is judged by its first
+ * word. An agent that typed `remoto` never called `t3 heavy`, so that answer speaks of `remoto`.
  */
-const commandRefusal = (program: string | undefined, args: ReadonlyArray<string>) => {
+const commandRefusal = (
+  program: string | undefined,
+  args: ReadonlyArray<string>,
+  remoto = false,
+) => {
   const first =
     program === undefined
       ? ""
       : isShellLine(program, args)
         ? (args[1]!.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
         : program;
-  if (first === "") return "no command given: use `--` before the command.";
-  return first.startsWith("-")
-    ? `\`${first}\` is not a command or a t3 heavy option: use \`--\` before the command.`
-    : null;
+  if (first !== "" && !first.startsWith("-")) return null;
+  if (remoto) {
+    return `remoto runs a command; ${first === "" ? "none was given" : `\`${first}\` is not one`}.\n${REMOTO_USAGE}`;
+  }
+  return `[t3 heavy] ${
+    first === ""
+      ? "no command given: use `--` before the command."
+      : `\`${first}\` is not a command or a t3 heavy option: use \`--\` before the command.`
+  }\n${USAGE}`;
 };
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
@@ -265,7 +276,7 @@ export const heavyLaunch = (
   const job = jobOf(command.program, command.args, cwd, home);
   const mode = modeAt(job.cwd);
   if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
-  const reason = commandRefusal(job.program, job.args);
+  const reason = commandRefusal(job.program, job.args, job.remoto);
   if (reason !== null) return { kind: "refused", reason };
   const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
   if (commit === "direct") return { kind: "direct" };
@@ -663,7 +674,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
   // A usage error exits before the queue sees it, so it never becomes a job or a problem card.
   const refuse = (reason: string): never => {
-    process.stderr.write(`[t3 heavy] ${reason}\n${USAGE}`);
+    process.stderr.write(reason);
     return process.exit(2);
   };
   const refusal = commandRefusal(program, args);

@@ -1045,36 +1045,57 @@ describe("t3 heavy", () => {
       );
     });
 
+    // [case, command, an agent's `remoto` T3 takes out, what the refusal says]
     const notCommands = [
-      ["bare remoto --help", ["remoto", "--help"], "--help"],
-      ["wrapped remoto -h", [SH, "-c", "remoto -h"], "-h"],
-      ["remoto -x after cd", [SH, "-c", "cd apps/server && remoto -x"], "-x"],
-      ["wrapped option", [SH, "-c", "--help"], "--help"],
-      ["quoted option", [SH, "-c", "'-x' a"], "-x"],
+      [
+        "bare remoto --help",
+        ["remoto", "--help"],
+        true,
+        "remoto runs a command; `--help` is not one",
+      ],
+      [
+        "wrapped remoto -h",
+        [SH, "-c", "remoto -h"],
+        true,
+        "remoto runs a command; `-h` is not one",
+      ],
+      [
+        "remoto -x after cd",
+        [SH, "-c", "cd apps/server && remoto -x"],
+        true,
+        "remoto runs a command; `-x` is not one",
+      ],
+      ["wrapped option", [SH, "-c", "--help"], false, "`--help` is not a command"],
+      ["quoted option", [SH, "-c", "'-x' a"], false, "`-x` is not a command"],
     ] as const;
 
     it.each(
       notCommands.flatMap((shape) =>
         modes.map((mode) => [shape[0], mode[0], shape, mode] as const),
       ),
-    )("refuses to queue %s, %s", (_shape, _mode, [, command, word], [, enabled, runner]) => {
-      const launch = heavyLaunch(
-        { program: command[0], args: command.slice(1), where: undefined },
-        "/w",
-        "/home/me",
-        () => ({ enabled, runner }),
-        false,
-      );
-      const remoto = command.join(" ").includes("remoto");
-      // Run as written when T3 would not queue it: what the caller sees is the same as without T3.
-      if ((!enabled && !runner) || (remoto && !runner)) expect(launch).toEqual({ kind: "direct" });
-      else {
-        expect(launch).toMatchObject({ kind: "refused" });
-        if (launch.kind === "refused") {
-          expect(launch.reason).toContain(`\`${word}\``);
+    )(
+      "refuses to queue %s, %s",
+      (_shape, _mode, [, command, remoto, text], [, enabled, runner]) => {
+        const launch = heavyLaunch(
+          { program: command[0], args: command.slice(1), where: undefined },
+          "/w",
+          "/home/me",
+          () => ({ enabled, runner }),
+          false,
+        );
+        // Run as written when T3 would not queue it: what the caller sees is the same as without T3.
+        if ((!enabled && !runner) || (remoto && !runner))
+          expect(launch).toEqual({ kind: "direct" });
+        else {
+          expect(launch).toMatchObject({ kind: "refused" });
+          if (launch.kind === "refused") {
+            expect(launch.reason).toContain(text);
+            // An agent that typed `remoto` never called `t3 heavy`: the answer speaks of `remoto`.
+            if (remoto) expect(launch.reason).not.toContain("t3 heavy");
+          }
         }
-      }
-    });
+      },
+    );
 
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
