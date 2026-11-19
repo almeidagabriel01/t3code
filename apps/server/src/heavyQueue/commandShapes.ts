@@ -87,7 +87,11 @@ export type Kind = "exclusive" | "heavy" | "medium";
 
 /** `simctl` subcommands that only read: every other one boots or drives a simulator. */
 const SIMCTL_READS = new Set(["list", "help", "getenv", "get_app_container", "listapps"]);
-const LAUNCHERS = new Set(["env", "time", "remoto", "nohup", "sudo", "command", "exec"]);
+const LAUNCHERS = new Set(
+  "env time timeout nice caffeinate remoto nohup sudo command exec".split(" "),
+);
+/** What a launcher takes before the program: a flag, a count or duration, `VAR=value`. */
+const LAUNCHER_VALUE = /^(-|\d+(\.\d+)?[smhd]?$|\w+=)/;
 
 /**
  * A command that boots or drives a device: `xcrun simctl boot`, `emulator -avd X`, `expo run:ios`.
@@ -96,9 +100,7 @@ const LAUNCHERS = new Set(["env", "time", "remoto", "nohup", "sudo", "command", 
 const drivesDevice = (line: string, depth = 0): boolean =>
   parseLine(line).commands.some((command) => {
     const values = command.words.map((word) => word.value);
-    const at = values.findIndex(
-      (value) => !LAUNCHERS.has(value) && !value.startsWith("-") && !/^\w+=/.test(value),
-    );
+    const at = values.findIndex((value) => !LAUNCHERS.has(value) && !LAUNCHER_VALUE.test(value));
     const program = values[at]?.split("/").pop()?.toLowerCase() ?? "";
     const rest = values.slice(at + 1);
     if (/^(ba|z|da)?sh$/.test(program)) {
@@ -106,13 +108,23 @@ const drivesDevice = (line: string, depth = 0): boolean =>
       return depth < 1 && text !== undefined && drivesDevice(text, depth + 1);
     }
     const words = rest.filter((value) => !value.startsWith("-"));
-    if (program === "simctl" || (program === "xcrun" && words[0] === "simctl")) {
-      return !SIMCTL_READS.has(words[program === "simctl" ? 0 : 1] ?? "list");
+    // `xcrun --sdk iphonesimulator simctl boot x`: an option's value may come first.
+    const simctl = program === "simctl" ? -1 : program === "xcrun" ? words.indexOf("simctl") : null;
+    if (simctl !== null && (simctl >= 0 || program === "simctl")) {
+      return !SIMCTL_READS.has(words[simctl + 1] ?? "list");
     }
     if (program === "emulator")
       return rest.some((value) => value === "-avd" || value.startsWith("@"));
+    if (program === "open") return /^simulator(\.app)?$/i.test(rest.at(-1) ?? "");
     const target = runTarget(program, words);
-    return target.program === "expo" && /^run(:|$)/.test(target.words[0] ?? "");
+    // `pnpm expo run:ios` runs the package's own `expo` bin, as `exec` would.
+    const expo =
+      target.program === "expo"
+        ? target.words
+        : PACKAGE_MANAGERS.has(program) && words[0] === "expo"
+          ? words.slice(1)
+          : null;
+    return expo !== null && /^run(:|$)/.test(expo[0] ?? "");
   });
 
 const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
