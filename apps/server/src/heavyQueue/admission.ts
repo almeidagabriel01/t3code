@@ -647,6 +647,10 @@ export const plan = (input: PlanInput): Plan => {
         spent -
         (reservationBinds() ? standard.reserved : 0)
       : Infinity;
+  const isLightLane = (entry: HeavyQueueEntry) => {
+    const kind = lane(entry);
+    return kind === "quick" || kind === "commit";
+  };
   let quickRunning = running.filter((entry) => lane(entry) === "quick").length;
   let commitRunning = running.filter((entry) => lane(entry) === "commit").length;
   for (const id of admits) {
@@ -654,6 +658,15 @@ export const plan = (input: PlanInput): Plan => {
     if (kind === "quick") quickRunning += 1;
     if (kind === "commit") commitRunning += 1;
   }
+  // Short memory (pressure, swapping or under the floor) still lets a small quick job or commit
+  // start while half the floor stays free, one per settle window so a bad estimate shows first.
+  const unheld = { ...input, holding: false };
+  const strained =
+    fresh && (memoryStrained(sample) || sample.availableMemoryBytes < floorBytes(unheld, sample));
+  let lightStarts =
+    loaded.filter((entry) => isLightLane(entry) && now - Date.parse(entry.startedAt!) < SETTLE_MS)
+      .length +
+    admits.filter((id) => isLightLane(waiting.find((entry) => entry.id === id)!)).length;
   for (const entry of rest) {
     const kind = lane(entry);
     if (admits.includes(entry.id) || (kind !== "quick" && kind !== "commit")) continue;
@@ -661,42 +674,56 @@ export const plan = (input: PlanInput): Plan => {
       hold(entry, "pressure");
       continue;
     }
-    if (kind === "commit") {
-      if (commitRunning >= 1) hold(entry, "commit-slot");
-      else {
-        admit(entry);
-        commitRunning += 1;
-      }
+    if (kind === "commit" && commitRunning >= 1) {
+      hold(entry, "commit-slot");
       continue;
     }
-    if (quickRunning >= quickSlots) {
+    if (kind === "quick" && quickRunning >= quickSlots) {
       hold(entry, "quick-slots");
       continue;
     }
     // Quick jobs pass a job that runs alone until it waited twice its patience, then let it drain.
-    if (standard.drainingFor !== null && aged(standard.drainingFor, 2)) {
+    if (kind === "quick" && standard.drainingFor !== null && aged(standard.drainingFor, 2)) {
       hold(entry, "draining");
       continue;
     }
     const need = estimateOf(entry).memoryBytes;
-    const room =
-      quickRoom() +
-      (fresh && !reservationBinds()
-        ? lightAllowance({ ...input, holding: false }, sample, entry)
-        : 0);
-    if (need > room) {
-      hold(
-        entry,
-        standard.reserved > 0 && need <= room + standard.reserved ? "reserved" : "job-memory",
-        standard.reserved > 0 && need <= room + standard.reserved
-          ? undefined
-          : `memory floor: ${gb(room)} room, needs ${gb(need)}`,
-      );
-      continue;
+    if (strained) {
+      if (lightStarts > 0) {
+        hold(entry, "settling");
+        continue;
+      }
+      const room = quickRoom() + floorBytes(unheld, sample) / 2;
+      if (need > input.lightJobMegabytes * MIB || need > room) {
+        hold(
+          entry,
+          "job-memory",
+          need > input.lightJobMegabytes * MIB
+            ? `memory short: only jobs under ${input.lightJobMegabytes} MB start, needs ${gb(need)}`
+            : `memory short: ${gb(room)} room keeping half the floor, needs ${gb(need)}`,
+        );
+        continue;
+      }
+      onFloor.add(entry.id);
+    } else if (kind === "quick") {
+      const room =
+        quickRoom() + (fresh && !reservationBinds() ? lightAllowance(unheld, sample, entry) : 0);
+      if (need > room) {
+        hold(
+          entry,
+          standard.reserved > 0 && need <= room + standard.reserved ? "reserved" : "job-memory",
+          standard.reserved > 0 && need <= room + standard.reserved
+            ? undefined
+            : `memory floor: ${gb(room)} room, needs ${gb(need)}`,
+        );
+        continue;
+      }
+      if (need > quickRoom()) onFloor.add(entry.id);
     }
-    if (need > quickRoom()) onFloor.add(entry.id);
     admit(entry);
-    quickRunning += 1;
+    lightStarts += 1;
+    if (kind === "quick") quickRunning += 1;
+    else commitRunning += 1;
   }
   return finish(admits.includes(head.id) && !onFloor.has(head.id) ? false : standard.holding);
 };

@@ -511,18 +511,89 @@ describe("admission plan", () => {
         hold,
         holding: true,
       },
+      // Short memory still lets a small quick job start while half the floor stays free.
       {
-        name: `${why} gives a light quick job nothing past the floor`,
+        name: `${why} lets a small quick job start keeping half the floor`,
         entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
         change: {
           sample: { ...calm, ...signal, availableMemoryBytes: 0.18 * 32 * GIB },
           history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
         },
-        admit: null,
-        hold: "job-memory",
+        admit: "a",
         holding: true,
       },
     ]),
+    // The live Mac under pressure: 16 GB, pressure 2, swapping under the limit.
+    ...(() => {
+      const strained = (free: number, pressureLevel = 2) => ({
+        ...sixteen,
+        availableMemoryBytes: free * 16 * GIB,
+        pressureLevel,
+        swapInBytesPerSecond: 16 * 1024 ** 2,
+      });
+      const commit = 'git commit -m "fix: x"';
+      const history = {
+        [signatureOf(commit)]: [run(1, 0.3, 10_000)],
+        [signatureOf("vp run typecheck")]: [run(1, 0.3, 120_000)],
+        [signatureOf("vp lint a.ts")]: [run(0.2, 0.1, 3_000)],
+      };
+      const build = entry("r", "vp run build", 60_000);
+      return [
+        {
+          name: "14.8% free under pressure: a 300 MB commit starts",
+          entries: [build, entry("c", commit)],
+          change: { sample: strained(0.148), history },
+          admit: "c",
+          holding: true,
+        },
+        {
+          name: "11% free under pressure: the commit would eat into half the floor",
+          entries: [build, entry("c", commit)],
+          change: { sample: strained(0.11), history },
+          admit: null,
+          hold: "job-memory",
+          reason: { c: "memory short: 0.2 GB room keeping half the floor, needs 0.3 GB" },
+        },
+        {
+          name: "critical pressure holds the commit",
+          entries: [build, entry("c", commit)],
+          change: { sample: strained(0.148, 4), history },
+          admit: null,
+          hold: "pressure",
+        },
+        {
+          name: "a standard job stays held by pressure though it is small",
+          entries: [build, entry("t", "vp run typecheck")],
+          change: { sample: strained(0.148), history },
+          admit: null,
+          hold: "pressure",
+        },
+        {
+          name: "three quick jobs under pressure: one starts per settle window",
+          entries: [
+            build,
+            entry("a", "vp lint a.ts"),
+            entry("b", "vp lint a.ts"),
+            entry("x", "vp lint a.ts"),
+          ],
+          change: { sample: strained(0.148), history },
+          admit: "a",
+          reason: { b: "letting the last one ramp up", x: "letting the last one ramp up" },
+        },
+        {
+          name: "after the settle window the second starts and the third waits for a quick slot",
+          entries: [
+            build,
+            entry("a", "vp lint a.ts", 20_000),
+            entry("b", "vp lint a.ts"),
+            entry("x", "vp lint a.ts"),
+          ],
+          change: { sample: strained(0.148), history },
+          admit: "b",
+          reason: { x: "2 quick jobs running" },
+        },
+      ];
+    })(),
     {
       name: "a light job past the floor still needs the memory it uses",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
@@ -1082,6 +1153,18 @@ describe("admission by real capacity", () => {
       ],
       admits: [],
       reasons: { q: "waiting for room for the head job" },
+    },
+    {
+      row: 49,
+      name: "an aged head held by pressure from outside the queue reserves nothing from quick jobs",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        fmt("q"),
+      ],
+      sample: { ...roomy, pressureLevel: 2 },
+      admits: ["q"],
     },
     {
       row: 48,
