@@ -68,12 +68,14 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import { type OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import {
   AssistantRequests,
   layer as assistantRequestsLayer,
 } from "../assistants/AssistantRequests.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import {
@@ -1860,6 +1862,62 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.isTrue(
           byDriver.message.includes("No V2 provider adapter is registered for driver forkOnly."),
         );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect("delegate_task with no environment goes where the assistant's default says", () =>
+    Effect.gen(function* () {
+      const peer = EnvironmentId.make("env-peer");
+      const delegated: Array<unknown> = [];
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({
+          remoteProject: () => Effect.undefined,
+          delegate: (_scope, input, options) =>
+            Effect.sync(() => delegated.push({ target: input.target, options })).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new OrchestratorMcpFailure({ code: "invalid_request", message: "recorded" }),
+                ),
+              ),
+            ),
+        }),
+        Layer.mock(PeerForwarding.PeerForwarding)({}),
+        Layer.mock(PeerLinks.PeerLinks)({
+          enabled: Effect.succeed(true),
+          get: (environmentId) =>
+            Effect.succeedSome({
+              environmentId,
+              label: "devbox",
+              expiresAt: DateTime.makeUnsafe("2100-01-01T00:00:00Z"),
+            } as never),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(AssistantDirectory)({
+          forThread: () =>
+            Effect.succeedSome({
+              assistant: { workspace: "host", scope: "all", defaultEnvironment: peer } as never,
+              current: true,
+            }),
+          sandboxEnvironmentId: Effect.succeedNone,
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, { task: "Look.", mode: "async" }).pipe(Effect.flip);
+        assert.deepEqual(delegated, [
+          { target: { environmentId: peer }, options: { implicit: true } },
+        ]);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

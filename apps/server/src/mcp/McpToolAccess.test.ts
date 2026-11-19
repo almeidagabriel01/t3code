@@ -10,6 +10,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,6 +21,8 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -633,5 +636,133 @@ it.effect("project scope: an assistant for every project may launch in any", () 
   call("t3_thread_launch", supervised, { projectId: ProjectId.make("project-b") }).pipe(
     Effect.map((outcome) => expect(outcome).toBe("here")),
     Effect.provide(launchServer(Option.none(), "all")),
+  ),
+);
+
+const peer = EnvironmentId.make("env-peer");
+const DefaultLaunchToolkit = Toolkit.make(
+  Tool.make("t3_thread_launch", {
+    ...linkedProbe,
+    parameters: Schema.Struct({
+      ...linkedProbe.parameters.fields,
+      projectId: Schema.optional(ProjectId),
+      scratch: Schema.optional(Schema.Boolean),
+      attachments: Schema.optional(Schema.Array(Schema.String)),
+    }),
+    success: Schema.Struct({
+      ran: Schema.String,
+      environmentId: Schema.optional(Schema.String),
+      environmentLabel: Schema.optional(Schema.String),
+    }),
+  }),
+);
+/** A host assistant: `supervised` is its direct chat, `plan` its group thread. */
+const defaultServer = (assistant: EnvironmentId | "local" | null, team: EnvironmentId | null = null) =>
+  McpHttpServer.toolkitRegistration(
+    DefaultLaunchToolkit,
+    McpToolAccess.toLayer(DefaultLaunchToolkit, {
+      t3_thread_launch: McpToolAccess.startsThreads((input) => input, ranHere, "stamped"),
+    }),
+  ).pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provideMerge(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PeerForwarding.PeerForwarding)({
+        call: (_scope, tool, environmentId, params) =>
+          Effect.succeed({
+            ran: `${tool.name} in ${environmentId} ${(params as { projectId?: string }).projectId ?? ((params as { scratch?: boolean }).scratch === true ? "scratch" : "")}`.trim(),
+          } as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PeerLinks.PeerLinks)({
+        enabled: Effect.succeed(true),
+        get: (environmentId) =>
+          Effect.succeed(
+            environmentId === peer
+              ? Option.some({
+                  environmentId,
+                  label: "devbox",
+                  expiresAt: DateTime.makeUnsafe("2100-01-01T00:00:00Z"),
+                } as never)
+              : Option.none(),
+          ),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(RemoteDelegation.RemoteDelegation)({
+        remoteProject: (_scope, _environmentId, projectId) =>
+          Effect.succeed(projectId === undefined ? undefined : ProjectId.make(`there-${projectId}`)),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(AssistantDirectory)({
+        forThread: (threadId) =>
+          Effect.succeed(
+            threadId === supervisedThreadId || threadId === planThreadId
+              ? Option.some({
+                  assistant: { workspace: "host", scope: "all", defaultEnvironment: assistant } as never,
+                  current: threadId === supervisedThreadId,
+                  ...(threadId === planThreadId
+                    ? { team: { defaultEnvironment: team } as never }
+                    : {}),
+                })
+              : Option.none(),
+          ),
+        sandboxEnvironmentId: Effect.succeedNone,
+        teamsOf: () => Effect.succeed([]),
+        projectTitles: () => Effect.succeed({}),
+      }),
+    ),
+  );
+
+it.effect("routes an assistant's launch to its default environment", () =>
+  call("t3_thread_launch", supervised, { projectId: ProjectId.make("p") }).pipe(
+    Effect.map((outcome) => expect(outcome).toBe("t3_thread_launch in env-peer there-p")),
+    Effect.provide(defaultServer(peer)),
+  ),
+);
+
+it.effect.each([
+  ["no default launches here", null, null, supervised, {}, "here"],
+  ["a Local default launches here", "local", null, supervised, {}, "here"],
+  [
+    "an explicit environment wins over the default",
+    peer,
+    null,
+    supervised,
+    { environmentId: other },
+    "t3_thread_launch in environment-other",
+  ],
+  ["... even when it names this one", peer, null, supervised, { environmentId: here }, "here"],
+  ["the default with no project goes to its Scratch there", peer, null, supervised, { scratch: true }, "t3_thread_launch in env-peer scratch"],
+  ["a group thread uses the group's default", null, peer, plan, {}, "t3_thread_launch in env-peer there-project:mcp-test"],
+  ["... before the member's own", peer, "local" as never, plan, {}, "here"],
+  ["the member's direct chat ignores the group's", null, peer, supervised, {}, "here"],
+  ["a thread that is no assistant's ignores defaults", peer, null, fullAccess, {}, "here"],
+  ["a call that came over a link ignores the default", peer, null, linkedClient, {}, "here"],
+  ["attachments to an implicit remote launch are refused", peer, null, supervised, { attachments: ["a"] }, "invalid_request"],
+  ["an unlinked default is refused, never run here", EnvironmentId.make("env-gone"), null, supervised, {}, "invalid_request"],
+] as const)("default environment: %s", ([, assistant, team, scope, args, expected]) =>
+  call("t3_thread_launch", scope, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(defaultServer(assistant, team)),
+  ),
+);
+
+it.effect("default environment: the result names where it ran", () =>
+  McpServer.McpServer.pipe(
+    Effect.flatMap((server) => server.callTool({ name: "t3_thread_launch", arguments: {} })),
+    Effect.map(({ content }) => {
+      const text = content.map((part) => (part.type === "text" ? part.text : "")).join("");
+      expect(JSON.parse(text)).toMatchObject({ environmentId: peer, environmentLabel: "devbox" });
+    }),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, supervised),
+    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+    Effect.provide(defaultServer(peer)),
   ),
 );
