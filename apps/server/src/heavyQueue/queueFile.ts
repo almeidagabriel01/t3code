@@ -805,7 +805,14 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     health: doc.linux,
     runnerOn: runnerOn(doc),
     lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
+    last: (entry) => laneOf(doc.rules, entry) === "last",
   });
+
+/** A waiter's place among those bound for its machine, in the order admission tries them. */
+const waitPosition = (plan: RoutePlan, id: string) => {
+  const runner = plan.routes[id] ?? "mac";
+  return plan.ordered.filter((each) => (plan.routes[each] ?? "mac") === runner).indexOf(id) + 1;
+};
 
 /** Fields that describe one attempt; a requeued entry drops them. */
 const withoutAttempt = ({
@@ -938,8 +945,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     doc: { ...doc, entries: asked, holding: decision.holding },
     result: {
       status: "waiting",
-      position:
-        there.filter((e) => e.startedAt === null && !isOrphan(e)).findIndex((e) => e.id === id) + 1,
+      position: waitPosition(decision, id),
       ...(runningThere === undefined ? {} : { running: runningThere }),
       ...(runnerOn(doc) ? { runner } : {}),
       ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
@@ -1234,22 +1240,19 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   );
   const withProbe = insertNew(doc, probed);
   const plan = planOf(withProbe, now);
-  const waiters = withProbe.entries.filter((e) => e.startedAt === null && !isOrphan(e));
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
-  const ahead = withProbe.entries
-    .slice(
-      0,
-      withProbe.entries.findIndex((e) => e.id === id),
-    )
-    .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  const ahead =
+    withProbe.entries.filter((e) => e.startedAt !== null && e.runner === "linux").length +
+    plan.ordered.slice(0, plan.ordered.indexOf(id)).filter((each) => plan.routes[each] === "linux")
+      .length;
   // A job asked for Linux that needs this Mac never runs: it ends with this reason.
   const cancel = plan.cancels[id];
   return {
     runsOn: plan.routes[id] ?? ("mac" as const),
     reason: cancel ?? plan.reasons[id] ?? null,
     startsNow: cancel === undefined && plan.admits[id] !== undefined,
-    position: waiters.findIndex((e) => e.id === id) + 1,
+    position: waitPosition(plan, id),
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
     canceled: cancel !== undefined,
     // The class admission gives it, by the same rules and clock.

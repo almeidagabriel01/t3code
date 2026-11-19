@@ -13,6 +13,7 @@ import {
   type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
+import { signatureOf } from "./admission.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
@@ -2888,5 +2889,32 @@ describe("Linux limits as a waiting reason", () => {
       // Hybrid sends it to the Mac, which is under its own limits, instead of holding it.
       expect(plan.linuxOver.a).toBe(where === "linux" ? over : undefined);
     }
+  });
+});
+
+describe("the order admission tries waiters in", () => {
+  const history = {
+    [signatureOf("vp run build")]: [{ cpu: 2, memoryBytes: GIB, durationMs: 240_000 }],
+    [signatureOf("vp test run")]: [{ cpu: 2, memoryBytes: GIB, durationMs: 120_000 }],
+  };
+
+  it("Linux's one free slot takes the shortest eligible waiter, not the first in the file", () => {
+    const plan = planRoutes(
+      input(
+        [job("build", "vp run build"), job("test", "vp test run")],
+        { runnerWhere: "linux" },
+        { history, machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxSlots: 1 } },
+      ),
+    );
+    expect(outcomeOf(plan, "test")).toBe("linux-start");
+    expect(outcomeOf(plan, "build")).toBe("linux-wait");
+    expect(plan.ordered).toEqual(["test", "build"]);
+    expect(plan.order.build).toEqual({ code: "shorter", text: "shorter runs go first" });
+  });
+
+  it("a project's last job waits behind the others until it aged twice the patience", () => {
+    const entries = [job("late", "vp test run"), job("build", "vp run build")];
+    const last = (entry: HeavyQueueEntry) => entry.id === "late";
+    expect(planRoutes(input(entries, {}, { history, last })).ordered).toEqual(["build", "late"]);
   });
 });

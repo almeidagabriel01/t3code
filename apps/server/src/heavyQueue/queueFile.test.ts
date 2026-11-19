@@ -56,6 +56,18 @@ const ids = (dir: string) => Queue.read(dir).map((e) => e.id);
 const deadPid = () => NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
 
 describe("heavy queue file", () => {
+  it("reports the place admission tries, without rewriting the file's order", () => {
+    const dir = tempDir();
+    Queue.setPaused(dir, true);
+    Queue.enqueue(dir, { ...entry("build"), label: "vp run build" });
+    Queue.enqueue(dir, { ...entry("lint"), label: "vp lint a.ts" });
+    // A second after both were queued: past the patience the build would move up instead.
+    const now = Date.parse(entry("build").createdAt) + 1000;
+    expect(Queue.tryStart(dir, "lint", now)).toMatchObject({ status: "waiting", position: 1 });
+    expect(Queue.tryStart(dir, "build", now)).toMatchObject({ status: "waiting", position: 2 });
+    expect(ids(dir)).toEqual(["build", "lint"]);
+  });
+
   it("starts entries one at a time in enqueue order, and reports waiter positions", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c"]) Queue.enqueue(dir, entry(id));

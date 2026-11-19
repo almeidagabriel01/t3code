@@ -7,6 +7,7 @@ import {
   HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   type HeavyQueueEntry,
+  type HeavyQueueOrder,
   type HeavyRunner,
   type HeavyRunnerAskReason,
   type RunnerMachineConfig,
@@ -15,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  admissionOrder,
   budgetOf,
   jobVerdict,
   laneOf,
@@ -1054,6 +1056,8 @@ export interface RoutePlanInput extends PlanInput {
   readonly runnerOn?: boolean;
   /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
   readonly lostCwds?: ReadonlyArray<string>;
+  /** A project rule placed it last: it waits behind the others until it aged twice as long. */
+  readonly last?: (entry: HeavyQueueEntry) => boolean;
 }
 
 interface LinuxBusy {
@@ -1082,6 +1086,9 @@ export interface RoutePlan {
   readonly cancels: Readonly<Record<string, string>>;
   /** Waiters "When Linux is full" moved to this Mac, with why: they stay there (`route`). */
   readonly moved: Readonly<Record<string, string>>;
+  /** Waiter ids in the order admission tries them (`admissionOrder`), and why each sits there. */
+  readonly ordered: ReadonlyArray<string>;
+  readonly order: Readonly<Record<string, HeavyQueueOrder>>;
   readonly room: boolean;
   readonly holding: boolean;
   readonly mac: Plan | null;
@@ -1167,7 +1174,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const queueOn = input.enabled;
   const paused = queueOn && input.paused;
   const running = entries.filter((entry) => entry.startedAt !== null);
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  // Light work and shorter runs take the first slots on either machine, aged jobs before them.
+  const { waiting, order } = admissionOrder(
+    input,
+    entries.filter((entry) => entry.startedAt === null),
+    input.last,
+  );
+  const ordered = waiting.map((entry) => entry.id);
   const linuxRunning = running.filter((entry) => entry.runner === "linux");
   const macRunning = running.filter((entry) => entry.runner !== "linux");
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
@@ -1556,6 +1569,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       asks,
       cancels,
       moved,
+      ordered,
+      order,
       room: true,
       holding: false,
       mac: null,
@@ -1580,6 +1595,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     asks,
     cancels,
     moved,
+    ordered,
+    order,
     room: mac.room,
     holding: mac.holding,
     mac,

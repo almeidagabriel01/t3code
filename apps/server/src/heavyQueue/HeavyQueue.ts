@@ -308,9 +308,17 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         };
       }
     }
+    // Waiters in the order admission tries them; ones it does not plan (orphans) keep the end.
+    const queued = new Set(plan.ordered);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const listed = [
+      ...entries.filter((entry) => entry.startedAt !== null),
+      ...plan.ordered.flatMap((id) => byId.get(id) ?? []),
+      ...entries.filter((entry) => entry.startedAt === null && !queued.has(entry.id)),
+    ];
     return {
       // A job's full line stays in the file; the row shows its label.
-      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
+      entries: listed.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
         entry.runner === "linux" ? withoutUsage(entry) : entry,
       ),
       estimates,
@@ -331,6 +339,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       serviceIdleMinutes,
       reclaimMinutes,
       costs,
+      order: plan.order,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
       room: plan.room && (!fresh || hasHeadroom(sample, doc)),

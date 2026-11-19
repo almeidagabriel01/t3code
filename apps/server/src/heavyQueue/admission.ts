@@ -6,9 +6,12 @@ import {
   fillsStandardSlot,
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
+  heavyOrderText,
   type HeavyQueueCost,
   type HeavyQueueEntry,
   type HeavyQueueHold,
+  type HeavyQueueOrder,
+  type HeavyQueueOrderCode,
 } from "@t3tools/contracts";
 
 import { kindOf, runTarget } from "./commandShapes.ts";
@@ -416,12 +419,18 @@ type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
   readonly idleSince?: number;
 };
 
+/**
+ * The runs of the machine `entry` goes to. A Linux job without Linux runs reads this Mac's, never
+ * the reverse: Linux timings would let a Mac first run skip the Mac's slots as quick.
+ */
+const usualRuns = (input: CostInput, entry: CostEntry) => {
+  const linuxRuns = entry.runner === "linux" ? runsOf(input.linuxHistory ?? {}, entry) : [];
+  return linuxRuns.length > 0 ? linuxRuns : runsOf(input.history, entry);
+};
+
 /** The cost class admission uses for `entry`, with its why; the one the Resource Manager shows. */
 export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
-  // The usual run on the machine it goes to. A Linux job without Linux runs reads this Mac's, never
-  // the reverse: Linux timings would let a Mac first run skip the Mac's slots as quick.
-  const linuxRuns = entry.runner === "linux" ? runsOf(input.linuxHistory ?? {}, entry) : [];
-  const runs = linuxRuns.length > 0 ? linuxRuns : runsOf(input.history, entry);
+  const runs = usualRuns(input, entry);
   // A server-held slot (a device open) is never idle work: its CPU is T3's own.
   const now = entry.server === true ? undefined : input.now;
   const cost = costOf(
@@ -447,6 +456,87 @@ const laneFrom = (cost: HeavyQueueCost): Lane => (cost.commit === true ? "commit
 
 export const laneOf = (input: CostInput, entry: CostEntry): Lane =>
   laneFrom(queueCostOf(input, entry));
+
+const ORDER_BAND: Readonly<Record<HeavyQueueOrderCode, number>> = {
+  forced: 0,
+  pinned: 0,
+  aged: 0,
+  light: 1,
+  shorter: 2,
+  "first-run": 3,
+  "runs-alone": 4,
+};
+
+export interface AdmissionOrder {
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+  readonly order: Readonly<Record<string, HeavyQueueOrder>>;
+}
+
+/**
+ * Waiters in the order admission tries them, derived per plan and never written back (other
+ * builds read the file). Pinned ones keep their place; a project's "last" jobs trail until they
+ * waited twice the patience.
+ */
+export const admissionOrder = (
+  input: CostInput & Pick<PlanInput, "headPatienceMinutes" | "now">,
+  waiting: ReadonlyArray<HeavyQueueEntry>,
+  last: (entry: HeavyQueueEntry) => boolean = () => false,
+): AdmissionOrder => {
+  const patience = input.headPatienceMinutes * 60_000;
+  const waited = (entry: HeavyQueueEntry) => input.now - Date.parse(entry.createdAt);
+  // Judged on the machine it already goes to, so ordering never waits on routing.
+  const bound = (entry: HeavyQueueEntry): CostEntry => {
+    const runner = entry.route ?? (entry.where === "linux" ? "linux" : undefined);
+    return runner === undefined ? entry : { ...entry, runner };
+  };
+  const ranked = waiting.map((entry, index) => {
+    const lane = laneOf(input, bound(entry));
+    const light = lane !== "standard";
+    const late = last(entry);
+    const aged = !light && waited(entry) >= (late ? 2 : 1) * patience;
+    const usual = medianDuration(usualRuns(input, bound(entry)));
+    const code: HeavyQueueOrderCode = aged
+      ? "aged"
+      : light
+        ? "light"
+        : kindOf(entry) === "exclusive"
+          ? "runs-alone"
+          : usual === null
+            ? "first-run"
+            : "shorter";
+    const key = [
+      late && !aged ? 1 : 0,
+      ORDER_BAND[code],
+      code === "shorter" ? usual! : 0,
+      Date.parse(entry.createdAt),
+      index,
+    ];
+    return { entry, code, key };
+  });
+  const before = (a: ReadonlyArray<number>, b: ReadonlyArray<number>) => {
+    for (let at = 0; at < a.length; at += 1) if (a[at] !== b[at]) return a[at]! - b[at]!;
+    return 0;
+  };
+  const free = ranked
+    .filter(({ entry }) => entry.forced !== true && entry.pinned !== true)
+    .toSorted((a, b) => before(a.key, b.key));
+  let next = 0;
+  const placed = ranked
+    .filter(({ entry }) => entry.forced !== true)
+    .map((each) =>
+      each.entry.pinned === true ? { ...each, code: "pinned" as const } : free[next++]!,
+    );
+  const forced = ranked
+    .filter(({ entry }) => entry.forced === true)
+    .map((each) => ({ ...each, code: "forced" as const }));
+  const all = [...forced, ...placed];
+  return {
+    waiting: all.map(({ entry }) => entry),
+    order: Object.fromEntries(
+      all.map(({ entry, code }) => [entry.id, { code, text: heavyOrderText(code, waited(entry)) }]),
+    ),
+  };
+};
 
 /**
  * Pure, for one machine's own sample and entries. Standard waiters that fit start in queue order,

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
+  admissionOrder,
   estimate,
   laneOf,
   machineHold,
@@ -1295,5 +1296,115 @@ describe("limits judged on sustained readings", () => {
       overLimitSince: null,
       underLimitSince: 5,
     });
+  });
+});
+
+describe("admission order", () => {
+  const MIN = 60_000;
+  const history = {
+    [signatureOf("vp run build")]: [run(2, 2, 4 * MIN)],
+    [signatureOf("vp test run")]: [run(2, 1, 2 * MIN)],
+    [signatureOf("vp lint a.ts")]: [run(0.2, 0.1, 3_000)],
+    [signatureOf('git commit -m "x"')]: [run(1, 0.3, 10_000)],
+  };
+  const input = { ...base, history };
+  const ordered = (
+    entries: ReadonlyArray<HeavyQueueEntry>,
+    last?: (entry: HeavyQueueEntry) => boolean,
+    now = NOW,
+  ) => admissionOrder({ ...input, now }, entries, last);
+  const codes = (result: ReturnType<typeof ordered>) =>
+    result.waiting.map((entry) => `${entry.id}:${result.order[entry.id]!.code}`);
+
+  it.each([
+    {
+      name: "light work first, then shorter usual runs, first runs and jobs that run alone",
+      entries: [
+        entry("build", "vp run build"),
+        entry("test", "vp test run"),
+        entry("lint", "vp lint a.ts"),
+        entry("commit", 'git commit -m "x"'),
+        entry("new", "vp run bundle"),
+        { ...entry("iphone", "Open iPhone 17"), server: true },
+      ],
+      expected: [
+        "lint:light",
+        "commit:light",
+        "test:shorter",
+        "build:shorter",
+        "new:first-run",
+        "iphone:runs-alone",
+      ],
+    },
+    {
+      name: "a job waiting past the patience moves up ahead of shorter ones",
+      entries: [entry("test", "vp test run"), entry("build", "vp run build", null, 6 * MIN)],
+      expected: ["build:aged", "test:shorter"],
+    },
+    {
+      name: "a light job never ages past other light work",
+      entries: [entry("lint", "vp lint a.ts", null, 20 * MIN), entry("build", "vp run build")],
+      expected: ["lint:light", "build:shorter"],
+    },
+    {
+      name: "a build moved to the front stays ahead of a quick job",
+      entries: [{ ...entry("build", "vp run build"), pinned: true }, entry("lint", "vp lint a.ts")],
+      expected: ["build:pinned", "lint:light"],
+    },
+    {
+      name: "a quick job moved to the end stays there; the rest fill the places around it",
+      entries: [
+        entry("build", "vp run build"),
+        entry("test", "vp test run"),
+        { ...entry("lint", "vp lint a.ts"), pinned: true },
+      ],
+      expected: ["test:shorter", "build:shorter", "lint:pinned"],
+    },
+    {
+      name: "a forced job leads",
+      entries: [entry("lint", "vp lint a.ts"), { ...entry("build", "vp run build"), forced: true }],
+      expected: ["build:forced", "lint:light"],
+    },
+  ])("$name", ({ entries, expected }) => {
+    expect(codes(ordered(entries))).toEqual(expected);
+  });
+
+  it("says how long an aged job waited", () => {
+    const result = ordered([entry("build", "vp run build", null, 6 * MIN + 30_000)]);
+    expect(result.order.build).toEqual({ code: "aged", text: "waited 6 min: moved up" });
+  });
+
+  it.each([
+    { waited: 1_000, expected: ["build:shorter", "lint:light", "late:shorter"] },
+    { waited: 6 * MIN, expected: ["build:shorter", "lint:light", "late:shorter"] },
+    { waited: 11 * MIN, expected: ["late:aged", "build:shorter", "lint:light"] },
+  ])("a project's last build that waited $waited ms", ({ waited, expected }) => {
+    const late = new Set(["late", "lint"]);
+    const result = ordered(
+      [
+        entry("lint", "vp lint a.ts"),
+        entry("late", "vp run build", null, waited),
+        entry("build", "vp run build"),
+      ],
+      (entry) => late.has(entry.id),
+    );
+    // The last ones follow every other job, light or not, and order among themselves.
+    expect(codes(result)).toEqual(expected);
+  });
+
+  it("a build behind a short job arriving every minute starts before the seventh", () => {
+    const started: string[] = [];
+    let waiting: HeavyQueueEntry[] = [{ ...entry("build", "vp run build"), createdAt: at(0) }];
+    for (let minute = 0; minute < 10; minute += 1) {
+      const now = NOW + minute * MIN;
+      waiting.push({
+        ...entry(`s${minute}`, "vp test run"),
+        createdAt: new Date(now).toISOString(),
+      });
+      const next = ordered(waiting, undefined, now).waiting[0]!;
+      started.push(next.id);
+      waiting = waiting.filter((each) => each.id !== next.id);
+    }
+    expect(started.indexOf("build")).toBeLessThan(6);
   });
 });
