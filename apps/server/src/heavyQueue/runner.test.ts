@@ -2912,9 +2912,28 @@ describe("the order admission tries waiters in", () => {
     expect(plan.order.build).toEqual({ code: "shorter", text: "shorter runs go first" });
   });
 
-  it("a project's last job waits behind the others until it aged twice the patience", () => {
-    const entries = [job("late", "vp test run"), job("build", "vp run build")];
-    const last = (entry: HeavyQueueEntry) => entry.id === "late";
-    expect(planRoutes(input(entries, {}, { history, last })).ordered).toEqual(["build", "late"]);
+  it.each([
+    {
+      name: "no rule: the shorter test first",
+      build: "normal",
+      test: "normal",
+      expected: ["test", "build"],
+    },
+    {
+      name: "the user's own build leads a shorter agent test",
+      build: "first",
+      test: "normal",
+      expected: ["build", "test"],
+    },
+    {
+      name: "a last test trails a longer build",
+      build: "normal",
+      test: "last",
+      expected: ["build", "test"],
+    },
+  ] as const)("$name", ({ build, test, expected }) => {
+    const entries = [job("test", "vp test run"), job("build", "vp run build")];
+    const lane = (entry: HeavyQueueEntry) => (entry.id === "build" ? build : test);
+    expect(planRoutes(input(entries, {}, { history, lane })).ordered).toEqual(expected);
   });
 });

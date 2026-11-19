@@ -6,10 +6,12 @@ import {
   fillsStandardSlot,
   heavyHoldText,
   HeavyQueueHold,
+  HeavyQueueOrderCode,
 } from "./heavyQueue.ts";
 
 const decode = Schema.decodeUnknownSync(HeavyCommandsState);
 const decodeHold = Schema.decodeSync(HeavyQueueHold);
+const decodeOrder = Schema.decodeSync(HeavyQueueOrderCode);
 
 const row = {
   pid: 12,
@@ -48,10 +50,12 @@ describe("heavyHoldText", () => {
   // Only this build and newer map an unknown hold to "other". Older clients stay safe because the
   // server never emits a hold literal they lack.
   it.each([
-    ["committed", "committed"],
-    ["a-hold-from-a-newer-server", "other"],
-  ])("decodes the %s hold as %s", (hold, decoded) => {
-    expect(decodeHold(hold)).toBe(decoded);
+    [decodeHold, "committed", "committed"],
+    [decodeHold, "a-hold-from-a-newer-server", "other"],
+    [decodeOrder, "light", "light"],
+    [decodeOrder, "an-order-from-a-newer-server", "other"],
+  ])("decodes %#: %s as %s", (decodeCode, code, decoded) => {
+    expect(decodeCode(code)).toBe(decoded);
   });
 });
 

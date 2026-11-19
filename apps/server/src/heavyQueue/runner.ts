@@ -1056,8 +1056,8 @@ export interface RoutePlanInput extends PlanInput {
   readonly runnerOn?: boolean;
   /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
   readonly lostCwds?: ReadonlyArray<string>;
-  /** A project rule placed it last: it waits behind the others until it aged twice as long. */
-  readonly last?: (entry: HeavyQueueEntry) => boolean;
+  /** The user's own and "first" jobs lead; "last" ones trail until they aged twice as long. */
+  readonly lane?: (entry: HeavyQueueEntry) => "first" | "normal" | "last";
 }
 
 interface LinuxBusy {
@@ -1178,7 +1178,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const { waiting, order } = admissionOrder(
     input,
     entries.filter((entry) => entry.startedAt === null),
-    input.last,
+    input.lane,
   );
   const ordered = waiting.map((entry) => entry.id);
   const linuxRunning = running.filter((entry) => entry.runner === "linux");

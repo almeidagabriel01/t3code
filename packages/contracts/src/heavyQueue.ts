@@ -336,7 +336,7 @@ export const fillsStandardSlot = (cost: HeavyQueueCost | undefined) =>
  * Why a waiter sits where it does in its machine's line: started or moved by hand first, then a
  * long wait, then light work, shorter usual runs, first runs and jobs that run alone.
  */
-export const HeavyQueueOrderCode = Schema.Literals([
+const ORDER_CODES = Schema.Literals([
   "forced",
   "pinned",
   "aged",
@@ -344,7 +344,19 @@ export const HeavyQueueOrderCode = Schema.Literals([
   "shorter",
   "first-run",
   "runs-alone",
+  "other",
 ]);
+const isKnownOrder = Schema.is(ORDER_CODES);
+/** Decodes a code it does not know as `other` (remote ready); its `text` still reads right. */
+export const HeavyQueueOrderCode = Schema.String.pipe(
+  Schema.decodeTo(
+    ORDER_CODES,
+    SchemaTransformation.transform<typeof ORDER_CODES.Type, string>({
+      decode: (code) => (isKnownOrder(code) ? code : "other"),
+      encode: (code) => code,
+    }),
+  ),
+);
 export type HeavyQueueOrderCode = typeof HeavyQueueOrderCode.Type;
 
 export const HeavyQueueOrder = Schema.Struct({
@@ -354,7 +366,10 @@ export const HeavyQueueOrder = Schema.Struct({
 });
 export type HeavyQueueOrder = typeof HeavyQueueOrder.Type;
 
-export const heavyOrderText = (code: HeavyQueueOrderCode, waitedMs: number): string => {
+export const heavyOrderText = (
+  code: Exclude<HeavyQueueOrderCode, "other">,
+  waitedMs: number,
+): string => {
   switch (code) {
     case "forced":
       return "started by hand: runs now";

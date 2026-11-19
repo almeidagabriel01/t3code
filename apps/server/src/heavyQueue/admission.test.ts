@@ -1395,7 +1395,7 @@ describe("admission order", () => {
     entries: ReadonlyArray<HeavyQueueEntry>,
     last?: (entry: HeavyQueueEntry) => boolean,
     now = NOW,
-  ) => admissionOrder({ ...input, now }, entries, last);
+  ) => admissionOrder({ ...input, now }, entries, (entry) => (last?.(entry) ? "last" : "normal"));
   const codes = (result: ReturnType<typeof ordered>) =>
     result.waiting.map((entry) => `${entry.id}:${result.order[entry.id]!.code}`);
 

@@ -457,7 +457,7 @@ const laneFrom = (cost: HeavyQueueCost): Lane => (cost.commit === true ? "commit
 export const laneOf = (input: CostInput, entry: CostEntry): Lane =>
   laneFrom(queueCostOf(input, entry));
 
-const ORDER_BAND: Readonly<Record<HeavyQueueOrderCode, number>> = {
+const ORDER_BAND: Readonly<Record<Exclude<HeavyQueueOrderCode, "other">, number>> = {
   forced: 0,
   pinned: 0,
   aged: 0,
@@ -474,13 +474,13 @@ export interface AdmissionOrder {
 
 /**
  * Waiters in the order admission tries them, derived per plan and never written back (other
- * builds read the file). Pinned ones keep their place; a project's "last" jobs trail until they
- * waited twice the patience.
+ * builds read the file). Pinned ones keep their place; the user's own and "first" jobs lead, and
+ * "last" jobs trail until they waited twice the patience.
  */
 export const admissionOrder = (
   input: CostInput & Pick<PlanInput, "headPatienceMinutes" | "now">,
   waiting: ReadonlyArray<HeavyQueueEntry>,
-  last: (entry: HeavyQueueEntry) => boolean = () => false,
+  lane: (entry: HeavyQueueEntry) => "first" | "normal" | "last" = () => "normal",
 ): AdmissionOrder => {
   const patience = input.headPatienceMinutes * 60_000;
   const waited = (entry: HeavyQueueEntry) => input.now - Date.parse(entry.createdAt);
@@ -490,12 +490,13 @@ export const admissionOrder = (
     return runner === undefined ? entry : { ...entry, runner };
   };
   const ranked = waiting.map((entry, index) => {
-    const lane = laneOf(input, bound(entry));
-    const light = lane !== "standard";
-    const late = last(entry);
+    const cost = laneOf(input, bound(entry));
+    const light = cost === "quick" || cost === "commit";
+    const rank = lane(entry);
+    const late = rank === "last";
     const aged = !light && waited(entry) >= (late ? 2 : 1) * patience;
     const usual = medianDuration(usualRuns(input, bound(entry)));
-    const code: HeavyQueueOrderCode = aged
+    const code: Exclude<HeavyQueueOrderCode, "other"> = aged
       ? "aged"
       : light
         ? "light"
@@ -505,7 +506,7 @@ export const admissionOrder = (
             ? "first-run"
             : "shorter";
     const key = [
-      late && !aged ? 1 : 0,
+      rank === "first" ? 0 : late && !aged ? 2 : 1,
       ORDER_BAND[code],
       code === "shorter" ? usual! : 0,
       Date.parse(entry.createdAt),

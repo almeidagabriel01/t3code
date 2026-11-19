@@ -805,7 +805,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     health: doc.linux,
     runnerOn: runnerOn(doc),
     lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
-    last: (entry) => laneOf(doc.rules, entry) === "last",
+    lane: (entry) => laneOf(doc.rules, entry),
   });
 
 /** A waiter's place among those bound for its machine, in the order admission tries them. */
@@ -1011,8 +1011,16 @@ const decideMove = (
   id: string,
   beforeId: string | null,
   note: string | undefined,
+  now: number,
 ): Decided<MoveResult> => {
-  const { entries } = doc;
+  // The line people see is admission's order, so a move lands among that order, not the file's.
+  const shown = planOf(doc, now).ordered;
+  const planned = new Set(shown);
+  const byId = new Map(doc.entries.map((entry) => [entry.id, entry]));
+  let next = 0;
+  const entries = doc.entries.map((entry) =>
+    planned.has(entry.id) ? byId.get(shown[next++]!)! : entry,
+  );
   const target = entries.find((entry) => entry.id === id);
   const anchor = beforeId === null ? undefined : entries.find((entry) => entry.id === beforeId);
   refuseOrphan(target);
@@ -1417,10 +1425,7 @@ export const orphan = (dir: string, id: string, now = Date.now()) =>
   mutate(
     dir,
     (doc) => {
-      const position =
-        doc.entries
-          .filter((entry) => entry.startedAt === null && !isOrphan(entry))
-          .findIndex((entry) => entry.id === id) + 1;
+      const position = waitPosition(planOf(doc, now), id);
       return position === 0
         ? { doc, result: null }
         : {
@@ -1525,14 +1530,17 @@ export const recordFault = (dir: string, id: string, fault: Fault, now = Date.no
     now,
   );
 
-export const move = (dir: string, id: string, beforeId: string | null, note?: string) =>
-  mutate(dir, (doc) => decideMove(doc, id, beforeId, note));
+export const move = (
+  dir: string,
+  id: string,
+  beforeId: string | null,
+  note?: string,
+  now = Date.now(),
+) => mutate(dir, (doc) => decideMove(doc, id, beforeId, note, now));
 
 /** Moves a waiter to the front of the waiters, right behind the running entry. */
-export const promote = (dir: string, id: string, note?: string) =>
-  mutate(dir, (doc) =>
-    decideMove(doc, id, doc.entries.find((entry) => entry.startedAt === null)?.id ?? id, note),
-  );
+export const promote = (dir: string, id: string, note?: string, now = Date.now()) =>
+  mutate(dir, (doc) => decideMove(doc, id, planOf(doc, now).ordered[0] ?? id, note, now));
 
 /** The user override: the waiter starts at once, past the pause, the slots and the load check. */
 export const startNow = (dir: string, id: string) =>

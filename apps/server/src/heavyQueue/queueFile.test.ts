@@ -66,6 +66,13 @@ describe("heavy queue file", () => {
     expect(Queue.tryStart(dir, "lint", now)).toMatchObject({ status: "waiting", position: 1 });
     expect(Queue.tryStart(dir, "build", now)).toMatchObject({ status: "waiting", position: 2 });
     expect(ids(dir)).toEqual(["build", "lint"]);
+    // Dropped above the lint people see first, not above the lint's place in the file.
+    Queue.enqueue(dir, { ...entry("test"), label: "vp test run" });
+    expect(Queue.move(dir, "test", "lint", undefined, now)).toBe("ok");
+    const positions = ["test", "lint", "build"].map((id) => Queue.tryStart(dir, id, now));
+    expect(positions.map((result) => result.status === "waiting" && result.position)).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   it("starts entries one at a time in enqueue order, and reports waiter positions", () => {
