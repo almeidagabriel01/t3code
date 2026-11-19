@@ -1460,6 +1460,58 @@
       "observed": "synthetic",
       "expect": "linux",
       "why": "read from the line's folder, not the one it runs in"
+    },
+    {
+      "line": "./scripts/sql-tests-ci.sh",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "scripts": {
+        "./scripts/sql-tests-ci.sh": "#!/bin/bash\nset -e\ncase \"${1:-all}\" in\n  all) pnpm test ;;\n  sql) psql -f tests/schema.sql ;;\nesac\n"
+      },
+      "observed": "Couldn't read this command safely (case)",
+      "expect": "linux",
+      "why": "case 31: a script the parser cannot follow goes to Linux; a missing tool there falls back and is learned"
+    },
+    {
+      "line": "run() { pnpm exec vp test run \"$@\"; }; run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 31: a function is no reason"
+    },
+    {
+      "line": "diff <(vp lint src) expected.txt",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 31: process substitution is no reason"
+    },
+    {
+      "line": "pnpm exec vp test run src/a.test.ts src/b.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux",
+      "why": "case 32: pnpm exec is judged by its bin"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < src/a.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "Reads its input from this Mac",
+      "expect": "linux",
+      "why": "case 32: input from a file in the checkout travels with it"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < /tmp/x.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 32: this Mac's shell opens the file and its bytes reach Linux on stdin, wherever it lives"
+    },
+    {
+      "line": "vp fmt --stdin-filepath=src/a.ts < ~/notes/x.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "synthetic",
+      "expect": "linux",
+      "why": "case 32: this Mac's shell opens the file and its bytes reach Linux on stdin, wherever it lives"
     }
   ]
 }
