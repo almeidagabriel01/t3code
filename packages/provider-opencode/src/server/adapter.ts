@@ -2061,6 +2061,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* resolveRuntimeRequest(pending.nativeRequestId, "cancelled");
             }
           }
+          // The server starts the next turn on the terminal event, so free the slot first.
+          state.activeTurn = null;
           yield* emitProviderTurn(state, turn, status, completedAt);
           const threadDisposition = terminal?.threadDisposition ?? "reusable";
           yield* updateProviderThread(state, {
@@ -2070,7 +2072,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ? state.providerThread.nativeConversationHeadRef
                 : providerRef(turn.nativeUserMessageId, "weak"),
           });
-          state.activeTurn = null;
           if (!turn.isRoot) {
             yield* emitProviderEvent({
               type: "node.updated",

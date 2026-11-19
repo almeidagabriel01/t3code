@@ -37,6 +37,7 @@ import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -2479,6 +2480,76 @@ describe("OpenCodeAdapterV2", () => {
             (event.type === "provider_session.updated" && event.providerSession.status === "error"),
         ),
       );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      // Every fiber yields every 3 ops except the event consumer, which runs to its
+      // first suspension: the interleaving where it wins the race with the finalizer.
+      const consumers = new Set<Fiber.Fiber<unknown, unknown>>();
+      const base = new Scheduler.MixedScheduler();
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        makeDispatcher: () => base.makeDispatcher(),
+        shouldYield: (fiber) => !consumers.has(fiber) && fiber.currentOpCount >= 3,
+      };
+      const exit = yield* Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        let promptId = "";
+        const harness = yield* makeOpenCodeRuntimeHarness("next-start", "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+        yield* harness.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.withFiber((fiber) => {
+              consumers.add(fiber);
+              return Effect.exit(harness.startTurn()).pipe(
+                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+              );
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "root",
+              info: { id: promptId, role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        for (const status of ["busy", "idle"]) {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "session.status",
+              properties: { sessionID: "root", status: { type: status } },
+            }),
+          );
+        }
+        return yield* Deferred.await(nextStart);
+      }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
