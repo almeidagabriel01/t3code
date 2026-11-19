@@ -226,7 +226,7 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
   await expect
     .element(
       off.getByText(
-        "No queue: listed commands wait for a Linux slot, the rest start here right away.",
+        "No queue: jobs Linux can run wait for a Linux slot; what needs this Mac starts right away.",
       ),
     )
     .toBeVisible();

@@ -1687,13 +1687,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["runner mac first jobs running waiting threshold overflow linux"],
   },
   {
-    id: "runner-linux-everything",
-    title: RUNNER_SETTING_COPY.runnerLinuxEverything.title,
-    description: RUNNER_SETTING_COPY.runnerLinuxEverything.description,
-    to: "/settings/maintenance",
-    searchTerms: ["runner linux all every heavy command except stay on mac"],
-  },
-  {
     id: "runner-linux-full",
     title: RUNNER_SETTING_COPY.runnerLinuxFull.title,
     description: RUNNER_SETTING_COPY.runnerLinuxFull.description,
@@ -1708,18 +1701,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["runner linux copy files created changed back results output sync"],
   },
   {
-    id: "runner-linux-commands",
-    title: RUNNER_SETTING_COPY.runnerLinuxCommands.title,
-    description: RUNNER_SETTING_COPY.runnerLinuxCommands.description,
-    to: "/settings/maintenance",
-    searchTerms: ["runner linux patterns tests lint typecheck allow list"],
-  },
-  {
     id: "runner-mac-only",
     title: RUNNER_SETTING_COPY.runnerMacOnly.title,
     description: RUNNER_SETTING_COPY.runnerMacOnly.description,
     to: "/settings/maintenance",
-    searchTerms: ["runner mac only patterns simulator xcodebuild gradle"],
+    searchTerms: [
+      "runner mac only patterns simulator xcodebuild gradle keep here what goes to linux commands list",
+    ],
   },
   {
     id: "runner-unavailable",

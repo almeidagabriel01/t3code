@@ -7,17 +7,16 @@ import {
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
-  runnerEverythingOn,
   runnerFieldIdle,
   runnerModeFieldApplies,
   runnerWhereLine,
-  RUNNER_SETTING_DEFAULTS,
-  RUNNER_SETTING_PROJECT_KEYS,
   type RunnerChoices,
   type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
+  RUNNER_DEFAULTS,
   RUNNER_LIMITS,
+  RUNNER_PROJECT_KEYS,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
   RunnerUnavailablePolicy,
@@ -48,14 +47,13 @@ import { SettingsSection } from "./SettingsSection";
 import { RUNNER_SECTION_COPY } from "./runnerSectionCopy";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
-export type RunnerProjectKey = (typeof RUNNER_SETTING_PROJECT_KEYS)[number];
+export type RunnerProjectKey = (typeof RUNNER_PROJECT_KEYS)[number];
 type Check = { readonly error: string } | { readonly patch: ServerSettingsPatch | null };
-type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 
 const patchOf = (key: RunnerSettingKey, value: unknown) =>
   ({ [key]: value }) as ServerSettingsPatch;
 const isProjectKey = (key: RunnerSettingKey): key is RunnerProjectKey =>
-  RUNNER_SETTING_PROJECT_KEYS.includes(key as RunnerProjectKey);
+  RUNNER_PROJECT_KEYS.includes(key as RunnerProjectKey);
 const UNIT: Record<(typeof RUNNER_LIMITS)[RunnerNumberKey]["unit"], string> = {
   minutes: "min",
   jobs: "jobs",
@@ -260,14 +258,10 @@ export function RunnerSection(props: {
     runnerUnavailable: choice("runnerUnavailable"),
     runnerDropped: choice("runnerDropped"),
   };
-  const everything = props.mixed("runnerLinuxEverything")
-    ? null
-    : (settings.runnerLinuxEverything ?? RUNNER_SETTING_DEFAULTS.runnerLinuxEverything);
   const shown = (...keys: ReadonlyArray<RunnerSettingKey>) =>
     keys.some(
       (key) =>
-        runnerFieldIdle(key, choices) === null &&
-        runnerModeFieldApplies(key, choices.runnerWhere, everything),
+        runnerFieldIdle(key, choices) === null && runnerModeFieldApplies(key, choices.runnerWhere),
     );
   const scoped = (key: RunnerSettingKey, text: string) => {
     if (!projectSelected) return text;
@@ -328,7 +322,7 @@ export function RunnerSection(props: {
       {isProjectKey(key) ? resetRow(key) : null}
     </>
   );
-  const commands = (key: PatternKey) => (
+  const commands = (key: "runnerMacOnly") => (
     <>
       <CommandsField
         label={RUNNER_SETTING_COPY[key].title}
@@ -338,7 +332,7 @@ export function RunnerSection(props: {
             ? `${RUNNER_SETTING_COPY[key].description} Differs across the selected targets.`
             : RUNNER_SETTING_COPY[key].description,
         )}
-        value={settings[key] ?? RUNNER_SETTING_DEFAULTS[key]}
+        value={settings[key]}
         disabled={props.disabledFor(key)}
         mixed={props.mixed(key)}
         onSave={(next) => props.write(patchOf(key, next))}
@@ -348,27 +342,19 @@ export function RunnerSection(props: {
           icon="arrow.counterclockwise"
           label="Use the defaults everywhere"
           disabled={props.disabledFor(key)}
-          onPress={() => props.write(patchOf(key, RUNNER_SETTING_DEFAULTS[key]))}
+          onPress={() => props.write(patchOf(key, RUNNER_DEFAULTS[key]))}
         />
       ) : null}
       {resetRow(key)}
     </>
   );
-  const toggle = (key: "runnerLinuxEverything" | "runnerBringBack", icon: AppSymbolName) => (
+  const toggle = (key: "runnerBringBack", icon: AppSymbolName) => (
     <>
       <SettingsSwitchRow
         icon={icon}
         label={RUNNER_SETTING_COPY[key].title}
-        subtitle={
-          scoped(
-            key,
-            // With Everything on, the Where line already says what it does.
-            key === "runnerLinuxEverything" && runnerEverythingOn(choices.runnerWhere, everything)
-              ? ""
-              : RUNNER_SETTING_COPY[key].description,
-          ) || undefined
-        }
-        value={props.mixed(key) ? null : (settings[key] ?? RUNNER_SETTING_DEFAULTS[key])}
+        subtitle={scoped(key, RUNNER_SETTING_COPY[key].description)}
+        value={props.mixed(key) ? null : settings[key]}
         disabled={props.disabledFor(key)}
         onValueChange={(value) => props.write(patchOf(key, value))}
       />
@@ -390,7 +376,7 @@ export function RunnerSection(props: {
         />
         {resetRow("runnerEnabled")}
       </SettingsSection>
-      {shown("runnerWhere", "runnerLinuxCommands", "runnerMacOnly") ? (
+      {shown("runnerWhere", "runnerMacOnly") ? (
         <SettingsSection title={RUNNER_SECTION_COPY.whereJobsRun.title}>
           <View
             className={whereDisabled ? "gap-2 px-4 py-3 opacity-45" : "gap-2 px-4 py-3"}
@@ -406,7 +392,7 @@ export function RunnerSection(props: {
               onSelect={(value) => props.write({ runnerWhere: value })}
             />
             <Text className="text-sm text-foreground-muted">
-              {scoped("runnerWhere", runnerWhereLine(where, everything))}
+              {scoped("runnerWhere", runnerWhereLine(where))}
             </Text>
           </View>
           {resetRow("runnerWhere")}
@@ -420,8 +406,6 @@ export function RunnerSection(props: {
               )
             : null}
           {shown("runnerMacFirstAfter") ? number("runnerMacFirstAfter") : null}
-          {shown("runnerLinuxEverything") ? toggle("runnerLinuxEverything", "server.rack") : null}
-          {shown("runnerLinuxCommands") ? commands("runnerLinuxCommands") : null}
           {shown("runnerMacOnly") ? commands("runnerMacOnly") : null}
           {toggle("runnerBringBack", "tray.and.arrow.down")}
         </SettingsSection>

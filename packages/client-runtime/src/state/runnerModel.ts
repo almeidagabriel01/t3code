@@ -19,42 +19,11 @@ import type {
 import {
   HEAVY_QUEUE_DEFAULTS,
   RUNNER_DEFAULTS,
-  RUNNER_PROJECT_KEYS,
   formatBytes,
   linuxOverText,
 } from "@t3tools/contracts";
 
-/** Runner defaults the settings screens use; the deprecated two leave with their controls. */
-export const RUNNER_SETTING_DEFAULTS = {
-  ...RUNNER_DEFAULTS,
-  runnerLinuxEverything: false,
-  runnerLinuxCommands: [
-    "test",
-    "vitest",
-    "jest",
-    "mocha",
-    "pytest",
-    "e2e",
-    "playwright",
-    "coverage",
-    "lint",
-    "oxlint",
-    "eslint",
-    "check",
-    "clippy",
-    "typecheck",
-    "tsc",
-    "tsgo",
-    "effect-tsgo",
-    "knip",
-  ] as ReadonlyArray<string>,
-};
-export type RunnerSettingKey = keyof typeof RUNNER_SETTING_DEFAULTS;
-export const RUNNER_SETTING_PROJECT_KEYS = [
-  ...RUNNER_PROJECT_KEYS,
-  "runnerLinuxCommands",
-  "runnerLinuxEverything",
-] as const;
+export type RunnerSettingKey = keyof typeof RUNNER_DEFAULTS;
 
 /** Every Runner setting's label and description; web and mobile both read these. */
 export const RUNNER_SETTING_COPY: Record<
@@ -69,12 +38,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerWhere: {
     title: "Where heavy work runs",
     description:
-      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
-  },
-  runnerLinuxCommands: {
-    title: "Can run on Linux",
-    description:
-      "A heavy command goes to Linux only when each heavy part of it matches one of these. Builds are left out because their output would stay on the PC.",
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends every job it can run there.",
   },
   runnerMacOnly: {
     title: "Always on this Mac",
@@ -108,10 +72,6 @@ export const RUNNER_SETTING_COPY: Record<
     title: "Send to Linux after",
     description:
       "Mac first sends a job to Linux once this Mac has this many jobs running or waiting.",
-  },
-  runnerLinuxEverything: {
-    title: "Everything",
-    description: "Every heavy command goes to Linux, except what has to stay on this Mac.",
   },
   runnerBringBack: {
     title: "Bring results back",
@@ -315,12 +275,11 @@ export interface HeavyModeInput {
   readonly queuePaused: boolean;
   readonly runnerEnabled: boolean;
   readonly where: RunnerWhere;
-  readonly everything: boolean;
 }
 
 /** One sentence for the current queue × Runner combination; both settings sections show it. */
 export function heavyModeLine(mode: HeavyModeInput): string {
-  const { queueEnabled, queuePaused, runnerEnabled, where, everything } = mode;
+  const { queueEnabled, queuePaused, runnerEnabled, where } = mode;
   if (!runnerEnabled) {
     if (!queueEnabled) return "Heavy jobs start right away, with nothing tracking them.";
     return queuePaused
@@ -333,9 +292,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       case "mac":
         return "Heavy jobs wait their turn on this Mac; nothing goes to Linux.";
       case "linux":
-        return everything
-          ? "Heavy commands run on Linux; what has to stay here waits its turn on this Mac."
-          : "Listed commands run on Linux; everything else waits its turn on this Mac.";
+        return "Heavy jobs Linux can run go there; what needs this Mac waits its turn here.";
       case "automatic":
         return RUNNER_WHERE_DESCRIPTION.automatic;
       case "macFirst":
@@ -346,9 +303,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
     case "mac":
       return "No queue: heavy jobs start on this Mac right away.";
     case "linux":
-      return everything
-        ? "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away."
-        : "No queue: listed commands wait for a Linux slot, the rest start here right away.";
+      return "No queue: jobs Linux can run wait for a Linux slot; what needs this Mac starts right away.";
     case "automatic":
       return RUNNER_WHERE_DESCRIPTION.automatic;
     case "macFirst":
@@ -524,14 +479,9 @@ export function moveAllActions(
   return actions;
 }
 
-/** Linux mode with Everything on: every heavy command may go, so the Linux list does nothing. */
-export function runnerEverythingOn(where: RunnerWhere | null, everything: boolean | null): boolean {
-  return where === "linux" && everything === true;
-}
-
 interface RunnerModeScope {
   /** Null (targets disagree) counts as applying. */
-  readonly applies: (where: RunnerWhere | null, everything: boolean | null) => boolean;
+  readonly applies: (where: RunnerWhere | null) => boolean;
   readonly idle: string;
 }
 
@@ -553,7 +503,6 @@ const RUNNER_MODE_SCOPE: Record<RunnerSettingKey, RunnerModeScope | null> = {
     applies: (where) => where === null || where === "macFirst",
     idle: "Only applies when Where jobs run is Mac first.",
   },
-  runnerLinuxEverything: LINUX_MODE,
   runnerBringBack: null,
   runnerRouteMemoryDays: null,
   runnerRouteLearnAfter: null,
@@ -561,10 +510,6 @@ const RUNNER_MODE_SCOPE: Record<RunnerSettingKey, RunnerModeScope | null> = {
   runnerBringBackMaxMB: null,
   runnerMacTools: null,
   runnerMacOnly: null,
-  runnerLinuxCommands: {
-    applies: (where, everything) => !runnerEverythingOn(where, everything),
-    idle: "Only applies while Everything is off.",
-  },
   runnerHost: null,
   runnerLinuxSlots: null,
   runnerHeartbeatSeconds: null,
@@ -576,23 +521,18 @@ const RUNNER_MODE_SCOPE: Record<RunnerSettingKey, RunnerModeScope | null> = {
   runnerLinuxEvictionsBeforeAlone: null,
 };
 
-/** Whether a field belongs to the picked mode (and the Linux list to Linux while Everything is off). */
-export function runnerModeFieldApplies(
-  key: RunnerSettingKey,
-  where: RunnerWhere | null,
-  everything: boolean | null,
-): boolean {
-  return RUNNER_MODE_SCOPE[key]?.applies(where, everything) ?? true;
+/** Whether a field belongs to the picked mode. */
+export function runnerModeFieldApplies(key: RunnerSettingKey, where: RunnerWhere | null): boolean {
+  return RUNNER_MODE_SCOPE[key]?.applies(where) ?? true;
 }
 
 /** Why a mode-specific field does nothing under the picked mode, or null when it applies. */
 export function runnerModeFieldIdle(
   key: RunnerSettingKey,
   where: RunnerWhere | null,
-  everything: boolean | null,
 ): string | null {
   const scope = RUNNER_MODE_SCOPE[key];
-  return scope === null || scope.applies(where, everything) ? null : scope.idle;
+  return scope === null || scope.applies(where) ? null : scope.idle;
 }
 
 /** The effective values Runner fields depend on; null where the selected targets disagree. */
@@ -612,10 +552,6 @@ export function runnerFieldIdle(key: RunnerSettingKey, choices: RunnerChoices): 
   if (key === "runnerEnabled") return null;
   if (choices.runnerEnabled === false) return "Only applies while the Runner is on.";
   switch (key) {
-    case "runnerLinuxCommands":
-      return choices.runnerWhere === "mac"
-        ? "Only applies when jobs run on Linux or Hybrid."
-        : null;
     case "runnerAskMinutes":
     case "runnerDeadlineAction":
       return [choices.runnerUnavailable, choices.runnerDropped].some(
@@ -634,14 +570,14 @@ export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
   macFirst: "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
   automatic:
     "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
-  linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
+  linux:
+    "Every job Linux can run goes there. Work that needs this Mac stays here: Always on this Mac, Mac-only tools and local files.",
 };
 
-/** The line under "Where heavy work runs"; with Everything on it says what Everything does. */
-export function runnerWhereLine(where: RunnerWhere | null, everything: boolean | null): string {
-  if (where === null) return RUNNER_SETTING_COPY.runnerWhere.description;
-  return runnerEverythingOn(where, everything)
-    ? RUNNER_SETTING_COPY.runnerLinuxEverything.description
+/** The line under "Where heavy work runs". */
+export function runnerWhereLine(where: RunnerWhere | null): string {
+  return where === null
+    ? RUNNER_SETTING_COPY.runnerWhere.description
     : RUNNER_WHERE_DESCRIPTION[where];
 }
 

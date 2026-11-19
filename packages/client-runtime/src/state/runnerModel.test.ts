@@ -50,8 +50,7 @@ describe("the queue × Runner line", () => {
     queuePaused: boolean,
     runnerEnabled: boolean,
     where: "mac" | "linux" | "automatic" | "macFirst",
-    everything: boolean,
-  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, everything });
+  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
 
   it.each([
     [true, false, false, "mac", "Heavy jobs wait their turn on this Mac."],
@@ -64,7 +63,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "linux",
-      "Listed commands run on Linux; everything else waits its turn on this Mac.",
+      "Heavy jobs Linux can run go there; what needs this Mac waits its turn here.",
     ],
     [
       true,
@@ -79,7 +78,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "linux",
-      "No queue: listed commands wait for a Linux slot, the rest start here right away.",
+      "No queue: jobs Linux can run wait for a Linux slot; what needs this Mac starts right away.",
     ],
     [
       false,
@@ -102,29 +101,9 @@ describe("the queue × Runner line", () => {
       "macFirst",
       "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
     ],
-    [
-      true,
-      false,
-      true,
-      "linux",
-      "Heavy commands run on Linux; what has to stay here waits its turn on this Mac.",
-      true,
-    ],
-    [
-      false,
-      false,
-      true,
-      "linux",
-      "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away.",
-      true,
-    ],
-    [true, true, true, "linux", "Queue paused: nothing new starts on this Mac or Linux.", true],
-  ] as const)(
-    "queue %s paused %s Runner %s %s",
-    (queue, paused, runner, where, text, everything: boolean = false) => {
-      expect(line(queue, paused, runner, where, everything)).toBe(text);
-    },
-  );
+  ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
+    expect(line(queue, paused, runner, where)).toBe(text);
+  });
 });
 
 describe("Linux status", () => {
@@ -304,7 +283,7 @@ describe("Runner copy and mode fields", () => {
     ],
     [
       RUNNER_SETTING_COPY.runnerWhere.description,
-      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends every job it can run there.",
     ],
     [
       RUNNER_WHERE_DESCRIPTION.automatic,
@@ -315,46 +294,36 @@ describe("Runner copy and mode fields", () => {
   });
 
   it.each([
-    ["runnerMacFirstAfter", "macFirst", false, true],
-    ["runnerMacFirstAfter", null, false, true],
-    ["runnerMacFirstAfter", "linux", false, false],
-    ["runnerLinuxEverything", "linux", true, true],
-    ["runnerLinuxEverything", null, false, true],
-    ["runnerLinuxEverything", "macFirst", false, false],
-    ["runnerLinuxFull", "linux", true, true],
-    ["runnerLinuxFull", null, false, true],
-    ["runnerLinuxFull", "automatic", false, false],
-    ["runnerLinuxFull", "mac", false, false],
-    ["runnerBringBack", "mac", false, true],
-    ["runnerLinuxCommands", "linux", false, true],
-    ["runnerLinuxCommands", "linux", true, false],
-    ["runnerLinuxCommands", "linux", null, true],
-    ["runnerLinuxCommands", "automatic", true, true],
-  ] as const)("%s under %s, Everything %s: %s", (key, where, everything, applies) => {
-    expect(runnerModeFieldApplies(key, where, everything)).toBe(applies);
+    ["runnerMacFirstAfter", "macFirst", true],
+    ["runnerMacFirstAfter", null, true],
+    ["runnerMacFirstAfter", "linux", false],
+    ["runnerLinuxFull", "linux", true],
+    ["runnerLinuxFull", null, true],
+    ["runnerLinuxFull", "automatic", false],
+    ["runnerLinuxFull", "mac", false],
+    ["runnerBringBack", "mac", true],
+    ["runnerMacOnly", "linux", true],
+  ] as const)("%s under %s: %s", (key, where, applies) => {
+    expect(runnerModeFieldApplies(key, where)).toBe(applies);
   });
 
   it.each([
-    ["runnerLinuxFull", "linux", false, null],
-    ["runnerLinuxFull", null, false, null],
-    ["runnerLinuxFull", "automatic", false, "Only applies when Where jobs run is Linux."],
-    ["runnerLinuxEverything", "mac", false, "Only applies when Where jobs run is Linux."],
-    ["runnerMacFirstAfter", "linux", false, "Only applies when Where jobs run is Mac first."],
-    ["runnerLinuxCommands", "linux", true, "Only applies while Everything is off."],
-    ["runnerBringBack", "mac", false, null],
-    ["runnerHost", "linux", true, null],
-  ] as const)("why %s does nothing under %s, Everything %s: %s", (key, where, everything, idle) => {
-    expect(runnerModeFieldIdle(key, where, everything)).toBe(idle);
+    ["runnerLinuxFull", "linux", null],
+    ["runnerLinuxFull", null, null],
+    ["runnerLinuxFull", "automatic", "Only applies when Where jobs run is Linux."],
+    ["runnerMacFirstAfter", "linux", "Only applies when Where jobs run is Mac first."],
+    ["runnerBringBack", "mac", null],
+    ["runnerHost", "linux", null],
+  ] as const)("why %s does nothing under %s: %s", (key, where, idle) => {
+    expect(runnerModeFieldIdle(key, where)).toBe(idle);
   });
 
   it.each([
-    ["linux", true, RUNNER_SETTING_COPY.runnerLinuxEverything.description],
-    ["linux", false, RUNNER_WHERE_DESCRIPTION.linux],
-    ["linux", null, RUNNER_WHERE_DESCRIPTION.linux],
-    ["automatic", true, RUNNER_WHERE_DESCRIPTION.automatic],
-    [null, true, RUNNER_SETTING_COPY.runnerWhere.description],
-  ] as const)("the Where line under %s, Everything %s", (where, everything, line) => {
-    expect(runnerWhereLine(where, everything)).toBe(line);
+    ["linux", RUNNER_WHERE_DESCRIPTION.linux],
+    ["automatic", RUNNER_WHERE_DESCRIPTION.automatic],
+    [null, RUNNER_SETTING_COPY.runnerWhere.description],
+  ] as const)("the Where line under %s", (where, line) => {
+    expect(runnerWhereLine(where)).toBe(line);
   });
 });
 
@@ -377,12 +346,7 @@ describe("Runner fields that do nothing under the current choices", () => {
     ["runnerEnabled", { runnerEnabled: false }, null],
     ["runnerHost", { runnerEnabled: false }, "Only applies while the Runner is on."],
     ["runnerHost", {}, null],
-    [
-      "runnerLinuxCommands",
-      { runnerWhere: "mac" },
-      "Only applies when jobs run on Linux or Hybrid.",
-    ],
-    ["runnerLinuxCommands", { runnerWhere: null }, null],
+    ["runnerMacOnly", { runnerWhere: "mac" }, null],
     ["runnerAskMinutes", {}, null],
     ["runnerDeadlineAction", { runnerUnavailable: null }, null],
     [

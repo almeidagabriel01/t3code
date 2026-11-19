@@ -1,7 +1,6 @@
 import {
   RUNNER_LINUX_FULL_DESCRIPTION,
   RUNNER_LINUX_FULL_LABEL,
-  RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
@@ -276,10 +275,10 @@ describe("RunnerSection", () => {
         "Connection checks",
       ],
       hidden: [],
-      visible: ["Can run on Linux", "Wait for an answer", "When Linux is full"],
+      visible: ["Always on this Mac", "Wait for an answer", "When Linux is full"],
     },
     {
-      name: "jobs stay on this Mac: no Linux command list",
+      name: "jobs stay on this Mac: no Linux-mode policy",
       settings: { runnerWhere: "mac" as const },
       mixed: [],
       sections: [
@@ -289,7 +288,7 @@ describe("RunnerSection", () => {
         "If Linux is unavailable",
         "Connection checks",
       ],
-      hidden: ["Can run on Linux", "When Linux is full"],
+      hidden: ["When Linux is full"],
       visible: ["Always on this Mac", "Linux host"],
     },
     {
@@ -308,7 +307,7 @@ describe("RunnerSection", () => {
         "Connection checks",
       ],
       hidden: ["Wait for an answer", "If nobody answers"],
-      visible: ["Can run on Linux", "When Linux is offline", "When Linux is full"],
+      visible: ["Always on this Mac", "When Linux is offline", "When Linux is full"],
     },
   ])(
     "hides what does nothing when $name",
@@ -323,22 +322,19 @@ describe("RunnerSection", () => {
     },
   );
 
-  it("with Everything on in Linux mode, says what it does once and hides the Linux list", async () => {
-    const EVERYTHING = RUNNER_SETTING_COPY.runnerLinuxEverything.description;
-    const on = await mount({ settings: { runnerWhere: "linux", runnerLinuxEverything: true } });
-    const text = on.host.textContent ?? "";
-    expect(text.split(EVERYTHING)).toHaveLength(2);
-    expect(text).not.toContain(RUNNER_WHERE_DESCRIPTION.linux);
-    expect(on.host.querySelector('[aria-label="Everything"]')).not.toBeNull();
-    expect(text).not.toContain("Can run on Linux");
-    await on.unmount();
-
-    const off = await mount({ settings: { runnerWhere: "linux", runnerLinuxEverything: false } });
-    const offText = off.host.textContent ?? "";
-    expect(offText).toContain(RUNNER_WHERE_DESCRIPTION.linux);
-    expect(offText).toContain(EVERYTHING);
-    expect(offText).toContain("Can run on Linux");
-    await off.unmount();
+  it("in Linux mode, shows no row for the retired Everything switch or Linux list, even when saved", async () => {
+    const view = await mount({
+      settings: {
+        runnerWhere: "linux",
+        runnerLinuxEverything: true,
+        runnerLinuxCommands: ["vitest"],
+      },
+    });
+    expect(view.host.textContent).toContain(RUNNER_WHERE_DESCRIPTION.linux);
+    expect(view.host.querySelector('[aria-label="Everything"]')).toBeNull();
+    expect(view.input("Add a command to Can run on Linux")).toBeUndefined();
+    expect(view.input("Add a command to Always on this Mac")).toBeDefined();
+    await view.unmount();
   });
 
   it("in Linux mode, picks what a job does while Linux is full, per project with a way back", async () => {
@@ -428,26 +424,26 @@ describe("RunnerSection", () => {
       name: "Mac first asks after how many jobs",
       settings: { runnerWhere: "macFirst" as const },
       shown: ["Send to Linux after"],
-      hidden: ["Everything"],
+      hidden: [],
     },
     {
-      name: "Linux can send everything",
+      name: "Linux asks for no threshold",
       settings: { runnerWhere: "linux" as const },
-      shown: ["Everything"],
+      shown: [],
       hidden: ["Send to Linux after"],
     },
     {
-      name: "disagreeing modes show both",
+      name: "disagreeing modes show the threshold",
       settings: {},
       mixed: ["runnerWhere" as const],
-      shown: ["Everything", "Send to Linux after"],
+      shown: ["Send to Linux after"],
       hidden: [],
     },
     {
       name: "Hybrid shows neither",
       settings: { runnerWhere: "automatic" as const },
       shown: [],
-      hidden: ["Everything", "Send to Linux after"],
+      hidden: ["Send to Linux after"],
     },
   ])("$name", async ({ settings, mixed, shown, hidden }) => {
     const view = await mount({ settings, ...(mixed === undefined ? {} : { mixed }) });
@@ -460,7 +456,7 @@ describe("RunnerSection", () => {
     await view.unmount();
   });
 
-  it("saves the Mac first threshold, Everything, bring-back and failure choices", async () => {
+  it("saves the Mac first threshold, bring-back and failure choices", async () => {
     const view = await mount({ settings: { runnerWhere: "macFirst" } });
     await view.type("Send to Linux after", "6");
     await view.type("Send to Linux after", "33");
@@ -479,17 +475,6 @@ describe("RunnerSection", () => {
       { runnerDropped: "agent" },
       { runnerDropped: "wait" },
     ]);
-
-    const linux = await mount({
-      settings: { runnerWhere: "linux", runnerLinuxEverything: true },
-      disabled: ["runnerLinuxEverything"],
-    });
-    const everything = linux.host.querySelector<HTMLInputElement>(
-      'input[aria-label="Everything"]',
-    )!;
-    expect(everything.checked).toBe(true);
-    expect(everything.disabled).toBe(true);
-    await linux.unmount();
   });
 
   it("folds the connection checks until asked", async () => {
@@ -513,28 +498,24 @@ describe("RunnerSection", () => {
 
   it("adds and removes commands as chips, and rejects too many", async () => {
     const view = await mount({
-      settings: {
-        runnerWhere: "linux",
-        runnerLinuxCommands: ["vitest", "lint"],
-        runnerMacOnly: [],
-      },
+      settings: { runnerMacOnly: ["vitest", "lint"] },
     });
-    await view.click("Remove lint from Can run on Linux");
-    expect(view.write).toHaveBeenLastCalledWith({ runnerLinuxCommands: ["vitest"] });
-    expect(view.button("Add to Can run on Linux")!.disabled).toBe(true);
-    await act(() => view.input("Add a command to Can run on Linux")!.onChangeText("  jest "));
-    expect(view.input("Add a command to Can run on Linux")!.value).toBe("  jest ");
-    await view.click("Add to Can run on Linux");
+    await view.click("Remove lint from Always on this Mac");
+    expect(view.write).toHaveBeenLastCalledWith({ runnerMacOnly: ["vitest"] });
+    expect(view.button("Add to Always on this Mac")!.disabled).toBe(true);
+    await act(() => view.input("Add a command to Always on this Mac")!.onChangeText("  jest "));
+    expect(view.input("Add a command to Always on this Mac")!.value).toBe("  jest ");
+    await view.click("Add to Always on this Mac");
     expect(view.write).toHaveBeenLastCalledWith({
-      runnerLinuxCommands: ["vitest", "lint", "jest"],
+      runnerMacOnly: ["vitest", "lint", "jest"],
     });
-    expect(view.input("Add a command to Can run on Linux")!.value).toBe("");
+    expect(view.input("Add a command to Always on this Mac")!.value).toBe("");
     // A command already listed clears the field without saving again.
-    await act(() => view.input("Add a command to Can run on Linux")!.onChangeText("vitest"));
-    await act(() => view.input("Add a command to Can run on Linux")!.onSubmitEditing!());
+    await act(() => view.input("Add a command to Always on this Mac")!.onChangeText("vitest"));
+    await act(() => view.input("Add a command to Always on this Mac")!.onSubmitEditing!());
     expect(view.write).toHaveBeenCalledTimes(2);
-    expect(view.input("Add a command to Can run on Linux")!.value).toBe("");
-    await act(() => view.input("Add a command to Can run on Linux")!.onSubmitEditing!());
+    expect(view.input("Add a command to Always on this Mac")!.value).toBe("");
+    await act(() => view.input("Add a command to Always on this Mac")!.onSubmitEditing!());
     expect(view.write).toHaveBeenCalledTimes(2);
     await view.unmount();
 

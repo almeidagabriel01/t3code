@@ -8,15 +8,14 @@ import {
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
-  runnerEverythingOn,
   runnerFieldIdle,
   runnerModeFieldIdle,
   runnerWhereLine,
-  RUNNER_SETTING_DEFAULTS,
   type RunnerChoices,
   type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
+  RUNNER_DEFAULTS,
   RUNNER_LIMITS,
   runnerHostError,
   runnerPatterns,
@@ -65,21 +64,16 @@ type ChoiceKey =
   | "runnerUnavailable"
   | "runnerDropped"
   | "runnerDeadlineAction";
-type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 
 /** The queue × Runner sentence, from this scope's effective Runner values. */
 export function useHeavyModeLine(queue: Pick<HeavyQueueState, "enabled" | "paused">) {
   const runnerEnabled = useScopedSettings((settings) => settings.runnerEnabled);
   const where = useScopedSettings((settings) => settings.runnerWhere);
-  const everything = useScopedSettings(
-    (settings) => settings.runnerLinuxEverything ?? RUNNER_SETTING_DEFAULTS.runnerLinuxEverything,
-  );
   return heavyModeLine({
     queueEnabled: queue.enabled,
     queuePaused: queue.paused,
     runnerEnabled,
     where,
-    everything,
   });
 }
 
@@ -101,14 +95,11 @@ function useRunnerChoices(): RunnerChoices {
 
 /** Back to the built-in value outside project scope; SettingsRow resets project overrides itself. */
 function useResetAction(key: RunnerSettingKey, label: string) {
-  const value = useScopedSettings((settings) => settings[key] ?? RUNNER_SETTING_DEFAULTS[key]);
+  const value = useScopedSettings((settings) => settings[key] ?? RUNNER_DEFAULTS[key]);
   const mixed = useScopedSettingsMixed([key]);
   const update = useUpdateScopedSettings();
-  return mixed || !Equal.equals(value, RUNNER_SETTING_DEFAULTS[key]) ? (
-    <SettingResetButton
-      label={label}
-      onClick={() => update({ [key]: RUNNER_SETTING_DEFAULTS[key] })}
-    />
+  return mixed || !Equal.equals(value, RUNNER_DEFAULTS[key]) ? (
+    <SettingResetButton label={label} onClick={() => update({ [key]: RUNNER_DEFAULTS[key] })} />
   ) : null;
 }
 
@@ -343,16 +334,12 @@ function SwitchRow({
   settingKey,
   searchId,
   idle = null,
-  titleOnly = false,
 }: {
-  readonly settingKey: "runnerLinuxEverything" | "runnerBringBack";
+  readonly settingKey: "runnerBringBack";
   readonly searchId: SettingsSearchItemId;
   readonly idle?: string | null;
-  readonly titleOnly?: boolean;
 }) {
-  const value = useScopedSettings(
-    (settings) => settings[settingKey] ?? RUNNER_SETTING_DEFAULTS[settingKey],
-  );
+  const value = useScopedSettings((settings) => settings[settingKey]);
   const update = useUpdateScopedSettings();
   const { title } = searchableSetting(searchId);
   return (
@@ -360,7 +347,7 @@ function SwitchRow({
       {...searchableSetting(searchId)}
       serverScoped
       settingKeys={[settingKey]}
-      description={titleOnly ? undefined : RUNNER_SETTING_COPY[settingKey].description}
+      description={RUNNER_SETTING_COPY[settingKey].description}
       status={idle === null ? undefined : <IdleNote>{idle}</IdleNote>}
       resetAction={useResetAction(settingKey, title)}
       control={
@@ -381,13 +368,11 @@ function CommandsRow({
   searchId,
   idle = null,
 }: {
-  readonly settingKey: PatternKey;
+  readonly settingKey: "runnerMacOnly";
   readonly searchId: SettingsSearchItemId;
   readonly idle?: string | null;
 }) {
-  const value = useScopedSettings(
-    (settings) => settings[settingKey] ?? RUNNER_SETTING_DEFAULTS[settingKey],
-  );
+  const value = useScopedSettings((settings) => settings[settingKey]);
   const mixed = useScopedSettingsMixed([settingKey]);
   const update = useUpdateScopedSettings();
   const { title } = searchableSetting(searchId);
@@ -572,10 +557,8 @@ const CONNECTION_SEARCH_IDS = [
 const SEARCH_ID: Partial<Record<RunnerSettingKey, SettingsSearchItemId>> = {
   runnerWhere: "runner-where",
   runnerMacFirstAfter: "runner-mac-first-after",
-  runnerLinuxEverything: "runner-linux-everything",
   runnerLinuxFull: "runner-linux-full",
   runnerBringBack: "runner-bring-back",
-  runnerLinuxCommands: "runner-linux-commands",
   runnerMacOnly: "runner-mac-only",
   runnerHost: "runner-host",
   runnerLinuxSlots: "runner-linux-slots",
@@ -599,24 +582,15 @@ export function RunnerSettingsSection() {
   const enabled = useScopedSettings((settings) => settings.runnerEnabled);
   const update = useUpdateScopedSettings();
   const choices = useRunnerChoices();
-  const everythingValue = useScopedSettings(
-    (settings) => settings.runnerLinuxEverything ?? RUNNER_SETTING_DEFAULTS.runnerLinuxEverything,
-  );
-  const everythingMixed = useScopedSettingsMixed(["runnerLinuxEverything"]);
-  const everythingSet = everythingMixed ? null : everythingValue;
-  const everythingOn = runnerEverythingOn(choices.runnerWhere, everythingSet);
   const target = useSettingsSearchRevealedId();
   const { title } = searchableSetting("runner-enabled");
   /** A field shows when it applies, or when a search lands on it (then with why it is idle). */
   const field = (key: RunnerSettingKey) => {
-    const idle =
-      runnerFieldIdle(key, choices) ?? runnerModeFieldIdle(key, choices.runnerWhere, everythingSet);
+    const idle = runnerFieldIdle(key, choices) ?? runnerModeFieldIdle(key, choices.runnerWhere);
     return { shown: idle === null || target === SEARCH_ID[key], idle };
   };
   const macFirstAfter = field("runnerMacFirstAfter");
-  const everything = field("runnerLinuxEverything");
   const linuxFull = field("runnerLinuxFull");
-  const linuxCommands = field("runnerLinuxCommands");
   const askMinutes = field("runnerAskMinutes");
   const deadline = field("runnerDeadlineAction");
   const machine = field("runnerHost");
@@ -651,8 +625,6 @@ export function RunnerSettingsSection() {
           "runnerWhere",
           "runnerLinuxFull",
           "runnerMacFirstAfter",
-          "runnerLinuxEverything",
-          "runnerLinuxCommands",
           "runnerMacOnly",
           "runnerBringBack",
         ) ? (
@@ -662,7 +634,7 @@ export function RunnerSettingsSection() {
               searchId="runner-where"
               labels={RUNNER_WHERE_LABEL}
               idle={field("runnerWhere").idle}
-              description={(value) => runnerWhereLine(value, everythingSet)}
+              description={(value) => runnerWhereLine(value)}
             />
             {linuxFull.shown ? (
               <SegmentedRow
@@ -682,21 +654,6 @@ export function RunnerSettingsSection() {
                 settingKey="runnerMacFirstAfter"
                 searchId="runner-mac-first-after"
                 idle={macFirstAfter.idle}
-              />
-            ) : null}
-            {everything.shown ? (
-              <SwitchRow
-                settingKey="runnerLinuxEverything"
-                searchId="runner-linux-everything"
-                idle={everything.idle}
-                titleOnly={everythingOn}
-              />
-            ) : null}
-            {linuxCommands.shown ? (
-              <CommandsRow
-                settingKey="runnerLinuxCommands"
-                searchId="runner-linux-commands"
-                idle={linuxCommands.idle}
               />
             ) : null}
             <CommandsRow
