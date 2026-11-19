@@ -37,12 +37,12 @@ import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2488,18 +2488,13 @@ describe("OpenCodeAdapterV2", () => {
 
   it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
     Effect.gen(function* () {
-      // Every fiber yields every 3 ops except the event consumer, which runs to its
-      // first suspension: the interleaving where it wins the race with the finalizer.
-      const consumers = new Set<Fiber.Fiber<unknown, unknown>>();
-      const base = new Scheduler.MixedScheduler();
-      const scheduler: Scheduler.Scheduler = {
-        executionMode: base.executionMode,
-        makeDispatcher: () => base.makeDispatcher(),
-        shouldYield: (fiber) => !consumers.has(fiber) && fiber.currentOpCount >= 3,
-      };
-      const exit = yield* Effect.gen(function* () {
-        const nativeEvents = asyncEventStream();
-        let promptId = "";
+      const nativeEvents = asyncEventStream();
+      let promptId = "";
+      // The session forks its native event pump when it opens, so it opens under the race's
+      // scheduler, inside startFirst.
+      const opened =
+        yield* Deferred.make<Effect.Success<ReturnType<typeof makeOpenCodeRuntimeHarness>>>();
+      const openAndStart = Effect.gen(function* () {
         const harness = yield* makeOpenCodeRuntimeHarness("next-start", "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
@@ -2512,60 +2507,55 @@ describe("OpenCodeAdapterV2", () => {
             children: async () => ({ data: [] }),
           },
         });
-        yield* harness.startTurn();
-        const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
-        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-        let threadSettledFirst = false;
-        yield* harness.runtime.events.pipe(
-          Stream.takeUntil(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        yield* Deferred.succeed(opened, harness);
+        return yield* harness.startTurn();
+      });
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      let firstPromptId = "";
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: Stream.unwrap(
+          Effect.map(Deferred.await(opened), (harness) =>
+            harness.runtime.events.pipe(Stream.tap((event) => Effect.sync(() => seen.push(event)))),
           ),
-          Stream.runForEach((event) => {
-            if (
-              event.type !== "provider_turn.updated" ||
-              event.providerTurn.status !== "completed"
-            ) {
-              seen.push(event);
-              return Effect.void;
-            }
-            // The ended turn's thread state lands before its end, never on top of the next turn's.
-            threadSettledFirst = seen.some(
-              (earlier) =>
-                earlier.type === "provider_thread.updated" &&
-                earlier.providerThread.nativeConversationHeadRef?.nativeId === promptId,
-            );
-            return Effect.withFiber((fiber) => {
-              consumers.add(fiber);
-              return Effect.exit(harness.startTurn()).pipe(
-                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
-              );
-            });
-          }),
-          Effect.forkScoped,
-        );
-        yield* Effect.promise(() =>
-          nativeEvents.push({
-            type: "message.updated",
-            properties: {
-              sessionID: "root",
-              info: { id: promptId, role: "user", time: { created: 1 } },
-            },
-          }),
-        );
-        for (const status of ["busy", "idle"]) {
+        ),
+        startFirst: openAndStart,
+        endFirst: Effect.gen(function* () {
+          firstPromptId = promptId;
           yield* Effect.promise(() =>
             nativeEvents.push({
-              type: "session.status",
-              properties: { sessionID: "root", status: { type: status } },
+              type: "message.updated",
+              properties: {
+                sessionID: "root",
+                info: { id: firstPromptId, role: "user", time: { created: 1 } },
+              },
             }),
           );
-        }
-        const exit = yield* Deferred.await(nextStart);
-        assert.isTrue(threadSettledFirst);
-        return exit;
-      }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+          for (const status of ["busy", "idle"]) {
+            yield* Effect.promise(() =>
+              nativeEvents.push({
+                type: "session.status",
+                properties: { sessionID: "root", status: { type: status } },
+              }),
+            );
+          }
+        }),
+        startNext: Effect.flatMap(Deferred.await(opened), (harness) => harness.startTurn()),
+      });
       assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
+      // The ended turn's thread state lands before its end, never on top of the next turn's.
+      const terminalIndex = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.isTrue(
+        seen
+          .slice(0, terminalIndex)
+          .some(
+            (earlier) =>
+              earlier.type === "provider_thread.updated" &&
+              earlier.providerThread.nativeConversationHeadRef?.nativeId === firstPromptId,
+          ),
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

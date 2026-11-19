@@ -36,6 +36,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2277,6 +2278,45 @@ describe("PiAdapterV2", () => {
       assert.isTrue(
         updated.type === "provider_thread.updated" && updated.providerThread.id === placeholder.id,
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      // The session forks its stdout reader when it opens, so it opens under the race's scheduler,
+      // inside startFirst.
+      const opened = yield* Deferred.make<{
+        readonly opened: Effect.Success<ReturnType<typeof openRuntime>>;
+        readonly providerThread: OrchestrationV2ProviderThread;
+      }>();
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: Stream.unwrap(
+          Effect.map(Deferred.await(opened), ({ opened }) =>
+            Stream.fromEffectRepeat(opened.takeEvent(() => true)),
+          ),
+        ),
+        startFirst: Effect.gen(function* () {
+          const session = yield* openRuntime(fake);
+          const providerThread = yield* session.runtime.ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          });
+          yield* Deferred.succeed(opened, { opened: session, providerThread });
+          yield* startTurn(session.runtime, providerThread);
+          yield* fake.takeRequest("prompt");
+        }),
+        endFirst: Effect.gen(function* () {
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+          yield* fake.emit({ type: "agent_settled" });
+        }),
+        startNext: Effect.flatMap(Deferred.await(opened), ({ opened, providerThread }) =>
+          startTurn(opened.runtime, providerThread, "default", [], "Hello pi", undefined, 2),
+        ),
+      });
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

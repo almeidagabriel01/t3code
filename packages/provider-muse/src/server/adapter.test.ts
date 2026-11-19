@@ -32,12 +32,12 @@ import type * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
@@ -1650,19 +1650,42 @@ describe("MuseAdapterV2", () => {
   it.effect("takes the next turn as soon as it reports the previous turn's end", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const turn = yield* startConversation(harness, fake);
-      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
-      yield* harness.takeEvent(
-        "provider_turn.updated",
+      // The session forks its native event handler when it opens, so it opens under the race's
+      // scheduler, inside startFirst.
+      const opened = yield* Deferred.make<Effect.Success<ReturnType<typeof makeHarness>>>();
+      let nativeTurnId = "";
+      const next = yield* startNextTurnAtTurnEnd({
+        events: Stream.unwrap(
+          Effect.map(Deferred.await(opened), (harness) =>
+            Stream.fromEffectRepeat(harness.takeEvent("provider_turn.updated")),
+          ),
+        ),
+        startFirst: Effect.gen(function* () {
+          const harness = yield* makeHarness(fake);
+          yield* Deferred.succeed(opened, harness);
+          yield* harness.runtime.startTurn(
+            yield* turnInput(harness.providerThread, 1, harness.policy),
+          );
+          nativeTurnId = (yield* fake.takeCall("turn/start")).commandId!;
+        }),
+        endFirst: Effect.suspend(() =>
+          fake.emit("turn/completed", { turnId: nativeTurnId, terminal: "completed" }),
+        ),
+        startNext: Effect.flatMap(Deferred.await(opened), (harness) =>
+          Effect.flatMap(turnInput(harness.providerThread, 2, harness.policy), (input) =>
+            harness.runtime.startTurn(input),
+          ),
+        ),
+      });
+      assert.strictEqual(next._tag, "Success", String(next));
+      const { allEvents } = yield* Deferred.await(opened);
+      const ended = allEvents.findIndex(
         (event) =>
-          event.providerTurn.id === turn.providerTurn.id &&
-          event.providerTurn.status === "completed",
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
       );
-      const ended = harness.allEvents.length - 1;
       // The ended turn's thread state lands before its end, never on top of the next turn's.
       assert.isTrue(
-        harness.allEvents
+        allEvents
           .slice(0, ended)
           .some(
             (event) =>
@@ -1671,16 +1694,7 @@ describe("MuseAdapterV2", () => {
               event.providerThread.status === "idle",
           ),
       );
-      const next = yield* harness.runtime
-        .startTurn(yield* turnInput(harness.providerThread, 2, harness.policy))
-        .pipe(Effect.exit);
-      assert.strictEqual(next._tag, "Success", String(next));
-    }).pipe(
-      // The finishing fiber yields between its writes, so the next start can run between them.
-      Effect.provideService(References.MaxOpsBeforeYield, 8),
-      Effect.scoped,
-      Effect.provide(testLayer),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("reports a no-op compaction as a visible failure and permits another turn", () =>

@@ -48,7 +48,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
@@ -60,6 +59,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -4143,40 +4143,32 @@ describe("AcpAdapterV2", () => {
   it.effect("frees the turn slot before the terminal provider turn update is offered", () =>
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({ environment: () => ({}) });
-      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
       const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      let threadSettledFirst = false;
-      const ends = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-        event.type === "provider_turn.updated" && event.providerTurn.status !== "running";
-      yield* harness.runtime.events.pipe(
-        Stream.takeUntil(ends),
-        Stream.runForEach((event) => {
-          if (!ends(event)) {
-            seen.push(event);
-            return Effect.void;
-          }
-          // The ended turn's thread state lands before its end, never on top of the next turn's.
-          threadSettledFirst = seen.some(
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: harness.runtime.events.pipe(
+          Stream.tap((event) => Effect.sync(() => seen.push(event))),
+        ),
+        startFirst: harness.startTurn(1),
+        // The mock agent ends its prompt on its own.
+        endFirst: Effect.void,
+        startNext: harness.startTurn(2),
+      });
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+      const ended = seen.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+      );
+      // The ended turn's thread state lands before its end, never on top of the next turn's.
+      assert.isTrue(
+        seen
+          .slice(0, ended)
+          .some(
             (earlier) =>
               earlier.type === "provider_thread.updated" &&
               earlier.providerThread.lastRunOrdinal === 1,
-          );
-          return harness.startTurn(2).pipe(
-            Effect.exit,
-            Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
-          );
-        }),
-        Effect.forkScoped,
+          ),
       );
-      yield* harness.startTurn(1);
-      const exit = yield* Deferred.await(nextStart);
-      assert.isTrue(Exit.isSuccess(exit), String(exit));
-      assert.isTrue(threadSettledFirst);
-    }).pipe(
-      Effect.provideService(References.MaxOpsBeforeYield, 3),
-      Effect.provide(layerTest),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect(

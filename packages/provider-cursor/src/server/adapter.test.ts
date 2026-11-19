@@ -17,15 +17,14 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import type * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1063,51 +1062,23 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
-      const consumerReady = yield* Deferred.make<void>();
-      // Every fiber yields every 3 ops except the event consumer, which runs to its
-      // first suspension: the interleaving where it wins the race with the finalizer.
-      const consumers = new Set<Fiber.Fiber<unknown, unknown>>();
-      const base = new Scheduler.MixedScheduler();
-      const scheduler: Scheduler.Scheduler = {
-        executionMode: base.executionMode,
-        makeDispatcher: () => base.makeDispatcher(),
-        shouldYield: (fiber) => !consumers.has(fiber) && fiber.currentOpCount >= 3,
-      };
       const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      let threadSettledFirst = false;
-      const exit = yield* Effect.gen(function* () {
-        yield* runtime.events.pipe(
-          Stream.tap(() => Deferred.succeed(consumerReady, undefined)),
-          Stream.tap((event) => Effect.sync(() => seen.push(event))),
-          Stream.filter(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-          ),
-          Stream.take(1),
-          Stream.runForEach(() =>
-            Effect.withFiber((fiber) => {
-              // The ended turn's thread state lands before its end, never on top of the next turn's.
-              threadSettledFirst = seen.some(
-                (earlier) =>
-                  earlier.type === "provider_thread.updated" &&
-                  earlier.providerThread.lastRunOrdinal === 1,
-              );
-              consumers.add(fiber);
-              return Effect.exit(runtime.startTurn(turnInput(2))).pipe(
-                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
-              );
-            }),
-          ),
-          Effect.forkScoped,
-        );
-        yield* runtime.startTurn(turnInput(1));
-        yield* Deferred.await(consumerReady);
-        yield* Deferred.succeed(runEnds[0]!, "finished");
-        return yield* Deferred.await(nextStart);
-      }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: runtime.events.pipe(Stream.tap((event) => Effect.sync(() => seen.push(event)))),
+        startFirst: runtime.startTurn(turnInput(1)),
+        endFirst: Effect.suspend(() => Deferred.succeed(runEnds[0]!, "finished")),
+        startNext: runtime.startTurn(turnInput(2)),
+      });
       assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
-      assert.isTrue(threadSettledFirst);
+      // The ended turn's thread state lands before its end (the last event seen), never on top of
+      // the next turn's.
+      assert.isTrue(
+        seen.some(
+          (earlier) =>
+            earlier.type === "provider_thread.updated" &&
+            earlier.providerThread.lastRunOrdinal === 1,
+        ),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

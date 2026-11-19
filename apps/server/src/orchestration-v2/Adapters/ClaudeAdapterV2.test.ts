@@ -91,6 +91,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
@@ -7391,6 +7392,54 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isTrue(threadSettledFirst);
     }).pipe(
       Effect.provideService(References.MaxOpsBeforeYield, 8),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const now = yield* DateTime.now;
+      const turnInput = (index: 1 | 2) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-consumer-${index}`),
+          text: index === 1 ? "Run sleep 60." : "Next.",
+          attachments: [],
+          providerTurnOrdinal: index,
+          nativeThreadHasTurns: index === 2,
+        });
+      const firstInput = turnInput(1);
+      const firstTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${firstInput.attemptId}`,
+      });
+      // The harness already drains the runtime's events, so relay them to the race's consumer.
+      const relay = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      harness.eventHooks.push((event) => Queue.offer(relay, event));
+      const exit = yield* startNextTurnAtTurnEnd({
+        events: Stream.fromQueue(relay),
+        startFirst: harness.runtime.startTurn(firstInput),
+        endFirst: harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: firstTurnId,
+        }),
+        startNext: harness.runtime.startTurn(turnInput(2)),
+      });
+      assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+    }).pipe(
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
