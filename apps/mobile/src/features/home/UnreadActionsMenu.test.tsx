@@ -43,6 +43,10 @@ vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../state/session", () => ({ useEnvironmentsWithScope: () => mocks.operable }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.visit }));
+vi.mock("../../state/decisions", () => ({
+  useOpenDecisionThreadKeys: () => new Set(),
+  useOpenDecisionAtByThreadKey: () => new Map(),
+}));
 
 import { UnreadActionsMenu } from "./UnreadActionsMenu";
 
@@ -97,7 +101,7 @@ describe("UnreadActionsMenu", () => {
     expect(mocks.visit).toHaveBeenCalledTimes(2);
     expect(mocks.visit).toHaveBeenCalledWith({
       environmentId: "hub",
-      input: { threadId: "one", visitedAt: now },
+      input: { threadId: "one", visitedAt: latestRun.completedAt },
     });
     expect(mocks.alert).not.toHaveBeenCalled();
 
@@ -116,13 +120,30 @@ describe("UnreadActionsMenu", () => {
     expect(mocks.visit).not.toHaveBeenCalled();
   });
 
+  it("reads a run that finished after its wake at the run's end, not at the wake", async () => {
+    const finishedAt = "2026-03-09T10:09:00.000Z";
+    render([
+      shell("woke", {
+        snoozedUntil: "2026-03-09T10:07:00.000Z",
+        snoozedAt: "2026-03-09T10:00:00.000Z",
+        latestRun: { completedAt: finishedAt, status: "completed" },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      }),
+    ]);
+    await press("Mark all as read");
+    expect(mocks.visit).toHaveBeenCalledWith({
+      environmentId: "hub",
+      input: { threadId: "woke", visitedAt: finishedAt },
+    });
+  });
+
   it("clears read threads through the same visits, skipping what it cannot operate", async () => {
     render([unread("one"), shell("seen", { latestRun })]);
     await press("Clear read");
     expect(mocks.visit).toHaveBeenCalledTimes(1);
     expect(mocks.visit).toHaveBeenCalledWith({
       environmentId: "hub",
-      input: { threadId: "one", visitedAt: now },
+      input: { threadId: "one", visitedAt: latestRun.completedAt },
     });
 
     mocks.operable = new Set();

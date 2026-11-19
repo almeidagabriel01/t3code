@@ -8,12 +8,14 @@ import {
   firstValidTimestampMs,
   holdSidebarPriorityRank,
   isSidebarThreadWoke,
+  countsInActivityBadge,
   markActivityRead,
+  planActivityClear,
+  planActivityMarkAllRead,
   resolveSidebarPriorityRank,
-  selectActivityClear,
   selectAgentsSection,
   selectProjectActivity,
-  selectSidebarMarkReadTargets,
+  type ActivityReadPlan,
 } from "./threadActivity.ts";
 
 const now = "2026-03-09T10:10:00.000Z";
@@ -107,43 +109,110 @@ describe("firstValidTimestampMs", () => {
 });
 
 describe("read plan", () => {
-  const unread = shell("unread", { latestRun, lastVisitedAt: before });
-  const readOnly = shell("readonly", { latestRun, lastVisitedAt: before });
-  const quiet = shell("quiet");
-  const working = shell("working", { runtime: { status: "running" } });
-  const key = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
-  const threads = [unread, readOnly, quiet, working];
-  const canOperate = (thread: EnvironmentThreadShell) => thread.id !== "readonly";
-
-  it("selects only operable unread rows as mark-read targets", () => {
-    const targets = selectSidebarMarkReadTargets({
+  const at = (minute: number) => `2026-03-09T10:${String(minute).padStart(2, "0")}:00.000Z`;
+  const unseen = { lastVisitedAt: before };
+  // Every row the badge counts, each arriving after the last visit (10:04).
+  const counted = [
+    shell("approval", { hasPendingApprovals: true, pendingRequest: { createdAt: at(7) } }),
+    shell("input", { hasPendingUserInput: true, pendingUserInputAt: at(7) }),
+    shell("subagent", { pendingSubagentRequest: "approval", pendingSubagentRequestAt: at(7) }),
+    shell("guest", {
+      pendingGuestMessageCount: 2,
+      oldestPendingGuestMessageAt: at(1),
+      latestPendingGuestMessageAt: at(7),
+    }),
+    shell("decision"),
+    shell("unread", { latestRun, ...unseen }),
+    // The machine that ran it is ahead of this device's clock (now is 10:10).
+    shell("ahead", { latestRun: { completedAt: at(30), status: "completed" }, ...unseen }),
+    shell("woke", { snoozedUntil: at(8), snoozedAt: at(0), ...unseen }),
+    shell("finished-after-wake", {
+      snoozedUntil: at(7),
+      snoozedAt: at(0),
+      latestRun: { completedAt: at(9), status: "completed" },
+      ...unseen,
+    }),
+  ].map((thread) => (thread.lastVisitedAt === after ? { ...thread, ...unseen } : thread));
+  const openDecisionAtByKey = new Map([["env:decision", at(7)]]);
+  const entriesOf = (threads: EnvironmentThreadShell[]) =>
+    buildActivityEntries({
       threads,
+      delegatedUnderParent: new Set(),
       localLastVisitedAtByKey: {},
-      canOperate,
+      holds: new Map(),
+      releases: new Set(),
+      now,
+      openDecisionThreadKeys: new Set(openDecisionAtByKey.keys()),
+      openDecisionAtByKey,
     });
-    expect(targets.map((thread) => thread.id)).toEqual(["unread"]);
-    const woke = selectSidebarMarkReadTargets({
-      threads: [quiet],
-      localLastVisitedAtByKey: {},
-      wokeAtByKey: new Map([[key(quiet), before]]),
-      canOperate,
+  const visit = (threads: EnvironmentThreadShell[], plan: ActivityReadPlan) =>
+    threads.map((thread) => {
+      const visitedAt = plan.visits.find((entry) => entry.thread.id === thread.id)?.visitedAt;
+      return visitedAt === undefined || Date.parse(visitedAt) < Date.parse(thread.lastVisitedAt!)
+        ? thread
+        : { ...thread, lastVisitedAt: visitedAt };
     });
-    expect(woke).toHaveLength(0);
+
+  it("Mark all as read clears every row the badge counts, at each row's own time", () => {
+    const entries = entriesOf(counted);
+    expect(countActivityBadge(entries)).toBe(counted.length);
+    const plan = planActivityMarkAllRead(entries, () => true, now);
+    const after = entriesOf(visit(counted, plan));
+    expect(countActivityBadge(after)).toBe(0);
+    // Requests stay listed until answered or dismissed.
+    expect(after.map((entry) => [entry.thread.id, entry.rank]).toSorted()).toEqual(
+      ["approval", "decision", "guest", "input", "subagent"].map((id) => [id, 0]),
+    );
   });
 
-  it("plans: marks operable unread read, releases quiet rows, keeps work and unwritable rows", () => {
-    const plan = selectActivityClear({
-      threads,
-      localLastVisitedAtByKey: {},
-      wokeAtByKey: new Map(),
-      canOperate,
+  it("a request older than the last visit is listed without counting", () => {
+    const seen = shell("seen", { hasPendingUserInput: true, pendingUserInputAt: before });
+    const entries = entriesOf([seen]);
+    expect(entries.map((entry) => entry.rank)).toEqual([0]);
+    expect(countActivityBadge(entries)).toBe(0);
+  });
+
+  it("an older server's request with no arrival time keeps counting, as before", () => {
+    const guest = shell("guest", {
+      pendingGuestMessageCount: 1,
+      oldestPendingGuestMessageAt: at(1),
     });
-    expect(plan.markRead.map((thread) => thread.id)).toEqual(["unread"]);
-    expect(plan.releaseKeys).toHaveLength(2);
-    expect(plan.releaseKeys).toEqual(["env:unread", "env:quiet"]);
+    const plan = planActivityMarkAllRead(entriesOf([guest]), () => true, now);
+    expect(countActivityBadge(entriesOf(visit([guest], plan)))).toBe(1);
+  });
+
+  it.each([
+    ["needs you on a writable connection", 0, true, true, true],
+    ["unread on a writable connection", 2, true, true, true],
+    ["unread on a read-only connection shows without counting", 2, true, false, false],
+    ["needs you on a read-only connection shows without counting", 0, true, false, false],
+    ["already seen", 0, false, true, false],
+    ["working", 1, false, true, false],
+  ] as const)("badge: %s", (_name, rank, unread, operable, expected) => {
+    expect(countsInActivityBadge({ rank, unread } as never, operable)).toBe(expected);
+  });
+
+  it("Clear read visits writable finished rows and releases every finished row it can clear", () => {
+    const working = shell("working", { runtime: { status: "running" } });
+    const readOnly = shell("readonly", { latestRun, ...unseen });
+    const threads = [counted[0]!, counted[5]!, working, readOnly];
+    const entries = entriesOf(threads);
+    const canOperate = (thread: EnvironmentThreadShell) => thread.id !== "readonly";
+    const plan = planActivityClear(entries, canOperate, now);
+    expect(plan.visits.map((entry) => [entry.thread.id, entry.visitedAt])).toEqual([
+      ["unread", latestRun.completedAt],
+    ]);
+    expect(plan.releaseKeys).toEqual(["env:unread"]);
+    const one = planActivityClear(entries, canOperate, now, "env:readonly");
+    expect(one.visits).toEqual([]);
+    expect(
+      planActivityMarkAllRead(entries, canOperate, now).visits.map((v) => v.thread.id),
+    ).toEqual(["approval", "unread"]);
   });
 
   it("rank resolves hold for an open decision and a local visit watermark", () => {
+    const quiet = shell("quiet");
+    const unread = shell("unread", { latestRun, ...unseen });
     expect(resolveSidebarPriorityRank({ thread: quiet, wokeAt: null, hasOpenDecision: true })).toBe(
       0,
     );
@@ -157,7 +226,14 @@ describe("read plan", () => {
   });
 
   it("releases at once and restores only rows whose visit fails", async () => {
-    const plan = { markRead: [unread, readOnly], releaseKeys: ["a", "b"] };
+    const unread = shell("unread", { latestRun, ...unseen });
+    const plan: ActivityReadPlan = {
+      visits: [
+        { key: "env:unread", thread: unread, visitedAt: now },
+        { key: "env:other", thread: shell("other"), visitedAt: now },
+      ],
+      releaseKeys: ["env:unread", "env:other"],
+    };
     const released: string[][] = [];
     const restored: string[] = [];
     await markActivityRead({
@@ -166,9 +242,8 @@ describe("read plan", () => {
       restore: (k) => restored.push(k),
       visit: async (thread) => (thread.id === "unread" ? "failed" : "visited"),
     });
-    expect(released).toEqual([["a", "b"]]);
-    expect(restored).toHaveLength(1);
-    expect(restored[0]).toContain("unread");
+    expect(released).toEqual([["env:unread", "env:other"]]);
+    expect(restored).toEqual(["env:unread"]);
   });
 });
 

@@ -194,6 +194,8 @@ export interface EnvironmentThreadShell {
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
+  /** When the newest of those subagent requests arrived. */
+  readonly pendingSubagentRequestAt?: string | null;
   /** The thread's own pending runtime request, of any kind; Needs you lists it by id. */
   readonly pendingRequest?: {
     readonly id: string;
@@ -204,6 +206,8 @@ export interface EnvironmentThreadShell {
   readonly pendingGuestMessageCount?: number;
   /** When the oldest of them arrived; null when none waits. */
   readonly oldestPendingGuestMessageAt: string | null;
+  /** When the newest of them arrived; null when none waits or the server is older. */
+  readonly latestPendingGuestMessageAt?: string | null;
   /** Messages waiting behind the active run. */
   readonly queuedMessageCount?: number;
   readonly hasActionableProposedPlan: boolean;
@@ -302,6 +306,7 @@ export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
   pendingSubagentRequest: PendingSubagentRequest | null = null,
+  pendingSubagentRequestAt: string | null = null,
 ): EnvironmentThreadShell {
   const updatedAt = iso(thread.updatedAt);
   const latestRun =
@@ -362,6 +367,7 @@ export function presentThreadShell(
         ? iso(thread.pendingRuntimeRequest.createdAt)
         : null,
     pendingSubagentRequest,
+    pendingSubagentRequestAt: pendingSubagentRequest === null ? null : pendingSubagentRequestAt,
     pendingRequest:
       thread.pendingRuntimeRequest === null
         ? null
@@ -374,6 +380,9 @@ export function presentThreadShell(
     // Older servers send the count alone; the shell's last change is the nearest time they give.
     oldestPendingGuestMessageAt: guestWaitsOnUser(thread)
       ? (thread.oldestPendingGuestMessageAt ?? updatedAt)
+      : null,
+    latestPendingGuestMessageAt: guestWaitsOnUser(thread)
+      ? (thread.latestPendingGuestMessageAt ?? null)
       : null,
     queuedMessageCount: thread.queuedMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,

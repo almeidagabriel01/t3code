@@ -45,7 +45,6 @@ import {
   isSidebarThreadWoke,
   resolveSidebarPriorityRank,
   resolveSidebarThreadPresentation,
-  selectSidebarMarkReadTargets,
   sortPriorityThreadsForSidebar,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1803,33 +1802,6 @@ describe("Activity Priority", () => {
     expect(rank({ ...thread, lastVisitedAt: after }, after)).toBeNull();
     expect(rank(thread, "invalid")).toBeNull();
     expect(isSidebarThreadWoke(after, "invalid")).toBe(true);
-  });
-
-  it("marks only unread or woke threads in operable environments", () => {
-    const readOnlyEnvironment = EnvironmentId.make("read-only");
-    const writableUnread = makeThread({ latestRun: makeLatestRun(), lastVisitedAt: before });
-    const readOnlyUnread = makeThread({
-      environmentId: readOnlyEnvironment,
-      latestRun: makeLatestRun(),
-      lastVisitedAt: before,
-    });
-    const writableRead = makeThread({
-      id: ThreadId.make("already-read"),
-      latestRun: makeLatestRun(),
-      lastVisitedAt: after,
-    });
-    const woke = makeThread({ id: ThreadId.make("woke-only"), lastVisitedAt: before });
-    expect(
-      selectSidebarMarkReadTargets({
-        threads: [readOnlyUnread, writableUnread, writableRead, woke],
-        localLastVisitedAtByKey: {},
-        wokeAtByKey: new Map([
-          [keyOf(woke), after],
-          [keyOf(writableRead), after],
-        ]),
-        canOperate: (thread) => thread.environmentId === localEnvironmentId,
-      }),
-    ).toEqual([writableUnread, woke]);
   });
 
   it("keeps a read row until the page is opened again, unless its settled state changes", () => {

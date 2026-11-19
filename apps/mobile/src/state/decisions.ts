@@ -4,6 +4,7 @@ import {
   collectDecisionEntries,
   createDecisionsEnvironmentAtoms,
   decisionErrorMessage,
+  openDecisionAtByThreadKey,
   openDecisionThreadKeys,
   type DecisionEntry,
   type DecisionsState,
@@ -64,6 +65,15 @@ const openDecisionThreadKeysAtom = Atom.make((get) =>
   openDecisionThreadKeys(get(decisionStatesAtom)),
 ).pipe(Atom.withLabel("mobile-open-decision-thread-keys"));
 
+const openDecisionAtByThreadKeyAtom = Atom.make((get) =>
+  openDecisionAtByThreadKey(get(decisionStatesAtom)),
+).pipe(Atom.withLabel("mobile-open-decision-at-by-thread-key"));
+
+/** When each thread's newest open decision arrived, so a read request stops counting. */
+export function useOpenDecisionAtByThreadKey(): ReadonlyMap<string, string> {
+  return useAtomValue(openDecisionAtByThreadKeyAtom);
+}
+
 /** Each environment's loaded decisions; opens the decisions feeds while mounted. */
 export function useDecisionStates() {
   return useAtomValue(decisionStatesAtom);
@@ -105,6 +115,7 @@ export function useDecisionActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(decisionsEnvironment.answer.permissionAtom(environmentId));
   const answer = useAtomCommand(decisionsEnvironment.answer, { reportFailure: true });
   const dismiss = useAtomCommand(decisionsEnvironment.dismiss, { reportFailure: true });
+  const reopen = useAtomCommand(decisionsEnvironment.reopen, { reportFailure: true });
   const reply = (result: Awaited<ReturnType<typeof answer>>): DecisionReply =>
     result._tag === "Success"
       ? { ok: true }
@@ -115,5 +126,7 @@ export function useDecisionActions(environmentId: EnvironmentId) {
       reply(await answer({ environmentId, input: { decisionId, ...input } })),
     dismiss: async (decisionId: DecisionId) =>
       reply(await dismiss({ environmentId, input: { decisionId } })),
+    reopen: async (decisionId: DecisionId) =>
+      reply(await reopen({ environmentId, input: { decisionId } })),
   };
 }

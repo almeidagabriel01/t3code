@@ -1,21 +1,12 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import {
-  selectActivityClear,
-  selectSidebarMarkReadTargets,
-} from "@t3tools/client-runtime/state/thread-activity";
-import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
-import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
-import { useEnvironmentsWithScope } from "../../state/session";
-import { threadEnvironment } from "../../state/threads";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useOpenDecisionAtByThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
+import { buildHomeActivityEntries } from "./homeActivityEntries";
+import { useActivityRead } from "./useActivityRead";
 
 const MENU_ACTIONS: MenuAction[] = [
   { id: "markAll", title: "Mark all as read", image: "checkmark.circle" },
@@ -28,43 +19,13 @@ export function UnreadActionsMenu(props: {
   readonly now: string;
   readonly sidebar?: boolean;
 }) {
-  const operable = useEnvironmentsWithScope(props.threads, AuthOrchestrationOperateScope);
-  const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const wokeAtByKey = new Map(
-    props.threads.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      threadWokeAt(thread, { now: props.now }),
-    ]),
-  );
-  const canOperate = (thread: EnvironmentThreadShell) => operable.has(thread.environmentId);
-  const markRead = async (targets: ReadonlyArray<EnvironmentThreadShell>) => {
-    let failed = false;
-    for (const thread of targets) {
-      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const result = await visitThread({
-        environmentId: thread.environmentId,
-        input: { threadId: thread.id, visitedAt: wokeAtByKey.get(key) ?? props.now },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) failed = true;
-    }
-    if (failed) Dialog.alert("Could not mark every thread as read");
-  };
-  const threads = props.threads;
-  const markAllRead = () =>
-    markRead(
-      selectSidebarMarkReadTargets({
-        threads,
-        localLastVisitedAtByKey: {},
-        wokeAtByKey,
-        canOperate,
-      }),
-    );
-  // No holds here, so rows leave as soon as they are read and only the visits remain.
-  const clearRead = () =>
-    markRead(
-      selectActivityClear({ threads, localLastVisitedAtByKey: {}, wokeAtByKey, canOperate })
-        .markRead,
-    );
+  const entries = buildHomeActivityEntries({
+    threads: props.threads,
+    now: props.now,
+    openDecisionThreadKeys: useOpenDecisionThreadKeys(),
+    openDecisionAtByKey: useOpenDecisionAtByThreadKey(),
+  });
+  const { markAllRead, clearRead } = useActivityRead(entries, props.now);
   return (
     <Menu
       actions={MENU_ACTIONS}

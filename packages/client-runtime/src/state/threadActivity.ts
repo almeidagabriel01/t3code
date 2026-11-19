@@ -1,4 +1,5 @@
 import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 
 import { scopeThreadRef, scopedThreadKey } from "../environment/scoped.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
@@ -127,29 +128,6 @@ export function holdSidebarPriorityRank(input: {
   return input.holds.get(input.key) === input.settledOverride ? 2 : null;
 }
 
-/** Writable unread completions and woke-only rows are targets of Priority's bulk visit. */
-export function selectSidebarMarkReadTargets<
-  T extends ThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "id">,
->(input: {
-  readonly threads: readonly T[];
-  readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
-  readonly wokeAtByKey?: ReadonlyMap<string, string | null>;
-  readonly canOperate: (thread: T) => boolean;
-}): T[] {
-  return input.threads.filter((thread) => {
-    if (!input.canOperate(thread)) return false;
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const lastVisitedAt = resolveThreadLastVisitedAt(
-      thread.lastVisitedAt,
-      input.localLastVisitedAtByKey[key],
-    );
-    return (
-      hasUnseenCompletion({ ...thread, lastVisitedAt }) ||
-      isSidebarThreadWoke(input.wokeAtByKey?.get(key) ?? null, lastVisitedAt)
-    );
-  });
-}
-
 /**
  * Lowest rank first, then the thread the user prompted last (creation time when never
  * prompted). Streamed events move updatedAt, never the prompt time, so rows hold their
@@ -198,7 +176,54 @@ export interface ActivityEntry {
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
   readonly rank: ActivityRank;
+  /** Something on the row arrived after the user last looked; a held row is already read. */
+  readonly unread: boolean;
+  /**
+   * The row's newest arrival. Visiting at it reads the row without trusting this device's
+   * clock, which can lag the machine that ran the thread. Null when the row has no time.
+   */
+  readonly readAt: string | null;
 }
+
+const newestTimestamp = (...candidates: ReadonlyArray<string | null | undefined>) => {
+  let newest: string | null = null;
+  for (const candidate of candidates) {
+    if (candidate == null || Number.isNaN(Date.parse(candidate))) continue;
+    if (newest === null || Date.parse(candidate) > Date.parse(newest)) newest = candidate;
+  }
+  return newest;
+};
+
+/**
+ * When the newest thing a row needs the user for arrived. Null when any cause has no time,
+ * as from older servers, so the row keeps counting until it is answered.
+ */
+function activityNeedsYouSince(
+  thread: ThreadStatusInput &
+    Pick<
+      EnvironmentThreadShell,
+      | "pendingRequest"
+      | "pendingUserInputAt"
+      | "pendingSubagentRequestAt"
+      | "latestPendingGuestMessageAt"
+    >,
+  openDecisionAt: string | null | undefined,
+): string | null {
+  const causes: Array<string | null | undefined> = [];
+  if (thread.hasPendingApprovals) causes.push(thread.pendingRequest?.createdAt);
+  if (thread.hasPendingUserInput) causes.push(thread.pendingUserInputAt);
+  if (thread.pendingSubagentRequest != null) causes.push(thread.pendingSubagentRequestAt);
+  if (guestWaitsOnUser(thread)) causes.push(thread.latestPendingGuestMessageAt);
+  if (openDecisionAt !== undefined) causes.push(openDecisionAt);
+  if (causes.some((at) => at == null || Number.isNaN(Date.parse(at)))) return null;
+  return newestTimestamp(...causes);
+}
+
+const seenSince = (since: string | null, lastVisitedAt: string | undefined) => {
+  if (since === null || lastVisitedAt === undefined) return false;
+  const visited = Date.parse(lastVisitedAt);
+  return Number.isFinite(visited) && visited >= Date.parse(since);
+};
 
 const threadActivityKey = (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -216,8 +241,11 @@ export function buildActivityEntries(input: {
   readonly now: string;
   /** Scoped thread keys with an open decision; see `openDecisionThreadKeys`. */
   readonly openDecisionThreadKeys?: ReadonlySet<string> | undefined;
+  /** When each thread's newest open decision arrived; see `openDecisionAtByThreadKey`. */
+  readonly openDecisionAtByKey?: ReadonlyMap<string, string> | undefined;
 }): ActivityEntry[] {
   const ranks = new Map<string, ActivityRank>();
+  const reads = new Map<string, Pick<ActivityEntry, "unread" | "readAt">>();
   const listed: EnvironmentThreadShell[] = [];
   for (const thread of filterSidebarV2VisibleThreads(
     input.threads,
@@ -226,13 +254,16 @@ export function buildActivityEntries(input: {
   )) {
     if (effectiveSnoozed(thread, { now: input.now })) continue;
     const key = threadActivityKey(thread);
+    const wokeAt = threadWokeAt(thread, { now: input.now });
+    const hasOpenDecision = input.openDecisionThreadKeys?.has(key) === true;
+    const liveRank = resolveSidebarPriorityRank({
+      thread,
+      localLastVisitedAt: input.localLastVisitedAtByKey[key],
+      wokeAt,
+      hasOpenDecision,
+    });
     const rank = holdSidebarPriorityRank({
-      rank: resolveSidebarPriorityRank({
-        thread,
-        localLastVisitedAt: input.localLastVisitedAtByKey[key],
-        wokeAt: threadWokeAt(thread, { now: input.now }),
-        hasOpenDecision: input.openDecisionThreadKeys?.has(key),
-      }),
+      rank: liveRank,
       key,
       settledOverride: thread.settledOverride,
       holds: input.holds,
@@ -241,16 +272,57 @@ export function buildActivityEntries(input: {
     if (rank === null) continue;
     ranks.set(key, rank);
     listed.push(thread);
+    const lastVisitedAt = resolveThreadLastVisitedAt(
+      thread.lastVisitedAt,
+      input.localLastVisitedAtByKey[key],
+    );
+    const since =
+      liveRank === 0
+        ? activityNeedsYouSince(
+            thread,
+            hasOpenDecision ? (input.openDecisionAtByKey?.get(key) ?? null) : undefined,
+          )
+        : null;
+    const finishedUnseen =
+      hasUnseenCompletion({ ...thread, lastVisitedAt }) ||
+      isSidebarThreadWoke(wokeAt, lastVisitedAt);
+    reads.set(key, {
+      unread:
+        liveRank === 2 || (liveRank === 0 && (!seenSince(since, lastVisitedAt) || finishedUnseen)),
+      readAt:
+        liveRank === 0 && since === null
+          ? null
+          : newestTimestamp(since, thread.latestRun?.completedAt, wokeAt),
+    });
   }
   return sortPriorityThreadsForSidebar(listed, ranks).map((thread) => {
     const key = threadActivityKey(thread);
-    return { key, thread, rank: ranks.get(key) ?? 2 };
+    return {
+      key,
+      thread,
+      rank: ranks.get(key) ?? 2,
+      ...(reads.get(key) ?? { unread: false, readAt: null }),
+    };
   });
 }
 
-/** What the bell and rail badge show: threads that need the user, or finished unseen. */
-export function countActivityBadge(entries: readonly ActivityEntry[]): number {
-  return entries.filter((entry) => entry.rank !== 1).length;
+/**
+ * Whether a row counts in the bell and rail badges. A row on a connection that cannot mark it
+ * read shows without counting, so Mark all as read can always clear the badge.
+ */
+export function countsInActivityBadge(
+  entry: Pick<ActivityEntry, "rank" | "unread">,
+  operable: boolean,
+): boolean {
+  return entry.rank !== 1 && entry.unread && operable;
+}
+
+/** What the bell and rail badge show: rows that need the user or finished since they last looked. */
+export function countActivityBadge(
+  entries: readonly ActivityEntry[],
+  canOperate: (thread: EnvironmentThreadShell) => boolean = () => true,
+): number {
+  return entries.filter((entry) => countsInActivityBadge(entry, canOperate(entry.thread))).length;
 }
 
 export interface AgentsSectionEntry extends ActivityEntry {
@@ -323,56 +395,75 @@ export function selectProjectActivity(
   ].sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
 }
 
-export interface ActivityReadPlan<T> {
-  readonly markRead: readonly T[];
+interface ActivityVisit {
+  readonly key: string;
+  readonly thread: EnvironmentThreadShell;
+  readonly visitedAt: string;
+}
+
+export interface ActivityReadPlan {
+  readonly visits: readonly ActivityVisit[];
   readonly releaseKeys: readonly string[];
 }
 
+const visitOf = (entry: ActivityEntry, now: string): ActivityVisit => ({
+  key: entry.key,
+  thread: entry.thread,
+  visitedAt: entry.readAt ?? now,
+});
+
 /**
- * Clear read takes every finished row off the page: rows held only because it stayed
- * open, and unread completions or wakes this connection can mark read. Work in progress and
- * pending requests stay. Wakes are the ones the page ranked the row with.
+ * Mark all as read visits every row the badge counts. Requests stay listed until answered or
+ * dismissed; finished rows leave.
  */
-export function selectActivityClear<
-  T extends ThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "id">,
->(input: {
-  readonly threads: readonly T[];
-  readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
-  readonly wokeAtByKey: ReadonlyMap<string, string | null>;
-  readonly canOperate: (thread: T) => boolean;
-}): ActivityReadPlan<T> {
-  const markRead: T[] = [];
+export function planActivityMarkAllRead(
+  entries: readonly ActivityEntry[],
+  canOperate: (thread: EnvironmentThreadShell) => boolean,
+  now: string,
+): ActivityReadPlan {
+  const visits = entries
+    .filter((entry) => countsInActivityBadge(entry, canOperate(entry.thread)))
+    .map((entry) => visitOf(entry, now));
+  return { visits, releaseKeys: visits.map((visit) => visit.key) };
+}
+
+/**
+ * Clear read takes finished rows off the page, all of them or the one `onlyKey` names: rows held
+ * only because the page stayed open, and unread ones this connection can mark read. Work in
+ * progress and requests stay, as do unread rows a read-only connection cannot clear.
+ */
+export function planActivityClear(
+  entries: readonly ActivityEntry[],
+  canOperate: (thread: EnvironmentThreadShell) => boolean,
+  now: string,
+  onlyKey?: string,
+): ActivityReadPlan {
+  const visits: ActivityVisit[] = [];
   const releaseKeys: string[] = [];
-  for (const thread of input.threads) {
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const rank = resolveSidebarPriorityRank({
-      thread,
-      localLastVisitedAt: input.localLastVisitedAtByKey[key],
-      wokeAt: input.wokeAtByKey.get(key) ?? null,
-    });
-    if (rank === null) {
-      releaseKeys.push(key);
-    } else if (rank === 2 && input.canOperate(thread)) {
-      markRead.push(thread);
-      releaseKeys.push(key);
+  for (const entry of entries) {
+    if (entry.rank !== 2 || (onlyKey !== undefined && entry.key !== onlyKey)) continue;
+    if (!entry.unread) {
+      releaseKeys.push(entry.key);
+    } else if (canOperate(entry.thread)) {
+      visits.push(visitOf(entry, now));
+      releaseKeys.push(entry.key);
     }
   }
-  return { markRead, releaseKeys };
+  return { visits, releaseKeys };
 }
 
 /** Rows leave the page at once; a row whose visit fails comes back. */
-export async function markActivityRead<
-  T extends ThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "id">,
->(input: {
-  readonly plan: ActivityReadPlan<T>;
+export async function markActivityRead(input: {
+  readonly plan: ActivityReadPlan;
   readonly release: (keys: readonly string[]) => void;
   readonly restore: (key: string) => void;
-  readonly visit: (thread: T) => Promise<"visited" | "skipped" | "failed">;
+  readonly visit: (
+    thread: EnvironmentThreadShell,
+    visitedAt: string,
+  ) => Promise<"visited" | "skipped" | "failed">;
 }): Promise<void> {
   input.release(input.plan.releaseKeys);
-  for (const thread of input.plan.markRead) {
-    if ((await input.visit(thread)) === "failed") {
-      input.restore(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
-    }
+  for (const { key, thread, visitedAt } of input.plan.visits) {
+    if ((await input.visit(thread, visitedAt)) === "failed") input.restore(key);
   }
 }

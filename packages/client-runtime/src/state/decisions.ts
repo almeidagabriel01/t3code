@@ -152,6 +152,33 @@ export function openDecisionThreadKeys(
   return keys;
 }
 
+/** When each thread's newest open decision arrived, by scoped thread key. */
+export function openDecisionAtByThreadKey(
+  states: Iterable<readonly [EnvironmentId, DecisionsState]>,
+): ReadonlyMap<string, string> {
+  const times = new Map<string, string>();
+  for (const [environmentId, state] of states) {
+    for (const decision of selectOpenDecisions(state)) {
+      const key = scopedThreadKey(scopeThreadRef(environmentId, decision.fromThreadId));
+      const known = times.get(key);
+      if (known === undefined || Date.parse(decision.createdAt) > Date.parse(known)) {
+        times.set(key, decision.createdAt);
+      }
+    }
+  }
+  return times;
+}
+
+/**
+ * The user's own dismissal can be undone, as can a to-do marked done. An agent's withdrawal,
+ * an expiry and a mirrored approval cannot: nothing waits on them anymore.
+ */
+export function canReopenDecision(decision: Decision): boolean {
+  if (decision.approvalRequestId !== undefined) return false;
+  if (decision.status === "withdrawn") return decision.answeredAt !== undefined;
+  return decision.status === "answered" && decision.kind === "manual";
+}
+
 export function decisionsStateStream<E, R>(
   events: Stream.Stream<DecisionsEvent, E, R>,
 ): Stream.Stream<DecisionsState, E, R> {
@@ -171,7 +198,10 @@ export function createDecisionsEnvironmentAtoms<R, E>(
     key: ({ environmentId }: { environmentId: string }) => environmentId,
   } as const;
   const command = <
-    TTag extends typeof WS_METHODS.decisionsAnswer | typeof WS_METHODS.decisionsDismiss,
+    TTag extends
+      | typeof WS_METHODS.decisionsAnswer
+      | typeof WS_METHODS.decisionsDismiss
+      | typeof WS_METHODS.decisionsReopen,
   >(
     tag: TTag,
     name: string,
@@ -190,5 +220,6 @@ export function createDecisionsEnvironmentAtoms<R, E>(
     }),
     answer: command(WS_METHODS.decisionsAnswer, "answer"),
     dismiss: command(WS_METHODS.decisionsDismiss, "dismiss"),
+    reopen: command(WS_METHODS.decisionsReopen, "reopen"),
   };
 }

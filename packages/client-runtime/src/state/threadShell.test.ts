@@ -205,6 +205,7 @@ describe("v2 thread shell lists", () => {
 
     withRequest("user_input");
     expect(registry.get(parent)?.pendingSubagentRequest).toBe("user_input");
+    expect(registry.get(parent)?.pendingSubagentRequestAt).toBe(DateTime.formatIso(v2Now));
     expect(childThreadInputsTitle(registry.get(inputs))).toBe("Side chat needs input");
     expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
       root.id,
@@ -451,6 +452,9 @@ describe("v2 thread shell lists", () => {
     const disposeTask = registry.mount(threads.threadShellAtom(taskRef));
     expect(registry.get(threads.threadShellAtom(taskRef))?.pendingSubagentRequest).toBe("approval");
     expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBe("approval");
+    expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequestAt).toBe(
+      DateTime.formatIso(v2Now),
+    );
 
     // Once it is answered, neither stays flagged.
     registry.set(snapshotAtom(thirdEnvironmentId), {

@@ -1,8 +1,11 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDelegatedUnderParent, useThreadShells } from "../../state/entities";
-import { useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useOpenDecisionAtByThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { useUiStateStore } from "../../uiStateStore";
 import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { buildActivityEntries, countActivityBadge } from "./activity.logic";
@@ -17,6 +20,7 @@ export function useActivityEntries() {
   const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const now = useNowMinute();
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const openDecisionAtByKey = useOpenDecisionAtByThreadKey();
   return buildActivityEntries({
     threads,
     delegatedUnderParent,
@@ -25,12 +29,18 @@ export function useActivityEntries() {
     releases: NO_RELEASES,
     now,
     openDecisionThreadKeys,
+    openDecisionAtByKey,
   });
 }
 
-/** Threads that need the user or finished unseen, for the bell and rail badges. */
+/** Rows that need the user or finished since they last looked, for the bell and rail badges. */
 export function useActivityBadge(): number {
-  return countActivityBadge(useActivityEntries());
+  const entries = useActivityEntries();
+  const operable = useEnvironmentsWithScope(
+    entries.map((entry) => entry.thread),
+    AuthOrchestrationOperateScope,
+  );
+  return countActivityBadge(entries, (thread) => operable.has(thread.environmentId));
 }
 
 export function useActivityOpen(): boolean {
