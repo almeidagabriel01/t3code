@@ -604,11 +604,11 @@ describe("t3 heavy", () => {
     it("runs a call that turns out to need this Mac as its own Mac job, never rerunning the line", async () => {
       const { dir, env } = setup(echoArgs);
       const marker = NodePath.join(dir, "marker");
-      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp lint a.ts`;
+      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp check a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(
-        `vp on mac: test run /etc/hosts\nvp|lint|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
+        `vp on mac: test run /etc/hosts\nvp|check|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
       );
       expect(run.stderr()).toContain(
         "Uses a file only this Mac has: /etc/hosts; running this call on this Mac",
@@ -618,10 +618,10 @@ describe("t3 heavy", () => {
 
     it("judges the variables a line set for a call like its arguments", async () => {
       const { dir, env } = setup(echoArgs);
-      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp lint a.ts`;
+      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp check a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: lint a.ts\n");
+      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: check a.ts\n");
       expect(run.stderr()).toContain("Uses a file only this Mac has: /etc/t3home");
     });
 
@@ -633,10 +633,10 @@ describe("t3 heavy", () => {
         NodeFS.writeFileSync(NodePath.join(dir, "src", file), "");
       const real = NodeFS.realpathSync(dir);
       const lint =
-        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp lint "${files[@]}"';
+        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp check "${files[@]}"';
       const linted = heavyHere(dir, ["/bin/bash", "-c", lint], env, ["--"], dir);
       expect(await linted.exited).toBe(0);
-      expect(linted.stdout()).toBe(`vp|lint|src/a.ts|src/b.ts| in ${real}\n`);
+      expect(linted.stdout()).toBe(`vp|check|src/a.ts|src/b.ts| in ${real}\n`);
       const cased = heavyHere(
         dir,
         [
@@ -677,7 +677,7 @@ describe("t3 heavy", () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} exit=3\\n' >&2; exit 3`,
       );
-      const line = 'vp lint a.ts; echo "status $?"; exit 5';
+      const line = 'vp check a.ts; echo "status $?"; exit 5';
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(5);
       expect(run.stdout()).toBe("status 3\n");
@@ -960,11 +960,11 @@ describe("t3 heavy", () => {
     it.each([
       ["vp test run < in.txt", "vp|test|run|input\n"],
       ["echo x | vp test run", "vp|test|run|x\n"],
-      ["echo x | vp lint --stdin-filepath=a.ts", "vp|lint|--stdin-filepath=a.ts|x\n"],
-      ['while read f; do vp lint "$f"; done < files.txt', "vp|lint|a.ts|b.ts\nvp|lint|b.ts|\n"],
+      ["echo x | vp check --stdin-filepath=a.ts", "vp|check|--stdin-filepath=a.ts|x\n"],
+      ['while read f; do vp check "$f"; done < files.txt', "vp|check|a.ts|b.ts\nvp|check|b.ts|\n"],
       [
-        "printf 'a.ts\\nb.ts\\n' | while read f; do vp lint \"$f\"; done",
-        "vp|lint|a.ts|\nvp|lint|b.ts|\n",
+        "printf 'a.ts\\nb.ts\\n' | while read f; do vp check \"$f\"; done",
+        "vp|check|a.ts|\nvp|check|b.ts|\n",
       ],
     ])("hands Linux the stdin of %j", async (line, expected) => {
       const { dir, env } = setup(
@@ -984,10 +984,10 @@ describe("t3 heavy", () => {
     // Linux already read the pipe it was handed, so a rerun here would get none; a file it read by
     // position is still all here.
     it.each([
-      ["cat in.txt | vp lint --stdin-filepath=a.ts", "code 127\n", true],
+      ["cat in.txt | vp check --stdin-filepath=a.ts", "code 127\n", true],
       [
-        "vp lint --stdin-filepath=a.ts < in.txt",
-        "vp on mac: lint --stdin-filepath=a.ts\ncode 0\n",
+        "vp check --stdin-filepath=a.ts < in.txt",
+        "vp on mac: check --stdin-filepath=a.ts\ncode 0\n",
         false,
       ],
     ])("%s after Linux lacked its tool", async (call, output, spent) => {
@@ -1581,7 +1581,7 @@ describe("t3 heavy", () => {
         );
         const run = heavyHere(
           dir,
-          ["/bin/sh", "-c", "vp lint a & vp lint b & wait"],
+          ["/bin/sh", "-c", "vp check a & vp check b & wait"],
           { ...env, T3CODE_REMOTO: remoto, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
           ["--"],
           dir,

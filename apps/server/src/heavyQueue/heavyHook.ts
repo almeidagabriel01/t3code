@@ -68,7 +68,9 @@ const SCRIPT_NAMES = [
   "ci",
   "verify",
 ];
-const FORMAT_NAMES = ["fmt", "format"];
+/** Scripts and programs that touch only the files they are given: light with a list of them. */
+const FORMAT_NAMES = ["fmt", "format", "lint"];
+const LINTERS = new Set(["oxlint", "eslint"]);
 const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
 const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
@@ -252,9 +254,18 @@ const fileListsOf = ({ commands, loops }: ParsedLine): ReadonlySet<string> => {
 };
 
 /**
- * Whether the script `words[at]` names is heavy. A formatter given its files one by one (or one
- * file on stdin) touches only those, so it is light; without them it walks the whole tree.
+ * A formatter or linter given its files one by one (or one file on stdin) touches only those, so it
+ * is light; without them it walks the whole tree.
  */
+const onlyFiles = (
+  files: ReadonlyArray<string>,
+  flags: ReadonlyArray<string>,
+  lists: ReadonlySet<string>,
+) =>
+  flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag)) ||
+  (files.length > 0 && files.every((file) => isFile(file) || lists.has(file)));
+
+/** Whether the script `words[at]` names is heavy. */
 const heavyScript = (
   words: ReadonlyArray<string>,
   at: number,
@@ -263,10 +274,7 @@ const heavyScript = (
 ) => {
   const script = words[at];
   if (script === undefined || !SCRIPT.test(script)) return false;
-  if (!FORMAT.test(script)) return true;
-  const files = words.slice(at + 1);
-  const stdin = flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag));
-  return !(stdin || (files.length > 0 && files.every((file) => isFile(file) || lists.has(file))));
+  return !FORMAT.test(script) || !onlyFiles(words.slice(at + 1), flags, lists);
 };
 
 const heavyWords = (
@@ -276,7 +284,7 @@ const heavyWords = (
   lists: ReadonlySet<string>,
 ): boolean => {
   const [first, second] = words;
-  if (DIRECT.has(program)) return true;
+  if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
   const sub = SUBCOMMANDS[program];
   if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {

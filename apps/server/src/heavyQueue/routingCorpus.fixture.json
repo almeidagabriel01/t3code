@@ -54,8 +54,8 @@
         "/private/tmp/claude-501/ID/ID/scratchpad/compile.cjs": "const path = require(\"node:path\");\nconst root = process.cwd();\nconst req = require(\"node:module\").createRequire(path.join(root, \"package.json\"));\nconst babel = req(\"@babel/core\");\nconst cfg = req(\"./babel.config.js\")({ cache: () => {} });\nconst presets = cfg.presets.map(([n, o]) => n === \"babel-preset-expo\" ? [req.resolve(n), o] : [n, o]);\nconst out = babel.transformFileSync(path.join(root, process.argv[2]), { babelrc: false, configFile: false, cwd: root, presets,\n  caller: { name: \"metro\", bundler: \"metro\", platform: \"ios\", isDev: false, isServer: false, isNodeModule: false, supportsStaticESM: true, supportsReactCompiler: true } });\nconst code = out.code; const i = code.indexOf(process.argv[3]);\nconsole.log(code.slice(i, i + 1600));\n"
       },
       "observed": "unknown",
-      "expect": "linux",
-      "why": "node running a scratch file is glue"
+      "expect": "mac-env:/private/tmp/claude-501/ID/ID/scratchpad/compile.cjs",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "cd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84/apps/mobile/src; python3 - <<'EOF'\npass\nEOF\ncd /Users/dev/.t3/worktrees/t3code/t3-draft-assistant-grou-53998d41f76d2e84; files=(apps/mobile/src/state/use-composer-drafts.ts apps/mobile/src/state/use-composer-drafts.test.ts apps/mobile/src/features/threads/thread-list-v2-items.tsx apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.tsx apps/mobile/src/features/assistants/HomeAssistantsSection.test.tsx apps/mobile/src/features/layout/workspace/WorkspaceThreadSidebar.tsx apps/mobile/src/features/layout/workspace/open-conversation-key.ts apps/mobile/src/features/layout/workspace/open-conversation-key.test.ts); { ./node_modules/.bin/vp fmt \"${files[@]}\"; ./node_modules/.bin/vp fmt --check \"${files[@]}\"; echo \"FMT_EXIT $?\"; ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\"; echo \"LINT_EXIT $?\"; } 2>&1 | grep -v \"t3 heavy\\|^note:\" | tail -8",
@@ -146,7 +146,8 @@
       "line": "F=(apps/server/src/heavyQueue/heavyCli.test.ts apps/server/src/heavyQueue/heavyCli.ts apps/server/src/heavyQueue/heavyHook.ts apps/server/src/heavyQueue/heavyHook.test.ts); vp lint --no-ignore \"${F[@]}\" 2>&1 | tail -3; for f in \"${F[@]}\"; do cat \"$f\" | vp fmt --stdin-filepath=\"$f\" > /private/tmp/claude-501/x.fmt 2>/dev/null; cmp -s \"$f\" /private/tmp/claude-501/x.fmt && echo \"ok $f\" || { [ -s /private/tmp/claude-501/x.fmt ] && cp /private/tmp/claude-501/x.fmt \"$f\" && echo \"formatted $f\"; }; done",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-heavy-route-pipes-li-b5cb766cc69f7a8c",
       "observed": "unknown",
-      "expect": "linux"
+      "expect": "mac-env:/private/tmp/claude-501/x.fmt",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "sh -c 'for f in src/features/resources/HeavyWork.test.tsx src/features/resources/ProcessSections.tsx src/features/resources/ResourceManagerRouteScreen.tsx src/features/resources/resourceManagerCopy.ts; do pnpm exec vp fmt --stdin-filepath=$f < $f > /tmp/fmtout 2>/dev/null; cmp -s /tmp/fmtout $f && echo \"OK $f\" || { echo \"DIFF $f\"; diff $f /tmp/fmtout | head -20; }; done' 2>&1 | grep -v \"^\\[t3 heavy\\]\\|^\\[remoto\\]\"",
@@ -159,8 +160,8 @@
       "line": "mkdir -p ~/.t3/shared && git show 5908ae8994:packages/contracts/src/heavyQueue.ts > ~/.t3/shared/front-heavyQueue-contract.ts && files=(packages/client-runtime/src/state/heavyQueueModel.ts packages/client-runtime/src/state/heavyQueueModel.test.ts); ./node_modules/.bin/vp lint --no-ignore \"${files[@]}\" 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | grep -v \"^note\\|t3 heavy\" | tail -5; echo \"LINT_EXIT ${pipestatus[1]}\"",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-fork2-resource-load--94a3d52515b56980",
       "observed": "unknown",
-      "expect": "linux",
-      "why": "~/.t3 only in glue and a redirect"
+      "expect": "mac-env:/Users/dev/.t3/shared",
+      "why": "a linter given its files is light now: with no heavy call, every program it runs is judged"
     },
     {
       "line": "S=/private/tmp/claude-501/ID/ID/scratchpad; grep -iE \"warn|error|✖|problems|Found\" $S/lint.txt | grep -v \"t3 heavy\" | head; files=(${(f)\"$(git diff --name-only)\"}); for f in \"${files[@]}\"; do vp fmt --stdin-filepath=\"$f\" < \"$f\" 2>/dev/null | cmp -s - \"$f\" || echo \"FMT DIFF: $f\"; done; echo fmt-ok",
