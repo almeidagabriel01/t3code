@@ -680,13 +680,22 @@ const runHook = async (dir: string) => {
   }
 };
 
+/**
+ * Whether a signal this process got must be passed to the program it runs, or the program
+ * outlives it (`vp run dev` left its server and Vite). A terminal's Ctrl-C already reaches the
+ * whole group: a second SIGINT would make a server skip its graceful shutdown.
+ */
+export const forwardsSignal = (signal: (typeof SIGNALS)[number], onTerminal: boolean) =>
+  signal !== "SIGINT" || !onTerminal;
+
 /** Runs a program with this process's stdio; its exit code, 127 when it can't start. */
 const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
   new Promise<number>((resolve) => {
     const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
-    // A signal sent to this process alone (not the terminal's group) must reach the program, or
-    // it outlives us: `vp run dev` left its server and Vite running.
-    const forward = (signal: NodeJS.Signals) => child.kill(signal);
+    const onTerminal = process.stdin.isTTY === true;
+    const forward = (signal: (typeof SIGNALS)[number]) => {
+      if (forwardsSignal(signal, onTerminal)) child.kill(signal);
+    };
     for (const signal of SIGNALS) process.on(signal, forward);
     const done = (code: number) => {
       for (const signal of SIGNALS) process.off(signal, forward);

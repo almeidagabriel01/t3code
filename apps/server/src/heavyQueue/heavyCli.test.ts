@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, onTestFinished } from "@effect/vitest"
 
 import {
   callingBins,
+  forwardsSignal,
   heavyLaunch,
   launchOf,
   parseHeavyArgs,
@@ -404,6 +405,17 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toContain("got");
     },
   );
+
+  // Ctrl-C on a terminal reaches the program too; only a signal sent to us alone needs passing.
+  it.each([
+    ["SIGINT", true, false],
+    ["SIGINT", false, true],
+    ["SIGTERM", true, true],
+    ["SIGTERM", false, true],
+    ["SIGHUP", true, true],
+  ] as const)("%s with a terminal %s is passed on: %s", (signal, onTerminal, passed) => {
+    expect(forwardsSignal(signal, onTerminal)).toBe(passed);
+  });
 
   it("queue off runs direct with the Runner off, and tracks an ungated job with it on", async () => {
     const dir = tempDir();
