@@ -1,7 +1,7 @@
 import { sideChatParentStatus, type SideChatParentTone } from "@t3tools/client-runtime/state/shell";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -36,7 +36,13 @@ export function ThreadSideChatBar(props: {
     await deleteThread({ environmentId: props.environmentId, input: { threadId: props.threadId } });
   };
   return (
-    <View className="flex-row items-center gap-2 pr-4 pb-2 pl-4">
+    // Opaque like the parent's side chats row: the list scrolls under the composer stack.
+    <View
+      className={cn(
+        "flex-row items-center gap-2 py-2 pr-4 pl-4",
+        Platform.OS === "android" ? "bg-thread-canvas" : "bg-screen",
+      )}
+    >
       <SymbolView
         name="bubble.left.and.bubble.right"
         size={12}
