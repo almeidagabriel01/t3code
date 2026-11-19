@@ -31,6 +31,8 @@ export function AssistantEnvironmentField(props: {
   readonly scope?: AssistantScope;
   /** A group's picker, where unset means each member's own default. */
   readonly group?: boolean;
+  /** Under a heading that already names it: only the description shows. */
+  readonly bare?: boolean;
   readonly disabled?: boolean;
   readonly onChange: (value: AssistantEnvironmentPreference | null) => void;
 }) {
@@ -59,7 +61,9 @@ export function AssistantEnvironmentField(props: {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex flex-col gap-0.5">
-        <Label htmlFor={id}>{ASSISTANT_DEFAULT_ENVIRONMENT_LABEL}</Label>
+        {props.bare === true ? null : (
+          <Label htmlFor={id}>{ASSISTANT_DEFAULT_ENVIRONMENT_LABEL}</Label>
+        )}
         <p className="text-xs text-muted-foreground">{ASSISTANT_DEFAULT_ENVIRONMENT_DESCRIPTION}</p>
       </div>
       <Select<AssistantEnvironmentPick>
