@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxPasswordStorePreference,
+  resolveEnableFeaturesSwitch,
   resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
 
@@ -50,6 +51,15 @@ describe("DesktopEarlyElectronStartup", () => {
     });
 
     assert.equal(preference, "auto");
+  });
+
+  it.each([
+    [null, "DocumentPolicyIncludeJSCallStacksInCrashReports"],
+    ["Foo", "Foo,DocumentPolicyIncludeJSCallStacksInCrashReports"],
+    ["Foo,*DocumentPolicyIncludeJSCallStacksInCrashReports", null],
+    ["DocumentPolicyIncludeJSCallStacksInCrashReports<Trial", null],
+  ] as const)("merges the JS call stack feature into enable-features %s", (current, expected) => {
+    assert.equal(resolveEnableFeaturesSwitch(current), expected);
   });
 
   describe("resolveLinuxDisableFeaturesSwitch", () => {

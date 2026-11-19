@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -40,6 +41,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -71,6 +73,7 @@ function makeFakeBrowserWindow() {
   const webContents = {
     copyImageAt: vi.fn(),
     focus: vi.fn(),
+    forcefullyCrashRenderer: vi.fn(),
     isDestroyed: vi.fn(() => false),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
@@ -153,6 +156,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    forcefullyCrashRenderer: webContents.forcefullyCrashRenderer,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -242,6 +246,7 @@ function layerTest(input: {
   readonly focusedWindow?: Electron.BrowserWindow;
   readonly materialWindowOptions?: { readonly transparent?: true };
   readonly materialAttachOptions?: unknown[];
+  readonly showMessageBox?: ElectronDialog.ElectronDialog["Service"]["showMessageBox"];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -327,6 +332,9 @@ function layerTest(input: {
         layerDesktopServerExposure,
         DesktopState.layer,
         layerElectronApp,
+        Layer.mock(ElectronDialog.ElectronDialog)({
+          showMessageBox: input.showMessageBox ?? (() => Effect.die("unexpected message box")),
+        }),
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
@@ -451,6 +459,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           layerDesktopServerExposure,
           DesktopState.layer,
           layerElectronApp,
+          Layer.mock(ElectronDialog.ElectronDialog)({}),
           layerElectronMenu,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
@@ -1071,6 +1080,102 @@ describe("DesktopWindow", () => {
           ),
         );
       }),
+  );
+
+  it.effect("offers a reload when the renderer hangs while the main process stays alive", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const prompts: Electron.MessageBoxOptions[] = [];
+      const prompted = yield* Deferred.make<void>();
+      const secondPrompt = yield* Deferred.make<void>();
+      const answers = yield* Queue.unbounded<number>();
+      const crashed = yield* Deferred.make<void>();
+      fakeWindow.forcefullyCrashRenderer.mockImplementation(() => {
+        Deferred.doneUnsafe(crashed, Exit.void);
+      });
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        showMessageBox: (options, owner) =>
+          Effect.sync(() => {
+            assert.strictEqual(owner, fakeWindow.window);
+            prompts.push(options);
+            Deferred.doneUnsafe(prompts.length === 1 ? prompted : secondPrompt, Exit.void);
+          }).pipe(
+            Effect.andThen(Queue.take(answers)),
+            Effect.map((response) => ({ response, checkboxChecked: false })),
+          ),
+      });
+      const emit = (eventName: string, ...args: readonly unknown[]) => {
+        const listener = fakeWindow.webContentsListeners.get(eventName);
+        assert.isDefined(listener, `${eventName} listener was not registered`);
+        listener(...args);
+      };
+      const crash = (reason: Electron.RenderProcessGoneDetails["reason"]) =>
+        Effect.gen(function* () {
+          emit("render-process-gone", {}, { reason, exitCode: 0 });
+          yield* TestClock.adjust(500);
+        });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const initialLoads = fakeWindow.loadURL.mock.calls.length;
+
+        // A renderer that answers again within the grace period never prompts.
+        emit("unresponsive");
+        yield* TestClock.adjust(5_000);
+        emit("responsive");
+        yield* TestClock.adjust(10_000);
+
+        // Use up automatic crash recovery so only the user's request can reload.
+        for (let attempt = 0; attempt < 3; attempt += 1) yield* crash("crashed");
+        assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 3);
+
+        // Electron repeats "unresponsive" during one hang; it still prompts once.
+        emit("unresponsive");
+        yield* TestClock.adjust(9_000);
+        emit("unresponsive");
+        yield* TestClock.adjust(1_000);
+        yield* Deferred.await(prompted);
+        emit("unresponsive");
+        yield* TestClock.adjust(10_000);
+        assert.equal(prompts.length, 1);
+        assert.deepEqual(prompts[0]?.buttons, ["Reload Window", "Wait"]);
+
+        yield* Queue.offer(answers, 0);
+        yield* Deferred.await(crashed);
+        yield* crash("killed");
+        assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 4);
+
+        // The override is one-shot: the next automatic crash stays within the limit.
+        yield* crash("crashed");
+        assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 4);
+        assert.equal(prompts.length, 1);
+
+        // The reloaded window hangs again: a new episode prompts again.
+        emit("unresponsive");
+        yield* TestClock.adjust(10_000);
+        yield* Deferred.await(secondPrompt);
+        assert.equal(prompts.length, 2);
+        yield* Queue.offer(answers, 1);
+
+        // After "Wait", the menu's Reload cannot rely on the hung renderer, so it crashes it.
+        yield* desktopWindow.runMainContentsCommand("reload");
+        assert.equal(fakeWindow.forcefullyCrashRenderer.mock.calls.length, 2);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
+        yield* crash("killed");
+        assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 5);
+
+        // A responsive window reloads normally.
+        yield* desktopWindow.runMainContentsCommand("reload");
+        assert.equal(fakeWindow.reload.mock.calls.length, 1);
+        assert.equal(fakeWindow.forcefullyCrashRenderer.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("persists normal bounds and state for a maximized window", () =>

@@ -49,6 +49,7 @@ describe("ElectronProtocol", () => {
       const page = yield* request("/settings/connections");
       assert.equal(yield* Effect.promise(() => page.text()), "<html>app</html>");
       assert.include(page.headers.get("content-security-policy") ?? "", "default-src 'self'");
+      assert.equal(page.headers.get("document-policy"), "include-js-call-stacks-in-crash-reports");
       const dottedRoute = yield* request("/environment/thread.with.dots", {
         headers: { accept: "text/html" },
       });

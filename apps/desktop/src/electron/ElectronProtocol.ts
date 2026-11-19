@@ -97,9 +97,11 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
   ].join("; ");
 }
 
-function withContentSecurityPolicy(response: Response, policy: string): Response {
+function withDocumentPolicies(response: Response, policy: string): Response {
   const headers = new Headers(response.headers);
   headers.set("Content-Security-Policy", policy);
+  // Without it, WebFrameMain.collectJavaScriptCallStack returns nothing for a hung window.
+  headers.set("Document-Policy", "include-js-call-stacks-in-crash-reports");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -202,7 +204,7 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
     request.method === "GET" || request.method === "HEAD"
       ? yield* fetchWithTransientRetry(targetUrl.toString(), init)
       : yield* netFetch(targetUrl.toString(), init);
-  return withContentSecurityPolicy(response, contentSecurityPolicy);
+  return withDocumentPolicies(response, contentSecurityPolicy);
 });
 
 const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
@@ -258,7 +260,7 @@ export const make = Effect.gen(function* () {
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
               if ("assetDirectory" in input) {
-                return withContentSecurityPolicy(
+                return withDocumentPolicies(
                   await runPromise(serveDesktopAsset(request, input.assetDirectory)),
                   contentSecurityPolicy,
                 );
