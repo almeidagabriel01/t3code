@@ -53,8 +53,8 @@ vi.mock("../../components/ui/ListActionRow", () => ({
 vi.mock("../../components/ui/ListRow", () => ({
   ListRow: (props: { label: string; detail?: string; disabled?: boolean; onPress: () => void }) => (
     <button
-      aria-label={props.label === "Runs on" ? "Runs on" : "Group default model"}
-      data-detail={props.detail}
+      aria-label={props.icon === "server.rack" ? "Runs on" : "Group default model"}
+      data-detail={props.icon === "server.rack" ? props.label : props.detail}
       disabled={props.disabled}
       onClick={props.onPress}
     >

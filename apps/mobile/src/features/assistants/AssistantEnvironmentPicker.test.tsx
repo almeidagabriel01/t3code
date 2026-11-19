@@ -249,6 +249,13 @@ describe("Runs on row", () => {
     expect(container.textContent).toBe("Runs on | Local");
   });
 
+  it("under a field header shows only the value", async () => {
+    using _screen = await mount(
+      <AssistantEnvironmentRow picker={picker(null)} valueOnly onPress={vi.fn()} />,
+    );
+    expect(container.textContent).toBe("Local");
+  });
+
   it("a fixed machine says why and does not open", async () => {
     const onPress = vi.fn();
     using _screen = await mount(

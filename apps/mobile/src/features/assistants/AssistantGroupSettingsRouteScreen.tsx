@@ -292,6 +292,7 @@ function SettingsForm(props: {
               <AssistantEnvironmentRow
                 picker={runsOn}
                 icon="server.rack"
+                valueOnly
                 disabled={busy || !teamActions.canAct}
                 onPress={() => navigation.navigate("SettingsGroupEnvironment")}
               />

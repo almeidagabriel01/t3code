@@ -61,10 +61,14 @@ export function useAssistantEnvironmentPicker(
 export const namesLink = (value: AssistantEnvironmentValue) =>
   value !== null && value !== "local" && value !== "auto";
 
-/** The "Runs on" row; a disabled one says why instead of opening. */
+/**
+ * The "Runs on" row; a disabled one says why instead of opening. Under a field header that
+ * already names it, the row shows only the value, like the group's default model.
+ */
 export function AssistantEnvironmentRow(props: {
   readonly picker: AssistantEnvironmentPicker;
   readonly icon?: AppSymbolName;
+  readonly valueOnly?: boolean;
   readonly disabled?: boolean;
   readonly onPress: () => void;
 }) {
@@ -72,8 +76,8 @@ export function AssistantEnvironmentRow(props: {
   return (
     <ListRow
       {...(props.icon ? { icon: props.icon } : {})}
-      label={COPY.rowLabel}
-      detail={picker.current}
+      label={props.valueOnly ? picker.current : COPY.rowLabel}
+      {...(props.valueOnly ? {} : { detail: picker.current })}
       {...(picker.disabledReason === null ? {} : { description: picker.disabledReason })}
       disabled={picker.disabledReason !== null || props.disabled === true}
       onPress={props.onPress}
