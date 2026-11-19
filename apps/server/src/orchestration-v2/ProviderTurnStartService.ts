@@ -7,12 +7,15 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   parseGoalCommand,
+  type ProviderSessionId,
+  type ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -25,7 +28,6 @@ import * as Option from "effect/Option";
 import * as Cause from "effect/Cause";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -37,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { makeThreadWorkspace } from "./ThreadWorkspace.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -105,12 +108,8 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
-const refusedForActiveTurn = (error: unknown): boolean =>
-  (Predicate.isTagged(error, "ProviderAdapterProtocolError") &&
-    Predicate.hasProperty(error, "reason") &&
-    error.reason === "previous_turn_active") ||
-  (Predicate.hasProperty(error, "cause") && refusedForActiveTurn(error.cause));
-
+const STOPPED_TURN_WAIT_MS = 10_000;
+const STOPPED_TURN_RETRY_MS = 250;
 const STOPPED_ATTEMPT_STATUSES: ReadonlySet<OrchestrationV2RunAttempt["status"]> = new Set([
   "interrupted",
   "failed",
@@ -123,6 +122,8 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    /** When the start was queued; it bounds the wait for a stopped turn that holds the slot. */
+    readonly queuedAt?: DateTime.Utc;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -264,84 +265,57 @@ export const layer: Layer.Layer<
       };
     };
 
-    // A stopped run's native turn can outlive its Stop and refuse the next start; end it, then retry.
-    const recoverStoppedTurns = (
-      session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
-    ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
-      const compactThread = session.compactThread;
-      const recover = <E>(
-        start: Effect.Effect<void, E>,
-        turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-      ) =>
-        start.pipe(
-          Effect.catchIf(refusedForActiveTurn, (refusal) =>
-            Effect.gen(function* () {
-              const { providerTurns } = yield* projectionStore
-                .getThreadRecords(turnInput.threadId, ["providerTurns"], {
-                  providerTurnThreadIds: [turnInput.providerThread.id],
-                })
-                .pipe(Effect.orElseSucceed(() => ({ providerTurns: [] })));
-              const running = providerTurns.filter((turn) => turn.status === "running");
-              const { attempts } =
-                running.length === 0
-                  ? { attempts: [] }
-                  : yield* projectionStore
-                      .getThreadRecords(turnInput.threadId, ["attempts"])
-                      .pipe(Effect.orElseSucceed(() => ({ attempts: [] })));
-              const stopped = running.filter((turn) =>
-                attempts.some(
-                  (attempt) =>
-                    attempt.id === turn.runAttemptId &&
-                    STOPPED_ATTEMPT_STATUSES.has(attempt.status),
-                ),
-              );
-              if (stopped.length === 0) return yield* Effect.fail(refusal);
-              yield* Effect.logWarning("orchestration-v2.stopped-turn-blocks-start", {
-                runId: turnInput.runId,
-                providerTurnIds: stopped.map((turn) => turn.id),
-              });
-              yield* Effect.forEach(
-                stopped,
-                (turn) =>
-                  session
-                    .interruptTurn({
-                      providerThread: turnInput.providerThread,
-                      providerTurnId: turn.id,
-                    })
-                    .pipe(Effect.ignoreCause({ log: true })),
-                { discard: true },
-              );
-              // A Stop of this run during the wait ends it; its start must not land after that.
-              let runEnded = false;
-              const startWhileCurrent = Effect.gen(function* () {
-                const run = yield* projectionStore
-                  .getRun(turnInput.threadId, turnInput.runId)
-                  .pipe(Effect.orElseSucceed(() => undefined));
-                if (run?.activeAttemptId !== turnInput.attemptId || run.status !== "running") {
-                  runEnded = true;
-                  return yield* Effect.fail(refusal);
-                }
-                return yield* start;
-              });
-              // Some adapters free the turn slot only when the native stop event arrives.
-              return yield* startWhileCurrent.pipe(
-                Effect.retry({
-                  while: (error) => !runEnded && refusedForActiveTurn(error),
-                  schedule: Schedule.spaced("250 millis"),
-                  times: 40,
-                }),
-              );
-            }),
-          ),
+    // Interrupts already on their way, so a waiting start does not repeat them on every claim.
+    const interruptsInFlight = new Set<ProviderTurnId>();
+    // A stopped run's native turn can outlive its Stop and hold the provider's turn slot. The start
+    // waits outside the worker slot, in place in its thread's queue; past the window it runs anyway.
+    const awaitStoppedTurns = Effect.fn("ProviderTurnStartService.awaitStoppedTurns")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly queuedAt: DateTime.Utc | undefined;
+        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly providerSessionId: ProviderSessionId;
+        readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+        readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt>;
+      }) {
+        if (input.queuedAt === undefined) return;
+        const stopped = input.providerTurns.filter(
+          (turn) =>
+            turn.status === "running" &&
+            turn.providerThreadId === input.providerThread.id &&
+            input.attempts.some(
+              (attempt) =>
+                attempt.id === turn.runAttemptId && STOPPED_ATTEMPT_STATUSES.has(attempt.status),
+            ),
         );
-      return {
-        ...session,
-        startTurn: (turnInput) => recover(session.startTurn(turnInput), turnInput),
-        ...(compactThread === undefined
-          ? {}
-          : { compactThread: (turnInput) => recover(compactThread(turnInput), turnInput) }),
-      };
-    };
+        if (stopped.length === 0) return;
+        const waitedMs =
+          DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(input.queuedAt);
+        if (waitedMs >= STOPPED_TURN_WAIT_MS) return;
+        // Without a live runtime nothing holds the slot; the stale row ends with the session.
+        const session = yield* providerSessions
+          .get(input.providerSessionId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(session)) return;
+        for (const turn of stopped) {
+          if (interruptsInFlight.has(turn.id)) continue;
+          interruptsInFlight.add(turn.id);
+          // Detached: an adapter can take seconds to confirm a stop.
+          yield* session.value
+            .interruptTurn({ providerThread: input.providerThread, providerTurnId: turn.id })
+            .pipe(
+              Effect.ignoreCause({ log: true }),
+              Effect.ensuring(Effect.sync(() => interruptsInFlight.delete(turn.id))),
+              Effect.forkDetach,
+            );
+        }
+        return yield* new EffectOutbox.EffectNotReadyError({
+          retryAfterMs: STOPPED_TURN_RETRY_MS,
+          reason: `Run ${input.runId} waits for stopped provider turns ${stopped.map((turn) => turn.id).join(", ")}.`,
+        });
+      },
+    );
 
     const makeDeliverySession = (
       session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -382,6 +356,7 @@ export const layer: Layer.Layer<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
+      readonly queuedAt?: DateTime.Utc;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -464,6 +439,15 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
+      yield* awaitStoppedTurns({
+        threadId: input.threadId,
+        runId,
+        queuedAt: input.queuedAt,
+        providerThread,
+        providerSessionId: providerThread.providerSessionId,
+        providerTurns: projection.providerTurns,
+        attempts: projection.attempts,
+      });
       const settleRunBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.settleBeforeStart")(
         function* (input: {
           readonly signal: string;
@@ -933,7 +917,7 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const session = recoverStoppedTurns(sessionResult.success);
+      const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,

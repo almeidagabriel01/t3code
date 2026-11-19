@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import {
@@ -244,7 +245,12 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-turn.start":
             return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+              .start({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                willRetry,
+                queuedAt: DateTime.makeUnsafe(effect.createdAt),
+              })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -691,6 +697,14 @@ export const layerExecutor: Layer.Layer<
   }),
 );
 
+const isEffectNotReady = Schema.is(EffectOutbox.EffectNotReadyError);
+const notReadyIn = (error: unknown): EffectOutbox.EffectNotReadyError | undefined =>
+  isEffectNotReady(error)
+    ? error
+    : Predicate.hasProperty(error, "cause")
+      ? notReadyIn(error.cause)
+      : undefined;
+
 // A running effect blocks later work on its thread and its lease is never reclaimed in-process,
 // so a stop that hangs must give up and fall through to the normal retry/fail path.
 const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
@@ -919,6 +933,28 @@ export const layerWithOptions = (
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
 
+          const notReady = Option.flatMap(Cause.findErrorOption(exit.cause), (failure) =>
+            Option.fromNullishOr(notReadyIn(failure)),
+          );
+          if (Option.isSome(notReady)) {
+            const deferred = yield* outbox
+              .retry({
+                effectId: effect.id,
+                workerId,
+                error: notReady.value.reason,
+                delayMs: notReady.value.retryAfterMs,
+                refundAttempt: true,
+              })
+              .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+            if (!deferred && !(yield* wasCancelled(effect.id))) {
+              return yield* new OrchestrationEffectWorkerError({
+                operation: "reschedule",
+                effectId: effect.id,
+                cause: "The worker no longer owns the effect lease.",
+              });
+            }
+            return true;
+          }
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {

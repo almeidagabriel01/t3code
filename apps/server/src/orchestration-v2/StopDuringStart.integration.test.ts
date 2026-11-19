@@ -14,7 +14,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,7 +40,7 @@ const stopDuringStart = (
     | "recorded-turn"
     | "starting-snapshot"
     | "next-message"
-    | "slow-release"
+    | "other-thread"
     | "never-released"
     | "stop-in-window",
 ) =>
@@ -54,13 +53,13 @@ const stopDuringStart = (
       const firstInterrupt = yield* Deferred.make<void>();
       // The adapter refuses a new turn while it still owns one, like every adapter with a turn slot.
       let active: ProviderTurnId | null = null;
-      let honorInterrupts =
+      let activeThread: ProviderThreadId | null = null;
+      const honorInterrupts =
         scenario === "ingested-turn" ||
         scenario === "recorded-turn" ||
         scenario === "starting-snapshot";
-      // Refusals after the next start interrupted the stopped turn, which still holds the slot.
-      let refusalsAfterRecovery = 0;
-      const refusedAfterRecovery = yield* Deferred.make<void>();
+      // The next start's own interrupt of the stopped turn, which it sends without waiting.
+      const startInterrupt = yield* Deferred.make<void>();
       const turnOf = (
         turn: ProviderAdapter.ProviderAdapterV2TurnInput,
         status: OrchestrationV2ProviderTurn["status"],
@@ -122,13 +121,7 @@ const stopDuringStart = (
               resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
               startTurn: (turn) =>
                 Effect.gen(function* () {
-                  if (active !== null && interrupts.length > 1) {
-                    refusalsAfterRecovery += 1;
-                    yield* Deferred.succeed(refusedAfterRecovery, undefined);
-                    // Some adapters free the slot only after the native turn reports its end.
-                    if (scenario === "slow-release" && refusalsAfterRecovery === 3) active = null;
-                  }
-                  if (active !== null) {
+                  if (active !== null && activeThread === turn.providerThread.id) {
                     return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                       driver,
                       detail: `Turn ${active} is still active.`,
@@ -137,6 +130,7 @@ const stopDuringStart = (
                   }
                   started.push(turn);
                   active = ProviderTurnId.make(`provider-turn:${turn.attemptId}`);
+                  activeThread = turn.providerThread.id;
                   // The first turn is announced by the test, after Stop.
                   if (started.length > 1) {
                     yield* Queue.offer(events, {
@@ -150,6 +144,7 @@ const stopDuringStart = (
               interruptTurn: (interrupt) =>
                 Effect.gen(function* () {
                   interrupts.push(interrupt.providerTurnId);
+                  if (interrupts.length === 2) yield* Deferred.succeed(startInterrupt, undefined);
                   if (!honorInterrupts || interrupt.providerTurnId !== active) return;
                   active = null;
                   const turn = started.find(
@@ -295,29 +290,73 @@ const stopDuringStart = (
 
         // The stopped turn is still running in the provider when the next message arrives.
         assert.equal(active, firstTurnId);
-        honorInterrupts = scenario === "next-message";
-        const next = yield* Effect.forkChild(send("next").pipe(Effect.andThen(worker.drain())));
-        if (scenario !== "next-message") {
-          yield* Deferred.await(refusedAfterRecovery);
-          if (scenario === "stop-in-window") {
-            yield* orchestrator.dispatch({
-              type: "thread.stop",
-              commandId: CommandId.make("stop-next"),
-              threadId,
-            });
-          }
-          yield* TestClock.adjust("15 seconds");
+        const otherThreadId = ThreadId.make("thread:stop-during-start:other");
+        yield* send("next");
+        if (scenario === "other-thread") {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-other"),
+            threadId: otherThreadId,
+            projectId: ProjectId.make("project:stop-during-start"),
+            title: "Another thread",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("other"),
+            threadId: otherThreadId,
+            messageId: MessageId.make("message:other"),
+            text: "other",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
         }
-        yield* Fiber.join(next);
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        const nextFailed = after.turnItems.some(
-          (item) => item.runId === after.runs[1]?.id && item.type === "error",
-        );
+        // The waiting start gives its worker slot back instead of sleeping in it.
+        yield* worker.drain();
+        yield* Deferred.await(startInterrupt);
+        assert.deepEqual(interrupts, [firstTurnId, firstTurnId]);
+        const waiting = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(waiting.runs[1]?.status, "starting");
+        if (scenario === "other-thread") {
+          // Work queued after the waiting start, on another thread, ran in the same drain.
+          assert.deepEqual(
+            started.map((turn) => turn.threadId),
+            [threadId, otherThreadId],
+          );
+          return;
+        }
+        assert.lengthOf(started, 1);
+
+        const nextOutcome = Effect.gen(function* () {
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          return {
+            after,
+            failed: after.turnItems.some(
+              (item) => item.runId === after.runs[1]?.id && item.type === "error",
+            ),
+          };
+        });
         if (scenario === "stop-in-window") {
-          // The start gives up quietly: the Stop already settled the run.
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop-next"),
+            threadId,
+          });
+          yield* TestClock.adjust("15 seconds");
+          yield* worker.drain();
+          const { after, failed } = yield* nextOutcome;
+          // The Stop cancelled the waiting start: no provider call, no error.
           assert.lengthOf(started, 1);
           assert.equal(after.runs[1]?.status, "interrupted");
-          assert.isFalse(nextFailed);
+          assert.isFalse(failed);
           assert.deepEqual(
             after.turnItems
               .filter((item) => item.runId === after.runs[1]?.id)
@@ -327,15 +366,47 @@ const stopDuringStart = (
           return;
         }
         if (scenario === "never-released") {
-          // The retry window is bounded: one try after the interrupt plus 40 retries.
-          assert.equal(refusalsAfterRecovery, 41);
+          yield* TestClock.adjust("9 seconds");
+          yield* worker.drain();
           assert.lengthOf(started, 1);
-          assert.isTrue(nextFailed);
+          assert.isFalse((yield* nextOutcome).failed, "still inside the ten-second window");
+          yield* TestClock.adjust("2 seconds");
+          yield* worker.drain();
+          // Past the window the start runs and the provider's refusal is reported.
+          const { after, failed } = yield* nextOutcome;
+          assert.lengthOf(started, 1);
+          assert.isTrue(failed);
+          assert.equal(after.runs[1]?.status, "failed");
           return;
         }
+
+        // Still running after one wait: the start keeps waiting.
+        yield* TestClock.adjust("250 millis");
+        yield* worker.drain();
+        assert.lengthOf(started, 1);
+        // The stopped turn ends and frees the slot.
+        active = null;
+        const endedAt = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("stopped-turn-ended"),
+              type: "provider-turn.updated",
+              threadId,
+              runId: first.runId,
+              nodeId: first.rootNodeId,
+              providerInstanceId: instanceId,
+              occurredAt: endedAt,
+              payload: turnOf(first, "interrupted", endedAt),
+            },
+          ],
+        });
+        yield* TestClock.adjust("250 millis");
+        yield* worker.drain();
+        const { after, failed } = yield* nextOutcome;
         assert.lengthOf(started, 2);
         assert.equal(after.runs[1]?.status, "running");
-        assert.isFalse(nextFailed);
+        assert.isFalse(failed);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -360,12 +431,12 @@ it.effect("Stop interrupts a turn whose start ran while Stop read a starting run
   stopDuringStart("starting-snapshot"),
 );
 
-it.effect("the next message ends a stopped turn the provider still runs, then starts", () =>
+it.effect("the next message waits for the stopped turn the provider still runs, then starts", () =>
   stopDuringStart("next-message"),
 );
 
-it.effect("the next message waits for a stopped turn that frees its slot late", () =>
-  stopDuringStart("slow-release"),
+it.effect("a start waiting for a stopped turn leaves its worker slot to other threads", () =>
+  stopDuringStart("other-thread"),
 );
 
 it.effect("the next message gives up after the retry window when the slot never frees", () =>

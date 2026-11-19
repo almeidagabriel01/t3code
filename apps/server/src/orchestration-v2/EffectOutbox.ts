@@ -200,6 +200,12 @@ export interface PendingOrchestrationEffectV2 {
   readonly availableAt?: DateTime.Utc;
 }
 
+/** An effect that cannot run yet; the worker frees its slot and claims it again later, in place. */
+export class EffectNotReadyError extends Schema.TaggedError<EffectNotReadyError>()(
+  "EffectNotReadyError",
+  { retryAfterMs: Schema.Number, reason: Schema.String },
+) {}
+
 export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
   "EffectOutboxError",
   {
@@ -256,6 +262,8 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly error: string;
     readonly delayMs: number;
+    /** A deferral is not a failed try: it must not count against the effect's attempts. */
+    readonly refundAttempt?: boolean;
   }) => Effect.Effect<boolean, EffectOutboxError>;
   readonly fail: (input: {
     readonly effectId: string;
@@ -624,7 +632,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           ),
       ),
       retry: Effect.fn("EffectOutbox.retry")(
-        function* ({ effectId, workerId, error, delayMs }) {
+        function* ({ effectId, workerId, error, delayMs, refundAttempt = false }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           const availableAt = DateTime.formatIso(
@@ -635,6 +643,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             SET
               status = 'pending',
               available_at = ${availableAt},
+              attempt_count = attempt_count - ${refundAttempt ? 1 : 0},
               lease_owner = NULL,
               updated_at = ${nowIso},
               last_error = ${error}
