@@ -528,6 +528,18 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       }),
     );
   }
+  // Where an assistant's implicit launches run: 'local', 'auto' or a linked environment id; NULL inherits.
+  yield* addColumns("assistants", [["default_environment", "TEXT"]]);
+  // The environment an "auto" launch picked, so a retry with the same request id lands there too.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_launch_routes (
+      caller_thread_id TEXT NOT NULL,
+      client_request_id TEXT NOT NULL,
+      environment_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (caller_thread_id, client_request_id)
+    )
+  `;
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,
@@ -784,6 +796,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["instructions", "TEXT NOT NULL DEFAULT ''"],
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["default_model_selection", "TEXT"],
+    ["default_environment", "TEXT"],
     // NULL reads as "requests".
     ["conversation_mode", "TEXT"],
   ]);

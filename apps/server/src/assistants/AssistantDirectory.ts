@@ -26,7 +26,11 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { SettledWait } from "../autonomy/needsYou.ts";
-import { allTeams, decodeModelSelectionJson } from "./AssistantTeams.ts";
+import {
+  allTeams,
+  decodeEnvironmentPreference,
+  decodeModelSelectionJson,
+} from "./AssistantTeams.ts";
 
 export interface AssistantRow {
   readonly assistant_id: string;
@@ -53,6 +57,7 @@ export interface AssistantRow {
   /** JSON array of the project ids a project assistant may work in; null reads as just `project_id`. */
   readonly project_ids_json?: string | null;
   readonly default_model_selection?: string | null;
+  readonly default_environment?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -141,6 +146,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
       ? DEFAULT_ASSISTANT_AUTONOMY
       : Option.getOrElse(decodeAutonomyOption(row.autonomy_json), () => DEFAULT_ASSISTANT_AUTONOMY),
   defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
+  defaultEnvironment: decodeEnvironmentPreference(row.default_environment),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });

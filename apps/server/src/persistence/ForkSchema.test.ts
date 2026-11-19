@@ -4,6 +4,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { toAssistantTeam, type AssistantTeamRow } from "../assistants/AssistantTeams.ts";
 import { ensureForkSchema } from "./ForkSchema.ts";
 
@@ -441,6 +442,36 @@ it.effect("backfills each assistant's default model once from its conversation",
     );
     assert.isTrue((yield* columnsOf("assistant_teams")).includes("default_model_selection"));
     assert.deepStrictEqual(yield* columnsOf("model_selection_seeds"), ["seed_id", "applied_at"]);
+    // Environment defaults start as "inherit"; a value that no longer decodes reads as inherit too.
+    yield* sql`UPDATE assistants SET default_environment = '  ' WHERE assistant_id = 'b'`;
+    assert.deepStrictEqual(
+      (yield* sql<AssistantRow>`SELECT * FROM assistants ORDER BY assistant_id`).map(
+        (row) => toAssistant(row).defaultEnvironment,
+      ),
+      [null, null],
+    );
+    assert.isTrue((yield* columnsOf("assistant_teams")).includes("default_environment"));
+    assert.deepStrictEqual(
+      ["auto", "env-peer", "", null].map(
+        (value) =>
+          toAssistantTeam({
+            team_id: "t",
+            name: "T",
+            member_ids_json: "[]",
+            lead_id: null,
+            default_environment: value,
+            created_at: "t",
+            updated_at: "t",
+          }).defaultEnvironment,
+      ),
+      ["auto", "env-peer", null, null],
+    );
+    assert.deepStrictEqual(yield* columnsOf("assistant_launch_routes"), [
+      "caller_thread_id",
+      "client_request_id",
+      "environment_id",
+      "created_at",
+    ]);
   }).pipe(Effect.provide(database)),
 );
 

@@ -6,6 +6,7 @@ import {
   type AssistantError,
   type AssistantsEvent,
   CommandId,
+  EnvironmentId,
   EventId,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
@@ -777,34 +778,47 @@ it.effect(
       const assistants = yield* Assistants.AssistantService;
       const made = yield* assistants.create(create());
       assert.isNull(made.defaultModelSelection);
-      const set = yield* assistants.update({ assistantId: made.id, defaultModelSelection: beyond });
+      assert.isNull(made.defaultEnvironment);
+      const set = yield* assistants.update({
+        assistantId: made.id,
+        defaultModelSelection: beyond,
+        defaultEnvironment: EnvironmentId.make("env-peer"),
+      });
       assert.deepEqual(set.defaultModelSelection, beyond);
+      assert.equal(set.defaultEnvironment, "env-peer");
       // Other edits keep it, and it never switches the current conversation.
-      assert.deepEqual(
-        (yield* assistants.update({ assistantId: made.id, name: "Renamed" })).defaultModelSelection,
-        beyond,
-      );
+      const renamed = yield* assistants.update({ assistantId: made.id, name: "Renamed" });
+      assert.deepEqual(renamed.defaultModelSelection, beyond);
+      assert.equal(renamed.defaultEnvironment, "env-peer");
       assert.isFalse(dispatched.some((command) => command.type === "thread.model-selection.set"));
-      assert.isNull(
-        (yield* assistants.update({ assistantId: made.id, defaultModelSelection: null }))
-          .defaultModelSelection,
-      );
+      const cleared = yield* assistants.update({
+        assistantId: made.id,
+        defaultModelSelection: null,
+        defaultEnvironment: null,
+      });
+      assert.isNull(cleared.defaultModelSelection);
+      assert.isNull(cleared.defaultEnvironment);
 
       const team = yield* assistants.createTeam({ name: "Dev", memberIds: [made.id] });
       assert.isNull(team.defaultModelSelection);
+      assert.isNull(team.defaultEnvironment);
       const withDefault = yield* assistants.updateTeam({
         teamId: team.id,
         defaultModelSelection: beyond,
+        defaultEnvironment: "auto",
       });
       assert.deepEqual(withDefault.defaultModelSelection, beyond);
-      assert.deepEqual(
-        (yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" })).defaultModelSelection,
-        beyond,
-      );
-      assert.isNull(
-        (yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: null }))
-          .defaultModelSelection,
-      );
+      assert.equal(withDefault.defaultEnvironment, "auto");
+      const renamedTeam = yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" });
+      assert.deepEqual(renamedTeam.defaultModelSelection, beyond);
+      assert.equal(renamedTeam.defaultEnvironment, "auto");
+      const clearedTeam = yield* assistants.updateTeam({
+        teamId: team.id,
+        defaultModelSelection: null,
+        defaultEnvironment: null,
+      });
+      assert.isNull(clearedTeam.defaultModelSelection);
+      assert.isNull(clearedTeam.defaultEnvironment);
 
       // A new default must name an instance that exists and is enabled.
       const settings = yield* ServerSettings.ServerSettingsService;

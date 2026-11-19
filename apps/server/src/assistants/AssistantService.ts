@@ -785,6 +785,10 @@ const make = Effect.gen(function* () {
               input.defaultModelSelection === undefined
                 ? (row.default_model_selection ?? null)
                 : encodeModelSelectionJson(input.defaultModelSelection),
+            defaultEnvironment:
+              input.defaultEnvironment === undefined
+                ? (row.default_environment ?? null)
+                : input.defaultEnvironment,
           };
           const saved =
             input.mcpServers === undefined
@@ -822,7 +826,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, default_environment = ${next.defaultEnvironment}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -834,7 +838,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, default_environment = ${next.defaultEnvironment}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -1037,6 +1041,11 @@ const make = Effect.gen(function* () {
               input.defaultModelSelection === undefined
                 ? (row.default_model_selection ?? null)
                 : encodeModelSelectionJson(input.defaultModelSelection)
+            },
+            default_environment = ${
+              input.defaultEnvironment === undefined
+                ? (row.default_environment ?? null)
+                : input.defaultEnvironment
             },
             project_ids_json = ${encodeMemberIds(projectIds)},
             updated_at = ${yield* nowIso}
