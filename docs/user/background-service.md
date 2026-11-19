@@ -72,6 +72,8 @@ queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
 commands (tests, builds, type checks, simulators) go through the queue on their
 own, even when the agent forgets. Local git writes (`git commit`, `merge`,
 `rebase`) never queue, even with commit hooks: they run at once on this Mac.
+A heavy pre-commit hook (a full test run, say) therefore runs outside the
+queue; move that work to a pre-push hook.
 Open the **Resource Manager** in the status bar:
 its top bar shows each machine's CPU, free memory and slots, and a gauge turns
 amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
