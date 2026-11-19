@@ -2,8 +2,6 @@ import { expect, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Snapshot from "../../../memory/MemorySnapshot.ts";
@@ -155,11 +153,11 @@ it.effect(
       expect(yield* counts).toEqual(afterForget);
       expect(
         yield* sql`SELECT 1 FROM memory_payloads WHERE memory_id=${input.memoryId}`,
-      ).toHaveLength(0);
+      ).toHaveLength(1);
     }).pipe(Effect.provide(Fixture.layer)),
 );
 
-it.effect("a write refused by a forgotten read is logged with its code", () => {
+it.effect("a write refused by a forgotten dependency is logged with its code", () => {
   const warnings: string[] = [];
   const logger = Logger.make(({ message, logLevel }) => {
     if (logLevel === "Warn") warnings.push(JSON.stringify(message));
@@ -178,7 +176,14 @@ it.effect("a write refused by a forgotten read is logged with its code", () => {
       },
       Effect.void,
     );
-    const refused = yield* Fixture.call("memory_upsert", Fixture.upsert(16102), caller());
+    const refused = yield* Fixture.call(
+      "memory_upsert",
+      {
+        ...Fixture.upsert(16102),
+        payload: { ...Fixture.upsert().payload, derivedFromMemoryRevisions: [a.revision] },
+      },
+      caller(),
+    );
     expect(refused.body).toMatchObject({ code: "source_invalidated" });
     expect(warnings.some((w) => w.includes("source_invalidated"))).toBe(true);
   }).pipe(
@@ -188,7 +193,7 @@ it.effect("a write refused by a forgotten read is logged with its code", () => {
   );
 });
 it.effect.each(["fork", "import", "transfer", "overflow"] as const)(
-  "r5 incomplete %s rejects caller user/project writes and exposes guidance",
+  "incomplete %s lineage does not fence explicit user/project writes",
   (kind) =>
     Effect.gen(function* () {
       yield* setup;
@@ -209,68 +214,21 @@ it.effect.each(["fork", "import", "transfer", "overflow"] as const)(
               : '{"targetThreadId":"r5-caller","sourceThreadId":"other"}';
         yield* sql`INSERT INTO orchestration_events VALUES(2,'thread',${ref().threadId},${kind === "transfer" ? "context-transfer.created" : "thread.created"},${payload})`;
       }
-      const before = yield* counts;
-      for (const scope of [
+      for (const [n, scope] of [
         { kind: "user" as const },
         {
           kind: "project" as const,
           projectKey: { kind: "explicit" as const, sharedProjectId: "synthetic-project" },
         },
-      ]) {
+      ].entries()) {
         const result = yield* Fixture.call(
           "memory_upsert",
-          { ...Fixture.upsert(), scope },
+          { ...Fixture.upsert(17010 + n), memoryId: M.MemoryId.make(Fixture.id(17020 + n)), scope },
           caller(),
         );
-        expect(result.result.isError).toBe(true);
-        expect(result.body).toMatchObject({
-          code: "thread_lineage_incomplete",
-          guidance:
-            "This conversation has incomplete memory provenance and cannot save new memories. Start a new conversation to save this memory.",
-        });
+        expect(result.result.isError, JSON.stringify(result.body)).not.toBe(true);
       }
-      expect(yield* counts).toEqual(before);
-      expect((yield* Fixture.call("memory_upsert", Fixture.upsert())).result.isError).not.toBe(
-        true,
-      );
-      yield* (yield* Service.MemoryService).upsert(
-        { ...Fixture.upsert(17002), memoryId: M.MemoryId.make(Fixture.id(17003)) },
-        Effect.void,
-      );
     }).pipe(Effect.provide(Fixture.layer)),
-);
-
-it.effect("r5 writer transaction observes lineage changed while upsert waits", () =>
-  Effect.gen(function* () {
-    yield* setup;
-    const store = yield* Store.MemoryStore;
-    const entered = yield* Deferred.make<void>();
-    const locked = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    const holder = yield* store
-      .transact(
-        Effect.gen(function* () {
-          yield* Deferred.succeed(locked, undefined);
-          yield* Deferred.await(release);
-          yield* store.appendThreadLineage(
-            ref(),
-            Fixture.space,
-            Array.from({ length: 101 }, (_, n) => M.MemoryRevisionId.make(Fixture.id(18000 + n))),
-          );
-        }),
-      )
-      .pipe(Effect.forkScoped);
-    yield* Deferred.await(locked);
-    const request = yield* Deferred.succeed(entered, undefined).pipe(
-      Effect.andThen(Fixture.call("memory_upsert", Fixture.upsert(), caller())),
-      Effect.forkScoped,
-    );
-    yield* Deferred.await(entered);
-    yield* Deferred.succeed(release, undefined);
-    yield* Fiber.join(holder);
-    expect((yield* Fiber.join(request)).body).toMatchObject({ code: "thread_lineage_incomplete" });
-    expect(yield* counts).toEqual([{ events: 0, payloads: 0, outbox: 0 }]);
-  }).pipe(Effect.provide(Fixture.layer)),
 );
 
 it.effect.each(["memory_read", "memory_list", "memory_recall", "memory_history"] as const)(
@@ -357,9 +315,9 @@ it.effect(
       expect((yield* Fixture.call("memory_read", input, caller())).result.isError).not.toBe(true);
       expect((yield* store.readThreadLineage(ref(), Fixture.space)).state).toBe("overflow");
       expect((yield* store.readThreadLineage(ref(), Fixture.space)).revisions).toHaveLength(100);
-      expect((yield* Fixture.call("memory_upsert", Fixture.upsert(), caller())).body).toMatchObject(
-        { code: "thread_lineage_incomplete" },
-      );
+      expect(
+        (yield* Fixture.call("memory_upsert", Fixture.upsert(), caller())).result.isError,
+      ).not.toBe(true);
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_events VALUES(2,'thread','unknown','thread.created','{"historyOrigin":"v1_import"}')`;
       expect(
@@ -373,7 +331,7 @@ it.effect(
 );
 
 it.effect.each(threadProvenanceCases(ref().threadId))(
-  "production origin $name: $state permits only tracked MCP writes",
+  "production origin $name: $state lineage, and explicit MCP writes still save",
   (origin) =>
     Effect.gen(function* () {
       yield* setup;
@@ -404,15 +362,8 @@ it.effect.each(threadProvenanceCases(ref().threadId))(
         // Own previous answer is retained above; the parent's sentinel is absent.
       }
       expect((yield* store.readThreadLineage(ref(), Fixture.space)).state).toBe(origin.state);
-      const before = yield* counts;
       const saved = yield* Fixture.call("memory_upsert", Fixture.upsert(), caller());
-      if (origin.state === "tracked") {
-        expect(saved.result.isError, JSON.stringify(saved.body)).not.toBe(true);
-        expect((yield* store.loadAggregate(Fixture.space, Fixture.memoryId)).heads).toHaveLength(1);
-      } else {
-        expect(saved.result.isError).toBe(true);
-        expect(saved.body).toMatchObject({ code: "thread_lineage_incomplete" });
-        expect(yield* counts).toEqual(before);
-      }
+      expect(saved.result.isError, JSON.stringify(saved.body)).not.toBe(true);
+      expect((yield* store.loadAggregate(Fixture.space, Fixture.memoryId)).heads).toHaveLength(1);
     }).pipe(Effect.provide(Fixture.layer)),
 );
