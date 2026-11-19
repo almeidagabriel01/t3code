@@ -15,9 +15,7 @@ import { ListActionRow } from "../../../components/ui/ListActionRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { Menu } from "../../../components/ui/Menu";
 import { RowPressable } from "../../../components/ui/RowPressable";
-import { buildModelOptions } from "../../../lib/modelOptions";
 import { useAssistantEntries } from "../../../state/assistants";
-import { useEnvironmentServerConfig } from "../../../state/entities";
 import { useEnvironmentsWithScope } from "../../../state/session";
 import { AssistantAvatar } from "../../assistants/assistantPresentation";
 import {
@@ -25,7 +23,7 @@ import {
   type ScopedMobileSettingsTarget,
 } from "../settings-scoped-server";
 import { useSettingsWriter } from "../useSettingsWriter";
-import { modelDisplayName } from "./SettingsModelPicker";
+import { useModelDisplayName } from "./SettingsModelPicker";
 import { PROJECT_MODEL_COPY } from "./modelDefaultsCopy";
 import { SettingsSection } from "./SettingsSection";
 
@@ -35,13 +33,6 @@ type Member = { readonly environmentId: EnvironmentId; readonly projectId: Proje
 const sameModel = (left: ModelSelection | null | undefined, right: ModelSelection | null) =>
   Equal.equals(left ?? null, right);
 
-/** A model's display name as its environment lists it for the project. */
-function useModelName(environmentId: EnvironmentId, projectId: ProjectId | null) {
-  const config = useEnvironmentServerConfig(environmentId);
-  return (selection: ModelSelection) =>
-    modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
-}
-
 function ProjectModelRow(props: {
   readonly targets: readonly ScopedMobileSettingsTarget[];
   readonly reference: ScopedMobileSettingsTarget;
@@ -50,7 +41,7 @@ function ProjectModelRow(props: {
 }) {
   const navigation = useNavigation();
   const { reference } = props;
-  const nameOf = useModelName(reference.environment.environmentId, reference.projectId);
+  const nameOf = useModelDisplayName(reference.environment.environmentId, reference.projectId);
   const selection = reference.settings.defaultModelSelection;
   const mixed = props.targets.some(
     (target) => !sameModel(target.settings.defaultModelSelection, selection),
@@ -101,7 +92,7 @@ function AssistantModelRow(props: {
   readonly onRemove: () => void;
 }) {
   const { target } = props;
-  const nameOf = useModelName(target.environment.environmentId, target.projectId);
+  const nameOf = useModelDisplayName(target.environment.environmentId, target.projectId);
   const name = props.assistant?.name ?? "Removed assistant";
   const model = props.mixed ? "Mixed" : nameOf(props.selection);
   return (

@@ -1,5 +1,6 @@
-import type { ProviderDriverKind } from "@t3tools/contracts";
+import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { formatModelSlugName } from "@t3tools/shared/model";
 
 export type ModelEsque = {
   slug: string;
@@ -41,4 +42,17 @@ export function getTriggerDisplayModelName(
 ): string {
   const shortName = resolveModelShortName(model, driverKind);
   return getDisplayModelName({ ...model, shortName }, { preferShortName: true });
+}
+
+/** A selection's name as its provider lists it; a model the provider does not list reads from its slug. */
+export function modelSelectionDisplayName(
+  providers:
+    | ReadonlyArray<{ readonly instanceId: string; readonly models: ReadonlyArray<ModelEsque> }>
+    | undefined,
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+): string {
+  const found = providers
+    ?.find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model);
+  return found ? getDisplayModelName(found) : formatModelSlugName(selection.model);
 }

@@ -1152,7 +1152,9 @@ it("a member row opens Assistant info with its role, groups and access", async (
   const access = panel.getByRole("region", { name: "Access" });
   await expect
     .element(access)
-    .toHaveTextContent("AccessTool accessEdit filesWhen it finds a problemFix small things");
+    .toHaveTextContent(
+      "AccessTool accessEdit filesAsks before actingOffWhen it finds a problemFix small things",
+    );
   const groups = panel.getByRole("region", { name: "Groups" });
   await expect.element(groups.getByRole("button", { name: "Leadership" })).toBeVisible();
 
