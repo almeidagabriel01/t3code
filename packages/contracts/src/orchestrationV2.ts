@@ -3693,6 +3693,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getThreadContextUsage: "orchestration.getThreadContextUsage",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -3847,6 +3848,23 @@ export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
 });
 export type OrchestrationV2ThreadLinkMetadata = typeof OrchestrationV2ThreadLinkMetadata.Type;
+
+export const OrchestrationV2GetThreadContextUsageInput = Schema.Struct({ threadId: ThreadId });
+
+/**
+ * What a thread's context meter reads, without its timeline: its active provider thread's newest
+ * turn report and its own report. `deriveLatestContextWindowSnapshot` takes them as they are.
+ */
+export const OrchestrationV2ThreadContextUsage = Schema.Struct({
+  latestTurnUsage: Schema.NullOr(OrchestrationV2ProviderTurnTokenUsage),
+  providerThread: Schema.NullOr(
+    Schema.Struct({
+      contextUsage: Schema.NullOr(ThreadTokenUsageSnapshot),
+      updatedAt: Schema.DateTimeUtc,
+    }),
+  ),
+});
+export type OrchestrationV2ThreadContextUsage = typeof OrchestrationV2ThreadContextUsage.Type;
 
 export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
@@ -4437,6 +4455,11 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getThreadContextUsage: {
+    input: OrchestrationV2GetThreadContextUsageInput,
+    /** null for an unknown thread or one with no provider thread yet. */
+    output: Schema.NullOr(OrchestrationV2ThreadContextUsage),
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,

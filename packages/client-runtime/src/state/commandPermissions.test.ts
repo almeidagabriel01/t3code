@@ -242,6 +242,7 @@ describe("command permissions", () => {
     WS_METHODS.notesStartWork,
     WS_METHODS.decisionsAnswer,
     WS_METHODS.decisionsDismiss,
+    WS_METHODS.decisionsReopen,
     WS_METHODS.assistantsCreate,
     WS_METHODS.assistantsUpdate,
     WS_METHODS.assistantsDelete,

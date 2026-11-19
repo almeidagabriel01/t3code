@@ -136,10 +136,19 @@ export const make = Effect.gen(function* () {
       // Subscribe before the startup sweep, so a concurrent commit cannot be lost.
       const changes = yield* store.changes(principal.memorySpaceId);
       const admissions = yield* activity.subscribe;
-      yield* compactIfNeeded(principal);
       const sweep = compactIfNeeded(principal).pipe(
         Effect.catch((error) =>
           Effect.logWarning("Memory compaction deferred", { errorTag: error._tag }),
+        ),
+      );
+      // Only a hub that is gone or not ours aborts start; the layer retries those on settings change.
+      yield* compactIfNeeded(principal).pipe(
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "MemoryHubForbiddenError" &&
+            error._tag !== "MemoryHubUnauthorizedError" &&
+            !(error._tag === "MemoryHubError" && error.code === "hub_disabled"),
+          (error) => Effect.logWarning("Memory compaction deferred", { errorTag: error._tag }),
         ),
       );
       yield* Stream.runForEach(changes, () => sweep).pipe(Effect.forkScoped);

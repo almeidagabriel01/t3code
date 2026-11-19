@@ -1287,6 +1287,40 @@ const make = Effect.gen(function* () {
       if (!page.hasMore) break;
     }
   });
+  // Joins before moving state, so a failed join leaves a ready replica serving reads.
+  const joinStaging = Effect.fnUntraced(function* (r: Route, expectedState: "unbound" | "ready") {
+    const input: M.MemoryHubJoinInput = {
+      protocolVersion: 1,
+      environmentId: local,
+      memorySpaceId: r.space!,
+    };
+    // The hub device is a replica too; use its active self authority without self HTTP.
+    const join = yield* r.connection
+      ? client.join(r.connection, input)
+      : hub.join(input, r.principal!);
+    yield* ensureEpoch(r.settings.memoryHubVersion);
+    const state: Bootstrap = {
+      state: "staging",
+      checkpointId: `hub:${join.snapshotToken}`,
+      snapshotToken: join.snapshotToken,
+      checkpointSequence: join.checkpointSequence,
+      cursor: null,
+      pageCount: 0,
+    };
+    yield* store.transact(
+      store.advanceBootstrapTx({
+        memorySpaceId: r.space!,
+        hubEnvironmentId: r.hubId,
+        expectedState,
+        nextState: "staging",
+        checkpointId: state.checkpointId!,
+        snapshotToken: state.snapshotToken,
+        checkpointSequence: state.checkpointSequence,
+        nextCursor: null,
+      }),
+    );
+    return state;
+  });
   const bootstrap = Effect.fnUntraced(function* (
     r: Route,
     budget: { pages: number; entries: number },
@@ -1297,38 +1331,7 @@ const make = Effect.gen(function* () {
       yield* rememberReadySpace(r);
       return true;
     }
-    if (state.state === "unbound") {
-      const input: M.MemoryHubJoinInput = {
-        protocolVersion: 1,
-        environmentId: local,
-        memorySpaceId: r.space,
-      };
-      // The hub device is a replica too; use its active self authority without self HTTP.
-      const join = yield* r.connection
-        ? client.join(r.connection, input)
-        : hub.join(input, r.principal!);
-      yield* ensureEpoch(r.settings.memoryHubVersion);
-      state = {
-        state: "staging",
-        checkpointId: `hub:${join.snapshotToken}`,
-        snapshotToken: join.snapshotToken,
-        checkpointSequence: join.checkpointSequence,
-        cursor: null,
-        pageCount: 0,
-      };
-      yield* store.transact(
-        store.advanceBootstrapTx({
-          memorySpaceId: r.space,
-          hubEnvironmentId: r.hubId,
-          expectedState: "unbound",
-          nextState: "staging",
-          checkpointId: state.checkpointId!,
-          snapshotToken: state.snapshotToken,
-          checkpointSequence: state.checkpointSequence,
-          nextCursor: null,
-        }),
-      );
-    }
+    if (state.state === "unbound") state = yield* joinStaging(r, "unbound");
     while (budget.pages < 10) {
       const response = yield* Effect.result(
         callPull(r, {
@@ -1421,8 +1424,22 @@ const make = Effect.gen(function* () {
     const result = yield* Effect.result(
       Effect.gen(function* () {
         const complete = yield* bootstrap(r, budget);
-        if (complete && budget.pages < 10) yield* pullTail(r, budget);
-        return complete;
+        if (!complete || budget.pages >= 10) return complete;
+        const tail = yield* Effect.result(pullTail(r, budget));
+        if (tail._tag === "Success") return complete;
+        if (tail.failure._tag !== "MemoryHubError" || tail.failure.code !== "cursor_expired")
+          return yield* tail.failure;
+        // The hub compacted past this replica's cursor; only a fresh snapshot can resume it.
+        const after = yield* store.readCursor(r.space!, r.hubId);
+        yield* Effect.logWarning("memory: hub cursor expired, re-snapshotting", {
+          memorySpaceId: r.space,
+          hubEnvironmentId: r.hubId,
+          afterSequence: after,
+        });
+        yield* joinStaging(r, "ready");
+        if (!(yield* bootstrap(r, budget)) || budget.pages >= 10) return false;
+        yield* pullTail(r, budget);
+        return true;
       }),
     );
     yield* ensureEpoch(r.settings.memoryHubVersion);
@@ -1667,7 +1684,13 @@ const make = Effect.gen(function* () {
     let bytes = 0;
     for (const candidate of candidates) {
       const operation = yield* store.readWorkOperation(candidate.work.id);
-      if (!operation) continue;
+      if (!operation) {
+        yield* Effect.logWarning("memory: sync work skipped", {
+          workId: candidate.work.id,
+          reason: "operation_unreadable",
+        });
+        continue;
+      }
       const input: M.MemoryHubPushInput = {
         protocolVersion: 1,
         memorySpaceId: r.space!,
@@ -1691,7 +1714,13 @@ const make = Effect.gen(function* () {
           ownedUntil: now + 30000,
         }),
       );
-      if (!acquired) continue;
+      if (!acquired) {
+        yield* Effect.logWarning("memory: sync work skipped", {
+          workId: candidate.work.id,
+          reason: "claim_lost",
+        });
+        continue;
+      }
       const result = yield* Effect.result(
         Effect.gen(function* () {
           yield* ensureEpoch(r.settings.memoryHubVersion);
@@ -1886,7 +1915,10 @@ const make = Effect.gen(function* () {
       yield* synchronizePull(r, budget);
       yield* sweep;
       yield* ensureEpoch(r.settings.memoryHubVersion);
-      lastSuccess = { epoch: r.settings.memoryHubVersion, at: iso(yield* Clock.currentTimeMillis) };
+      const at = yield* Clock.currentTimeMillis;
+      lastSuccess = { epoch: r.settings.memoryHubVersion, at: iso(at) };
+      if (r.space)
+        yield* store.recordSyncSuccess({ memorySpaceId: r.space, hubEnvironmentId: r.hubId, at });
     }),
   );
   // A single tracked cycle includes manual sync and registry sweeps. Waiters coalesce;
@@ -2183,12 +2215,14 @@ const make = Effect.gen(function* () {
             (c): c is "protocol" | "availability" => c === "protocol" || c === "availability",
           );
           if (!recoverable.length) return { version: input.expectedVersion, rearmedClasses: [] };
-          if (!r.connection) return yield* new M.MemoryHubError({ code: "route_unavailable" });
-          const descriptor = yield* client.preflight(r.connection);
-          if (descriptor.environmentId !== r.hubId)
-            return yield* new M.MemoryHubError({ code: "identity_mismatch" });
-          if (descriptor.capabilities.memoryHubProtocolVersion !== 1)
-            return yield* new M.MemoryHubError({ code: "unsupported_protocol" });
+          // The hub on this device runs this build, so only a remote hub needs the probe.
+          if (r.connection) {
+            const descriptor = yield* client.preflight(r.connection);
+            if (descriptor.environmentId !== r.hubId)
+              return yield* new M.MemoryHubError({ code: "identity_mismatch" });
+            if (descriptor.capabilities.memoryHubProtocolVersion !== 1)
+              return yield* new M.MemoryHubError({ code: "unsupported_protocol" });
+          }
           yield* permit;
           yield* ensureEpoch(input.expectedVersion);
           yield* requireCurrentPublication;
@@ -2256,7 +2290,10 @@ const make = Effect.gen(function* () {
         resetStatus(epoch);
         const space = s.memoryHub.mode === "disabled" ? null : s.memoryHub.memorySpaceId;
         const hubId = s.memoryHub.mode === "member" ? s.memoryHub.hubEnvironmentId : local;
-        const bootstrap = space ? (yield* runtime.readBootstrap(space, hubId)).state : "unbound";
+        const progress = space
+          ? yield* store.readBootstrap({ memorySpaceId: space, hubEnvironmentId: hubId })
+          : undefined;
+        const bootstrap = progress?.state ?? "unbound";
         const holds = space
           ? yield* store.readPersistedHoldClasses({ memorySpaceId: space, hubEnvironmentId: hubId })
           : [];
@@ -2265,7 +2302,13 @@ const make = Effect.gen(function* () {
         if (current.memoryHubVersion !== epoch)
           return yield* new M.MemoryHubError({ code: "fenced" });
         const failure = lastFailure?.epoch === epoch ? lastFailure.code : undefined;
-        const success = lastSuccess?.epoch === epoch ? lastSuccess.at : null;
+        const persistedSuccess = progress?.lastSuccessAt;
+        const success =
+          lastSuccess?.epoch === epoch
+            ? lastSuccess.at
+            : persistedSuccess == null
+              ? null
+              : iso(persistedSuccess);
         const publication = yield* readPublication;
         const recoverableHolds = holds.filter(
           (c): c is "protocol" | "availability" => c === "protocol" || c === "availability",
@@ -2310,7 +2353,10 @@ const make = Effect.gen(function* () {
           "includeRetainedLocalSpaceId" in input && input.includeRetainedLocalSpaceId;
         const retainedLocalSpaceId = includeRetained ? yield* readRetainedSpace : null;
         const hubId = s.memoryHub.mode === "member" ? s.memoryHub.hubEnvironmentId : local;
-        const bootstrap = space ? (yield* runtime.readBootstrap(space, hubId)).state : "unbound";
+        const progress = space
+          ? yield* store.readBootstrap({ memorySpaceId: space, hubEnvironmentId: hubId })
+          : undefined;
+        const bootstrap = progress?.state ?? "unbound";
         if (bootstrap === "ready") yield* rememberReadySpace({ space, settings: s });
         const persisted = yield* runtime.readProcessing(space, space ? hubId : null);
         const storage = space
@@ -2321,7 +2367,13 @@ const make = Effect.gen(function* () {
         if (current.memoryHubVersion !== epoch)
           return yield* new M.MemoryHubError({ code: "fenced" });
         const failure = lastFailure?.epoch === epoch ? lastFailure.code : undefined;
-        const success = lastSuccess?.epoch === epoch ? lastSuccess.at : null;
+        const persistedSuccess = progress?.lastSuccessAt;
+        const success =
+          lastSuccess?.epoch === epoch
+            ? lastSuccess.at
+            : persistedSuccess == null
+              ? null
+              : iso(persistedSuccess);
         const selected = memorySelection(current);
         const memoryModel =
           selected === null

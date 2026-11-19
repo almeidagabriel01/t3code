@@ -50,8 +50,18 @@ export function useOpenAssistantTeam() {
       appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId, section });
       navigation.navigate("SettingsAssistantGroupSettings");
     },
-    /** The group's chat; shown in the detail column like a thread row. */
-    chat: (environmentId: EnvironmentId, teamId: AssistantTeamId) =>
-      selectDetail({ name: "AssistantGroupChat", params: { environmentId, teamId } }),
+    /** The group's chat in the detail column; a target opens its tab at that request. */
+    chat: (
+      environmentId: EnvironmentId,
+      teamId: AssistantTeamId,
+      target?: { readonly tab: string; readonly requestId: string } | null,
+    ) =>
+      selectDetail({
+        name: "AssistantGroupChat",
+        params:
+          target == null
+            ? { environmentId, teamId }
+            : { environmentId, teamId, tab: target.tab, request: target.requestId },
+      }),
   };
 }

@@ -5,9 +5,11 @@ import {
   forgetDeletedProjects,
 } from "../assistants/AssistantTeamProjects.ts";
 import {
+  afterBoundarySql,
   countsAsUnreadSql,
   needsUserTaskScopesSql,
-  scopeNeedsUserSql,
+  pausedTaskNeedsUserSql,
+  scopeWaitingRequestSql,
   taskCountsByScopeSql,
   workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
@@ -431,6 +433,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!decisionColumns.some((column) => column.name === "executed_at")) {
     yield* sql`ALTER TABLE decisions ADD COLUMN executed_at TEXT`;
   }
+  // kind NULL reads as "choice"; steps_json is the user's checklist for any kind.
+  yield* addColumns("decisions", [
+    ["kind", "TEXT"],
+    ["steps_json", "TEXT"],
+  ]);
   const assistantColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistants)`;
   if (!assistantColumns.some((column) => column.name === "budget_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN budget_json TEXT`;
@@ -686,6 +693,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantTaskColumns.some((column) => column.name === "auto_dismissed_run_id")) {
     yield* sql`ALTER TABLE assistant_tasks ADD COLUMN auto_dismissed_run_id TEXT`;
   }
+  if (!assistantTaskColumns.some((column) => column.name === "source_thread_id")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN source_thread_id TEXT`;
+  }
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_tasks_source_idx ON assistant_tasks(source_thread_id)`;
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {
@@ -772,6 +783,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["instructions", "TEXT NOT NULL DEFAULT ''"],
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["default_model_selection", "TEXT"],
+    // NULL reads as "requests".
+    ["conversation_mode", "TEXT"],
   ]);
   // A member's hidden thread for a group, and the last chat message that thread was shown.
   yield* sql`
@@ -792,6 +805,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  // Decision outcomes that reached a task while it ran, consumed when its run ends, the answer
+  // files its next turn carries, and the open decisions it inherited in a hand-over.
+  yield* addColumns("assistant_group_tasks", [
+    ["pending_followup_json", "TEXT"],
+    ["followup_attachments_json", "TEXT"],
+    ["inherited_decisions_json", "TEXT"],
+  ]);
   // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
   // pages its own lines. Filled once below, in the start that adds the column; after that only
   // the rows the repair gives a request take its project, so General is never swept again.
@@ -869,6 +889,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_scope_idx ON assistant_group_messages(team_id, request_project_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_open_wait_idx ON assistant_group_messages(team_id) WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_asks_project_idx ON assistant_group_messages(team_id, request_project_id) WHERE asks_project = 1`;
+  // The newest boundary, which every stopped-task count reads, without walking the chat back to it.
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_boundary_idx ON assistant_group_messages(team_id, seq) WHERE kind = 'boundary'`;
   // How far the user has read one tab of a group: scope is the project id, or '' for General.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_read_cursors (
@@ -900,6 +922,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
   // The message's model that switch applied: a thread off it was changed by the user since.
   yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
+  // When a delivered request left this conversation active because its work still ran.
+  yield* addColumns("assistant_group_request_threads", [["settle_held_at", "TEXT"]]);
   // A team with its chat counters, recreated on every start after every column it reads. A tab
   // reads from its own cursor, else the group's read_seq; it is listed while it has unread, a wait
   // on the user, its own cursor, working or stopped tasks (so an end reads apart from a move), and
@@ -918,26 +942,27 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
           AS open_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           WHERE k.team_id = t.team_id AND k.status = 'running') AS running_tasks,
+        -- Only current members: a task left running by a removed member is not theirs to show.
+        (SELECT json_group_array(g.owner_id) FROM (SELECT DISTINCT k.owner_id
+            FROM assistant_group_tasks k
+            JOIN json_each(t.member_ids_json) member ON member.value = k.owner_id
+            WHERE k.team_id = t.team_id AND k.status = 'running'
+            ORDER BY k.owner_id) g) AS running_member_ids_json,
         (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview,
         (SELECT m.request_project_id FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
-        -- Paused requests and failed root tasks count only after the newest boundary, as the chat
-        -- offers their actions there. A failed child is reported to its parent, which goes on; a
-        -- task the user stopped, or one an archive paused, waits on nobody.
         (SELECT COUNT(DISTINCT k.root_id) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
-          WHERE k.team_id = t.team_id AND k.kind <> 'reply' AND k.status = 'paused'
-            AND COALESCE(k.reason, '') NOT IN ('stopped', 'group_archived')
-            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
-              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS paused_tasks,
+          WHERE k.team_id = t.team_id AND k.status = 'paused'
+            AND ${sql.literal(pausedTaskNeedsUserSql("k"))}
+            AND ${sql.literal(afterBoundarySql("t.team_id", "m.seq"))}) AS paused_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
           WHERE k.team_id = t.team_id AND k.kind = 'root' AND k.status = 'failed'
-            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
-              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS failed_tasks,
+            AND ${sql.literal(afterBoundarySql("t.team_id", "m.seq"))}) AS failed_tasks,
         (SELECT json_group_array(g.thread_id) FROM (
             SELECT thread_id FROM assistant_group_threads WHERE team_id = t.team_id
             UNION ALL SELECT thread_id FROM assistant_group_request_threads
@@ -954,7 +979,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
               WHERE p.project_id = r.id AND p.deleted_at IS NULL)
             ORDER BY r.id) g) AS removed_project_ids_json,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
-            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
+            'unreadCount', x.unread, 'waiting', x.waiting_request IS NOT NULL,
+            'waitingRequest', json(x.waiting_request), 'readSeq', x.read_seq,
             'openTasks', x.open_tasks, 'doneTasks', x.done_tasks, 'general', x.general,
             'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
@@ -963,7 +989,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULLIF(c.scope, '')
                   AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
-              ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
+              ${sql.literal(scopeWaitingRequestSql("t.team_id", "c.scope"))} AS waiting_request,
               c.working AS open_tasks,
               c.stopped AS done_tasks,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
@@ -988,7 +1014,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             -- A stable order, so a client's "Removed project 2" stays the same project.
             ORDER BY c.scope
           ) x
-          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
+          WHERE x.unread > 0 OR x.waiting_request IS NOT NULL OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
             OR x.done_tasks > 0)
           AS scopes_json
       FROM assistant_teams t

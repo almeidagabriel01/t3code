@@ -99,6 +99,7 @@ type SidebarListItem =
 interface ThreadNavigationSidebarProps {
   readonly width: number;
   readonly visible: boolean;
+  /** The draft key of the open conversation; a group chat's is thread-shaped and matches no row. */
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
@@ -164,6 +165,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     .map((connection) => ({
       environmentId: connection.environmentId,
       label: connection.environmentLabel,
+      displayUrl: connection.displayUrl,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
   const availableEnvironmentIds = new Set(
@@ -301,7 +303,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
-    hiddenThreadKeys: zones.ownedThreadKeys,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -560,6 +561,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           gutter={4}
           renderThread={(item) => renderListItem({ item })}
           environmentById={teamsEnvironments(savedConnectionsById)}
+          openConversationKey={props.selectedThreadKey ?? null}
         />
         {selectedProjectScope === null ? null : (
           <ProjectAssistantFaces

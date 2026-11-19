@@ -300,7 +300,7 @@ function taskAction(task: PresenceTask, canAct: boolean): MenuAction {
 
 function senderActions(
   sender: Sender,
-  section: AssistantPresenceSection,
+  look: Pick<SenderLook, "section" | "label">,
   canAct: boolean,
   task: PresenceTask | null,
 ): MenuAction {
@@ -308,9 +308,9 @@ function senderActions(
   return {
     id: `assistant:${sender.assistantId}`,
     title: assistant?.name ?? "Assistant",
-    image: SECTION_IMAGE[section],
+    image: SECTION_IMAGE[look.section],
     // A native menu subtitle wraps past one line; the message badge already says "asks first".
-    subtitle: assistantPresenceStatus(section, sender, false),
+    subtitle: assistantPresenceStatus(look.label, sender, false),
     subactions: [
       ...(sender.count === 0
         ? []
@@ -370,7 +370,14 @@ export function presenceMenuActions(
   const sectionOf = (sender: Sender) => looks.get(sender.assistantId)?.section ?? "idle";
   const sections = assistantPresenceSections(senders, sectionOf);
   const rows = (id: AssistantPresenceSection) =>
-    sections[id].map((sender) => senderActions(sender, id, canAct, task));
+    sections[id].map((sender) =>
+      senderActions(
+        sender,
+        looks.get(sender.assistantId) ?? { section: id, label: "Idle" },
+        canAct,
+        task,
+      ),
+    );
   if (!inlineSections) return ASSISTANT_PRESENCE_SECTIONS.flatMap(([id]) => rows(id));
   return ASSISTANT_PRESENCE_SECTIONS.filter(([id]) => sections[id].length > 0).map(
     ([id, title]) => ({

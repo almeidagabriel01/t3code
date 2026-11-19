@@ -9,6 +9,8 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupComposerSession,
+  type AssistantGroupChatState,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
   assistantGroupFailedSendRouting,
@@ -21,10 +23,18 @@ import {
   insertAssistantGroupMention,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
+  assistantGroupDraftThreadId,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import {
+  describeCatalogEntry,
+  getProviderSkillsForSlashMenu,
+  resolveProviderSkillsForCwd,
+} from "@t3tools/client-runtime/providerSkills";
 import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
+  assistantGroupAddress,
   type Assistant,
   type AssistantGroupMessage,
   type AssistantGroupMessageId,
@@ -32,40 +42,68 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  type ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type ClipboardEvent,
-  type DragEvent,
 } from "react";
 
-import { collapseExpandedComposerCursor, composerSubmissionIntentForKey } from "~/composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  composerSubmissionIntentForKey,
+  detectComposerTrigger,
+  extendReplacementRangeForTrailingSpace,
+  type ComposerTrigger,
+} from "~/composer-logic";
 import {
   listContinuationForEnter,
   listIndentForTab,
   listOutdentForTab,
   type ComposerListEdit,
 } from "~/composer-list-continuation";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
 import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useRenderedAppearance } from "~/hooks/useTheme";
+import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { cn, randomUUID } from "~/lib/utils";
+import { searchProviderSkills } from "~/providerSkillSearch";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
 import { useProject, useQuietThreadShell } from "~/state/entities";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
+import { useComposerDraftStore, useComposerThreadDraft } from "~/composerDraftStore";
+import { orchestrationEnvironment } from "~/state/orchestration";
+import { useEnvironmentQuery } from "~/state/query";
+import { usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  primaryServerKeybindingsAtom,
+  providersIgnoringCheckedAtAtom,
+  serverEnvironment,
+} from "~/state/server";
+import { readPreparedConnection } from "~/state/session";
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import {
   ComposerPromptEditorTiptap,
   type ComposerPromptEditorHandle,
 } from "../ComposerPromptEditorTiptap";
-import { ComposerAttachButton } from "../chat/ComposerAttachmentStrip";
+import {
+  ComposerAttachButton,
+  ComposerAttachmentFileList,
+  ComposerAttachmentMediaRow,
+  ComposerFilePreviewDialog,
+} from "../chat/ComposerAttachmentStrip";
 import { ComposerBanner } from "../chat/ComposerBanner";
+import { ComposerContextMeter } from "../chat/ComposerContextMeter";
 import {
   ComposerCommandMenu,
   composerSuggestionOptionId,
@@ -75,6 +113,18 @@ import { ComposerCommandMenuLayer } from "../chat/ComposerCommandMenuLayer";
 import { ComposerControl, ComposerSelectControl } from "../chat/ComposerControl";
 import { ComposerPrimaryActions } from "../chat/ComposerPrimaryActions";
 import { ComposerSurface } from "../chat/ComposerSurface";
+import {
+  composerOtherFilesForPresentation,
+  isPreviewableComposerVideo,
+  shouldHandleComposerAttachmentPaste,
+} from "../chat/composerAttachmentFiles";
+import { searchSlashCommandItems } from "../chat/composerSlashCommandSearch";
+import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
+import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
+import { folderDropTarget, resolveDroppedFolderPath } from "../chat/folderDrop";
+import { useComposerAttachmentIntake } from "../chat/useComposerAttachmentIntake";
+import { useFileAttachmentCapabilities } from "../chat/useFileAttachmentCapabilities";
+import { makeWorkspaceFileDropHandlers, splitTransferredFiles } from "../chat/workspaceFileDrop";
 import {
   buildComposerPromptHistoryEntries,
   stepComposerPromptHistory,
@@ -90,9 +140,9 @@ import {
   SelectPopup,
   SelectValue,
 } from "../ui/select";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
-import { GroupAttachmentChips } from "./GroupAttachments";
 import { GroupMentionChip } from "./GroupMentionChip";
 import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
 import { clearGroupAttachments, useGroupAttachments } from "./useGroupAttachments";
@@ -138,15 +188,21 @@ export interface GroupLandedSend {
 }
 
 const LEAD_DECIDES = "lead";
+// Context chips need records sent beside the text, and a group post carries only text and files.
 const NO_CONTEXT_RECORDS = new Map();
-const NO_SKILLS: never[] = [];
-
-/** Unsent text per group, so leaving the chat and coming back keeps it. */
-const drafts = new Map<string, string>();
+const NO_SKILLS: ServerProvider["skills"] = [];
+const NOT_REVERTING = { current: false };
+const GROUP_INTAKE_THREAD_ID = ThreadId.make("group-composer");
+const NO_INLINE_FILES: ReadonlySet<string> = new Set();
+const NO_IDS: ReadonlyArray<never> = [];
 
 /** For tests: each starts with empty drafts. */
 export const clearGroupDrafts = () => {
-  drafts.clear();
+  useComposerDraftStore.setState((state) => ({
+    draftsByThreadKey: Object.fromEntries(
+      Object.entries(state.draftsByThreadKey).filter(([key]) => !key.includes(":assistant-group:")),
+    ),
+  }));
   outgoings.clear();
   clearGroupAttachments();
 };
@@ -313,6 +369,56 @@ type RecipientsLineProps = Omit<
 };
 
 /**
+ * How full the context is of the session a reply lands in, read from the server once per thread
+ * and again whenever that member's task moves. Hidden for a new request, which opens fresh threads.
+ */
+function GroupContextMeter(props: {
+  readonly environmentId: EnvironmentId;
+  readonly state: AssistantGroupChatState | null;
+  readonly chat: AssistantGroupChatRef;
+  readonly text: string;
+  readonly members: ReadonlyArray<Assistant>;
+  readonly leadId: Assistant["id"] | null;
+}) {
+  const { environmentId, state, chat } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const replyId = chat.reply?.id ?? null;
+  const session = assistantGroupComposerSession({
+    state,
+    requestId: replyId === null ? null : (state?.messages.get(replyId)?.requestId ?? replyId),
+    text: props.text,
+    members: props.members,
+    leadId: props.leadId,
+    context,
+  });
+  const query = useEnvironmentQuery(
+    session === null
+      ? null
+      : orchestrationEnvironment.threadContextUsage({
+          environmentId,
+          input: { threadId: session.threadId },
+        }),
+  );
+  const { refresh } = query;
+  const moved = session?.updatedAt ?? null;
+  const readAt = useRef(moved);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server's usage moves with the task
+  useEffect(() => {
+    if (moved === null || readAt.current === moved) return;
+    readAt.current = moved;
+    refresh();
+  }, [moved, refresh]);
+  const usage = query.data;
+  const snapshot =
+    session === null || usage == null
+      ? null
+      : deriveLatestContextWindowSnapshot([], usage.latestTurnUsage, usage.providerThread);
+  if (snapshot === null) return null;
+  const owner = props.members.find((member) => member.id === session!.ownerId)?.name ?? "member";
+  return <ComposerContextMeter usage={snapshot} owner={`Context of ${owner} in this request`} />;
+}
+
+/**
  * Who a draft reaches, under the composer. Only this line reads the lead's model and the
  * providers, so a provider update does not re-render the composer.
  */
@@ -343,6 +449,72 @@ function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
     >
       {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
     </p>
+  );
+}
+
+/**
+ * The skills of the provider a draft runs on: the message's own model, else the model of the member
+ * it names first or replies to, else the lead's, read in that member's checkout.
+ */
+function useGroupDraftSkills(input: {
+  readonly environmentId: EnvironmentId;
+  readonly text: string;
+  readonly members: ReadonlyArray<Assistant>;
+  readonly lead: Assistant | null;
+  readonly replyTo: string | null;
+  readonly model: ModelSelection | null;
+}) {
+  const recipient =
+    assistantGroupAddress(input.text, input.members)?.[0] ??
+    input.members.find((member) => member.name === input.replyTo) ??
+    input.lead;
+  const thread = useQuietThreadShell(
+    recipient?.threadId == null ? null : scopeThreadRef(input.environmentId, recipient.threadId),
+  );
+  const project = useProject(
+    recipient === null ? null : scopeProjectRef(input.environmentId, recipient.projectId),
+  );
+  const providers = useAtomValue(providersIgnoringCheckedAtAtom(input.environmentId));
+  const instanceId = input.model?.instanceId ?? thread?.modelSelection.instanceId;
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  return {
+    driver: provider?.driver ?? null,
+    skills:
+      provider === undefined
+        ? NO_SKILLS
+        : resolveProviderSkillsForCwd(provider, thread?.worktreePath ?? project?.workspaceRoot),
+  };
+}
+
+/** The skill menu for a `$` or `/` trigger, as the thread composer lists it. */
+function skillItems(
+  trigger: ComposerTrigger,
+  skills: ServerProvider["skills"],
+  driver: ServerProvider["driver"],
+  showInSlashMenu: boolean,
+): ComposerCommandItem[] {
+  const item = (skill: ServerProvider["skills"][number], label: string) => ({
+    id: `skill:${driver}:${skill.name}`,
+    type: "skill" as const,
+    provider: driver,
+    skill,
+    label,
+    description: describeCatalogEntry(
+      skill.shortDescription ?? skill.description,
+      false,
+      skill.scope ? `${skill.scope} skill` : "Run provider skill",
+    ),
+  });
+  if (trigger.kind === "skill") {
+    return searchProviderSkills(skills, trigger.query).map((skill) =>
+      item(skill, formatProviderSkillDisplayName(skill)),
+    );
+  }
+  return searchSlashCommandItems(
+    getProviderSkillsForSlashMenu(skills, showInSlashMenu).map((skill) =>
+      item(skill, `/skill:${skill.name}`),
+    ),
+    trigger.query.trim().toLowerCase(),
   );
 }
 
@@ -377,6 +549,8 @@ export function GroupComposer(props: {
   readonly history: ReadonlyArray<{ readonly id: string; readonly text: string }>;
   /** The chat as loaded: a failed send whose post shows here landed. */
   readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
+  /** The loaded chat, for the session whose context the meter shows. */
+  readonly state: AssistantGroupChatState | null;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -392,18 +566,25 @@ export function GroupComposer(props: {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
-  const [draft, setDraftState] = useState<PromptState>(() => {
-    const value = drafts.get(props.draftKey) ?? "";
-    return {
-      value,
-      cursor: collapseExpandedComposerCursor(value, value.length),
-      expanded: value.length,
-    };
-  });
+  // Unsent text lives in the thread draft store, so it survives a reload and lights the sidebar row.
+  const draftRef = scopeThreadRef(
+    props.environmentId,
+    assistantGroupDraftThreadId(props.chat.teamId),
+  );
+  const storedDraft = useComposerThreadDraft(draftRef).prompt;
+  const [caret, setCaret] = useState<PromptState | null>(null);
+  // The caret holds only while it matches the stored text; a discard elsewhere moves it to the end.
+  const draft: PromptState =
+    caret !== null && caret.value === storedDraft
+      ? caret
+      : {
+          value: storedDraft,
+          cursor: collapseExpandedComposerCursor(storedDraft, storedDraft.length),
+          expanded: storedDraft.length,
+        };
   const setDraft = (value: string, cursor: number, expanded: number) => {
-    if (value === "") drafts.delete(props.draftKey);
-    else drafts.set(props.draftKey, value);
-    setDraftState({ value, cursor, expanded });
+    useComposerDraftStore.getState().setPrompt(draftRef, value);
+    setCaret({ value, cursor, expanded });
   };
   // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(props.draftKey));
@@ -447,25 +628,51 @@ export function GroupComposer(props: {
     memberAt === null ? [] : assistantGroupMentionOptions(memberAt.query, props.members);
   const projectOptions =
     projectAt === null ? [] : assistantGroupProjectOptions(projectAt.query, projectRefs);
+  const { skills, driver } = useGroupDraftSkills({
+    environmentId: props.environmentId,
+    text: prompt.value,
+    members: props.members,
+    lead,
+    replyTo: props.replyingTo?.to ?? null,
+    model: props.messageModel.pick?.value ?? null,
+  });
+  const showSkillsInSlashMenu = useEnvironmentSettings(
+    props.environmentId,
+    (settings) => settings.showSkillsInSlashMenu,
+  );
+  // `@` and `#` stay the group's; only the thread's skill triggers carry over.
+  // No context chips (file, thread, card): the group post has no `context` field yet (spec D3).
+  const detected =
+    triggers && memberAt === null && projectAt === null && driver !== null
+      ? detectComposerTrigger(prompt.value, prompt.expanded)
+      : null;
+  const skillAt =
+    detected?.kind === "skill" || detected?.kind === "slash-command" ? detected : null;
   const items: ComposerCommandItem[] =
     memberAt !== null
       ? memberOptions.map((option) => memberItem(option, props.environmentId, props.leadId))
-      : projectOptions.map((project) => ({
-          id: `project:${project.id}`,
-          type: "custom",
-          icon: <FolderIcon aria-hidden className="size-4 shrink-0 text-secondary-label" />,
-          label: project.name,
-          description: `#${project.slug}`,
-        }));
+      : projectAt !== null
+        ? projectOptions.map((project) => ({
+            id: `project:${project.id}`,
+            type: "custom",
+            icon: <FolderIcon aria-hidden className="size-4 shrink-0 text-secondary-label" />,
+            label: project.name,
+            description: `#${project.slug}`,
+          }))
+        : skillAt !== null && driver !== null
+          ? skillItems(skillAt, skills, driver, showSkillsInSlashMenu)
+          : [];
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
   const attached = useGroupAttachments(
     props.draftKey,
     props.environmentId,
-    props.disabled,
     assistantGroupHeldAttachments(outgoing, shown),
     new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
   );
+  const capabilities = useFileAttachmentCapabilities(props.environmentId);
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
+  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
 
   const replace = (value: string, caret: number) => {
     const cursor = collapseExpandedComposerCursor(value, caret);
@@ -501,7 +708,9 @@ export function GroupComposer(props: {
   const sendDisabledReason =
     props.disabledReason ??
     (attached.unsettled
-      ? "Waiting for files to upload"
+      ? attached.failed
+        ? "Retry or remove the file that failed to upload"
+        : "Waiting for files to upload"
       : tooLong
         ? `Messages are limited to ${ASSISTANT_GROUP_MESSAGE_MAX_CHARS} characters`
         : speech.preparing
@@ -525,6 +734,19 @@ export function GroupComposer(props: {
       if (project === undefined) return;
       const next = insertAssistantGroupProject(prompt.value, projectAt, project);
       replace(next.text, next.caret);
+    } else if (skillAt !== null) {
+      const item = items[index];
+      if (item?.type !== "skill") return;
+      const replacement = `$${item.skill.name} `;
+      const end = extendReplacementRangeForTrailingSpace(
+        prompt.value,
+        skillAt.rangeEnd,
+        replacement,
+      );
+      replace(
+        `${prompt.value.slice(0, skillAt.rangeStart)}${replacement}${prompt.value.slice(end)}`,
+        skillAt.rangeStart + replacement.length,
+      );
     }
   };
 
@@ -576,6 +798,8 @@ export function GroupComposer(props: {
 
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
+    const ready = attached.ready();
+    if (ready === null) return;
     const attachmentIds = attached.items.map((item) => item.id);
     // A refused or unconfirmed message goes again under its first id, unless anything changed.
     const { requestId, sendKey } = assistantGroupSendRequestId(
@@ -606,7 +830,7 @@ export function GroupComposer(props: {
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);
     setError(null);
-    const result = await props.onSend(value.trim(), attached.ready, requestId);
+    const result = await props.onSend(value.trim(), ready, requestId);
     if (result.ok) settle(sent);
     else {
       // What the user changed while it was on its way is what its resend goes with.
@@ -700,19 +924,105 @@ export function GroupComposer(props: {
     return false;
   };
 
-  const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
+  const intake = useComposerAttachmentIntake({
+    // The intake takes files only for a thread; this id stands for the group and names no thread.
+    activeThreadId: GROUP_INTAKE_THREAD_ID,
+    activePendingProgress: null,
+    activePendingIsResponding: false,
+    pendingUserInputs: [],
+    supportsQuestionAttachments: false,
+    isLiteralPendingAnswer: false,
+    projectSelectionRequired: false,
+    questionAttachmentTarget: null,
+    attachmentTargetKey: attached.targetKey,
+    fileStagingLimit: capabilities.fileStagingLimit,
+    promptRef: { current: prompt.value },
+    composerImagesRef: { current: attached.images },
+    composerFilesRef: { current: attached.files },
+    composerEditorRef: editorRef,
+    isRevertingCheckpointRef: NOT_REVERTING,
+    setThreadError: (_thread, message) => setError(message),
+    countReservedAttachments: attached.reserved,
+    addComposerImage: (image) => attached.add([image]),
+    addComposerImagesToDraft: attached.add,
+    addComposerFilesToDraft: attached.add,
+    removeComposerImageFromDraft: attached.remove,
+    // Attachment chips need context records, which a group post cannot carry.
+    insertAttachmentReferences: () => false,
+  });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const addFolders = (folders: ReadonlyArray<File>) => {
+    const target = folderDropTarget({
+      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+      environmentId: props.environmentId,
+      primaryEnvironmentId,
+      connection: readPreparedConnection(props.environmentId),
+      isDesktopRenderer: window.desktopBridge !== undefined,
+    });
+    if (target === "remote") {
+      toastManager.add({
+        type: "error",
+        title: "Folders can only be referenced on a server running on this computer",
+      });
+      return;
+    }
+    const links = folders.flatMap((folder) => {
+      const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
+      if (path !== null) return [serializeComposerFileLink(path)];
+      toastManager.add({
+        type: "error",
+        title: `Couldn't get the path of "${folder.name}"`,
+        description: "Type the folder path instead.",
+      });
+      return [];
+    });
+    if (links.length === 0) return;
+    const gap = prompt.value === "" || /\s$/.test(prompt.value) ? "" : " ";
+    const next = `${prompt.value}${gap}${links.join(" ")} `;
+    replace(next, next.length);
+  };
+  const addFiles = (files: File[]) => {
+    void intake.addComposerAttachments(files).then((inserted) => {
+      if (!inserted) editorRef.current?.focus();
+    });
+  };
   const onPaste = (event: ClipboardEvent<HTMLElement>) => {
-    const files = Array.from(event.clipboardData.files);
-    if (files.length === 0) return;
-    event.preventDefault();
-    attached.add(files);
+    if (props.disabled || sending) return;
+    const { files, folders } = splitTransferredFiles(event.clipboardData);
+    const plainText = event.clipboardData.getData("text/plain");
+    if (
+      folders.length > 0 ||
+      (files.length > 0 && shouldHandleComposerAttachmentPaste({ files, plainText }))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (folders.length > 0) addFolders(folders);
+      if (files.length > 0) void intake.addComposerAttachments(files);
+      return;
+    }
+    if (intake.foldPastedText(plainText, false)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   };
-  const onDrop = (event: DragEvent) => {
-    setDragging(false);
-    if (props.disabled || !hasFiles(event)) return;
-    event.preventDefault();
-    attached.add(Array.from(event.dataTransfer.files));
-  };
+  const fileDrop = makeWorkspaceFileDropHandlers({
+    setDragActive: (active) => setDragging(active && !props.disabled && !sending),
+    addFiles: useStableCallback((files: File[]) => {
+      if (!props.disabled && !sending) addFiles(files);
+    }),
+    addFolders: useStableCallback((folders: File[]) => {
+      if (!props.disabled && !sending) addFolders(folders);
+    }),
+  });
+  const videos = attached.files.filter((file) =>
+    isPreviewableComposerVideo(file, props.environmentId),
+  );
+  const otherFiles = composerOtherFilesForPresentation(
+    attached.files,
+    props.environmentId,
+    NO_INLINE_FILES,
+  );
+  const previewFile = attached.files.find((file) => file.id === previewFileId);
 
   const projectItems = [
     { value: LEAD_DECIDES, label: ASSISTANT_GROUP_LEAD_DECIDES_LABEL },
@@ -773,226 +1083,274 @@ export function GroupComposer(props: {
     "this project";
 
   return (
-    <div className="flex flex-col gap-1.5 px-3 pt-2 pb-3 @xl/group-chat:px-6">
-      <ComposerSurface.Shell>
-        <ComposerSurface.Host>
-          <div
-            ref={shellRef}
-            data-chat-composer-form="true"
-            className="min-w-0"
-            onDragOver={(event) => {
-              if (props.disabled || !hasFiles(event)) return;
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={(event) => {
-              const next = event.relatedTarget;
-              if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
-                setDragging(false);
-              }
-            }}
-            onDrop={onDrop}
-          >
-            <ReplyQuote
-              quote={props.replyingTo}
-              onJump={props.onJumpToReply}
-              onCancel={() => {
-                props.onClearReply();
-                editorRef.current?.focus();
-              }}
-            />
-            <div className="relative">
-              <ComposerSurface.Main>
-                <div
-                  data-testid="group-composer-surface"
-                  className={cn(
-                    "rounded-2xl transition-[background-color] duration-200",
-                    dragging && "bg-accent/45 ring-1 ring-inset ring-primary/70",
-                  )}
-                >
-                  <div ref={setMenuAnchor} className="relative px-4 pt-3.5 pb-2 sm:pt-4">
-                    {menuOpen ? (
-                      <ComposerCommandMenuLayer anchor={menuAnchor}>
-                        <ComposerCommandMenu
-                          listId={listId}
-                          items={items}
-                          resolvedTheme={resolvedTheme}
-                          isLoading={false}
-                          triggerKind={null}
-                          listLabel={memberAt !== null ? "Mention" : "Projects"}
-                          activeItemId={items[chosen]?.id ?? null}
-                          onHighlightedItemChange={(id) => {
-                            const index = items.findIndex((item) => item.id === id);
-                            if (index >= 0) setHighlight(index);
-                          }}
-                          onSelect={(item) => pick(items.indexOf(item))}
-                        />
-                      </ComposerCommandMenuLayer>
-                    ) : null}
-                    <GroupAttachmentChips
-                      items={attached.items}
-                      onRemove={attached.remove}
-                      onRetry={attached.retry}
-                    />
-                    <ComposerPromptEditorTiptap
-                      draftKey={props.draftKey}
-                      editorRef={editorRef}
-                      ariaLabel="Message the group"
-                      suggestionListId={listId}
-                      activeSuggestionId={
-                        menuOpen && items[chosen]
-                          ? composerSuggestionOptionId(listId, items[chosen].id)
-                          : undefined
-                      }
-                      richTextEnabled={richText}
-                      value={prompt.value}
-                      cursor={prompt.cursor}
-                      contextRecords={NO_CONTEXT_RECORDS}
-                      skills={NO_SKILLS}
-                      disabled={
-                        props.disabled || speech.freezesEditor || (sending && shown !== null)
-                      }
-                      placeholder={
-                        props.disabledReason ??
-                        "Message the group. @ picks who gets it, # picks a project."
-                      }
-                      groupMentions={{
-                        ...assistantGroupMentionTargets(props.members, projectRefs),
-                        render: (kind, value) => (
-                          <GroupMentionChip
-                            kind={kind}
-                            value={value}
-                            members={props.members}
-                            projects={projectRefs}
-                            environmentId={props.environmentId}
-                          />
-                        ),
-                      }}
-                      onChange={(value, cursor, expanded, adjacent) => {
-                        setPrompt(value, cursor, expanded);
-                        setBesideChip(adjacent);
-                        setHighlight(0);
-                        setError(null);
-                      }}
-                      onCommandKeyDown={onCommandKey}
-                      onPaste={onPaste}
-                    />
-                  </div>
+    <div className="chat-composer-lane pt-2 pb-3">
+      <div className="chat-content-lane flex flex-col gap-1.5">
+        <ComposerSurface.Shell>
+          <ComposerSurface.Host>
+            <div
+              ref={shellRef}
+              data-chat-composer-form="true"
+              className="min-w-0"
+              onDragEnter={fileDrop.onDragEnter}
+              onDragOver={fileDrop.onDragOver}
+              onDragLeave={fileDrop.onDragLeave}
+              onDrop={fileDrop.onDrop}
+            >
+              <ReplyQuote
+                quote={props.replyingTo}
+                onJump={props.onJumpToReply}
+                onCancel={() => {
+                  props.onClearReply();
+                  editorRef.current?.focus();
+                }}
+              />
+              <div className="relative">
+                <ComposerSurface.Main>
                   <div
-                    data-testid="group-composer-controls"
-                    // A narrow composer keeps its labels as icons, and voice and send hold the right
-                    // edge outside the wrap, so the controls never take a third line.
-                    className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
+                    data-testid="group-composer-surface"
+                    className={cn(
+                      "rounded-2xl transition-[background-color] duration-200",
+                      dragging && "bg-accent/45 ring-1 ring-inset ring-primary/70",
+                    )}
                   >
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                      {/* A long project name shrinks beside attach instead of taking a line alone. */}
-                      <div className="flex min-w-0 items-center gap-1">
-                        <ComposerAttachButton
-                          addComposerAttachments={async (files) => {
-                            attached.add(files);
-                            return false;
-                          }}
-                          focusComposer={() => editorRef.current?.focus()}
-                          disabled={props.disabled || attached.full || sending}
-                        />
-                        {projectPicker}
-                      </div>
-                      <div className="flex min-w-0 items-center gap-1">
-                        {modelProjectId === null ? null : (
-                          <GroupProjectModelPicker
-                            environmentId={props.environmentId}
-                            projectId={modelProjectId}
-                            projectLabel={modelProjectLabel}
-                            teamDefault={props.teamDefault}
-                            disabled={props.disabled}
-                            onError={setError}
-                            message={props.messageModel}
+                    <div ref={setMenuAnchor} className="relative px-4 pt-3.5 pb-2 sm:pt-4">
+                      {menuOpen ? (
+                        <ComposerCommandMenuLayer anchor={menuAnchor}>
+                          <ComposerCommandMenu
+                            listId={listId}
+                            items={items}
+                            resolvedTheme={resolvedTheme}
+                            isLoading={false}
+                            triggerKind={skillAt?.kind ?? null}
+                            listLabel={
+                              memberAt !== null
+                                ? "Mention"
+                                : projectAt !== null
+                                  ? "Projects"
+                                  : "Skills"
+                            }
+                            activeItemId={items[chosen]?.id ?? null}
+                            onHighlightedItemChange={(id) => {
+                              const index = items.findIndex((item) => item.id === id);
+                              if (index >= 0) setHighlight(index);
+                            }}
+                            onSelect={(item) => pick(items.indexOf(item))}
                           />
-                        )}
-                        <Menu>
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <MenuTrigger
-                                  disabled={props.disabled || props.members.length === 0}
-                                  render={<ComposerControl size="xs" aria-label="Mention" />}
-                                />
-                              }
-                            >
-                              <AtSignIcon className="size-3" />
-                              <span data-composer-control-label>Mention</span>
-                            </TooltipTrigger>
-                            <TooltipPopup side="top">Mention a member</TooltipPopup>
-                          </Tooltip>
-                          <MenuPopup align="start" side="top">
-                            <MenuGroup>
-                              <MenuGroupLabel>Mention</MenuGroupLabel>
-                              {assistantGroupMentionOptions("", props.members).map((option) => (
-                                <MenuItem
-                                  key={option.kind === "everyone" ? "everyone" : option.member.id}
-                                  onClick={() => insertFromMenu(option)}
-                                >
-                                  <MentionOptionLabel
-                                    option={option}
-                                    environmentId={props.environmentId}
-                                    leadId={props.leadId}
-                                  />
-                                </MenuItem>
-                              ))}
-                            </MenuGroup>
-                          </MenuPopup>
-                        </Menu>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <ComposerPrimaryActions
-                        compact={false}
-                        canOperateThread={!props.disabled}
-                        pendingAction={null}
-                        isRunning={false}
-                        canInterrupt={false}
-                        voiceInputActive={speech.blocksSubmission}
-                        isSendBusy={sending}
-                        sendDisabledReason={canSend || !hasContent ? null : sendDisabledReason}
-                        isEnvironmentUnavailable={false}
-                        isPreparingWorktree={false}
-                        hasSendableContent={hasContent && canSend}
-                        onSubmitMessage={submit}
-                        onPreviousPendingQuestion={() => {}}
-                        onInterrupt={() => {}}
-                      >
-                        <TextFieldSpeechControls
-                          speech={speech}
-                          disabled={props.disabled || sending}
+                        </ComposerCommandMenuLayer>
+                      ) : null}
+                      {attached.images.length + videos.length + attached.preparing.length > 0 ? (
+                        <ComposerAttachmentMediaRow
+                          images={attached.images}
+                          expandedImages={attached.images}
+                          preparingImages={attached.preparing}
+                          videos={videos}
+                          pendingSnapShotAnimations={NO_IDS}
+                          pendingSnapShotIds={NO_IDS}
+                          uncommittedSnapShotIds={NO_IDS}
+                          nonPersistedImageIds={NO_IDS}
+                          snapShotAnimations={false}
+                          supportsAttachmentUploads={capabilities.supportsAttachmentUploads}
+                          maxFileAttachmentBytes={capabilities.maxFileAttachmentBytes}
+                          environmentId={props.environmentId}
+                          canOperateThread={!props.disabled && !sending}
+                          onExpandImage={setExpandedImage}
+                          // A group file keeps its local copy until sent, so a video always plays it.
+                          onFileOpen={() => {}}
+                          onRemoveImage={intake.removeComposerImage}
+                          onRemoveFile={attached.remove}
                         />
-                      </ComposerPrimaryActions>
+                      ) : null}
+                      {otherFiles.length > 0 ? (
+                        <ComposerAttachmentFileList
+                          files={otherFiles}
+                          resolvedTheme={resolvedTheme}
+                          supportsAttachmentUploads={capabilities.supportsAttachmentUploads}
+                          maxFileAttachmentBytes={capabilities.maxFileAttachmentBytes}
+                          fileStagingLimit={capabilities.fileStagingLimit}
+                          environmentId={props.environmentId}
+                          canOperateThread={!props.disabled && !sending}
+                          onPreviewFile={setPreviewFileId}
+                          onRemoveFile={attached.remove}
+                        />
+                      ) : null}
+                      {previewFile ? (
+                        <ComposerFilePreviewDialog
+                          file={previewFile}
+                          onRemove={attached.remove}
+                          onPreviewFileIdChange={setPreviewFileId}
+                        />
+                      ) : null}
+                      {expandedImage ? (
+                        <ExpandedImageDialog
+                          preview={expandedImage}
+                          onClose={() => setExpandedImage(null)}
+                        />
+                      ) : null}
+                      <ComposerPromptEditorTiptap
+                        draftKey={props.draftKey}
+                        editorRef={editorRef}
+                        ariaLabel="Message the group"
+                        suggestionListId={listId}
+                        activeSuggestionId={
+                          menuOpen && items[chosen]
+                            ? composerSuggestionOptionId(listId, items[chosen].id)
+                            : undefined
+                        }
+                        richTextEnabled={richText}
+                        value={prompt.value}
+                        cursor={prompt.cursor}
+                        contextRecords={NO_CONTEXT_RECORDS}
+                        skills={skills}
+                        disabled={
+                          props.disabled || speech.freezesEditor || (sending && shown !== null)
+                        }
+                        placeholder={
+                          props.disabledReason ??
+                          "Message the group. @ picks who gets it, # picks a project."
+                        }
+                        groupMentions={{
+                          ...assistantGroupMentionTargets(props.members, projectRefs),
+                          render: (kind, value) => (
+                            <GroupMentionChip
+                              kind={kind}
+                              value={value}
+                              members={props.members}
+                              projects={projectRefs}
+                              environmentId={props.environmentId}
+                            />
+                          ),
+                        }}
+                        onChange={(value, cursor, expanded, adjacent) => {
+                          setPrompt(value, cursor, expanded);
+                          setBesideChip(adjacent);
+                          setHighlight(0);
+                          setError(null);
+                        }}
+                        onCommandKeyDown={onCommandKey}
+                        onPaste={onPaste}
+                      />
+                    </div>
+                    <div
+                      data-testid="group-composer-controls"
+                      // A narrow composer keeps its labels as icons, and voice and send hold the right
+                      // edge outside the wrap, so the controls never take a third line.
+                      className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
+                    >
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                        {/* A long project name shrinks beside attach instead of taking a line alone. */}
+                        <div className="flex min-w-0 items-center gap-1">
+                          <ComposerAttachButton
+                            addComposerAttachments={intake.addComposerAttachments}
+                            focusComposer={() => editorRef.current?.focus()}
+                            disabled={props.disabled || attached.full || sending}
+                          />
+                          {projectPicker}
+                        </div>
+                        <div className="flex min-w-0 items-center gap-1">
+                          {modelProjectId === null ? null : (
+                            <GroupProjectModelPicker
+                              environmentId={props.environmentId}
+                              projectId={modelProjectId}
+                              projectLabel={modelProjectLabel}
+                              teamDefault={props.teamDefault}
+                              disabled={props.disabled}
+                              onError={setError}
+                              message={props.messageModel}
+                            />
+                          )}
+                          <Menu>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <MenuTrigger
+                                    disabled={props.disabled || props.members.length === 0}
+                                    render={<ComposerControl size="xs" aria-label="Mention" />}
+                                  />
+                                }
+                              >
+                                <AtSignIcon className="size-3" />
+                                <span data-composer-control-label>Mention</span>
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">Mention a member</TooltipPopup>
+                            </Tooltip>
+                            <MenuPopup align="start" side="top">
+                              <MenuGroup>
+                                <MenuGroupLabel>Mention</MenuGroupLabel>
+                                {assistantGroupMentionOptions("", props.members).map((option) => (
+                                  <MenuItem
+                                    key={option.kind === "everyone" ? "everyone" : option.member.id}
+                                    onClick={() => insertFromMenu(option)}
+                                  >
+                                    <MentionOptionLabel
+                                      option={option}
+                                      environmentId={props.environmentId}
+                                      leadId={props.leadId}
+                                    />
+                                  </MenuItem>
+                                ))}
+                              </MenuGroup>
+                            </MenuPopup>
+                          </Menu>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <GroupContextMeter
+                          environmentId={props.environmentId}
+                          state={props.state}
+                          chat={props.chat}
+                          text={prompt.value}
+                          members={props.members}
+                          leadId={props.leadId}
+                        />
+                        <ComposerPrimaryActions
+                          compact={false}
+                          canOperateThread={!props.disabled}
+                          pendingAction={null}
+                          isRunning={false}
+                          canInterrupt={false}
+                          voiceInputActive={speech.blocksSubmission}
+                          isSendBusy={sending}
+                          sendDisabledReason={canSend || !hasContent ? null : sendDisabledReason}
+                          isEnvironmentUnavailable={false}
+                          isPreparingWorktree={false}
+                          hasSendableContent={hasContent && canSend}
+                          onSubmitMessage={submit}
+                          onPreviousPendingQuestion={() => {}}
+                          onInterrupt={() => {}}
+                        >
+                          <TextFieldSpeechControls
+                            speech={speech}
+                            disabled={props.disabled || sending}
+                          />
+                        </ComposerPrimaryActions>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </ComposerSurface.Main>
+                </ComposerSurface.Main>
+              </div>
             </div>
-          </div>
-        </ComposerSurface.Host>
-      </ComposerSurface.Shell>
-      {shownError === null ? (
-        <GroupRecipientsLine
-          environmentId={props.environmentId}
-          text={prompt.value}
-          members={props.members}
-          lead={lead}
-          projects={projectRefs}
-          projectId={props.projectId}
-          chat={props.chat}
-        />
-      ) : (
-        <p
-          role="alert"
-          data-testid="group-composer-alert"
-          className="min-h-4 px-1 text-xs text-destructive-foreground"
-        >
-          {shownError}
-        </p>
-      )}
+          </ComposerSurface.Host>
+        </ComposerSurface.Shell>
+        {shownError === null ? (
+          <GroupRecipientsLine
+            environmentId={props.environmentId}
+            text={prompt.value}
+            members={props.members}
+            lead={lead}
+            projects={projectRefs}
+            projectId={props.projectId}
+            chat={props.chat}
+          />
+        ) : (
+          <p
+            role="alert"
+            data-testid="group-composer-alert"
+            className="min-h-4 px-1 text-xs text-destructive-foreground"
+          >
+            {shownError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -320,12 +320,47 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * A group of assistants that may message each other in any direction. The optional lead only
  * routes a group request that mentions nobody; it gains no permission.
  */
+/**
+ * Why a request waits on the user: a member's open wait (an approval, a question, a decision), a
+ * task paused without the user asking, a failed task, or the lead asking which project. A reason
+ * from a newer server reads as `paused`.
+ */
+export const AssistantTeamChatWaitingReason = Schema.Literals([
+  "wait",
+  "paused",
+  "failed",
+  "project",
+]);
+export type AssistantTeamChatWaitingReason = typeof AssistantTeamChatWaitingReason.Type;
+
+export const ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS = 80;
+
+/** The oldest request of a tab that waits on the user, so an indicator leads to it. */
+export const AssistantTeamChatWaitingRequest = Schema.Struct({
+  /** The request's first message id (an `AssistantGroupMessageId`). */
+  requestId: TrimmedNonEmptyString,
+  title: Schema.String,
+  reason: AssistantTeamChatWaitingReason.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("paused" as const)),
+  ),
+  /** For `paused` and `failed`: the task's own reason, such as `routing_failed`; absent when none. */
+  taskReason: Schema.optionalKey(Schema.String),
+  /** The member whose wait or task it is; null for the lead's project question. */
+  assistantId: Schema.NullOr(AssistantId),
+});
+export type AssistantTeamChatWaitingRequest = typeof AssistantTeamChatWaitingRequest.Type;
+
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
 export const AssistantTeamChatScope = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   unreadCount: Schema.Int,
-  /** An open wait on the user, or the lead asking which project, in this tab. */
+  /**
+   * A request of this tab waits on the user: an open wait, a task paused without the user asking
+   * or a failed root task (after the newest boundary), or the lead asking which project.
+   */
   waiting: Schema.Boolean,
+  /** The oldest such request, while `waiting`; absent from older servers. */
+  waitingRequest: Schema.optionalKey(AssistantTeamChatWaitingRequest),
   /** The tab's read position: its own, else the group's. */
   readSeq: Schema.Int,
   /** The project's title, kept after it is deleted; absent for General and unknown projects. */
@@ -357,6 +392,8 @@ export const AssistantTeamChat = Schema.Struct({
   working: Schema.Boolean,
   /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
   runningCount: Schema.optionalKey(Schema.Int),
+  /** Members with a task running now; absent from older servers. */
+  runningMemberIds: Schema.optionalKey(Schema.Array(AssistantId)),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
   /**
@@ -408,6 +445,10 @@ export function assistantGroupFinishedScopes(
   return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
 }
 
+/** `requests` keeps each request in its own block; `continuous` reads the chat as one feed. */
+export const AssistantGroupConversationMode = Schema.Literals(["requests", "continuous"]);
+export type AssistantGroupConversationMode = typeof AssistantGroupConversationMode.Type;
+
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
   name: AssistantTeamName,
@@ -422,6 +463,8 @@ export const AssistantTeam = Schema.Struct({
   memories: Schema.optionalKey(AssistantTeamMemories),
   /** The model a group request starts on, below the project's own default. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Absent from older servers, which have only `requests`. */
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Projects every member may work in, on top of its own; absent from older servers. */
   projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
@@ -469,6 +512,8 @@ export const AssistantTask = Schema.Struct({
   createdAt: IsoDateTime,
   /** Hidden from the lists once set; the thread itself is untouched. Absent from older servers. */
   dismissedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The assistant conversation that launched it. Absent from older servers, null on older rows. */
+  sourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
 });
 export type AssistantTask = typeof AssistantTask.Type;
 
@@ -742,6 +787,7 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   memories: Schema.optional(AssistantTeamMemories),
   /** Null clears it. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  conversationMode: Schema.optionalKey(AssistantGroupConversationMode),
   /** Replaces the group's projects; the two lists below then apply to it, removals last. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
   addProjectIds: Schema.optional(Schema.Array(ProjectId)),

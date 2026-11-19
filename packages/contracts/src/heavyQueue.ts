@@ -155,6 +155,9 @@ export const HeavyRunnerLinux = Schema.Struct({
   online: Schema.NullOr(Schema.Boolean),
   slots: Schema.Int,
   running: Schema.Int,
+  /** Busy share of its CPU, 0–100, as the Mac's; absent from servers before it was measured. */
+  cpuPercent: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  /** The one-minute load: a hint only, since it counts waiting tasks, not CPU in use. */
   load1: Schema.NullOr(Schema.Number),
   cpuCount: Schema.NullOr(Schema.Int),
   availableMemoryBytes: Schema.NullOr(Schema.Number),
@@ -290,7 +293,7 @@ export const HeavyQueueState = Schema.Struct({
   headPatienceMinutes: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
   ),
-  /** Why a waiting entry is not starting, by entry id. */
+  /** Why a waiting entry is not starting, or why a running one runs on this Mac, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -394,6 +397,43 @@ export const HeavyQueueRouteAllInput = Schema.Struct({ runner: HeavyRunner });
 export type HeavyQueueRouteAllInput = typeof HeavyQueueRouteAllInput.Type;
 export const HeavyQueueRouteAllResult = Schema.Struct({ moved: Schema.Array(Schema.String) });
 export type HeavyQueueRouteAllResult = typeof HeavyQueueRouteAllResult.Type;
+
+/**
+ * What route memory learned: Linux failed `key` (program, package folder, fault kind) for its
+ * environment `faults` times; once `learned`, it runs on this Mac until `expiresAt`.
+ */
+export const HeavyLearnedRoute = Schema.Struct({
+  key: Schema.String,
+  kind: Schema.String,
+  faults: Schema.Int,
+  /** Faults it takes to learn the route, from the Runner settings that apply. */
+  learnAfter: Schema.Int,
+  learned: Schema.Boolean,
+  /** The output line that showed the last fault. */
+  line: Schema.String,
+  lastFaultAt: Schema.String,
+  expiresAt: Schema.String,
+});
+export type HeavyLearnedRoute = typeof HeavyLearnedRoute.Type;
+
+/** `cwd` picks the project whose Runner settings (memory days, faults to learn) apply. */
+export const HeavyQueueListRoutesInput = Schema.Struct({ cwd: Schema.optionalKey(Schema.String) });
+export type HeavyQueueListRoutesInput = typeof HeavyQueueListRoutesInput.Type;
+/** `warning`: routes.json was unreadable, so it was moved aside and memory started over. */
+export const HeavyQueueListRoutesResult = Schema.Struct({
+  routes: Schema.Array(HeavyLearnedRoute),
+  warning: Schema.optionalKey(Schema.String),
+});
+export type HeavyQueueListRoutesResult = typeof HeavyQueueListRoutesResult.Type;
+
+/** `key` from the list, or `all`; forgetting one already gone removes 0. */
+export const HeavyQueueForgetRoutesInput = Schema.Struct({ key: Schema.NonEmptyString });
+export type HeavyQueueForgetRoutesInput = typeof HeavyQueueForgetRoutesInput.Type;
+export const HeavyQueueForgetRoutesResult = Schema.Struct({
+  removed: Schema.Int,
+  warning: Schema.optionalKey(Schema.String),
+});
+export type HeavyQueueForgetRoutesResult = typeof HeavyQueueForgetRoutesResult.Type;
 
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,

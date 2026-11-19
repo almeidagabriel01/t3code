@@ -51,13 +51,18 @@ import {
   RunnerHost,
   RunnerLinuxSlots,
   RunnerMacFirstAfter,
+  RunnerRouteMemoryDays,
+  RunnerRouteLearnAfter,
+  RunnerBringBackMaxMB,
   RunnerOfflineAfterFailures,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
   RunnerStopWaitSeconds,
   RunnerLinuxMemoryFloorPercent,
   RunnerLinuxCpuCeilingPercent,
+  RunnerLinuxEvictionsBeforeAlone,
   RunnerUnavailablePolicy,
+  RunnerLinuxFullPolicy,
   RunnerWhere,
 } from "./runner.ts";
 import { ProviderBudget, UsageLimitAlerts, UsageLimitAlertsPatch } from "./usage.ts";
@@ -1391,6 +1396,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerEnabled",
   "runnerWhere",
   "runnerUnavailable",
+  "runnerLinuxFull",
   "runnerAskMinutes",
   "runnerDeadlineAction",
   "runnerDropped",
@@ -1399,6 +1405,11 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerMacFirstAfter",
   "runnerLinuxEverything",
   "runnerBringBack",
+  "runnerRouteMemoryDays",
+  "runnerRouteLearnAfter",
+  "runnerBringBackExclude",
+  "runnerBringBackMaxMB",
+  "runnerMacTools",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1463,6 +1474,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  // A value this build does not know reads as unset, so the machine's choice applies.
+  runnerLinuxFull: ForwardCompatibleOptional(RunnerLinuxFullPolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
@@ -1471,6 +1484,11 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
+  runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerRouteLearnAfter: Schema.optionalKey(RunnerRouteLearnAfter),
+  runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.optionalKey(RunnerPatterns),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1757,6 +1775,10 @@ export const ServerSettings = Schema.Struct({
   runnerUnavailable: RunnerUnavailablePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
   ),
+  runnerLinuxFull: RunnerLinuxFullPolicy.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome(RUNNER_DEFAULTS.runnerLinuxFull)),
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxFull)),
+  ),
   runnerAskMinutes: RunnerAskMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerAskMinutes)),
   ),
@@ -1781,6 +1803,21 @@ export const ServerSettings = Schema.Struct({
   runnerBringBack: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBack)),
   ),
+  runnerRouteMemoryDays: RunnerRouteMemoryDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerRouteLearnAfter: RunnerRouteLearnAfter.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteLearnAfter)),
+  ),
+  runnerBringBackExclude: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),
+  ),
+  runnerBringBackMaxMB: RunnerBringBackMaxMB.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
+  ),
+  runnerMacTools: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacTools)),
+  ),
   runnerHost: RunnerHost.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
   ),
@@ -1804,6 +1841,9 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerLinuxCpuCeilingPercent: RunnerLinuxCpuCeilingPercent.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent)),
+  ),
+  runnerLinuxEvictionsBeforeAlone: RunnerLinuxEvictionsBeforeAlone.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone)),
   ),
   /** Which heavy job notices clients get: problems, machine changes, or none. */
   heavyNotices: HeavyNoticesMode.pipe(Schema.withDecodingDefault(Effect.succeed("unexpected"))),
@@ -2319,6 +2359,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerLinuxFull: Schema.optionalKey(RunnerLinuxFullPolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
@@ -2327,6 +2368,11 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.optionalKey(Schema.Boolean),
+  runnerRouteMemoryDays: Schema.optionalKey(RunnerRouteMemoryDays),
+  runnerRouteLearnAfter: Schema.optionalKey(RunnerRouteLearnAfter),
+  runnerBringBackExclude: Schema.optionalKey(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.optionalKey(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.optionalKey(RunnerPatterns),
   runnerHost: Schema.optionalKey(RunnerHost),
   runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
   runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),
@@ -2335,6 +2381,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
   runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
   runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
+  runnerLinuxEvictionsBeforeAlone: Schema.optionalKey(RunnerLinuxEvictionsBeforeAlone),
   heavyNotices: Schema.optionalKey(HeavyNoticesMode),
   heavySlowAgentJobs: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),

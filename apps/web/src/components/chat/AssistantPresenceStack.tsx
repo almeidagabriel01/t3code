@@ -5,7 +5,6 @@ import {
   assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
-  type AssistantPresenceSection,
   type AssistantSender,
 } from "@t3tools/client-runtime/assistantPresence";
 import type { AssistantFace } from "@t3tools/client-runtime/assistantRobot";
@@ -74,7 +73,8 @@ function AssistantPresenceRow(props: {
   readonly threadKey: string;
   readonly sender: AssistantSender;
   readonly face: AssistantFace;
-  readonly section: AssistantPresenceSection;
+  /** Its status word from the shared status: the section's title, or what failed or holds it. */
+  readonly label: string;
   /** Set on the row of the assistant that launched this thread as a task. */
   readonly task: {
     readonly threadId: ThreadId;
@@ -83,7 +83,7 @@ function AssistantPresenceRow(props: {
   } | null;
   readonly onDone: () => void;
 }) {
-  const { sender, environmentId, task, section } = props;
+  const { sender, environmentId, task, label } = props;
   const { assistant } = sender;
   const actions = useAssistantActions(environmentId);
   const flows = useAssistantFlows(environmentId);
@@ -227,7 +227,7 @@ function AssistantPresenceRow(props: {
         data-assistant-presence-status
         className="truncate ps-7 text-xs whitespace-nowrap text-muted-foreground"
       >
-        {assistantPresenceStatus(section, sender, assistant?.askBeforeActing === true)}
+        {assistantPresenceStatus(label, sender, assistant?.askBeforeActing === true)}
       </p>
     </div>
   );
@@ -303,7 +303,7 @@ export function AssistantPresenceStack(props: {
       threadKey={threadKey}
       sender={sender}
       face={faceOf(sender)}
-      section={sectionOf(sender)}
+      label={looks.get(sender.assistantId)?.label ?? "Idle"}
       task={taskOf(sender)}
       onDone={() => setOpen(false)}
     />

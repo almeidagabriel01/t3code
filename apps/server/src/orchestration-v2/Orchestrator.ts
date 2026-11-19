@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
   OrchestrationV2AppThreadLineage,
@@ -89,6 +90,7 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
+  sessionWorkWakesAgent,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -330,6 +332,26 @@ export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<O
   }
 }
 
+const AWAITING_BACKGROUND_WORK_REFUSALS = {
+  settle: "be settled",
+  worktree: "move to another worktree",
+} as const;
+
+/** Detaching would end the process running work the agent waits to be woken by. */
+export class OrchestratorThreadAwaitingBackgroundWorkError extends Schema.TaggedError<OrchestratorThreadAwaitingBackgroundWorkError>()(
+  "OrchestratorThreadAwaitingBackgroundWorkError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    threadTitle: Schema.String,
+    refused: Schema.Literals(["settle", "worktree"]),
+  },
+) {
+  override get message(): string {
+    return `"${this.threadTitle}" is waiting on background work, so it can't ${AWAITING_BACKGROUND_WORK_REFUSALS[this.refused]} yet. Let the work finish, press Stop to end it, or archive the thread.`;
+  }
+}
+
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
@@ -395,6 +417,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorProviderSelectionBusyError,
+  OrchestratorThreadAwaitingBackgroundWorkError,
   OrchestratorRuntimeModeAboveCeilingError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -526,6 +549,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, OrchestratorV2Error>;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
@@ -614,6 +640,10 @@ export function threadHasUnfinishedWork(records: {
     ) || records.runtimeRequests.some((request) => request.status === "pending")
   );
 }
+
+// Visits only move forward, so a late or repeated write never rewinds read state.
+const advanceVisit = (lastVisitedAt: DateTime.Utc | null, visitedAt: DateTime.Utc) =>
+  lastVisitedAt === null ? visitedAt : DateTime.max(lastVisitedAt, visitedAt);
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
@@ -3455,9 +3485,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} visit time ${command.visitedAt} is not a valid timestamp.`,
       });
     }
-    const movesForward =
-      thread.lastVisitedAt === null ||
-      DateTime.toEpochMillis(visitedAt.value) > DateTime.toEpochMillis(thread.lastVisitedAt);
     const occurredAt = yield* DateTime.now;
     // Opens are timed by the server clock so devices with skewed clocks agree.
     const opens = command.opened
@@ -3479,7 +3506,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt,
       payload: {
         ...thread,
-        ...(movesForward ? { lastVisitedAt: visitedAt.value } : {}),
+        lastVisitedAt: advanceVisit(thread.lastVisitedAt, visitedAt.value),
         ...(opens ? { opens } : {}),
       },
     });
@@ -4122,16 +4149,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
+    const latestRunCompletedAt =
+      command.type === "thread.mark-unread" || command.type === "thread.settle"
+        ? ((yield* projectionStore
+            .getThreadShell(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            ))?.latestRunCompletedAt ?? null)
+        : null;
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
-      const shell = yield* projectionStore
-        .getThreadShell(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      const latestRunCompletedAt = shell?.latestRunCompletedAt ?? null;
       if (latestRunCompletedAt === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4158,10 +4187,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
+          const unchanged =
+            alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null;
+          // Settling reads the thread wherever it comes from, so it never returns unread.
           return {
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            lastVisitedAt: unchanged
+              ? thread.lastVisitedAt
+              : advanceVisit(
+                  thread.lastVisitedAt,
+                  latestRunCompletedAt === null ? now : DateTime.max(now, latestRunCompletedAt),
+                ),
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
@@ -4169,10 +4207,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
-            updatedAt:
-              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
-                ? thread.updatedAt
-                : now,
+            updatedAt: unchanged ? thread.updatedAt : now,
           };
         }
         case "thread.unsettle": {
@@ -4826,6 +4861,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
+      // Detaching ends the process, and with it work the agent is still waiting to be woken by.
+      // Only archive closes it anyway; release then drops the roster so the thread never waits.
+      // Model and runtime mode changes already refused any session work above.
+      if (
+        (command.type === "thread.settle" || command.type === "thread.metadata.update") &&
+        liveSessions.length > 0 &&
+        (
+          (yield* projectionStore
+            .getThreadShell(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            ))?.pendingBackgroundTasks ?? []
+        ).some(sessionWorkWakesAgent)
+      ) {
+        return yield* new OrchestratorThreadAwaitingBackgroundWorkError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          threadTitle: thread.title,
+          refused: command.type === "thread.settle" ? "settle" : "worktree",
+        });
+      }
       yield* Effect.forEach(
         liveSessions,
         (session) =>
@@ -12448,6 +12506,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Run ${command.runId} has no active attempt to interrupt.`,
         });
       }
+      // A running run's start may already have a native turn this projection cannot see yet.
+      // A starting one may too: its running write can land while Stop reads, so the
+      // post-commit lookup below runs for every attempt; it is a no-op without a turn.
+      const providerMayHaveStarted = run.status === "running";
       const interruptResultItem: OrchestrationV2TurnItem = {
         id: idAllocator.derive.runSignalTurnItem({
           runId: run.id,
@@ -12467,7 +12529,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_result",
-        message: "Run interrupted before provider start",
+        message: providerMayHaveStarted
+          ? (command.reason ?? RunExecutionService.USER_STOP_REASON)
+          : "Run interrupted before provider start",
       };
       yield* emitEvent({
         type: "turn-item.updated",
@@ -12580,11 +12644,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
+      if (providerThread.providerSessionId !== null) {
+        otherProviderInterrupts.push({
+          id: `effect:${command.commandId}:run-attempt.interrupt:${attempt.id}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "run-attempt.interrupt",
+            providerSessionId: providerThread.providerSessionId,
+            providerThreadId: providerThread.id,
+            attemptId: attempt.id,
+          },
+        });
+      }
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
       return {
-        effectTypes: ["provider-turn.start", "provider-turn.restart"],
-        reason: `Run ${run.id} was interrupted before its provider turn started.`,
+        // Interrupting a start inside the adapter can leave its turn slot claimed; the start
+        // stops on its own once it sees the run ended.
+        effectTypes: providerMayHaveStarted
+          ? ["provider-turn.restart"]
+          : ["provider-turn.start", "provider-turn.restart"],
+        reason: providerMayHaveStarted
+          ? `Run ${run.id} was interrupted while its provider turn was starting.`
+          : `Run ${run.id} was interrupted before its provider turn started.`,
       } satisfies {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
@@ -15198,6 +15281,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
       return projectionStore.getThreadTitles(threadIds).pipe(Effect.mapError(shellProjectionError));
+    }),
+    getThreadContextUsage: Effect.fn("OrchestratorV2.getThreadContextUsage")(function (threadId) {
+      return projectionStore
+        .getThreadContextUsage(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getThreadEventSequence: Effect.fn("OrchestratorV2.getThreadEventSequence")(function (threadId) {
       return eventSink

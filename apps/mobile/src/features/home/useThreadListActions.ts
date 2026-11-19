@@ -15,7 +15,6 @@ import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThre
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { threadOwnershipAtom } from "../../state/assistants";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -613,7 +612,6 @@ export function useThreadListActions(
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
       settlementEnvironmentIds: new Set(configs.keys()),
       snoozeEnvironmentIds: new Set(configs.keys()),
-      hiddenThreadKeys: appAtomRegistry.get(threadOwnershipAtom).ownedThreadKeys,
     });
     const assignments = createThreadMovePlanner({
       allThreads: shells,

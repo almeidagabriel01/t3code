@@ -5,9 +5,9 @@ export const CHECKPOINT_PAGE_OVERHEAD = 4096;
 export const checkpointBound = (bytes: number, rows: number) =>
   bytes + Math.max(1, rows) * CHECKPOINT_PAGE_OVERHEAD;
 
-// Only fields not yet materialized retain the legacy worst-case escape/core reserve.
-// Current encoded records are literal objects and must NEVER be multiplied by six.
+// `reserve_bytes` is already the literal encoded size the forget admission may write
+// (MemoryQuotaService caps its records by it), so it is never multiplied by six.
 export const futureForgetReserve = (bytes: number, keys: number) => ({
-  bytes: bytes * 6 + 8 * 8192,
+  bytes: bytes + 8 * 8192,
   rows: keys + 8,
 });

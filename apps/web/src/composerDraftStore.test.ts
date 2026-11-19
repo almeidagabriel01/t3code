@@ -10,6 +10,7 @@ import {
 import { makeThreadProjectionFixture } from "./test-fixtures";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { assistantGroupDraftThreadId } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -18,6 +19,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
+  AssistantTeamId,
   defaultInstanceIdForDriver,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -88,6 +90,7 @@ import {
   subscribeDraftThreadPromotion,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  composerDraftHasUserContent,
   composerFileNeedsReattach,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
@@ -357,6 +360,36 @@ describe("composerDraftStore unsent draft marker", () => {
     expect(partializeComposerDraftStoreState(useComposerDraftStore.getState())).not.toHaveProperty(
       "rewindingThreadKeys",
     );
+  });
+
+  it.each([
+    ["thread", ThreadId.make("thread-unsent-marker")],
+    ["assistant chat", ThreadId.make("assistant:ada:g-0123456789abcdef")],
+    ["group", assistantGroupDraftThreadId(AssistantTeamId.make("team-1"))],
+  ])("keeps a %s draft through a reload and drops it once sent or emptied", (_kind, id) => {
+    const ref = scopeThreadRef(TEST_ENVIRONMENT_ID, id);
+    const hasDraft = () =>
+      composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(ref));
+    const store = useComposerDraftStore.getState();
+
+    store.setPrompt(ref, "   ");
+    expect(hasDraft()).toBe(false);
+
+    store.setPrompt(ref, "half a thought");
+    expect(hasDraft()).toBe(true);
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    resetComposerDraftStore();
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    useComposerDraftStore.setState(merge(persisted, useComposerDraftStore.getState()));
+    expect(useComposerDraftStore.getState().getComposerDraft(ref)?.prompt).toBe("half a thought");
+
+    useComposerDraftStore.getState().setPrompt(ref, "");
+    expect(hasDraft()).toBe(false);
+    expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
+
+    useComposerDraftStore.getState().setPrompt(ref, "sent next");
+    useComposerDraftStore.getState().clearComposerContent(ref);
+    expect(hasDraft()).toBe(false);
   });
 });
 

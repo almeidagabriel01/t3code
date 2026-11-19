@@ -263,7 +263,10 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { AssistantSidebarSection } from "./assistants/AssistantSidebarSection";
+import {
+  AssistantSidebarSection,
+  type GroupChatTarget,
+} from "./assistants/AssistantSidebarSection";
 import { useAssistantSidebarModel } from "./assistants/useAssistantSidebarModel";
 import { setTaskDismissed } from "./assistants/useAssistantFlows";
 import { readAssistantTask } from "../state/assistants";
@@ -399,8 +402,6 @@ function useSidebarThreads(input: {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly projectGroups: readonly SidebarProjectSnapshot[];
-  /** Threads an assistant owns; Teams draws them, so the project lists leave them out. */
-  readonly ownedThreadKeys: ReadonlySet<string>;
 }) {
   const {
     projectScopeKey,
@@ -412,7 +413,6 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups,
-    ownedThreadKeys,
   } = input;
   const threadOrder = useClientSettings((s) => s.sidebarThreadOrder);
   const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
@@ -456,17 +456,13 @@ function useSidebarThreads(input: {
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
-  // Search still lists owned threads; only the project lists, and what numbers them, drop them.
-  const inProjects = (thread: EnvironmentThreadShell) =>
-    !ownedThreadKeys.has(threadShellKey(thread));
-  const projectSettledThreads = settledThreads.filter(inProjects);
   const settledCount =
-    projectSettledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
   const projectLayout = useSidebarProjectLayout({
     projectGroups,
-    pinnedThreads: pinnedThreads.filter(inProjects),
-    unsettledThreads: [...activeThreads, ...snoozedThreads].filter(inProjects),
-    settledThreads: projectSettledThreads.filter(
+    pinnedThreads,
+    unsettledThreads: [...activeThreads, ...snoozedThreads],
+    settledThreads: settledThreads.filter(
       (thread) =>
         olderSettledShelf.isListed(thread) || threadShellKey(thread) === routeRowThreadKey,
     ),
@@ -862,6 +858,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     readonly activeSection: SidebarSection;
     readonly occurredAt: string;
     readonly activationY: number | null;
+    /** Screen pixels per CSS pixel of the list, measured at pickup. */
+    readonly listScale: number;
     readonly targetSection: SidebarSection | null;
     readonly contextDrag: boolean;
   } | null>(null);
@@ -938,6 +936,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const zones = useSidebarZones();
+  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
@@ -949,11 +948,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    // An owned thread is drawn under its assistant, so it never widens the project scope.
-    findThread: (key) =>
-      zones.ownedThreadKeys.has(key)
-        ? undefined
-        : threads.find((candidate) => threadShellKey(candidate) === key),
+    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    listedInTeams: (thread) => teamsShown && zones.ownerOf(thread).kind === "assistant",
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1098,7 +1094,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups: scopedProjectGroups.length === 0 ? projectGroups : scopedProjectGroups,
-    ownedThreadKeys: zones.ownedThreadKeys,
   });
   const subagentChildrenByParent = activeSubagentChildrenByParent(threads);
 
@@ -1214,13 +1209,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
-  const navigateToGroup = (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
+  const navigateToGroup = (
+    environmentId: EnvironmentId,
+    teamId: AssistantTeamId,
+    target?: GroupChatTarget | null,
+  ) => {
     if (isMobile) {
       setOpenMobile(false);
     }
     return router.navigate({
       to: "/group/$environmentId/$teamId",
       params: { environmentId, teamId },
+      search: target == null ? {} : { tab: target.tab, request: target.requestId },
     });
   };
   // The zones' rows memoize on their props; a handler rebuilt each render would redraw them all.
@@ -1228,8 +1228,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     void navigateToThread(threadRef);
   });
   const openZoneGroup = useStableCallback(
-    (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
-      void navigateToGroup(environmentId, teamId);
+    (environmentId: EnvironmentId, teamId: AssistantTeamId, target?: GroupChatTarget | null) => {
+      void navigateToGroup(environmentId, teamId, target);
     },
   );
   const projectOfZone = useStableCallback((environmentId: EnvironmentId, projectId: ProjectId) =>
@@ -1781,11 +1781,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       `[data-testid="sidebar-pinned-header"][data-sidebar-scope="${CSS.escape(projectKey)}"]`,
     );
     const list = header?.closest("ul");
+    let listScale = 1;
     if (list && header) {
       const listRect = list.getBoundingClientRect();
-      const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+      if (list.offsetWidth > 0) listScale = listRect.width / list.offsetWidth;
       dragLabelOffsetRef.current =
-        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * listScale;
     } else {
       dragLabelOffsetRef.current = 0;
     }
@@ -1798,6 +1799,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       occurredAt: nowIso(),
       activationY:
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
+      listScale,
     });
   };
   const handleThreadDragOver = (event: DragOverEvent) => {
@@ -1842,7 +1844,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: dragItems,
     enabled: !isContextDrag,
-    boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+    boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT * (dragState?.listScale ?? 1),
     settledOrder: draggedSettledOrder,
     ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
     settledExpanded: dragEntry?.settledExpanded ?? false,

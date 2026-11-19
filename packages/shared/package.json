@@ -219,6 +219,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./assistantGroupThreads": {
+      "types": "./src/assistantGroupThreads.ts",
+      "import": "./src/assistantGroupThreads.ts"
+    },
     "./telemetryId": {
       "types": "./src/telemetryId.ts",
       "import": "./src/telemetryId.ts"

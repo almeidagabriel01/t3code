@@ -24,10 +24,17 @@ import { PresentationSource } from "./ui/NativePresentation";
 import type { FilePreviewSource } from "./ui/FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ComposerAttachmentUploadState } from "../lib/composerAttachmentUploadQueue";
 import {
   retryComposerAttachmentUpload,
   useComposerAttachmentUploadState,
 } from "../state/composer-attachment-uploads";
+
+/** Uploads a strip's owner runs itself, in place of the draft's background queue. */
+export interface ComposerAttachmentOwnUploads {
+  readonly stateOf: (attachmentId: string) => ComposerAttachmentUploadState | undefined;
+  readonly retry: (attachmentId: string) => void;
+}
 
 export interface ComposerAttachmentStripProps {
   readonly environmentId?: EnvironmentId;
@@ -42,6 +49,7 @@ export interface ComposerAttachmentStripProps {
   readonly imageSize?: number;
   readonly imageBorderRadius?: number;
   readonly removeButtonPlacement?: "overlay" | "gutter";
+  readonly ownUploads?: ComposerAttachmentOwnUploads;
 }
 
 type ComposerAttachmentThumbnailProps = {
@@ -56,10 +64,17 @@ type ComposerAttachmentThumbnailProps = {
     sourceIdentifier: string,
   ) => void;
   readonly onPressDocument?: (attachment: DraftComposerFileAttachment) => void;
+  readonly ownUploads?: ComposerAttachmentOwnUploads;
 };
 
 export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
-  const upload = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
+  const queued = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
+  const upload = props.ownUploads ? props.ownUploads.stateOf(props.attachment.id) : queued;
+  const retry = () =>
+    props.ownUploads
+      ? props.ownUploads.retry(props.attachment.id)
+      : props.environmentId &&
+        retryComposerAttachmentUpload(props.environmentId, props.attachment.id);
   return (
     <View style={{ width: props.size, height: props.size }}>
       <ComposerAttachmentContent {...props} />
@@ -73,10 +88,7 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
           }
           accessibilityHint={upload.status === "failed" ? upload.reason : undefined}
           disabled={upload.status !== "failed"}
-          onPress={() =>
-            props.environmentId &&
-            retryComposerAttachmentUpload(props.environmentId, props.attachment.id)
-          }
+          onPress={retry}
           className="absolute bottom-0.5 left-0.5 flex-row items-center gap-0.5 rounded-full bg-black/70 px-1 py-0.5"
         >
           <SymbolView
@@ -306,6 +318,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 onPressPreview={props.onPressPreview}
                 onPressVideo={props.onPressVideo}
                 onPressDocument={props.onPressDocument}
+                ownUploads={props.ownUploads}
               />
               <Pressable
                 accessibilityRole="button"

@@ -1,4 +1,5 @@
 import type { HeavyQueueEntry, HeavyRunnerLinux } from "@t3tools/contracts";
+import { RunnerLinuxFullPolicy } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -12,6 +13,8 @@ import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   runnerModeFieldApplies,
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   runnerWhereLine,
   runnerBadge,
   runnerFieldIdle,
@@ -33,6 +36,7 @@ const linux: HeavyRunnerLinux = {
   online: true,
   slots: 2,
   running: 1,
+  cpuPercent: 12.4,
   load1: 1.234,
   cpuCount: 6,
   availableMemoryBytes: 8.1 * 1024 ** 3,
@@ -124,9 +128,15 @@ describe("the queue × Runner line", () => {
 
 describe("Linux status", () => {
   it.each([
-    [linux, "Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.1 GB free"],
-    [{ ...linux, load1: null, availableMemoryBytes: null }, "Linux online · 1 of 2 running"],
-    [{ ...linux, cpuCount: null }, "Linux online · 1 of 2 running · load 1.2 · 8.1 GB free"],
+    [linux, "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free"],
+    [
+      { ...linux, cpuPercent: null, load1: null, availableMemoryBytes: null },
+      "Linux online · 1 of 2 running",
+    ],
+    [
+      { ...linux, cpuCount: null },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 · 8.1 GB free",
+    ],
     [{ ...linux, online: false, error: "Connection refused" }, "Linux offline: Connection refused"],
     [{ ...linux, online: false }, "Linux offline"],
     [{ ...linux, online: null }, "Checking Linux (pc)…"],
@@ -267,7 +277,7 @@ describe("Runner copy and mode fields", () => {
     [RUNNER_SETTING_COPY.runnerDropped.title, "If a Linux run fails"],
     [
       RUNNER_SETTING_COPY.runnerDropped.description,
-      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
+      "What a job does when the PC drops its run and its retries run out. A command Linux lacks a tool or folder for runs again on this Mac by itself.",
     ],
     [
       RUNNER_SETTING_COPY.runnerWhere.description,
@@ -288,6 +298,10 @@ describe("Runner copy and mode fields", () => {
     ["runnerLinuxEverything", "linux", true, true],
     ["runnerLinuxEverything", null, false, true],
     ["runnerLinuxEverything", "macFirst", false, false],
+    ["runnerLinuxFull", "linux", true, true],
+    ["runnerLinuxFull", null, false, true],
+    ["runnerLinuxFull", "automatic", false, false],
+    ["runnerLinuxFull", "mac", false, false],
     ["runnerBringBack", "mac", false, true],
     ["runnerLinuxCommands", "linux", false, true],
     ["runnerLinuxCommands", "linux", true, false],
@@ -305,6 +319,13 @@ describe("Runner copy and mode fields", () => {
     [null, true, RUNNER_SETTING_COPY.runnerWhere.description],
   ] as const)("the Where line under %s, Everything %s", (where, everything, line) => {
     expect(runnerWhereLine(where, everything)).toBe(line);
+  });
+});
+
+describe("When Linux is full", () => {
+  it("offers every policy in the order the choice shows them, each with a line", () => {
+    expect(Object.keys(RUNNER_LINUX_FULL_LABEL)).toEqual(RunnerLinuxFullPolicy.literals);
+    expect(Object.keys(RUNNER_LINUX_FULL_DESCRIPTION)).toEqual(RunnerLinuxFullPolicy.literals);
   });
 });
 

@@ -2061,7 +2061,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* resolveRuntimeRequest(pending.nativeRequestId, "cancelled");
             }
           }
-          yield* emitProviderTurn(state, turn, status, completedAt);
+          // The server starts the next turn on the terminal event, so settle this turn's thread and
+          // session state and free the slot first.
           const threadDisposition = terminal?.threadDisposition ?? "reusable";
           yield* updateProviderThread(state, {
             status: turn.isRoot ? "active" : threadDisposition === "broken" ? "error" : "idle",
@@ -2070,7 +2071,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ? state.providerThread.nativeConversationHeadRef
                 : providerRef(turn.nativeUserMessageId, "weak"),
           });
+          if (turn.isRoot) {
+            const anotherTurnIsActive = Array.from(threads.values()).some(
+              (candidate) => candidate.activeTurn !== turn && candidate.activeTurn?.isRoot === true,
+            );
+            yield* updateProviderSession(
+              anotherTurnIsActive ? "running" : status === "failed" ? "error" : "ready",
+              status === "failed" ? sessionEntity.lastError : null,
+            );
+          }
           state.activeTurn = null;
+          yield* emitProviderTurn(state, turn, status, completedAt);
           if (!turn.isRoot) {
             yield* emitProviderEvent({
               type: "node.updated",
@@ -2095,13 +2106,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             });
             return;
           }
-          const anotherTurnIsActive = Array.from(threads.values()).some(
-            (candidate) => candidate.activeTurn?.isRoot === true,
-          );
-          yield* updateProviderSession(
-            anotherTurnIsActive ? "running" : status === "failed" ? "error" : "ready",
-            status === "failed" ? sessionEntity.lastError : null,
-          );
           yield* emitProviderEvent(
             status === "failed"
               ? {

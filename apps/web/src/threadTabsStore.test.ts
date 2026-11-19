@@ -4,10 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { migratePersistedRightPanelState, useRightPanelStore } from "./rightPanelStore";
 import {
+  applyThreadTabDrop,
   closeThreadTab,
   commitRouteTab,
   dropThreadTab,
   focusThreadTabGroup,
+  joinThreadTabGroups,
   layoutGeometry,
   mergeThreadTabGroups,
   parsePersistedWorkspace,
@@ -563,6 +565,31 @@ describe("threadTabRow", () => {
     const t = scenario();
     steps(t);
     expect(t.row()).toEqual(expected);
+  });
+
+  it("splits a palette pick beside the route and joins it back, files kept with threads", () => {
+    useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+    useThreadTabsStore.setState({ byProject: { p: one([key("a")]) }, visibleKey: null });
+    panels().openFile(A, "x.ts");
+    panels().openFile(B, "b.ts");
+    const workspace = () => useThreadTabsStore.getState().byProject.p ?? null;
+    const rows = () =>
+      workspace()?.groups.map((group) => show({ ...workspace()!, groups: [group] }));
+
+    // A thread cannot open beside itself.
+    expect(applyThreadTabDrop("p", key("a"), key("a"), { beside: true })).toBe(false);
+    expect(applyThreadTabDrop("p", key("a"), key("b"), { beside: true })).toBe(true);
+    // The palette then lands on the pick's chat, even over a file it left shown.
+    panels().showChat(B);
+    expect(workspace()?.layout).toMatchObject({ type: "split", direction: "horizontal" });
+    expect(rows()).toEqual([
+      ["a", "*a/x.ts"],
+      ["*b", "b/b.ts"],
+    ]);
+
+    joinThreadTabGroups("p");
+    expect(workspace()?.layout).toEqual(leaf(workspace()!.groups[0]!.id));
+    expect(rows()).toEqual([["a", "a/x.ts", "*b", "b/b.ts"]]);
   });
 
   it("derives the row from layouts and panels saved before the unified strip", () => {

@@ -1047,12 +1047,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           if (entry.request.providerTurnId !== null) yield* resolvePending(entry, "cancelled");
         turn.providerTurn = { ...turn.providerTurn, status, completedAt };
         lastProviderTurn = turn.providerTurn;
-        yield* emit({
-          type: "provider_turn.updated",
-          driver: MUSE_PROVIDER,
-          threadId: turn.input.threadId,
-          providerTurn: turn.providerTurn,
-        });
         yield* updateThread({
           status: disposition === "broken" ? "error" : "idle",
           ...(!turn.compact && status === "completed"
@@ -1060,7 +1054,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : {}),
         });
         yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
+        // The server starts the next turn on the terminal event, so settle state and free the slot first.
         active = undefined;
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: MUSE_PROVIDER,
+          threadId: turn.input.threadId,
+          providerTurn: turn.providerTurn,
+        });
         if (status === "failed") {
           const usageLimited =
             disposition === "reusable" && (quota !== undefined || isMuseUsageLimitFailure(detail));

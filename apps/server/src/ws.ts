@@ -2102,6 +2102,7 @@ export const layerWsRpc = (
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
+          threadContextUsage: true,
           shellOlderSettled: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -2415,6 +2416,16 @@ export const layerWsRpc = (
           getOrchestrationV2ArchivedShellSnapshot,
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
           readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage]: (input) =>
+          threadManagement.getThreadContextUsage(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load thread context usage",
+                  cause,
+                }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(
             Effect.mapError(
@@ -2655,6 +2666,7 @@ export const layerWsRpc = (
         [WS_METHODS.decisionsAnswer]: (input) =>
           DecisionAttachmentIntake.answerDecision(input).pipe(Effect.provide(intakeContext)),
         [WS_METHODS.decisionsDismiss]: (input) => decisions.dismiss(input.decisionId),
+        [WS_METHODS.decisionsReopen]: (input) => decisions.reopen(input.decisionId),
         [WS_METHODS.computerUsePermissions]: (input) =>
           computerUse.permissions({ automation: input.automation === true }),
         [WS_METHODS.computerUseOpenSettings]: (input) =>
@@ -2743,6 +2755,8 @@ export const layerWsRpc = (
           heavyQueue.route(id, runner, force === true),
         [WS_METHODS.heavyQueueRouteAll]: ({ runner }) =>
           heavyQueue.routeAll(runner).pipe(Effect.map((moved) => ({ moved }))),
+        [WS_METHODS.heavyQueueListRoutes]: ({ cwd }) => heavyQueue.listRoutes(cwd),
+        [WS_METHODS.heavyQueueForgetRoutes]: ({ key }) => heavyQueue.forgetRoutes(key),
         [WS_METHODS.heavyQueueSetPriority]: ({ id, priority }) =>
           heavyQueue.setPriority(id, priority),
         [WS_METHODS.heavyQueueSetClaudeHook]: ({ installed }) =>

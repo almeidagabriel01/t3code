@@ -153,6 +153,17 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+    // The Claude adapter keeps an awaited command listed until its wake turn starts.
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({
+          pendingBackgroundTasks: [
+            { taskId: "build", kind: "command", description: "gradle build", awaited: true },
+          ],
+        }),
+        NOW_MS,
+      ),
+    ).toBe(false);
   });
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {

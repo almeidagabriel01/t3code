@@ -6,9 +6,11 @@ import {
 } from "../projects/archiveProjectMenu";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type {
-  HomeListFilterMenuEnvironment,
-  HomeListFilterMenuProject,
+import {
+  sameNameEnvironmentSubtitle,
+  sameNameMachineLabels,
+  type HomeListFilterMenuEnvironment,
+  type HomeListFilterMenuProject,
 } from "./home-list-filter-menu";
 
 export function ThreadListFilters(props: {
@@ -29,6 +31,8 @@ export function ThreadListFilters(props: {
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
+  const environmentSubtitle = sameNameEnvironmentSubtitle(props.environments);
+  const machineOf = sameNameMachineLabels(props.projects, props.environments);
   const projectActions = {
     openSettings: props.onOpenProjectSettings,
     archive: props.onArchiveProject,
@@ -53,6 +57,7 @@ export function ThreadListFilters(props: {
           ...props.environments.map((environment) => ({
             id: JSON.stringify(environment.environmentId),
             title: environment.label,
+            subtitle: environmentSubtitle(environment),
             state:
               environment.environmentId === props.selectedEnvironmentId
                 ? ("on" as const)
@@ -82,6 +87,7 @@ export function ThreadListFilters(props: {
           ...props.projects.map((project) => ({
             id: JSON.stringify(project.key),
             title: project.needsAttention ? `${project.label} •` : project.label,
+            subtitle: machineOf(project),
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
           ...selectedProjectMenuActions(selectedProject, projectActions),

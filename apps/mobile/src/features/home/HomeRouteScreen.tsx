@@ -120,6 +120,7 @@ export function HomeRouteScreen() {
     Object.values(savedConnectionsById).map((connection) => ({
       environmentId: connection.environmentId,
       label: connection.environmentLabel,
+      displayUrl: connection.displayUrl,
       connectionState: connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
     })),
     Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),

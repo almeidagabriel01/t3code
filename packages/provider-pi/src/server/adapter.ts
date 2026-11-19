@@ -1741,20 +1741,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
           : undefined;
         const failure = interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
-        yield* emit({
-          type: "provider_turn.updated",
-          driver: PI_PROVIDER,
-          threadId: turn.turnInput.threadId,
-          providerTurn: {
-            ...turn.providerTurn,
-            ...(treeRefs === null || treeRefs.nativeTurnRef === undefined
-              ? {}
-              : { nativeTurnRef: treeRefs.nativeTurnRef }),
-            status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
-            completedAt,
-            ...(tokenUsage === undefined ? {} : { tokenUsage }),
-          },
-        });
+        // The server starts the next turn on the turn's end, so the thread and session settle first.
         yield* updateProviderThread(
           state,
           {
@@ -1772,6 +1759,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           failure !== null ? "error" : "ready",
           failure?.message ?? null,
         );
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: PI_PROVIDER,
+          threadId: turn.turnInput.threadId,
+          providerTurn: {
+            ...turn.providerTurn,
+            ...(treeRefs === null || treeRefs.nativeTurnRef === undefined
+              ? {}
+              : { nativeTurnRef: treeRefs.nativeTurnRef }),
+            status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
+            completedAt,
+            ...(tokenUsage === undefined ? {} : { tokenUsage }),
+          },
+        });
         if (failure !== null) {
           const failureItemId = `terminal-failure:${turn.providerTurn.id}`;
           if (turn.activeProviderRetry !== null) {

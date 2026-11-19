@@ -1,12 +1,22 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  MessageId,
+  NodeId,
   ProviderInstanceId,
   ProviderReplayEntry,
   ProviderSessionId,
+  ProviderThreadId,
+  RunAttemptId,
+  RunId,
   ThreadId,
+  type ModelSelection,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,16 +25,19 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as UrlParams from "effect/http/UrlParams";
+import * as Stream from "effect/Stream";
 
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
 import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import {
   OpenCodeReplayController,
@@ -386,3 +399,335 @@ export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHar
     ),
   makeProviderAdapterRegistryLayer: layerRegistry,
 };
+
+export const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
+export const WORK = "/work/opencode2";
+export const instanceId = ProviderInstanceId.make("opencode");
+export const threadId = ThreadId.make("thread:opencode2-adapter");
+
+export const out = (type: string, input?: unknown): ProviderReplayEntry => ({
+  type: "expect_outbound",
+  frame: input === undefined ? { type } : { type, input },
+});
+export const reply = (operation: string, data: unknown): ProviderReplayEntry => ({
+  type: "emit_inbound",
+  frame: { type: "sdk.response", operation, data },
+});
+export const replyData = (operation: string, data: unknown) => reply(operation, { data });
+export const event = (
+  type: string,
+  data: Record<string, unknown>,
+  label?: string,
+  version = 1,
+): ProviderReplayEntry => ({
+  type: "emit_inbound",
+  frame: {
+    type: "sdk.event",
+    event: {
+      id: `evt_${type.replaceAll(".", "")}0000`,
+      created: 1,
+      type,
+      ...(type.startsWith("rpc.") ? { location: { directory: WORK } } : {}),
+      data,
+      durable: { ...durable.durable, version },
+    },
+  },
+  ...(label === undefined ? {} : { label }),
+});
+const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
+
+export const mcpRules = [
+  { action: "t3-code-*", resource: "*", effect: "deny" },
+  { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
+];
+export const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+export const TITLE = "Prime check";
+export const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
+  id: SESSION,
+  title: TITLE,
+  permissions: t3Rules,
+  projectID: "global",
+  model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  time: { created: 1790656601394, updated: 1790656601394 },
+  location: { directory: WORK },
+  ...overrides,
+});
+export const modelCatalog = {
+  location: { directory: WORK },
+  data: [
+    {
+      id: "big-pickle",
+      modelID: "big-pickle",
+      providerID: "opencode",
+      family: "big-pickle",
+      name: "Big Pickle",
+      compatibility: { reasoningField: "reasoning_content" },
+      package: "@opencode/ai/providers/openai-compatible",
+      settings: { apiKey: "public", baseURL: "https://opencode.ai/zen/v1", provider: "opencode" },
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: [],
+      time: { released: 1760659200000 },
+      cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+      status: "active",
+      enabled: true,
+      limit: { context: 200000, input: 160000, output: 32000 },
+    },
+  ],
+};
+
+export const PROMPT_ID = "msg_0eb735d41001NJee1EvVePJAK5";
+export const promptAccepted = replyData("session.prompt", {
+  id: PROMPT_ID,
+  sessionID: SESSION,
+  time: { created: 1790656601410 },
+  type: "user",
+  payload: { text: "hi" },
+  delivery: "steer",
+});
+
+export const emptyShellInventory: ReadonlyArray<ProviderReplayEntry> = [
+  out("shell.list", "<any>"),
+  reply("shell.list", { location: { directory: WORK }, data: [] }),
+];
+
+export const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
+  out("permission.list", { sessionID: SESSION }),
+  replyData("permission.list", []),
+  out("session.form.list", { sessionID: SESSION }),
+  replyData("session.form.list", []),
+];
+
+export const withInstructions = (
+  entries: ReadonlyArray<ProviderReplayEntry>,
+): ReadonlyArray<ProviderReplayEntry> => {
+  const first = entries.findIndex(
+    (entry) =>
+      entry.type === "expect_outbound" &&
+      typeof entry.frame === "object" &&
+      entry.frame !== null &&
+      "type" in entry.frame &&
+      ([
+        "session.prompt",
+        "session.command",
+        "session.compact",
+        "command.list",
+        "skill.list",
+        "rpc.call",
+      ].includes(String(entry.frame.type)) ||
+        ("input" in entry.frame &&
+          typeof entry.frame.input === "object" &&
+          (entry.frame.input as { key?: unknown } | null)?.key === "t3-code-memory")),
+  );
+  const after = entries.findIndex(
+    (entry, index) =>
+      index < first &&
+      entry.type === "emit_inbound" &&
+      typeof entry.frame === "object" &&
+      entry.frame !== null &&
+      "operation" in entry.frame &&
+      entry.frame.operation === "mcp.add",
+  );
+  const at = after < 0 ? first : after + 1;
+  return first < 0
+    ? entries
+    : [
+        ...entries.slice(0, at),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
+        ...entries.slice(at),
+      ];
+};
+
+export const opening: ReadonlyArray<ProviderReplayEntry> = [
+  out("event.subscribe"),
+  out("model.list", "<any>"),
+  reply("model.list", modelCatalog),
+];
+
+export const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
+export const policy = (runtimeMode: "full-access" | "approval-required" = "full-access") => ({
+  runtimeMode,
+  interactionMode: "default" as const,
+  cwd: WORK,
+});
+
+export const providerThread = (now: DateTime.Utc): OrchestrationV2ProviderThread => ({
+  id: ProviderThreadId.make("provider-thread:opencode2-adapter"),
+  driver: OPENCODE_PROVIDER,
+  providerInstanceId: instanceId,
+  providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
+  appThreadId: threadId,
+  ownerNodeId: null,
+  nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: SESSION, strength: "strong" },
+  nativeConversationHeadRef: null,
+  status: "idle",
+  firstRunOrdinal: null,
+  lastRunOrdinal: null,
+  handoffIds: [],
+  forkedFrom: null,
+  createdAt: now,
+  updatedAt: now,
+});
+
+export const turnInput = (
+  thread: OrchestrationV2ProviderThread,
+  modelSelection: ModelSelection = bigPickle,
+  runtimeMode: "full-access" | "approval-required" = "full-access",
+) => ({
+  appThread: { title: TITLE } as OrchestrationV2AppThread,
+  threadId,
+  runId: RunId.make("run:opencode2-adapter"),
+  runOrdinal: 1,
+  providerTurnOrdinal: 1,
+  attemptId: RunAttemptId.make("attempt:opencode2-adapter"),
+  rootNodeId: NodeId.make("node:opencode2-adapter"),
+  providerThread: thread,
+  message: {
+    messageId: MessageId.make("message:opencode2-adapter"),
+    text: "hi",
+    attachments: [],
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    scheduledTaskId: undefined,
+    senderThreadId: undefined,
+  },
+  modelSelection,
+  runtimePolicy: policy(runtimeMode),
+});
+
+const buildPaths = [
+  {
+    action: "external_directory",
+    resource: "/home/.local/share/opencode/tool-output/*",
+    effect: "allow",
+  },
+];
+export const agentList = {
+  location: { directory: WORK },
+  data: [
+    {
+      id: "build",
+      name: "Build",
+      request: { settings: {}, headers: {}, body: {} },
+      description: "The default agent.",
+      mode: "primary",
+      hidden: false,
+      permissions: [{ action: "*", resource: "*", effect: "allow" }, ...buildPaths],
+    },
+  ],
+};
+export const supervisedRules = [
+  { action: "shell", resource: "*", effect: "ask" },
+  { action: "edit", resource: "*", effect: "ask" },
+  { action: "external_directory", resource: "*", effect: "ask" },
+  ...buildPaths,
+  ...mcpRules,
+];
+
+export const resumed = (
+  entries: ReadonlyArray<ProviderReplayEntry>,
+  options?: {
+    readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
+    readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
+    readonly lastRunOrdinal?: number;
+    readonly goal?: OrchestrationV2ProviderThread["goal"];
+    readonly external?: boolean;
+    readonly supervised?: boolean;
+    readonly replayGate?: ProviderReplayGate;
+    readonly attachmentsDir?: string;
+    readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
+    readonly fileSystem?: FileSystem.FileSystem;
+    readonly onPrompt?: (input: unknown) => void;
+    readonly borrowers?: { current: number };
+  },
+) =>
+  Effect.gen(function* () {
+    const runtime = yield* openCode2ReplayRuntime(
+      [
+        ...opening,
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo()),
+        ...noOpenRequests,
+        ...(options?.version === "2.2.5" || options?.version === "2.2.6"
+          ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
+          : []),
+        ...(options?.shellRecovery ??
+          (options?.version === undefined
+            ? []
+            : [
+                ...(options.version === "2.2.6"
+                  ? [out("job.list", { kind: "shell" }), reply("job.list", { data: [] })]
+                  : emptyShellInventory),
+              ])),
+        ...withInstructions([
+          ...(options?.supervised === true
+            ? [
+                out("agent.list", "<any>"),
+                reply("agent.list", agentList),
+                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                reply("session.update", null),
+              ]
+            : []),
+          ...entries,
+        ]),
+      ],
+      {
+        ...(options?.version === undefined ? {} : { version: options.version }),
+        ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
+        ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
+        ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.external === undefined ? {} : { external: options.external }),
+        ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
+        ...(options?.attachmentsDir === undefined
+          ? {}
+          : { attachmentsDir: options.attachmentsDir }),
+        ...(options?.resolveExtractedTextPath === undefined
+          ? {}
+          : { resolveExtractedTextPath: options.resolveExtractedTextPath }),
+      },
+    );
+    const thread = yield* runtime.resumeThread({
+      providerThread: {
+        ...providerThread(yield* DateTime.now),
+        ...(options?.lastRunOrdinal === undefined
+          ? {}
+          : { lastRunOrdinal: options.lastRunOrdinal }),
+        ...(options?.goal === undefined ? {} : { goal: options.goal }),
+      },
+      threadId,
+      modelSelection: bigPickle,
+      runtimePolicy: policy(options?.supervised === true ? "approval-required" : "full-access"),
+    });
+    return { runtime, thread };
+  });
+export const openCode2TurnSlotRace = Effect.gen(function* () {
+  // The session forks its inbound frame reader when it opens, so it opens under the race's
+  // scheduler, inside startFirst.
+  const opened = yield* Deferred.make<Effect.Success<ReturnType<typeof resumed>>>();
+  const startOn = (session: Effect.Success<ReturnType<typeof resumed>>) =>
+    session.runtime.startTurn(turnInput(session.thread));
+  const exit = yield* startNextTurnAtTurnEnd({
+    events: Stream.unwrap(Effect.map(Deferred.await(opened), (session) => session.runtime.events)),
+    startFirst: Effect.gen(function* () {
+      const session = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+      ]);
+      yield* Deferred.succeed(opened, session);
+      return yield* startOn(session);
+    }),
+    // The script ends the first turn as soon as its prompt is accepted.
+    endFirst: Effect.void,
+    startNext: Effect.flatMap(Deferred.await(opened), startOn),
+  });
+  return { exit };
+}).pipe(Effect.provide(McpProviderSessions.layer), Effect.scoped);

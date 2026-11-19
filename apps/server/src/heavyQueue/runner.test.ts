@@ -9,6 +9,7 @@ import {
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
   type HeavyQueueEntry,
+  type RunnerLinuxFullPolicy,
   type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
@@ -19,11 +20,15 @@ import {
   foldMarker,
   installFailure,
   linkMachine,
+  LINUX_EVICT_SHARE,
+  LINUX_FULL_SHORTER,
+  LINUX_FULL_WAITING,
+  linuxStops,
+  macReasonText,
   matchesAny,
   mayPublish,
   nextHealth,
-  NEEDS_GIT,
-  PYTHON_HERE,
+  needsBrowser,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -67,9 +72,10 @@ const runningOn = (id: string, runner: "mac" | "linux", cwd = `/work/${id}`) =>
 
 const ONLINE: LinuxHealth = { ...UNKNOWN_HEALTH, online: true, okAt: NOW - 1000 };
 const OFFLINE: LinuxHealth = { ...UNKNOWN_HEALTH, online: false, failures: 2 };
-/** A heartbeat with numbers: 8 of 12 GiB free, load 0.5 on 6 cores. */
+/** A heartbeat with numbers: 8 of 12 GiB free, 8% CPU, load 0.5 on 6 cores. */
 const READ: LinuxHealth = {
   ...ONLINE,
+  cpuPercent: 8,
   load1: 0.5,
   cpuCount: 6,
   availableMemoryBytes: 8 * GIB,
@@ -145,15 +151,13 @@ describe("routing matrix", () => {
     "offline",
     "unknown",
   ] as const;
-  // "spike": the latest reading is over the limits, but not for the whole window.
-  const macStates = ["room", "full", "over", "spike"] as const;
+  // "spike": the latest reading is over the limits, but not for the whole window. "holding": a
+  // spike while admission already holds the Mac back (`holding`), which moves nothing by itself.
+  const macStates = ["room", "full", "over", "spike", "holding"] as const;
   const kinds = {
     eligible: "vp test run",
     exclusive: "xcrun simctl boot iPhone",
     "mac-only": "vp test run --project ios -- xcodebuild",
-    // A venv made on this Mac: Linux rebuilds no Python environment.
-    python: ".venv/bin/pytest -q",
-    "not-listed": "vp run build",
   } as const;
   const linuxRunningIn = { full: 2, "same-worktree": 1, stale: 1 } as Record<string, number>;
 
@@ -199,7 +203,7 @@ describe("routing matrix", () => {
     if (here && mac === "over") here = false;
     else if (!here && linux === "overloaded") here = true;
     // A machine that can start it now takes it from one that can't.
-    const macRoom = off ? mac !== "over" : mac === "room" || mac === "spike";
+    const macRoom = off ? mac !== "over" : mac === "room" || mac === "spike" || mac === "holding";
     if (here && linuxRoom && !macRoom) here = false;
     else if (!here && !linuxRoom && macRoom) here = true;
     return here ? onMac : linuxStart;
@@ -233,7 +237,7 @@ describe("routing matrix", () => {
               : []),
         job("w", kinds[kind]),
       ];
-      const over = mac === "over" || mac === "spike";
+      const over = mac === "over" || mac === "spike" || mac === "holding";
       const plan = planRoutes(
         input(
           entries,
@@ -241,6 +245,7 @@ describe("routing matrix", () => {
           {
             enabled: queue === "on" || queue === "paused",
             paused: queue === "paused" || queue === "off-paused",
+            holding: mac === "holding",
             sample: {
               ...CALM,
               ...(over ? { busyCores: 9, headroomSince: null } : {}),
@@ -261,6 +266,44 @@ describe("routing matrix", () => {
     },
   );
 
+  it("a Mac over its ceiling holds back none of the incident's jobs while Linux is up", () => {
+    const shapes = [
+      "vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx",
+      'f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts',
+      "pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
+      "vp run fmt src/a.ts; vp run typecheck",
+      "vp fmt --check && vp test run",
+      "./node_modules/.bin/vp lint --no-ignore a.tsx",
+      "sh -c './gate.sh'",
+    ];
+    const scripts = {
+      "./node_modules/.bin/vp": "case x in\n*) ;;\nesac\n",
+      "./gate.sh": "vp test run\n",
+    };
+    const entries = [
+      runningOn("release", "mac"),
+      ...shapes.map((label, at) => ({ ...job(`w${at}`, label), scripts }) as QueuedEntry),
+    ];
+    const strained = (health: LinuxHealth) =>
+      planRoutes(
+        input(
+          entries,
+          { runnerWhere: "linux", runnerUnavailable: "mac" },
+          {
+            holding: true,
+            sample: { ...CALM, busyCores: 9.8, headroomSince: null, overLimit: true },
+            health,
+            machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxSlots: 5 },
+          },
+        ),
+      );
+    const up = strained(READ);
+    expect(shapes.map((_, at) => up.routes[`w${at}`])).toEqual(shapes.map(() => "linux"));
+    expect(up.admits.w0).toEqual({ runner: "linux", ungated: false });
+    const down = strained(OFFLINE);
+    expect(shapes.map((_, at) => outcomeOf(down, `w${at}`))).toEqual(shapes.map(() => "mac-wait"));
+  });
+
   it("Hybrid with three Mac slots and five agents splits them by backlog per slot", () => {
     const entries = ["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run"));
     const plan = planRoutes(input(entries, { runnerWhere: "automatic" }, { health: READ }));
@@ -272,7 +315,7 @@ describe("routing matrix", () => {
       b: { runner: "linux", ungated: false },
     });
     expect(plan.reasons.d).toBe(
-      "waiting for Linux: a fresh reading since the last job started there",
+      "waiting for Linux: a reading a minute after the last job started there",
     );
   });
 
@@ -347,7 +390,7 @@ describe("routing matrix", () => {
         [job("a", "vp test run")],
         { runnerWhere: "linux" },
         {
-          health: { ...READ, load1: 5.4, overLimit: true },
+          health: { ...READ, cpuPercent: 90, overLimit: true },
         },
       ),
     );
@@ -364,19 +407,92 @@ describe("routing matrix", () => {
     expect(easing.reasons.a).toBe("waiting for Linux: easing back under its limits");
   });
 
-  it("the next Linux start waits for a heartbeat taken after the last one started", () => {
-    const entries = [
-      { ...runningOn("l1", "linux"), startedAt: ago(5_000) },
-      job("a", "vp test run"),
+  // 17/11 16:42: five starts one heartbeat apart, each before the last one's load showed.
+  it("the next Linux start waits for a reading a minute after the last one started", () => {
+    const starts = (startedAgo: number, health: LinuxHealth = READ) =>
+      Object.keys(
+        planRoutes(
+          input(
+            [
+              { ...runningOn("l1", "linux"), startedAt: ago(startedAgo) },
+              ...["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run")),
+            ],
+            { runnerWhere: "linux" },
+            { health, machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxSlots: 6 } },
+          ),
+        ).admits,
+      );
+    expect(starts(20_000)).toEqual([]);
+    // With no numbers in the heartbeat as well.
+    expect(starts(20_000, ONLINE)).toEqual([]);
+    expect(starts(70_000)).toEqual(["a"]);
+    // The reading (a second old) is exactly a minute after the start, or just short of it.
+    expect(starts(61_000)).toEqual(["a"]);
+    expect(starts(60_999)).toEqual([]);
+  });
+
+  it.each([
+    ["a reading 5 minutes old", { ...READ, okAt: NOW - 300_000 }, "a fresh reading of Linux"],
+    ["no reading yet", { ...READ, okAt: null }, "a fresh reading of Linux"],
+    // Under the sustained limits, but past the instant ones: no new start.
+    [
+      "10% memory free",
+      { ...READ, availableMemoryBytes: 1.2 * GIB, overLimit: false },
+      "1.2 GB free, keeping 20%",
+    ],
+    ["CPU at 95%", { ...READ, cpuPercent: 95, overLimit: false }, "CPU 95%, limit 70%"],
+  ] as const)("with %s nothing starts on Linux", (_, health, why) => {
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(plan.admits).toEqual({});
+    expect(plan.reasons.a).toBe(`waiting for Linux: ${why}`);
+  });
+
+  // Stopped twice for memory beside others: only alone, so stop and start never loop.
+  it.each([
+    ["twice, beside another Linux job", [runningOn("l1", "linux")], 2, 2, "linux-wait"],
+    ["twice, Linux idle", [], 2, 2, "linux-start"],
+    ["once, set to 1, beside another Linux job", [runningOn("l1", "linux")], 1, 1, "linux-wait"],
+    ["once, by default, beside another Linux job", [runningOn("l1", "linux")], 1, 2, "linux-start"],
+  ] as const)("a job evicted %s", (_, beside, evictions, setting, outcome) => {
+    const plan = planRoutes(
+      input(
+        [...beside, job("a", "vp test run", { evictions } as never)],
+        { runnerWhere: "linux" },
+        {
+          health: READ,
+          machine: { ...DEFAULT_MACHINE_CONFIG, runnerLinuxEvictionsBeforeAlone: setting },
+        },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "linux-wait") {
+      expect(plan.reasons.a).toBe(
+        "waiting for Linux: Linux ran short of memory beside other jobs: waiting to run there alone",
+      );
+    }
+  });
+
+  it("Linux admits no one past a job waiting to run there alone, then takes it once empty", () => {
+    const queue = [
+      job("a", "vp test run", { evictions: 2 } as never),
+      job("b", "vp test run"),
+      job("c", "vp test run"),
     ];
-    const at = (okAt: number, health: LinuxHealth = READ) =>
-      planRoutes(input(entries, { runnerWhere: "linux" }, { health: { ...health, okAt } })).admits
-        .a;
-    expect(at(NOW - 6_000)).toBeUndefined();
-    expect(at(NOW - 5_000)).toBeUndefined();
-    expect(at(NOW - 4_000)).toEqual({ runner: "linux", ungated: false });
-    // Without numbers in the heartbeat, only the slots count.
-    expect(at(NOW - 6_000, ONLINE)).toEqual({ runner: "linux", ungated: false });
+    const plan = (beside: ReadonlyArray<HeavyQueueEntry>, where: "linux" | "automatic") =>
+      planRoutes(input([...beside, ...queue], { runnerWhere: where }, { health: READ }));
+    const draining = plan([runningOn("l1", "linux")], "linux");
+    expect(["a", "b", "c"].map((id) => outcomeOf(draining, id))).toEqual([
+      "linux-wait",
+      "linux-wait",
+      "linux-wait",
+    ]);
+    expect(draining.reasons.b).toBe(
+      "waiting for Linux: Linux is kept free for a job that runs there alone",
+    );
+    expect(Object.keys(plan([], "linux").admits)).toEqual(["a"]);
+    // Hybrid needn't wait for Linux to drain: this Mac has room for it.
+    const hybrid = plan([runningOn("l1", "linux")], "automatic");
+    expect(outcomeOf(hybrid, "a")).toBe("mac-start");
   });
 
   it("two waiters of one worktree never take Linux together", () => {
@@ -390,7 +506,7 @@ describe("routing matrix", () => {
   });
 
   it("the job's own --runner wins over the project and takes unlisted work", () => {
-    const plan = planRoutes(input([job("a", "make deploy", { where: "linux" })]));
+    const plan = planRoutes(input([job("a", "just deploy", { where: "linux" })]));
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
   });
 
@@ -571,6 +687,30 @@ describe("Mac first, Hybrid and Everything", () => {
     expect(plan.admits.a).toEqual({ runner: "mac", ungated: !enabled });
   });
 
+  // ROUTE-051: each machine has its own line. A Mac-only waiter on a full Mac never holds back
+  // a job Linux has room for.
+  it.each(
+    (["linux", "macFirst", "automatic"] as const).flatMap((where) =>
+      [1, 3].flatMap((slots) =>
+        (["xcodebuild test", "xcrun simctl boot iPhone"] as const).map(
+          (head) => [where, slots, head] as const,
+        ),
+      ),
+    ),
+  )(
+    "%s, this Mac's %i slots full and %j waiting there: Linux takes the next job",
+    (where, slots, head) => {
+      const entries = [
+        ...Array.from({ length: slots }, (_, at) => runningOn(`m${at}`, "mac")),
+        job("head", head),
+        job("a", "vp test run"),
+      ];
+      const plan = planned(entries, { runnerWhere: where }, { maxRunning: slots });
+      expect(plan.routes.head).toBe("mac");
+      expect(plan.admits).toEqual({ a: { runner: "linux", ungated: false } });
+    },
+  );
+
   // RUN-14: a hand route holds in every mode, with the queue on or off.
   it.each(
     QUEUE.flatMap((enabled) =>
@@ -588,33 +728,24 @@ describe("Mac first, Hybrid and Everything", () => {
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: !enabled });
   });
 
-  // RUN-01: Everything sends unlisted work too, never what has to stay on this Mac.
+  // RUN-01: Linux takes builds too, never what has to stay on this Mac.
   it.each(
     QUEUE.flatMap((enabled) =>
-      [false, true].flatMap((everything) =>
-        (
-          [
-            ["vp run build", everything ? "linux" : "mac"],
-            ["vp test run", "linux"],
-            ["pnpm install", "mac"],
-            ["xcodebuild test", "mac"],
-            ["vp run dev", "mac"],
-            ["vp run mobile:install ios", "mac"],
-          ] as const
-        ).map(([line, route]) => [line, everything, enabled, route] as const),
-      ),
+      (
+        [
+          ["vp run build", "linux"],
+          ["vp test run", "linux"],
+          ["pnpm install", "mac"],
+          ["xcodebuild test", "mac"],
+          ["vp run dev", "mac"],
+          ["vp run mobile:install ios", "mac"],
+        ] as const
+      ).map(([line, route]) => [line, enabled, route] as const),
     ),
-  )(
-    "Linux, %s with Everything %s (queue on: %s) runs on %s",
-    (line, everything, enabled, route) => {
-      const plan = planned(
-        [job("a", line)],
-        { runnerWhere: "linux", runnerLinuxEverything: everything },
-        { enabled },
-      );
-      expect(plan.routes.a).toBe(route);
-    },
-  );
+  )("Linux, %s (queue on: %s) runs on %s", (line, enabled, route) => {
+    const plan = planned([job("a", line)], { runnerWhere: "linux" }, { enabled });
+    expect(plan.routes.a).toBe(route);
+  });
 
   /** 10 jobs, two of them Mac-only, with their minutes; each in its own worktree. */
   const MIXED = [
@@ -630,7 +761,7 @@ describe("Mac first, Hybrid and Everything", () => {
     ["vp test run", 6],
   ] as const;
 
-  /** Minutes until the last job ends, replanning whenever a job ends, with fresh readings. */
+  /** Minutes until the last job ends, replanning each minute, with a reading each minute. */
   const makespan = (where: "mac" | "linux" | "automatic") => {
     const MINUTE = 60_000;
     const minutes = new Map(MIXED.map(([, length], at) => [`j${at}`, length]));
@@ -658,7 +789,7 @@ describe("Mac first, Hybrid and Everything", () => {
       }
       const running = entries.filter((entry) => entry.startedAt !== null);
       expect(running.length).toBeGreaterThan(0);
-      t = Math.min(...running.map((entry) => ends.get(entry.id)!));
+      t += 1;
       entries = entries.filter((entry) => entry.startedAt === null || ends.get(entry.id)! > t);
     }
     return t;
@@ -672,7 +803,145 @@ describe("Mac first, Hybrid and Everything", () => {
     };
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
-    expect(spans).toEqual({ mac: 19, linux: 20, hybrid: 12 });
+    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 12 });
+  });
+});
+
+describe("When Linux is full", () => {
+  const MAC_OVER = { ...CALM, busyCores: 9, headroomSince: null, overLimit: true };
+  const STALE: LinuxHealth = { ...READ, okAt: NOW - 3_600_000 };
+  const linuxJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`l${at}`, "linux"));
+  const macJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`m${at}`, "mac"));
+  const a = (extra: Partial<HeavyQueueEntry> = {}) => job("a", "vp test run", extra);
+  /** Why Linux holds `a` back: each row's entries, health and Mac sample. */
+  const HOLDS = {
+    slots: { entries: [...linuxJobs(2), a()], health: READ },
+    limits: { entries: [a()], health: OVERLOADED },
+    worktree: { entries: [runningOn("l0", "linux", "/work/a"), a()], health: READ },
+    reading: { entries: [a()], health: STALE },
+    alone: { entries: [a(), job("z", "vp test run", { evictions: 2 } as never)], health: READ },
+    aloneMemory: {
+      entries: [...linuxJobs(1), a({ evictions: 2 } as never)],
+      health: READ,
+    },
+  } as const;
+  const MAC_STATES = {
+    room: {},
+    noRoom: { entries: macJobs(1), over: { maxRunning: 1 } },
+    over: { over: { sample: MAC_OVER } },
+  } as const;
+  type Expect = "mac" | "shorter" | "wait" | "busier";
+  const REASON: Record<Expect, RegExp> = {
+    mac: /^Linux is full: running on this Mac$/,
+    shorter: /^Linux is full: shorter queue on this Mac$/,
+    busier: /^Linux is full: waiting \(this Mac is busier\)$/,
+    wait: /^waiting for Linux: /,
+  };
+  type Hold = keyof typeof HOLDS;
+  type MacState = keyof typeof MAC_STATES;
+  const expectOf = (hold: Hold, policy: RunnerLinuxFullPolicy, mac: MacState): Expect => {
+    if ((hold !== "slots" && hold !== "limits") || policy === "wait") return "wait";
+    if (mac !== "room") return policy === "balance" ? "busier" : "wait";
+    return policy === "mac" ? "mac" : "shorter";
+  };
+  const rows = (Object.keys(HOLDS) as Hold[]).flatMap((hold) =>
+    (Object.keys(MAC_STATES) as MacState[]).flatMap((mac) =>
+      (["wait", "mac", "balance"] as const).map(
+        (policy) => [hold, policy, mac, expectOf(hold, policy, mac)] as const,
+      ),
+    ),
+  );
+
+  it.each(rows)("held by %s, policy %s, Mac %s: %s", (hold, policy, macState, expected) => {
+    const { entries, health } = HOLDS[hold];
+    const state: { entries?: ReadonlyArray<HeavyQueueEntry>; over?: Partial<RoutePlanInput> } =
+      MAC_STATES[macState];
+    const plan = planRoutes(
+      input(
+        [...(state.entries ?? []), ...entries],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health, runnerOn: true, ...state.over },
+      ),
+    );
+    expect(plan.routes.a).toBe(expected === "mac" || expected === "shorter" ? "mac" : "linux");
+    expect(plan.admits.a?.runner).not.toBe("linux");
+    expect(plan.reasons.a).toMatch(REASON[expected]);
+  });
+
+  // Backlog per slot, the job's own place included; a machine that can't start it now counts one.
+  it.each([
+    // [name, maxRunning, Mac jobs, policy, route]
+    ["Mac has room", 3, 0, "balance", "mac"],
+    ["no room, but 1/4 waits against Linux's 1/2", 4, 4, "balance", "mac"],
+    ["the same queue under mac: no room, Linux", 4, 4, "mac", "linux"],
+    ["1/2 against 1/2 is a tie: Linux", 2, 2, "balance", "linux"],
+    ["1/1 against 1/2: Linux", 1, 1, "balance", "linux"],
+  ] as const)("balance by wait: %s", (_, maxRunning, mac, policy, route) => {
+    const plan = planRoutes(
+      input(
+        [...macJobs(mac), ...linuxJobs(2), a()],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health: READ, maxRunning, runnerOn: true },
+      ),
+    );
+    expect(plan.routes.a).toBe(route);
+    if (policy === "balance") {
+      const reason = route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING;
+      expect(plan.reasons.a?.split(" · ")[0]).toBe(reason);
+    }
+  });
+
+  // A move is for good: only a Mac short of slots alone may take it, never one holding it back.
+  it.each([
+    ["memory pressure", { ...CALM, pressureLevel: 2 }],
+    ["the job's own memory", { ...CALM, availableMemoryBytes: 7 * GIB }],
+  ] as const)("free Mac slots holding the job back for %s: no move", (_, sample) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...macJobs(1), ...linuxJobs(2), a()],
+          { runnerWhere: "linux", runnerLinuxFull: policy },
+          { health: READ, maxRunning: 3, runnerOn: true, sample },
+        ),
+      );
+      expect(plan.routes.a).toBe("linux");
+      expect(plan.moved).toEqual({});
+    }
+  });
+
+  it.each([
+    ["asked for Linux", a({ where: "linux", linuxOnly: true } as never), {}, READ, "linux-wait"],
+    ["Start now", a({ forced: true }), {}, READ, "linux-start"],
+    // Slots never hold a call: only limits do.
+    ["a job's own call", a({ where: "linux", call: true } as never), {}, OVERLOADED, "linux-wait"],
+    ["the user chose to wait for Linux", a({ route: "linux" }), {}, READ, "linux-wait"],
+    ["the queue paused", a(), { paused: true }, READ, "linux-wait"],
+    ["a Runner set to this Mac", a({ where: "linux" }), { mode: "mac" }, READ, "linux-wait"],
+    ["Linux offline", a(), {}, OFFLINE, "ask"],
+    [
+      "an unconfirmed run",
+      a({ unconfirmed: true, dropped: true } as never),
+      {},
+      READ,
+      "linux-wait",
+    ],
+  ] as const)("%s: never moves, whatever the policy", (_, entry, over, health, outcome) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...linuxJobs(2), entry],
+          {
+            runnerWhere: "mode" in over ? over.mode : "linux",
+            runnerLinuxFull: policy,
+          },
+          { health, runnerOn: true, ...("paused" in over ? { paused: true } : {}) },
+        ),
+      );
+      expect(outcomeOf(plan, "a")).toBe(outcome);
+      expect(plan.reasons.a ?? "").not.toMatch(/^Linux is full/);
+    }
   });
 });
 
@@ -789,7 +1058,8 @@ describe("the Mac↔Linux link", () => {
       plannedWith(
         entry,
         { runnerUnavailable: "mac" },
-        { health: { ...ONLINE, okAt: NOW - 60_000 } },
+        // Fresh, and older than every failure: only the backoff sends it back.
+        { health: { ...ONLINE, okAt: NOW - 10_000 } },
       ),
     ).toBe(outcome);
   });
@@ -897,19 +1167,112 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     );
   });
 
+  // A job that asked for Linux itself (`--runner linux`) never changes machine; an agent's
+  // `remoto` and a Mac job's own nested call (`call`) follow the settings.
+  const OFFLINE_ASKED = "Linux is offline and this job asked for Linux";
+  it.each([
+    [
+      "--runner linux, mac",
+      "vp test run",
+      { where: "linux", linuxOnly: true },
+      { runnerUnavailable: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "--runner linux, dropped, agent",
+      "vp test run",
+      { where: "linux", linuxOnly: true, dropped: true, linkFailures: 3 },
+      { runnerDropped: "agent", runnerUnavailable: "wait" },
+      "Linux dropped it mid-run, and this job asked for Linux",
+    ],
+    [
+      "--runner linux, dropped, mac",
+      "vp test run",
+      { where: "linux", linuxOnly: true, dropped: true, linkFailures: 3 },
+      { runnerDropped: "mac", runnerUnavailable: "wait" },
+      "Linux dropped it mid-run, and this job asked for Linux",
+    ],
+    [
+      "remoto line, mac",
+      "remoto vp test run",
+      { where: "linux" },
+      { runnerUnavailable: "mac" },
+      "mac-start",
+    ],
+    [
+      "--now, mac",
+      "vp test run",
+      { where: "linux", linuxOnly: true, forced: true },
+      { runnerUnavailable: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "--runner linux, wait",
+      "vp test run",
+      { where: "linux", linuxOnly: true },
+      { runnerUnavailable: "wait" },
+      "linux-wait",
+    ],
+    [
+      "--runner linux, ask",
+      "vp test run",
+      { where: "linux", linuxOnly: true },
+      { runnerUnavailable: "ask" },
+      "ask",
+    ],
+    [
+      "--runner linux, unanswered → Mac",
+      "vp test run",
+      { where: "linux", linuxOnly: true, ask: asked(-1) },
+      { runnerUnavailable: "ask", runnerDeadlineAction: "mac" },
+      OFFLINE_ASKED,
+    ],
+    [
+      "a Mac job's call, mac",
+      "vp test run",
+      { where: "linux", call: true },
+      { runnerUnavailable: "mac" },
+      "mac-start",
+    ],
+    ["no --runner, mac", "vp test run", {}, { runnerUnavailable: "mac" }, "mac-start"],
+    [
+      "--runner linux, needs this Mac",
+      "xcodebuild test",
+      { where: "linux", linuxOnly: true },
+      { runnerUnavailable: "mac" },
+      "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+    ],
+  ] as const)("asked for Linux: %s, Linux offline → %s", (_, label, fields, config, outcome) => {
+    const plan = offline(job("a", label, fields as never), config);
+    expect(plan.cancels.a ?? outcomeOf(plan, "a")).toBe(outcome);
+  });
+
+  it("asked for Linux and needing this Mac cancels even with Linux up", () => {
+    const plan = planRoutes(
+      input([job("a", "xcodebuild test", { where: "linux", linuxOnly: true } as never)]),
+    );
+    expect(plan.cancels.a).toBe(
+      "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+    );
+    expect(plan.admits).toEqual({});
+  });
+
   it.each([
     ["mac", "mac-start"],
     ["wait", "linux-wait"],
     ["ask", "ask"],
     ["agent", "cancel"],
-  ] as const)("dropped mid-run: %s → %s, apart from the unavailable policy", (policy, outcome) => {
-    const plan = offline(job("a", "vp test run", { dropped: true }), {
-      runnerDropped: policy,
-      runnerUnavailable: "wait",
-    });
-    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
-    if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
-  });
+  ] as const)(
+    "dropped on its last attempt: %s → %s, apart from the unavailable policy",
+    (policy, outcome) => {
+      const plan = offline(job("a", "vp test run", { dropped: true, linkFailures: 3 } as never), {
+        runnerDropped: policy,
+        runnerUnavailable: "wait",
+      });
+      expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+      if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+    },
+  );
 
   // Tell the agent hands every failure back, in every mode: nothing reruns on this Mac.
   it.each(
@@ -967,25 +1330,24 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     },
   );
 
-  // The PC went away: Linux was marked offline after the drop. Its policy acts at once, before
-  // Linux can confirm the run stopped, and Linux coming back does not undo it; only a rerun waits
-  // for the confirmation. A blip that never took Linux offline still goes back by itself.
+  // A drop (the link, or the PC going away or restarting) goes back to Linux by itself while it
+  // has attempts left: once Linux is up and confirms the run stopped, whatever the policy; with
+  // Linux offline, "When Linux is offline" decides, as for any waiter. On its last attempt "If a
+  // Linux run fails" acts at once, before Linux can confirm, and Linux coming back undoes nothing.
   const BLIP: LinuxHealth = { ...ONLINE, okAt: NOW - 100 };
   const BACK: LinuxHealth = { ...BLIP, backOnlineAt: NOW - 100 };
   const PC = { "back before offline": BLIP, "still offline": OFFLINE, "back after offline": BACK };
+  const pcs = Object.keys(PC) as ReadonlyArray<keyof typeof PC>;
   it.each([
-    ["agent", "back before offline", "linux-wait", "linux-start"],
-    ["agent", "still offline", "cancel", "cancel"],
-    ["agent", "back after offline", "cancel", "cancel"],
-    ["ask", "back before offline", "linux-wait", "linux-start"],
-    ["ask", "still offline", "ask", "ask"],
-    ["ask", "back after offline", "ask", "ask"],
-    ["mac", "back before offline", "linux-wait", "linux-start"],
-    ["mac", "still offline", "mac-wait", "mac-start"],
-    ["mac", "back after offline", "mac-wait", "mac-start"],
+    [1, "agent", "back before offline", "linux-wait", "linux-start"],
+    [1, "agent", "back after offline", "linux-wait", "linux-start"],
+    [1, "agent", "still offline", "mac-wait", "mac-start"],
+    ...pcs.map((pc) => [3, "agent", pc, "cancel", "cancel"] as const),
+    ...pcs.map((pc) => [3, "ask", pc, "ask", "ask"] as const),
+    ...pcs.map((pc) => [3, "mac", pc, "mac-wait", "mac-start"] as const),
   ] as const)(
-    "dropped under %s, PC %s: %s until Linux confirms the run stopped, then %s",
-    (policy, pc, unconfirmed, confirmed) => {
+    "dropped on attempt %i under %s, PC %s: %s until Linux confirms the run stopped, then %s",
+    (linkFailures, policy, pc, unconfirmed, confirmed) => {
       for (const [hold, outcome] of [
         [true, unconfirmed],
         [false, confirmed],
@@ -993,10 +1355,15 @@ describe("Linux unavailable, deadline and dropped policies", () => {
         const entry = job("a", "vp test run", {
           dropped: true,
           linuxFailedAt: NOW - 5000,
+          linkFailures,
           ...(hold ? { unconfirmed: true } : {}),
-        });
+        } as never);
         const plan = planRoutes(
-          input([entry], { runnerWhere: "linux", runnerDropped: policy }, { health: PC[pc] }),
+          input(
+            [entry],
+            { runnerWhere: "linux", runnerDropped: policy, runnerUnavailable: "mac" },
+            { health: PC[pc] },
+          ),
         );
         expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
         if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
@@ -1010,14 +1377,14 @@ describe("Linux unavailable, deadline and dropped policies", () => {
         }
         if (hold && outcome === "mac-wait") {
           expect(plan.reasons.a).toBe(
-            "Linux dropped it mid-run: running here once Linux confirms it stopped",
+            `${linkFailures === 3 ? "Linux dropped it mid-run" : "Linux is unavailable"}: running here once Linux confirms it stopped`,
           );
         }
       }
     },
   );
 
-  // A question asked while the PC was away is the one decision: no second question, and its
+  // A question asked on the last attempt is the one decision: no second question, and its
   // deadline action reruns only once Linux confirms the run stopped.
   it.each([
     ["open, PC back and confirmed", 60_000, "mac", BACK, false, "linux-wait"],
@@ -1030,9 +1397,10 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     const entry = job("a", "vp test run", {
       dropped: true,
       linuxFailedAt: NOW - 5000,
+      linkFailures: 3,
       ask: { reason: "dropped", deadlineAt: ago(-deadline) },
       ...(hold ? { unconfirmed: true } : {}),
-    });
+    } as never);
     const plan = planRoutes(
       input(
         [entry],
@@ -1196,6 +1564,35 @@ describe("Linux unavailable, deadline and dropped policies", () => {
   });
 });
 
+// A running job's own call never waits for a slot its job holds: A (Mac) calls B (Linux), which
+// waits for C (Linux, same worktree), which calls D (Mac). With D waiting on A's slot, none moved.
+describe("a running job's own calls", () => {
+  const W = "/work/w";
+  const call = (id: string, where: "mac" | "linux") =>
+    job(id, "vp test run", { cwd: W, where, call: true } as never);
+  const full = { ...CALM, availableMemoryBytes: 1 * GIB };
+  it.each([
+    ["A holds the only Mac slot", "vp run build", CALM, 1],
+    ["A runs alone", "xcrun simctl boot iPhone", CALM, 3],
+    ["the Mac has no memory for D", "vp run build", full, 3],
+  ] as const)("%s: D starts, then B once C ends", (_, aLine, sample, maxRunning) => {
+    const a = job("a", aLine, { cwd: W, startedAt: ago(600_000) });
+    const c = runningOn("c", "linux", W);
+    // Linux's slots are full of other worktrees' jobs: B still starts.
+    const others = Array.from({ length: DEFAULT_MACHINE_CONFIG.runnerLinuxSlots }, (_, i) =>
+      runningOn(`x${i}`, "linux"),
+    );
+    const over = { maxRunning, sample };
+    const first = planRoutes(input([a, c, call("b", "linux"), call("d", "mac")], {}, over));
+    expect(first.admits.d).toEqual({ runner: "mac", ungated: false });
+    expect(first.admits.b).toBeUndefined();
+    expect(first.reasons.b).toBe("waiting for Linux: this worktree is already running on Linux");
+    const d = { ...call("d", "mac"), startedAt: ago(1000) };
+    const then = planRoutes(input([a, d, ...others, call("b", "linux")], {}, over));
+    expect(then.admits.b).toEqual({ runner: "linux", ungated: false });
+  });
+});
+
 describe("runtime toggles", () => {
   const entries = [
     runningOn("r", "mac"),
@@ -1212,9 +1609,16 @@ describe("runtime toggles", () => {
     expect(plan.routes.linuxWaiter).toBe("linux");
   });
 
-  it("Runner off sends Linux waiters down the Mac path", () => {
-    const off = planRoutes(input(entries, { runnerEnabled: false }, { health: OFFLINE }));
+  it("Runner off sends Linux waiters down the Mac path, and cancels one that asked for Linux", () => {
+    const asked = job("asked", "vp test run", { where: "linux", linuxOnly: true } as never);
+    const off = planRoutes(
+      input([...entries, asked], { runnerEnabled: false }, { health: OFFLINE }),
+    );
     expect(off.routes.linuxWaiter).toBe("mac");
+    expect(off.cancels.asked).toBe(
+      "The Runner is off for this project and this job asked for Linux",
+    );
+    expect(off.admits.asked).toBeUndefined();
     const offAndNoQueue = planRoutes(
       input(entries, { runnerEnabled: false }, { enabled: false, health: OFFLINE }),
     );
@@ -1240,41 +1644,36 @@ describe("runtime toggles", () => {
 
   it("once a Runner is on, every Mac row says why it stays, beside what it waits for here", () => {
     const entries = [
-      job("run", "git commit -m x", { startedAt: ago(1000) }),
-      job("commit", "git commit -m 'fix: t3 heavy'"),
-      job("build", "vp run build"),
+      job("run", "xcodebuild -scheme App build", { startedAt: ago(1000) }),
+      job("install", "pnpm install"),
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
         route: "mac",
-        routeReason: "Uses a file outside the project: /x",
+        routeReason: "Uses a file only this Mac has: /x",
       } as Partial<HeavyQueueEntry>),
       job("forced", "vp test run", { forced: true }),
     ];
     const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
       planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
         .reasons;
-    const commits = "Commits run here: the pre-commit edits this Mac's repository";
     expect(at({ runnerOn: true })).toEqual({
-      run: commits,
-      commit: `${commits} · the one slot is busy`,
-      build: "Not on the Can run on Linux list: vp run build · waiting its turn",
+      run: "Mac-only tool: xcodebuild",
+      install: "Changes this Mac's checkout: pnpm install · the one slot is busy",
       moved: "Moved to this Mac · waiting its turn",
-      back: "Uses a file outside the project: /x · waiting its turn",
+      back: "Uses a file only this Mac has: /x · waiting its turn",
     });
-    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
+    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(
+      /^Changes this Mac's checkout/,
+    );
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
-      build: "Runner off for this project",
+      install: "Runner off for this project",
     });
-    // With every Runner off, rows read as they always did, but a commit still says why it waits.
-    const hook = "Commit hook runs checks";
+    // With every Runner off, rows say only what they wait for.
     expect(at({}, { runnerEnabled: false })).toEqual({
-      run: hook,
-      commit: `${hook} · next in line`,
-      build: "waiting its turn",
+      install: "next in line",
       moved: "waiting its turn",
       back: "waiting its turn",
     });
-    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
 });
 
@@ -1294,6 +1693,9 @@ describe("patterns and eligibility", () => {
     ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
     ["vue-tsc --noEmit", "tsc", true],
     ["tsgo --noEmit", "test", false],
+    // A pattern named like an object's own key matches as written.
+    ["vp test run", "constructor", false],
+    ["toString x", "toString", true],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
@@ -1302,205 +1704,230 @@ describe("patterns and eligibility", () => {
   it.each([
     ["vp test run", "linux", null],
     ["vp run typecheck && vp run lint", "linux", null],
-    ["vp run build && vp test run", "not-listed", "Not on the Can run on Linux list: vp run build"],
-    ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
+    ["vp run build && vp test run", "linux", null],
+    ["pnpm run build", "linux", null],
+    ["xcodebuild -scheme App test", "mac-only", "Mac-only tool: xcodebuild"],
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
-    ["echo hi", "mac-only", "Nothing in it runs on Linux"],
-    ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
-    // The Linux copy has no `.git`: what diffs against it stays here, except check:changed,
-    // whose changed files this Mac computes and hands over.
+    ["echo hi", "linux", null],
+    ["./scripts/ci.sh", "linux", null],
     ["vp run check:changed", "linux", null],
     ["timeout 3500 vp run check:changed origin/main", "linux", null],
-    ["vp test run --changed", "mac-only", NEEDS_GIT],
-    ["npx jest --onlyChanged", "mac-only", NEEDS_GIT],
-    ["vp test run --changedSince=origin/main", "mac-only", NEEDS_GIT],
-    ["remoto vp staged", "mac-only", NEEDS_GIT],
-    ["remoto /usr/bin/git status", "mac-only", NEEDS_GIT],
+    ["vp test run --changed", "linux", null],
+    ["npx jest --onlyChanged", "linux", null],
+    ["remoto /usr/bin/git status", "linux", null],
     ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
-    ["vp test run unchanged", "linux", null],
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
-    ["vp test run -t staged", "linux", null],
-    ["vp test run --reporter=changed", "linux", null],
-    ["pnpm --filter web check:changed", "linux", null],
     // A folder flag with no folder after it moves nothing.
-    ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
+    ["pnpm -C", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
-    expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
+    expect(eligibilityOf({ label, cwd: "/w" }, at)).toMatchObject({ eligibility, reason });
   });
 
-  // The Linux copy rebuilds `node_modules` from a lockfile, and nothing else that git ignores.
-  const copy = {
-    ...at,
-    config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true },
-    synced: (path: string) => !/^\/w\/(\.venv|dist|nolock\/node_modules)\//.test(path),
-  };
+  // Not following a command, or what its shell set up, is no reason to keep it here.
   it.each(
     (
       [
-        [".venv/bin/pytest -q", "mac-only", PYTHON_HERE],
-        ["pytest tests", "mac-only", PYTHON_HERE],
-        ["python3 -m pytest", "mac-only", PYTHON_HERE],
-        ["uv run pytest", "mac-only", PYTHON_HERE],
-        ["remoto pytest", "mac-only", PYTHON_HERE],
-        [
-          "source .venv/bin/activate && vp test run",
-          "mac-only",
-          "Sets up its shell here first: source .venv/bin/activate",
-        ],
-        [". ./env.sh; vp test run", "mac-only", "Sets up its shell here first: . ./env.sh"],
-        [
-          "node dist/cli.js test",
-          "mac-only",
-          "Uses a file the Linux copy doesn't have: dist/cli.js",
-        ],
-        ["./dist/run-tests", "mac-only", "Uses a file the Linux copy doesn't have: dist/run-tests"],
-        ["node_modules/.bin/vitest run", "linux", null],
-        [
-          "nolock/node_modules/.bin/vitest run",
-          "mac-only",
-          "Uses a file the Linux copy doesn't have: nolock/node_modules/.bin/vitest",
-        ],
-        ["node -e 'process.exit(0)' && vp test run", "linux", null],
+        [".venv/bin/pytest -q", "linux", null],
+        ["uv run pytest", "linux", null],
+        ["source .venv/bin/activate && vp test run", "linux", null],
+        ["nvm use 22 && vp test run", "linux", null],
+        ['eval "$(direnv export bash)" && vp test run', "linux", null],
+        ["node dist/cli.js test", "linux", null],
+        ["./tools/check", "linux", null, { "./tools/check": "#!/usr/bin/env python3\nprint(1)" }],
         ["vp test run /w/src/a.test.ts", "linux", null],
         [
           "vp test run /Users/me/other/a.test.ts",
           "mac-only",
-          "Uses a file outside the project: /Users/me/other/a.test.ts",
+          "Uses a file only this Mac has: /Users/me/other/a.test.ts",
         ],
         ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
-        // Python is the class: its tools, a program inside an environment, a script whose shebang is Python.
-        ["pdm run pytest", "mac-only", PYTHON_HERE],
-        ["hatch run test", "mac-only", PYTHON_HERE],
-        ["rye test", "mac-only", PYTHON_HERE],
-        ["conda run -n app pytest", "mac-only", PYTHON_HERE],
-        ["mamba run pytest", "mac-only", PYTHON_HERE],
-        ["micromamba run pytest", "mac-only", PYTHON_HERE],
-        ["pixi run test", "mac-only", PYTHON_HERE],
-        ["ipython -c 1", "mac-only", PYTHON_HERE],
-        ["jupyter nbconvert --execute a.ipynb", "mac-only", PYTHON_HERE],
-        ["pipx run tox", "mac-only", PYTHON_HERE],
-        ["envs/app/bin/test-runner", "mac-only", PYTHON_HERE],
-        ["/opt/miniconda3/bin/runtests", "mac-only", PYTHON_HERE],
-        ["lib/python3.12/site-packages/x/run", "mac-only", PYTHON_HERE],
-        [".tox/py312/bin/run-tests", "mac-only", PYTHON_HERE],
-        [
-          "./tools/check",
-          "mac-only",
-          PYTHON_HERE,
-          { "./tools/check": "#!/usr/bin/env python3\nprint(1)" },
-        ],
-        ["./tools/check.sh", "linux", null, { "./tools/check.sh": "#!/bin/sh\nvp test run" }],
-        // What sets up this Mac's shell holds the work after it, like `source`.
-        [
-          'eval "$(direnv export bash)" && vp test run',
-          "mac-only",
-          // `eval` already makes the whole line unreadable, so it stays here too.
-          "Couldn't read this command safely (eval)",
-        ],
-        ["nvm use 22 && vp test run", "mac-only", "Sets up its shell here first: nvm use 22"],
-        ["fnm use && vp test run", "mac-only", "Sets up its shell here first: fnm use"],
-        [
-          "pyenv shell 3.12 && vp test run",
-          "mac-only",
-          "Sets up its shell here first: pyenv shell 3.12",
-        ],
-        [
-          "conda activate app && vp test run",
-          "mac-only",
-          "Sets up its shell here first: conda activate app",
-        ],
-        [
-          "rbenv shell 3.3 && vp test run",
-          "mac-only",
-          "Sets up its shell here first: rbenv shell 3.3",
-        ],
-        [
-          "direnv exec . vp test run",
-          "mac-only",
-          "Sets up its shell here first: direnv exec . vp test run",
-        ],
-        ["nvm ls && vp test run", "linux", null],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >
     ).map(([label, eligibility, reason, scripts]) => ({ label, eligibility, reason, scripts })),
-  )("$label is $eligibility from the Linux copy", ({ label, eligibility, reason, scripts }) => {
+  )("$label is $eligibility", ({ label, eligibility, reason, scripts }) => {
     expect(
-      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
-    ).toEqual({ eligibility, reason });
+      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, at),
+    ).toMatchObject({ eligibility, reason });
   });
 
-  // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
+  // Every mode, even with nothing on Always on this Mac; only port 5733 listens here.
   const open = {
     ...at,
-    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [] },
+    listening: (port: number) => port === 5733,
   };
   it.each([
-    ["pnpm install", "pnpm install"],
-    ["vp i", "vp i"],
-    ["npm ci", "npm ci"],
-    ["yarn add react", "yarn add react"],
-    ["pnpm --filter web remove lodash", "pnpm web remove"],
-    ["xcodebuild -scheme App test", "xcodebuild App test"],
-    ["adb install app.apk", "adb install app.apk"],
-    ["pnpm exec next start", "pnpm exec next"],
-    ["vp run dev", "vp run dev"],
-    ["pnpm start", "pnpm start"],
-    ["npm run watch:css", "npm run watch:css"],
-    ["npx vite", "npx vite"],
-    ["npx next dev", "npx next dev"],
-  ])("%s stays on this Mac whatever the lists say", (label, name) => {
+    ["pnpm install", "mac-state", "pnpm install"],
+    ["vp i", "mac-state", "vp i"],
+    ["npm ci", "mac-state", "npm ci"],
+    ["yarn add react", "mac-state", "yarn add"],
+    ["pnpm --filter web remove lodash", "mac-state", "pnpm remove"],
+    ["xcodebuild -scheme App test", "mac-tool", "xcodebuild"],
+    ["adb install app.apk", "mac-tool", "adb"],
+    ["pnpm exec next start", "serves-port", "next start"],
+    ["vp run dev", "serves-port", "vp dev"],
+    ["pnpm start", "serves-port", "pnpm start"],
+    ["npx vite", "serves-port", "vite"],
+    ["npx next dev", "serves-port", "next dev"],
+    ["cargo build --release", "native-build", "cargo build"],
+    ["cargo +nightly clippy", "native-build", "cargo clippy"],
+    ["swift build -c release", "native-build", "swift build"],
+    ["go test ./...", "native-build", "go test"],
+    ["codesign --verify dist/T3.app", "native-build", "codesign"],
+    ["make -C native/x", "native-build", "make"],
+    ["pnpm exec cmake --build build", "native-build", "cmake"],
+    ["sh -c 'cd native && clang++ -O2 a.cc'", "native-build", "clang++"],
+    ["pnpm exec playwright test --base-url http://127.0.0.1:5733", "mac-port", "localhost:5733"],
+    ["curl -s --url=http://[::1]:5733/api", "mac-port", "localhost:5733"],
+    ["pnpm exec vitest --ui", "serves-port", "vitest --ui"],
+    ["pnpm -F web exec playwright test --ui", "serves-port", "playwright --ui"],
+    ["pnpm exec turbo run dev", "serves-port", "turbo dev"],
+    ["nx run web:serve", "serves-port", "nx web:serve"],
+    ["jest --watch", "watches", "jest --watch"],
+    ["pnpm exec vitest -w", "watches", "vitest -w"],
+    ["vitest watch", "watches", "vitest watch"],
+    ["docker build -t app .", "mac-docker", "docker build"],
+    ["docker compose exec db psql", "mac-docker", "docker compose"],
+    ["T3CODE_HOME=/home/me/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
+    ["T3CODE_HOME=~/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
+    ["env CLAUDE_CONFIG_DIR=/home/me/.claude vp test run", "mac-env", "/home/me/.claude"],
+    [
+      "export DATABASE_URL=postgres://u@localhost:5733/db; vp test run",
+      "mac-port",
+      "localhost:5733",
+    ],
+    ["BASE_URL=http://localhost:5733 pnpm exec playwright test", "mac-port", "localhost:5733"],
+  ] as const)("%s stays on this Mac whatever the lists say", (label, code, subject) => {
     expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
       eligibility: "mac-only",
-      reason: `Always on this Mac: ${name}`,
+      reason: macReasonText({ code, subject }),
+      mac: { code, subject },
     });
   });
-  it.each(["vp test run", "npx vite build", "pnpm run build", "./scripts/ci.sh"])(
-    "%s may still leave",
-    (label) => {
-      expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
-    },
-  );
+  it("takes its Mac-only tools from the settings", () => {
+    const tools = { ...at, config: { ...open.config, runnerMacTools: ["fastlane"] } };
+    expect(eligibilityOf({ label: "fastlane beta", cwd: "/w" }, tools)).toMatchObject({
+      reason: "Mac-only tool: fastlane",
+    });
+    expect(eligibilityOf({ label: "adb devices", cwd: "/w" }, tools).eligibility).toBe("linux");
+  });
+
+  it.each([
+    "vp test run",
+    "npx vite build",
+    "pnpm run build",
+    "./scripts/ci.sh",
+    "cargo fmt --check",
+    "go mod tidy",
+    "pnpm exec playwright test --base-url http://localhost:4173",
+    "pnpm -w exec vitest run",
+    "turbo run build --filter web",
+    "docker --version",
+    "CI=1 NODE_OPTIONS=--max-old-space-size=8192 vp test run",
+    "S=/tmp/x; vp test run",
+    "DATABASE_URL=postgres://localhost:5432/db vp test run",
+    "PATH=/opt/bin:$PATH vp test run",
+    "jest -w 4",
+  ])("%s may still leave", (label) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
+  });
 
   // The queue read each script when the job was queued; the Runner judges its text.
   it.each([
     ["vp test run", "linux", null],
     ["cd sub && vp run lint", "linux", null],
-    ["vp run build", "not-listed", "Not on the Can run on Linux list: vp run build"],
-    [
-      "git add . && git commit -m x",
-      "mac-only",
-      "Commits run here: the pre-commit edits this Mac's repository",
-    ],
-    ["vp test run /etc/hosts", "mac-only", "Uses a file outside the project: /etc/hosts"],
-    [null, "mac-only", "Couldn't read this script"],
+    ["vp run build", "linux", null],
+    ["git add . && git commit -m x", "mac-only", "Changes this Mac's checkout: git commit"],
+    ["vp test run /etc/hosts", "mac-only", "Uses a file only this Mac has: /etc/hosts"],
+    [null, "mac-only", "Uses a file only this Mac has: /tmp/s/v.sh"],
   ] as const)("a script outside the project running %j is %s", (body, eligibility, reason) => {
     for (const label of ["bash /tmp/s/v.sh", "/tmp/s/v.sh --fast"]) {
       const scripts = { "/tmp/s/v.sh": body };
-      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject({
+        eligibility,
+        reason,
+      });
     }
+  });
+
+  // Shapes of the eight jobs a strained Mac held while Linux idled, and their counter-cases.
+  const SHIM =
+    '#!/bin/sh\ncase `uname -a` in\n  *CYGWIN*) exe=".exe" ;;\nesac\nexec node "$basedir/vp" "$@"\n';
+  const GATE =
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\nif [ -n "${CI:-}" ]; then echo ci; fi\nvp lint --no-ignore src/a.ts\nfor p in apps/server apps/web; do (cd $p && vp test run); done\n';
+  it.each([
+    ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", {}, "linux", null],
+    ['f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts', {}, "linux", null],
+    [
+      "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
+      {},
+      "linux",
+      null,
+    ],
+    ["vp run fmt src/a.ts; vp run typecheck", {}, "linux", null],
+    [
+      'for f in $(git diff --name-only HEAD); do vp fmt --stdin-filepath=$f < $f | cmp -s - $f || echo "fmt diff $f"; done; vp lint --no-ignore a.ts',
+      {},
+      "linux",
+      null,
+    ],
+    // A formatter that only checks the whole tree writes nothing: a check like any other.
+    ["vp fmt --check && vp test run", {}, "linux", null],
+    // A package's bin is a launcher, judged by the program it starts.
+    [
+      "./node_modules/.bin/vp lint --no-ignore apps/web/src/a.tsx",
+      { "./node_modules/.bin/vp": SHIM },
+      "linux",
+      null,
+    ],
+    // A script inside a `sh -c` text is judged by the text the job carries, not its name.
+    ["sh -c 'cd apps/web && ./gate.sh'", { "./gate.sh": GATE }, "linux", null],
+    // A formatter writing the whole tree, and a build, go there too.
+    ["vp fmt && vp lint", {}, "linux", null],
+    ["sh -c './gate.sh'", { "./gate.sh": "vp lint\nvp run build\n" }, "linux", null],
+    // A script it can't read is no reason to keep it here.
+    ["sh -c './gate.sh'", {}, "linux", null],
+  ] as const)("%s is %s", (label, scripts, eligibility, reason) => {
+    expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toMatchObject({ eligibility, reason });
   });
 
   it("a job the hook queued on this Mac shows why", () => {
     const entry = {
       ...job("s", "bash missing.sh"),
       where: "mac" as const,
-      routeReason: "Couldn't read this script",
+      routeReason: "Uses a file only this Mac has: /x",
     };
     const plan = planRoutes(input([entry], {}, { runnerOn: true }));
-    expect(plan.reasons.s).toContain("Couldn't read this script");
+    expect(plan.reasons.s).toContain("Uses a file only this Mac has: /x");
   });
 
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
     const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
-    expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toEqual({
+    expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toMatchObject({
       eligibility: "mac-only",
-      reason: "Uses a file outside the project: /etc/hosts",
+      reason: "Uses a file only this Mac has: /etc/hosts",
     });
     expect(eligibilityOf({ label: "Open iPhone", server: true, cwd: "/w" }, at)).toEqual({
       eligibility: "exclusive",
       reason: "Always on this Mac: Open iPhone",
     });
+  });
+
+  it.each([
+    ["mac-tool", "xcodebuild", "Mac-only tool: xcodebuild"],
+    ["mac-env", "~/.t3/userdata", "Uses a file only this Mac has: ~/.t3/userdata"],
+    ["mac-state", "git commit", "Changes this Mac's checkout: git commit"],
+    ["mac-repo", "git push", "Uses this Mac's git repository: git push"],
+    ["pinned", "--runner mac", "Pinned to this Mac: --runner mac"],
+    ["serves-port", "vite", "Serves a port used here: vite"],
+    [
+      "learned",
+      "sh: 1: vp: not found, 2026-11-18",
+      "Linux couldn't run this before: sh: 1: vp: not found, 2026-11-18",
+    ],
+  ] as const)("a %s reason reads as its code and subject", (code, subject, text) => {
+    expect(macReasonText({ code, subject })).toBe(text);
   });
 
   it("finds Mac-only test files in a failed run's output", () => {
@@ -1604,9 +2031,10 @@ describe("Linux health", () => {
   describe("over its limits only on sustained readings", () => {
     const WINDOW = 20_000;
     const BEAT = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
-    const reading = (freeGib: number, load1 = 0.5) => ({
+    const reading = (freeGib: number, cpuPercent = 8, load1 = 0.5) => ({
       ok: true as const,
       reading: {
+        cpuPercent,
         load1,
         cpuCount: 6,
         availableMemoryBytes: freeGib * GIB,
@@ -1623,7 +2051,9 @@ describe("Linux health", () => {
     };
     const low = reading(1);
     const fine = reading(8);
-    const busy = reading(8, 5.4);
+    const busy = reading(8, 90);
+    // 17/11: load 34.7 on 6 cores while `top` showed the PC 98% idle.
+    const queued = reading(8, 2, 34.7);
 
     it.each([
       [
@@ -1650,6 +2080,15 @@ describe("Linux health", () => {
           [BEAT, busy],
         ],
         [false, true],
+      ],
+      [
+        "a high load on an idle CPU never counts",
+        [
+          [0, queued],
+          [BEAT, queued],
+          [2 * BEAT, queued],
+        ],
+        [false, false, false],
       ],
       [
         "one good heartbeat does not bring it back",
@@ -1700,6 +2139,78 @@ describe("Linux health", () => {
     });
   });
 
+  /** `HEARTBEAT_COMMAND` output with `/proc/stat`'s `cpu` line before and after. */
+  const heartbeat = (load: string, before: string, after: string) =>
+    [
+      `${load} 0.80 0.50 2/400 1234`,
+      "6",
+      "               total        used        free      shared  buff/cache   available",
+      "Mem:     12000000000  3000000000  6000000000     1000000  3000000000  8500000000",
+      "Swap:     4000000000           0  4000000000",
+      before,
+      after,
+    ].join("\n");
+  const STAT = "cpu  2255340 3412 2290112 22625563 6290 0 4562 0 0 0";
+
+  it.each([
+    // 300 jiffies (6 cores, half a second): 6 busy, 294 idle, though the load is 34.7.
+    [
+      "an idle PC with a high load",
+      "34.70",
+      "cpu  2255344 3412 2290114 22625857 6290 0 4562 0 0 0",
+      2,
+    ],
+    ["a busy PC", "5.40", "cpu  2255540 3412 2290182 22625583 6290 0 4572 0 0 0", 93.3],
+    [
+      "waiting on disk is not busy",
+      "8.00",
+      "cpu  2255400 3412 2290112 22625753 6340 0 4562 0 0 0",
+      20,
+    ],
+    ["steal is busy", "1.00", "cpu  2255340 3412 2290112 22625713 6290 0 4562 150 0 0", 50],
+    // Guest time already sits inside user: counting it again would pass 100%.
+    ["guest time once", "1.00", "cpu  2255640 3412 2290112 22625563 6290 0 4562 0 300 0", 100],
+    ["counters that did not move", "1.00", STAT, null],
+    ["counters that went back (a reboot)", "1.00", "cpu  10 0 10 1000 0 0 0 0 0 0", null],
+    ["a missing second line", "1.00", "", null],
+  ] as const)("reads CPU in use from /proc/stat: %s", (_name, load, after, cpu) => {
+    const reading = parseHeartbeat(heartbeat(load, STAT, after));
+    expect(reading.cpuPercent === null ? null : Math.round(reading.cpuPercent * 10) / 10).toBe(cpu);
+    expect(reading.load1).toBe(Number(load));
+  });
+
+  it("a PC idle under a high load takes an eligible job", () => {
+    const idle = {
+      ok: true as const,
+      reading: parseHeartbeat(
+        heartbeat("34.70", STAT, "cpu  2255344 3412 2290114 22625857 6290 0 4562 0 0 0"),
+      ),
+    };
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    const health = [0, 1, 2].reduce<LinuxHealth>(
+      (health, at) =>
+        nextHealth(health, idle, DEFAULT_MACHINE_CONFIG, 20_000, NOW - 3 * beat + at * beat),
+      { ...UNKNOWN_HEALTH, online: true },
+    );
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(outcomeOf(plan, "a")).toBe("linux-start");
+  });
+
+  // A server or PC without the `/proc/stat` lines reads no CPU: unknown never holds jobs back.
+  it("a heartbeat with no CPU reading and a high load takes an eligible job", () => {
+    const blind = { ok: true as const, reading: parseHeartbeat(heartbeat("34.70", "", "")) };
+    expect(blind.reading.cpuPercent).toBeNull();
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    const health = [0, 1, 2].reduce<LinuxHealth>(
+      (health, at) =>
+        nextHealth(health, blind, DEFAULT_MACHINE_CONFIG, 20_000, NOW - 3 * beat + at * beat),
+      { ...UNKNOWN_HEALTH, online: true },
+    );
+    expect(health.overLimit).toBe(false);
+    const plan = planRoutes(input([job("a", "vp test run")], { runnerWhere: "linux" }, { health }));
+    expect(outcomeOf(plan, "a")).toBe("linux-start");
+  });
+
   it("reads load, cores and memory from the heartbeat output", () => {
     const text = [
       "1.25 0.80 0.50 2/400 1234",
@@ -1709,12 +2220,23 @@ describe("Linux health", () => {
       "Swap:     4000000000           0  4000000000",
     ].join("\n");
     expect(parseHeartbeat(text)).toEqual({
+      cpuPercent: null,
       load1: 1.25,
       cpuCount: 6,
       totalMemoryBytes: 12_000_000_000,
       availableMemoryBytes: 8_500_000_000,
     });
+    // `/proc/uptime` comes last: seconds since boot, then idle time.
+    expect(parseHeartbeat(`${text}\n300.25 1650.10`)).toEqual({
+      cpuPercent: null,
+      load1: 1.25,
+      cpuCount: 6,
+      totalMemoryBytes: 12_000_000_000,
+      availableMemoryBytes: 8_500_000_000,
+      uptimeSeconds: 300.25,
+    });
     expect(parseHeartbeat("garbage")).toEqual({
+      cpuPercent: null,
       load1: null,
       cpuCount: null,
       totalMemoryBytes: null,
@@ -1746,6 +2268,47 @@ describe("Linux health", () => {
   });
 });
 
+describe("Linux runs a reading stops", () => {
+  const at = (id: string, startedAgo: number, extra: Partial<QueuedEntry> = {}) => ({
+    ...runningOn(id, "linux"),
+    startedAt: ago(startedAgo),
+    ...extra,
+  });
+  // Half the 20% floor: below 10% free the newest run stops.
+  const EVICT = (DEFAULT_MACHINE_CONFIG.runnerLinuxMemoryFloorPercent / 100) * LINUX_EVICT_SHARE;
+  const free = (share: number): LinuxHealth => ({
+    ...READ,
+    availableMemoryBytes: share * 12 * GIB,
+  });
+  const three = [at("old", 900_000), at("mid", 600_000), at("new", 300_000)];
+  it.each([
+    ["8% free beside two others", free(EVICT - 0.02), three, { new: "memory" }],
+    ["8% free with one run", free(EVICT - 0.02), [at("only", 300_000)], {}],
+    [
+      "8% free while one already stops for memory",
+      free(EVICT - 0.02),
+      [at("old", 900_000), at("mid", 600_000, { stop: "memory" }), at("new", 300_000)],
+      {},
+    ],
+    [
+      "8% free, with no reading since the last stop",
+      free(EVICT - 0.02),
+      [...three, job("gone", "vp test run", { evictedAt: NOW - 1000 } as never)],
+      {},
+    ],
+    ["15% free", free(EVICT + 0.05), three, {}],
+    // The reading is a second old: Linux booted 301 s ago.
+    [
+      "Linux booted 300 s before the reading",
+      { ...READ, uptimeSeconds: 300 },
+      [at("before", 601_000), at("after", 101_000)],
+      { before: "reboot" },
+    ],
+  ] as const)("%s", (_, health, entries, stops) => {
+    expect(linuxStops(health, entries, DEFAULT_MACHINE_CONFIG)).toEqual(stops);
+  });
+});
+
 describe("an install unfinished in a fresh Linux copy", () => {
   it.each([
     [
@@ -1771,8 +2334,58 @@ describe("an install unfinished in a fresh Linux copy", () => {
     ["AssertionError: expected 1 to be 2", null],
     ["Error: EEXIST: file already exists, mkdir '/tmp/out'", null],
     ["FAIL src/node_modules.test.ts > writes the folder", null],
+    // Text that only quotes one: a test runner listing test names, a command echoed as data.
+    [
+      '     \u001b[2m\u001b[90m↓\u001b[39m\u001b[22m an install that really fails while installing is an install failure of ["echo \\"Error: EEXIST: file already exists, mkdir \'node_modules/sharp/vendor\'\\" >&2"]',
+      null,
+    ],
+    ["  ✓ Electron failed to install correctly reruns once", null],
+    // An installer's own error, miette style.
+    [
+      "  × failed to create directory '/home/dev/runs/a/node_modules/.pnpm/electron@44.10.1/node_modules/electron/dist': File exists (os error 17)",
+      "electron",
+    ],
+    ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);
+  });
+});
+
+describe("whether a Linux run needs Chromium", () => {
+  const FILES: Record<string, string> = {
+    "/w/package.json": JSON.stringify({
+      scripts: {
+        "ci:local": "node scripts/ci-local/run.mjs",
+        "test:e2e": "playwright test",
+        test: "vitest run",
+      },
+    }),
+    "/w/apps/web/package.json": JSON.stringify({
+      devDependencies: { "@vitest/browser-playwright": "5.0.5" },
+    }),
+    "/w/apps/server/package.json": JSON.stringify({ dependencies: { "playwright-core": "1" } }),
+    "/w/apps/broken/package.json": "{",
+  };
+  const read = (path: string) => FILES[path] ?? null;
+  it.each([
+    ["npx playwright test --list", "/w", true],
+    ["npm run ci:local", "/w", false],
+    ["pnpm test:e2e", "/w", true],
+    ["npm run test:e2e", "/w", true],
+    ["node scripts/x.mjs", "/w", false],
+    ["vitest --browser.enabled", "/w", true],
+    // The root's tests depend on no browser.
+    ["pnpm test", "/w", false],
+    ["vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["pnpm exec vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["vp test run apps/web/src/a.browser.test.tsx", "/w", true],
+    ["vp test run src/preview/ServerBrowser.test.ts", "/w/apps/server", true],
+    ["vp test run src/a.test.ts", "/w/apps/other", false],
+    ["vp test run src/a.test.ts", "/w/apps/broken", false],
+    ["vp lint src/a.ts", "/w/apps/web", false],
+    ["vp lint playwright.config.ts", "/w", false],
+  ] as const)("%s from %s: %s", (line, cwd, needs) => {
+    expect(needsBrowser(line.split(" "), cwd, "/w", read)).toBe(needs);
   });
 });
 
@@ -1817,16 +2430,39 @@ describe("remoto markers", () => {
     expect(fold("phase=syncing id=$(rm -rf ~)").id).toBeNull();
   });
 
+  it("the stop script leaves alone a group that no longer works in the run's folder", () => {
+    // A restart reuses process numbers: the recorded group is now someone else's.
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "stop-home-"));
+    const stranger = NodeChildProcess.spawn("sleep", ["30"], { detached: true, cwd: home });
+    try {
+      const said = NodeChildProcess.spawnSync(
+        "bash",
+        ["-c", remoteStopScript("app-1a2b3c4d", stranger.pid!, 1, true)],
+        { cwd: home, env: { ...process.env, HOME: home }, encoding: "utf8" },
+      );
+      expect(said.stdout.trim()).toBe("gone");
+      expect(stranger.exitCode).toBeNull();
+      expect(() => process.kill(stranger.pid!, 0)).not.toThrow();
+    } finally {
+      process.kill(stranger.pid!, "SIGKILL");
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("the stop script refuses ids that could escape its quotes", () => {
     expect(() => remoteStopScript("a'; rm -rf ~; '", null, 5)).toThrow(/Unsafe/);
     const script = remoteStopScript("app-1a2b3c4d", 42, 5);
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // Commands that left the group (setsid, a daemon) still carry the copy's tag.
+    expect(script).toContain("grep -qzs '^REMOTO_RUN=app-1a2b3c4d:'");
+    expect(script).toContain("kill -KILL $(tagged)");
+    expect(remoteStopScript("app.1-2", null, 5)).toContain("'^REMOTO_RUN=app\\.1-2:'");
     // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
     const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
     expect(group).toContain('kill -TERM -- "-$p"');
-    expect(group).not.toMatch(/pkill|pgrep|\.pgid/);
+    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid|REMOTO_RUN/);
     expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
     // `kill -- -1` would reach every process there.
     for (const pgid of [0, 1, -3, 1.5]) {

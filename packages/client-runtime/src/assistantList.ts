@@ -36,9 +36,8 @@ const RECENT_ASSISTANT_LIMIT = 5;
 export function rankAssistants<E extends RankableAssistant>(
   entries: ReadonlyArray<E>,
   shells: ReadonlyArray<RankShell>,
-  /** The shared `assistantStatus` reading; the bare presence when omitted. */
-  statusOf: (entry: E, presence: AssistantPresence) => AssistantPresence = (_entry, presence) =>
-    presence,
+  /** The shared `assistantStatus` reading, so rows sort by the status their labels show. */
+  statusOf: (entry: E, presence: AssistantPresence) => AssistantPresence,
 ): Array<RankedAssistant<E>> {
   const byThread = new Map(shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]));
   const ranked = entries.map((entry) => {

@@ -14,6 +14,7 @@ import {
   continuesAssistantSender,
   messageAssistantId,
 } from "./assistantPresence.ts";
+import { ENVIRONMENT_DISCONNECTED_LABEL } from "./sidebarZones.ts";
 
 const jarvis = { id: "jarvis", name: "Jarvis" } as Assistant;
 
@@ -172,35 +173,48 @@ describe("assistant look", () => {
 });
 
 describe("assistantSenderLook", () => {
-  const status = (mood: string) => ({ mood, reading: false, since: null }) as never;
+  const status = (mood: string, detail = "") =>
+    ({ mood, detail, reading: false, since: null }) as never;
   const qa = { assistant: { id: "qa" } as Assistant };
   it.each([
-    { mood: "needs", expected: ["waiting", "needs"] },
-    { mood: "working", expected: ["working", "working"] },
-    { mood: "failed", expected: ["failed", "idle"] },
-    { mood: "idle", expected: ["idle", "idle"] },
-  ] as const)("face and section agree: $mood", ({ mood, expected }) => {
-    const look = assistantSenderLook(qa, status(mood));
-    expect([look.face, look.section]).toEqual(expected);
+    { mood: "needs", detail: "Asked you a question", expected: ["waiting", "needs", "Needs you"] },
+    { mood: "working", detail: "Fixing it", expected: ["working", "working", "Working"] },
+    { mood: "failed", detail: "Last run failed", expected: ["failed", "idle", "Last run failed"] },
+    {
+      mood: "limited",
+      detail: "Limit until 14:30",
+      expected: ["waiting", "idle", "Limit until 14:30"],
+    },
+    {
+      mood: "idle",
+      detail: ENVIRONMENT_DISCONNECTED_LABEL,
+      expected: ["idle", "idle", ENVIRONMENT_DISCONNECTED_LABEL],
+    },
+    { mood: "idle", detail: "Done, see the PR", expected: ["idle", "idle", "Idle"] },
+  ] as const)("face, section and word agree: $mood, $detail", ({ mood, detail, expected }) => {
+    const look = assistantSenderLook(qa, status(mood, detail));
+    expect([look.face, look.section, look.label]).toEqual(expected);
   });
 
   it("a removed assistant sleeps", () => {
     expect(assistantSenderLook({ assistant: null }, status("working"))).toEqual({
       face: "sleeping",
       section: "working",
+      label: "Working",
     });
   });
 });
 
 describe("presence rows", () => {
   it.each([
-    ["idle", 1, false, "Idle · 1 message here"],
-    ["idle", 6, false, "Idle · 6 messages here"],
-    ["working", 2, true, "Working · 2 messages here · Asks before acting"],
-    ["needs", 2, false, "Needs you · 2 messages here"],
-    ["working", 0, true, "Working · Asks before acting"],
-  ] as const)("%s, %i messages, asks %s → %s", (section, count, asks, expected) => {
-    expect(assistantPresenceStatus(section, { count }, asks)).toBe(expected);
+    ["Idle", 1, false, "Idle · 1 message here"],
+    ["Idle", 6, false, "Idle · 6 messages here"],
+    ["Working", 2, true, "Working · 2 messages here · Asks before acting"],
+    ["Needs you", 2, false, "Needs you · 2 messages here"],
+    ["Working", 0, true, "Working · Asks before acting"],
+    ["Last run failed", 3, false, "Last run failed · 3 messages here"],
+  ] as const)("%s, %i messages, asks %s → %s", (label, count, asks, expected) => {
+    expect(assistantPresenceStatus(label, { count }, asks)).toBe(expected);
   });
 
   it("lists Needs you, then Working, then Idle, in speaking order", () => {

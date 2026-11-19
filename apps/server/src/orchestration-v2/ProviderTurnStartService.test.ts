@@ -33,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -218,6 +219,27 @@ function startWithMissingWorktree(
     projectionReads: () => projectionReadCount,
   };
 }
+
+effectIt.effect("forgets the wait window of a start cancelled while it waited", () =>
+  Effect.gen(function* () {
+    const firstWaitAt = new Map<RunId, number>();
+    const now = Effect.map(DateTime.now, DateTime.toEpochMillis);
+    const cancelled = RunId.make("run-cancelled-while-waiting");
+    const live = RunId.make("run-still-waiting");
+    expect(ProviderTurnStart.stoppedTurnWait(firstWaitAt, cancelled, yield* now)).toBe("wait");
+    // A Stop cancels that start: it never asks again, so only another wait can drop its anchor.
+    yield* TestClock.adjust("59 seconds");
+    expect(ProviderTurnStart.stoppedTurnWait(firstWaitAt, live, yield* now)).toBe("wait");
+    expect(firstWaitAt.has(cancelled)).toBe(true);
+    yield* TestClock.adjust("1 second");
+    expect(ProviderTurnStart.stoppedTurnWait(firstWaitAt, live, yield* now)).toBe("wait");
+    expect([...firstWaitAt.keys()]).toEqual([live]);
+    // The live start keeps the window it anchored a second earlier.
+    yield* TestClock.adjust("9 seconds");
+    expect(ProviderTurnStart.stoppedTurnWait(firstWaitAt, live, yield* now)).toBe("stuck");
+    expect(firstWaitAt.size).toBe(0);
+  }),
+);
 
 it.each([
   {

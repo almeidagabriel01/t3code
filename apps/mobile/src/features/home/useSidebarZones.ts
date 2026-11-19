@@ -26,7 +26,7 @@ const assistantKeyOf = (entry: {
 export function useSidebarZones() {
   const shells = useQuietThreadShells();
   const { active, activeTeams } = useAssistantEntries();
-  const { ownerOf, ownedThreadKeys } = useThreadOwnership();
+  const { ownerOf } = useThreadOwnership();
   const { items, read } = useAssistantStatus();
   return useMemo(() => {
     const assistantIndicators = new Map<string, ZoneIndicator | null>();
@@ -50,13 +50,12 @@ export function useSidebarZones() {
     return {
       items,
       ownerOf,
-      ownedThreadKeys,
       layout,
       indicators: { assistant: assistantIndicators, folder: folderIndicators },
       /** Nothing for the Needs you and Teams zones to draw. */
       empty: items.length === 0 && active.length === 0 && activeTeams.length === 0,
     };
-  }, [shells, items, read, ownerOf, ownedThreadKeys, active, activeTeams]);
+  }, [shells, items, read, ownerOf, active, activeTeams]);
 }
 
 type SidebarZones = ReturnType<typeof useSidebarZones>;

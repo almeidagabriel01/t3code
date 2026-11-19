@@ -7,6 +7,7 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -154,20 +155,11 @@ export function isRestartNoteSource(
   );
 }
 
-/**
- * Matches the Working-section hold: a shell or monitor wakes it only when the agent said it
- * waits on it. Most are dev servers and their watchdogs, so their note waits for the next
- * user message.
- */
-export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
-  return work.awaited === true || (work.kind !== "shell" && work.kind !== "monitor");
-}
-
 export function runOutcome(
   run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
 ): OrchestrationV2Run["status"] {
   return (run.status === "completed" || run.status === "cancelled") &&
-    (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    (run.restartCancelledBackgroundWork ?? []).some(wakesAgentWhenDone)
     ? "interrupted"
     : run.status;
 }
@@ -253,7 +245,7 @@ export function isRestartContinuationSource(
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
 ): boolean {
   return isRestartNoteSource(source, providerTurns)
-    ? (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+    ? (source.restartCancelledBackgroundWork ?? []).some(wakesAgentWhenDone)
     : source.status === "cancelled";
 }
 

@@ -94,7 +94,7 @@ const RecallTool = Tool.dynamic("memory_recall", {
 
 const RememberTool = Tool.dynamic("memory_remember", {
   description:
-    'Save to memory. Call this when the user says \"remember that ...\" or states a lasting fact or preference; replying \"noted\" saves nothing. Give text and scope (project for this project only, user for everywhere). An assistant that works in several projects passes the projectId the fact is about with scope project. Saving the same text again is harmless. Pass memoryId to replace a memory instead of adding a second. Never store progress reports or tool output.',
+    'Save to memory. Call this when the user says \"remember that ...\" or states a lasting fact or preference; replying \"noted\" saves nothing. Give text and scope: user only for how the person wants agents to work anywhere, a working style that names no company, client, repository, domain or infrastructure; project for a fact, decision or convention of a repository or company, even when the user says to remember it everywhere. When you cannot tell which, ask the user before saving. An assistant that works in several projects passes the projectId the fact is about with scope project, and asks which project when the user does not say. Saving the same text again is harmless. Pass memoryId to replace a memory instead of adding a second. Never store progress reports or tool output.',
   parameters: memoryInputSchema(M.MemoryRememberInput),
   success: M.MemoryMutationReceipt,
   failure,

@@ -99,16 +99,21 @@ recipient, and each member works a request in its own hidden thread for that req
 request's project, `assistant:<assistantId>:g-<hash>` (`assistant_group_request_threads`). Requests
 never share a thread, so a packet, `history`, `#seq` quotes, stopped-task lists and hand-off counts are
 all scoped to one request. When every task of a request is completed or cancelled its threads are
-settled (`settleThread`, retried when a cancelled run ends); a task opening again in it un-settles
-them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
-the per-group threads of chats from before requests; they stay for history and for runs that started
-on them, and `threadRowOf` reads both tables. The suffix is a hash because team ids
-may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
-source of a member's thread id: a deleted thread keeps its id reserved, so `ensureThread` launches the
-replacement under an id derived from the dead one and moves the row. `forThread` resolves these
-threads as non-current, so sandbox, runtime policy, connectors and the note apply, and
-`guardAssistantThread` refuses archive, delete and unarchive on them; the service changes their
-lifecycle through the Orchestrator directly.
+settled (`settleThread`). A delivered task is not finished work: a thread still at work (its own
+subagents or delegates, or a thread it launched, found by `assistant_tasks.source_thread_id`) is held
+(`settle_held_at`). A later run end settles only held threads, never one already settled and then
+reopened. Pinning it, marking it active or a message from the user releases the hold, and from then
+only the user or inactivity settles it. The wait is one level deep: a thread
+that a launched thread launched does not hold the conversation. A task opening again in it
+un-settles them first and drops the holds. Paused, failed and project-waiting requests never settle.
+`assistant_group_threads` holds the per-group threads of chats from before requests; they stay for
+history and for runs that started on them, and `threadRowOf` reads both tables. The suffix is a hash
+because team ids may hold `:`; look the group up in the table, never parse it out of the id. The
+table is also the only source of a member's thread id: a deleted thread keeps its id reserved, so
+`ensureThread` launches the replacement under an id derived from the dead one and moves the row.
+`forThread` resolves these threads as non-current, so sandbox, runtime policy, connectors and the
+note apply, and `guardAssistantThread` refuses archive, delete and unarchive on them; the service
+changes their lifecycle through the Orchestrator directly.
 
 Recipients are decided before any model, first match winning (`routeGroupMessage`): the `@` mentions
 anywhere in the text (`assistantGroupMentions`, the one parser the clients highlight and preview
@@ -237,8 +242,9 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 ## Tasks are ordinary threads with an owner
 
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
-project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
-takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
+project, title, and the conversation that launched it) before the launch starts, so a run that ends
+fast still finds it; a failed launch takes it back. The source conversation lets a client attribute
+a thread launched from a member's hidden group thread to that group task. The thread stays a normal project thread: no flag on it, listed in project lists.
 These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not

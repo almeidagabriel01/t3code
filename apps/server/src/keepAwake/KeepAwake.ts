@@ -3,7 +3,7 @@
  * owns the child it spawns and kills only that child.
  */
 import type { KeepAwakeMode, KeepAwakeStatus } from "@t3tools/contracts";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Clock from "effect/Clock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -166,7 +166,7 @@ const make = Effect.gen(function* () {
             : event.type === "provider-thread.updated"
               ? {
                   key: `background:${event.payload.id}`,
-                  on: backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
+                  on: (event.payload.pendingBackgroundTasks ?? []).some(wakesAgentWhenDone),
                 }
               : null;
         if (entry === null) return Effect.void;

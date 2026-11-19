@@ -49,8 +49,10 @@ describe("the Runner block a server publishes", () => {
           runnerMacOnly: ["CaptureDevices.test.ts"],
           runnerWhere: "macFirst" as const,
           runnerDropped: "ask" as const,
-          runnerLinuxEverything: true,
-          runnerBringBack: true,
+          runnerBringBack: false,
+          runnerBringBackExclude: ["dist"],
+          runnerBringBackMaxMB: 50,
+          runnerMacTools: ["fastlane"],
         },
       },
     };
@@ -67,8 +69,10 @@ describe("the Runner block a server publishes", () => {
       runnerAskMinutes: 4,
       runnerDropped: "agent",
       runnerMacFirstAfter: 6,
-      runnerLinuxEverything: false,
-      runnerBringBack: false,
+      runnerBringBack: true,
+      runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,
+      runnerBringBackMaxMB: 200,
+      runnerMacTools: RUNNER_DEFAULTS.runnerMacTools,
     });
     expect(block.machine).toEqual({
       runnerHost: "pc",
@@ -79,6 +83,7 @@ describe("the Runner block a server publishes", () => {
       runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
       runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
       runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+      runnerLinuxEvictionsBeforeAlone: RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone,
       heavySlowAgentJobs: false,
     });
     expect(block.projects[0]).toEqual({
@@ -90,8 +95,10 @@ describe("the Runner block a server publishes", () => {
         runnerWhere: "macFirst",
         runnerDropped: "ask",
         runnerMacFirstAfter: 6,
-        runnerLinuxEverything: true,
-        runnerBringBack: true,
+        runnerBringBack: false,
+        runnerBringBackExclude: ["dist"],
+        runnerBringBackMaxMB: 50,
+        runnerMacTools: ["fastlane"],
       }),
     });
     expect(block.projects[1]!.config).toEqual(block.global);
@@ -190,7 +197,13 @@ describe("the publisher layer", () => {
           calls += 1;
           return {
             ok: true,
-            reading: { load1: 1, cpuCount: 6, totalMemoryBytes: 8, availableMemoryBytes: 4 },
+            reading: {
+              cpuPercent: 10,
+              load1: 1,
+              cpuCount: 6,
+              totalMemoryBytes: 8,
+              availableMemoryBytes: 4,
+            },
           };
         };
         const services = Layer.mergeAll(
@@ -241,7 +254,13 @@ describe("the publisher layer", () => {
         Queue.offerUnsafe(checked, machine.runnerHost);
         return {
           ok: true,
-          reading: { load1: 1, cpuCount: 6, totalMemoryBytes: 8, availableMemoryBytes: 4 },
+          reading: {
+            cpuPercent: 10,
+            load1: 1,
+            cpuCount: 6,
+            totalMemoryBytes: 8,
+            availableMemoryBytes: 4,
+          },
         };
       };
       const change = (next: ServerSettings) => {

@@ -72,6 +72,12 @@ export const sameHeadSet = (a: readonly string[], b: readonly string[]) =>
 export const hashText = (text: string) =>
   NodeCrypto.createHash("sha256").update(text).digest("hex");
 export const strict = { onExcessProperty: "error" } as const;
+/**
+ * Settled sync and resolution work past the log retention window: the hub compactor and every
+ * device's retention pass delete it, which also clears the failures it counted.
+ */
+export const expiredTerminalWorkSql = (alias: string, now: number) =>
+  `${alias}.kind IN ('sync','resolve','revert_intent','rebuild') AND ${alias}.status IN ('completed','failed','cancelled') AND ${alias}.terminal_at<=${Math.trunc(now - M.MEMORY_LOG_RETENTION_MS)} AND NOT EXISTS(SELECT 1 FROM memory_pending_forget_intents f WHERE f.space=${alias}.space AND f.operation_id=json_extract(${alias}.metadata_json,'$.operationId'))`;
 export const digest = Schema.String.check(Schema.makeFilter((s) => /^[a-f0-9]{64}$/.test(s)));
 export const Metadata = Schema.Struct({
   protocolVersion: Schema.Literal(1),

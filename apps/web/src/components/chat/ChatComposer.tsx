@@ -1,3 +1,5 @@
+import { ComposerContextMeter } from "./ComposerContextMeter";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -380,6 +382,8 @@ export interface ChatComposerProps {
   isCompacting: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
+  /** The session's latest context window, for the meter beside send; null before any report. */
+  contextWindow: ContextWindowSnapshot | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
@@ -3615,6 +3619,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {props.contextWindow === null ? null : (
+                    <ComposerContextMeter usage={props.contextWindow} />
+                  )}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

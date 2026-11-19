@@ -6,12 +6,12 @@ import {
   RunId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
-  isAwaitedWork,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
   restartContinuationNote,
@@ -98,7 +98,7 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     label: "sleep 150 (subagent agent-1)",
     id: "agent-1",
   });
-  assert.isTrue(isAwaitedWork(ownShell));
+  assert.isTrue(wakesAgentWhenDone(ownShell));
   const long = cancelledRosterTaskWork({
     kind: "command",
     taskId: "shell-1",
@@ -120,13 +120,22 @@ it("names a lost subagent by the id the agent resumes it with", () => {
       description: `${"d".repeat(158)}🚀 deploy`,
     }).label.isWellFormed(),
   );
-  assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "shell-2" })));
-  assert.isTrue(
-    isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "tests", awaited: true })),
+  assert.isFalse(
+    wakesAgentWhenDone(cancelledRosterTaskWork({ kind: "command", taskId: "shell-2" })),
   );
-  assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "watchdog" })));
   assert.isTrue(
-    isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "ci", awaited: true })),
+    wakesAgentWhenDone(
+      cancelledRosterTaskWork({ kind: "command", taskId: "tests", awaited: true }),
+    ),
+  );
+  assert.isFalse(
+    wakesAgentWhenDone(cancelledRosterTaskWork({ kind: "monitor", taskId: "watchdog" })),
+  );
+  assert.isTrue(
+    wakesAgentWhenDone(cancelledRosterTaskWork({ kind: "monitor", taskId: "ci", awaited: true })),
+  );
+  assert.isFalse(
+    wakesAgentWhenDone(cancelledRosterTaskWork({ kind: "background_task", taskId: "lint" })),
   );
   assert.equal(
     cancelledTurnItemWork({
