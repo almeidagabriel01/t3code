@@ -75,8 +75,14 @@ function Slots(props: { readonly row: MachineBarRow }) {
         Off
       </Text>
     );
+  const { quick } = props.row;
   return (
     <View className="flex-row items-center gap-1.5">
+      {quick === null ? null : (
+        <Text textRole="footnote" className="text-foreground-muted tabular-nums">
+          quick {quick.running}/{quick.slots}
+        </Text>
+      )}
       {slots.slots > MAX_PIPS ? null : (
         <View className="flex-row gap-1">
           {Array.from({ length: slots.slots }, (_, index) => (
@@ -112,6 +118,7 @@ function MachineRow(props: {
     row.memory?.hint,
     row.offline !== null && row.offline.hint !== row.statusHint ? row.offline.hint : null,
     row.slots?.hint ?? row.queueOff,
+    row.quick?.hint,
     props.hint,
   ].filter((hint): hint is string => hint !== null && hint !== undefined && hint !== "");
   const warned = row.cpu?.warn === true || row.memory?.warn === true;
@@ -124,6 +131,7 @@ function MachineRow(props: {
         row.cpu === null ? null : `CPU ${row.cpu.value}`,
         row.memory === null ? null : `${row.memory.value} free`,
         row.slots === null ? "Off" : `${row.slots.running} of ${row.slots.slots} running`,
+        row.quick === null ? null : `${row.quick.running} of ${row.quick.slots} quick`,
         warned ? "warning" : null,
       ]
         .filter(Boolean)

@@ -43,6 +43,7 @@ import { parse as parseYaml } from "yaml";
 import * as ServerConfig from "./config.ts";
 import { devWorktreeCleanupBlocked } from "./devWorktreeCleanupGuard.ts";
 import * as QueueFile from "./heavyQueue/queueFile.ts";
+import { whenLockFree } from "./heavyQueue/whenLockFree.ts";
 import { copyRemovalFor, drainCopyRemovals, runnerBlockOf } from "./heavyQueue/RunnerPublisher.ts";
 import { terminalRunStatuses } from "./memory/memoryCatchUpWakes.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -1269,11 +1270,10 @@ const make = Effect.gen(function* () {
           now,
         );
         if (removal !== null)
-          yield* Effect.try({
-            try: () => QueueFile.addCopyRemoval(queueDir, removal),
-            catch: (cause) =>
-              new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
-          }).pipe(
+          yield* whenLockFree(
+            () => QueueFile.addCopyRemoval(queueDir, removal),
+            (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+          ).pipe(
             Effect.catch((error) =>
               Effect.logWarning("storage cleanup could not queue a Linux copy removal", { error }),
             ),

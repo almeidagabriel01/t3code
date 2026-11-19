@@ -9,14 +9,13 @@ import { afterEach, describe, expect, it, onTestFinished } from "@effect/vitest"
 import {
   callingBins,
   heavyLaunch,
-  jobOf,
-  labelOf,
   launchOf,
   parseHeavyArgs,
   selfPrefix,
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
+import { jobOf, labelOf } from "./jobEntry.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
@@ -229,7 +228,7 @@ describe("t3 heavy", () => {
     expect(await Promise.all([first.exited, third.exited])).toEqual([0, 0]);
   });
 
-  it("passes the program's exit code through, and a waiter interrupted leaves the queue", async () => {
+  it("passes the exit code through; an interrupted waiter leaves, an agent's keeps its place", async () => {
     const dir = tempDir();
     const failing = heavy(dir, [process.execPath, "-e", "process.exit(7)"]);
     expect(await failing.exited).toBe(7);
@@ -241,8 +240,26 @@ describe("t3 heavy", () => {
     waiter.child.kill("SIGTERM");
     expect(await waiter.exited).toBe(143);
     expect(Queue.read(dir)).toHaveLength(1);
+
+    // An agent's waiter keeps its place instead, and the same command run again takes it back.
+    const asAgent = { T3CODE_THREAD_ID: "thread-1" };
+    const agent = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await agent.until("err", "position 1");
+    agent.child.kill("SIGTERM");
+    expect(await agent.exited).toBe(143);
+    expect(agent.stderr()).toContain(
+      "[t3 heavy] stopped while waiting (position 1); run the same command again within 10 min to keep this place.",
+    );
+    const kept = Queue.read(dir)[1]!;
+    expect(kept.orphanedAt).toBeDefined();
+    const retry = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await retry.until("err", "position 1");
+    expect(Queue.read(dir).map((entry) => [entry.id, entry.pid])).toEqual([
+      [Queue.read(dir)[0]!.id, holder.child.pid],
+      [kept.id, retry.child.pid],
+    ]);
     holder.child.stdin.end();
-    expect(await holder.exited).toBe(0);
+    expect(await Promise.all([holder.exited, retry.exited])).toEqual([0, 0]);
   });
 
   it("reports a missing program and a program that cannot start", async () => {
@@ -291,6 +308,22 @@ describe("t3 heavy", () => {
     const kept = heavy(dir, [process.execPath, "-e", show], { VITEST_MAX_WORKERS: "2" });
     await kept.until("out", `,2,1`);
     expect(await kept.exited).toBe(0);
+  });
+
+  // The CLI waits on a busy lock without limit, and says who holds it.
+  it("says who holds the queue's lock while it waits for it", async () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    const run = heavy(dir, [process.execPath, "-e", "console.log('ran')"]);
+    await run.until(
+      "err",
+      `[t3 heavy] waiting for the queue's lock: process ${process.pid} holds it\n`,
+    );
+    NodeFS.rmSync(lock, { recursive: true });
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe("ran\n");
   });
 
   it("inside a queue job runs at once without queuing, so it never waits on its own slot", async () => {
@@ -351,7 +384,11 @@ describe("t3 heavy", () => {
       return path;
     };
     /** Heartbeats read as online; a stop check answers `gone`. */
-    const setup = (remotoBody: string, config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => {
+    const setup = (
+      remotoBody: string,
+      config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {},
+      machine: Partial<typeof DEFAULT_MACHINE_CONFIG> = {},
+    ) => {
       const dir = tempDir();
       // A checkout, so work started in it may go to Linux.
       NodeFS.mkdirSync(NodePath.join(dir, ".git"));
@@ -359,7 +396,7 @@ describe("t3 heavy", () => {
       script(NodePath.join(dir, "bin"), "vp", 'echo "vp on mac: $*"');
       Queue.publishRunner(dir, {
         global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux", ...config },
-        machine: DEFAULT_MACHINE_CONFIG,
+        machine: { ...DEFAULT_MACHINE_CONFIG, ...machine },
         projects: [],
         publisher: { pid: process.pid, home: dir, primary: true },
       });
@@ -1947,6 +1984,19 @@ describe("t3 heavy", () => {
       );
     });
 
+    it.each([
+      ["vp", ["run", "dev"]],
+      [SH, ["-c", "cd apps/web && vp run dev:desktop"]],
+      ["npx", ["expo", "start"]],
+      ["vp", ["test", "--watch"]],
+    ])("row 14: %s %j keeps running, so it runs outside the queue", (program, args) => {
+      const modeAt = () => ({ enabled: true, runner: true });
+      expect(heavyLaunch({ program, args, where: undefined }, "/w", "/h", modeAt, false)).toEqual({
+        kind: "direct",
+        service: true,
+      });
+    });
+
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
       const modeAt = (cwd: string) => (seen.push(cwd), { enabled: true, runner: true });
@@ -2206,7 +2256,8 @@ describe("t3 heavy", () => {
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
       ["xcodebuild -scheme App test", "Mac-only tool: xcodebuild"],
-      ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
+      // It keeps running: load on this Mac, never a queue job.
+      ["vp run dev:desktop", "light"],
       // A line it can't follow is no reason to keep it here.
       ["vp test run <<EOF\nx\nEOF", "linux", "vp test run <<EOF\nx\nEOF"],
       ["echo a | vp test run", "linux", "echo a | vp test run"],

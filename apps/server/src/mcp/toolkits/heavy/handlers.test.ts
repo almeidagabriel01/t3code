@@ -120,6 +120,34 @@ describe("heavyStatus", () => {
       high: false,
     },
     {
+      name: "calm, the only slot busy, an orphaned place but nobody else waits",
+      change: {
+        entries: [entry("a", null, "t"), { ...entry("o", "me", null), orphanedAt: 1 }],
+        maxRunning: 1,
+      },
+      askUser: false,
+      high: false,
+    },
+    {
+      name: "calm, a commit, a quick job and a service run: the one standard slot is free",
+      change: {
+        entries: [
+          entry("c", null, "t"),
+          entry("q", null, "t"),
+          entry("s", null, "t"),
+          entry("b", null, null),
+        ],
+        costs: {
+          c: { class: "standard" as const, why: "staged files", commit: true },
+          q: { class: "quick" as const, why: "usually 4 s" },
+          s: { class: "service" as const, why: "dev server" },
+        },
+        maxRunning: 1,
+      },
+      askUser: false,
+      high: false,
+    },
+    {
       name: "queue off: load high, agents busy",
       change: { enabled: false, busyCores: 6 },
       askUser: false,
@@ -231,6 +259,22 @@ describe("heavyStatus", () => {
       askUser: false,
       reason: "No commit hook",
     },
+    ...(["quick", "service"] as const).map((cost) => ({
+      name: `a ${cost} command under pressure never waits: never ask`,
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, class: cost, classWhy: "2 files" },
+      },
+      askUser: false,
+    })),
+    {
+      name: "a quick command that would wait (quick slots full) under pressure: ask",
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, startsNow: false, class: "quick" as const, classWhy: "1 file" },
+      },
+      askUser: true,
+    },
     {
       name: "Mac-bound: Linux jobs never fill this Mac's slots",
       change: {
@@ -258,6 +302,7 @@ describe("heavyStatus", () => {
         { ...entry("on-linux", "other", "t"), runner: "linux" },
         entry("on-mac", "other", "t"),
         entry("w-linux", "me", null),
+        { ...entry("orphan", "me", null), orphanedAt: 1 },
         entry("w-mac", "other", null),
         entry("w-mac-2", "me", null),
       ],
@@ -273,13 +318,16 @@ describe("heavyStatus", () => {
       ["on-linux", "linux"],
       ["on-mac", "mac"],
     ]);
+    // An orphan only keeps a place for its agent: no machine, no position, no shift of the others.
     expect(status.waiting.map((w) => [w.id, w.runsOn, w.position])).toEqual([
       ["w-linux", "linux", 1],
+      ["orphan", undefined, 0],
       ["w-mac", "mac", 1],
       ["w-mac-2", "mac", 2],
     ]);
     expect(status.yours).toEqual([
       { id: "w-linux", position: 1, runsOn: "linux" },
+      { id: "orphan", position: 0 },
       { id: "w-mac-2", position: 2, runsOn: "mac" },
     ]);
     expect(status.commands.map((c) => [c.pid, c.runsOn, c.cpuCores, c.peakMemoryBytes])).toEqual([
@@ -388,6 +436,7 @@ const callTool = (
             linux: queueLinux,
             routes: {},
             macOnly: [],
+            costs: { run: { class: "standard", why: "staged files", commit: true } },
             ...HEAVY_QUEUE_DEFAULTS,
           }),
           command: Effect.succeed("t3 heavy --"),
@@ -400,8 +449,11 @@ const callTool = (
                     runsOn: "linux" as const,
                     reason: "Linux is unavailable: waiting for it",
                     startsNow: false,
+                    position: 1,
                     linuxFull: true,
                     canceled: false,
+                    class: "standard" as const,
+                    classWhy: "first run",
                   };
                 }),
           promote: (id, note) =>
@@ -472,6 +524,8 @@ describe("t3_heavy", () => {
       expect(chunk.at(-1)!.result).toMatchObject({
         askUser: true,
         command: "t3 heavy --",
+        // A commit runs in its own slot.
+        mac: { running: 0, maxRunning: 3 },
         running: [{ id: "run" }],
         yours: [{ id: "w", position: 1 }],
         commands: [

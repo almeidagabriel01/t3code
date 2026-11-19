@@ -1,0 +1,101 @@
+// @effect-diagnostics nodeBuiltinImport:off
+/** How a `t3 heavy` command becomes its queue entry: plain Node, shared by the CLI and the probe. */
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
+
+import { lineParts, readLine, shellQuote, type ReadScript } from "./heavyHook.ts";
+import { startFolder, type QueuedEntry } from "./runner.ts";
+
+const LABEL_CHARS = 200;
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
+
+/**
+ * The job a command really is. A shell line's leading `cd <dir> &&` steps become the folder it
+ * starts from, so the queue, its project settings and Linux all see that folder, and an agent's own
+ * `remoto` around the command is dropped.
+ */
+export const jobOf = (
+  program: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  home: string,
+): {
+  readonly cwd: string;
+  readonly program: string;
+  readonly args: ReadonlyArray<string>;
+  readonly remoto: boolean;
+} => {
+  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
+    return { cwd, program: args[0], args: args.slice(1), remoto: true };
+  }
+  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
+    return { cwd, program, args, remoto: false };
+  }
+  const parts = lineParts(args[1]);
+  return {
+    cwd: startFolder(parts.dirs, cwd, home),
+    program,
+    args: ["-c", parts.command, ...args.slice(2)],
+    remoto: parts.remoto,
+  };
+};
+
+/**
+ * A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it.
+ * Any other program by its name, as Linux runs it (`remoteCommand`).
+ */
+export const labelOf = (program: string, args: ReadonlyArray<string>) =>
+  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
+    0,
+    LABEL_CHARS,
+  );
+
+export const isShellLine = (program: string, args: ReadonlyArray<string>) =>
+  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
+
+/** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
+export const jobLine = (program: string, args: ReadonlyArray<string>) =>
+  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
+
+/**
+ * The queue entry a `t3 heavy` job is, built one way for the real job and for a probe of it, so
+ * both get the same label, line, scripts and request key.
+ */
+export const jobEntryOf = (
+  job: Pick<
+    QueuedEntry,
+    | "id"
+    | "pid"
+    | "threadId"
+    | "cwd"
+    | "createdAt"
+    | "priority"
+    | "name"
+    | "routeReason"
+    | "where"
+    | "forced"
+  > & { readonly program: string; readonly args: ReadonlyArray<string> },
+  readScript: ReadScript,
+): QueuedEntry => {
+  const { program, args, ...rest } = job;
+  const label = labelOf(program, args);
+  const line = jobLine(program, args);
+  // The scripts it runs travel with the job: the Runner judges them by their text.
+  const scripts: Record<string, string | null> = {};
+  readLine(line, (word) => (scripts[word] = readScript(word)));
+  return {
+    ...rest,
+    label,
+    ...(line === label ? {} : { line }),
+    ...(Object.keys(scripts).length === 0 ? {} : { scripts }),
+    startedAt: null,
+    // A retry of the same request takes back its orphaned place.
+    ...(job.threadId === null
+      ? {}
+      : {
+          requestKey: NodeCrypto.createHash("sha1")
+            .update(`${job.threadId}|${job.cwd}|${line}`)
+            .digest("hex"),
+        }),
+  };
+};

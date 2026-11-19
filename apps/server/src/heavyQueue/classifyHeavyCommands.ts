@@ -1,8 +1,14 @@
-import type { HeavyCommand, HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type HeavyCommand,
+  type HeavyQueueEntry,
+  type ResourceTelemetryProcess,
+} from "@t3tools/contracts";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import type { ProcessOwner } from "@t3tools/shared/ProcessOwners";
 import * as DateTime from "effect/DateTime";
 
+import { costOf } from "./costClass.ts";
 import { readLine } from "./heavyHook.ts";
 
 /** Summed over the tree: half a core, or 1 GiB resident, as the Resource Manager flags a process. */
@@ -229,6 +235,9 @@ export function classifyHeavyCommands(input: {
       startTimeMs: root.identity.startTimeMs,
       label,
       name: heavyEntryName({ label, cwd: "" }),
+      ...(costOf({ label }, null, HEAVY_QUEUE_DEFAULTS.quickSeconds).class === "service"
+        ? { keepsRunning: true }
+        : {}),
       startedAt: DateTime.formatIso(DateTime.makeUnsafe(root.identity.startTimeMs)),
       cpu: tenth(usage.cpu),
       memory: roundMemory(usage.memoryBytes),

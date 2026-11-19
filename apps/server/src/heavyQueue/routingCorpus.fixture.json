@@ -1231,7 +1231,7 @@
       "line": "vp run dev:desktop",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",
-      "expect": "exclusive"
+      "expect": "serves-port:vp dev:desktop"
     },
     {
       "line": "vp test run --outputFile=/tmp/r.json",

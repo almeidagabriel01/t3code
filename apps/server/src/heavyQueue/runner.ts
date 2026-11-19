@@ -15,8 +15,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  budgetOf,
   jobVerdict,
-  kindOf,
+  laneOf,
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
@@ -27,6 +28,7 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
+import { EXECUTORS, kindOf, PACKAGE_MANAGERS } from "./commandShapes.ts";
 import {
   commitOnly,
   FOLDER_FLAGS,
@@ -41,7 +43,7 @@ import {
 } from "./heavyHook.ts";
 import type { SyncBack } from "./heavyNotices.ts";
 import { localPortsIn } from "./localPorts.ts";
-import type { Word } from "./shellLine.ts";
+import { withHome, type Word, wordFrom } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
@@ -218,6 +220,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly linkFailures?: number;
   /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
   readonly failure?: string;
+  /** The last line Linux printed when its link last failed, for the retry's reason. */
+  readonly linkError?: string;
   /** Its worktree broke the install on Linux (a stale lockfile): the fix, for its end notice. */
   readonly worktree?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
@@ -251,7 +255,7 @@ const expand = (
   vars: ReadonlyMap<string, string | null>,
   cwd: string,
 ): { readonly value: string } | { readonly unknown: string } => {
-  let value = word.tilde ? word.value.replace(/^~(?=\/|$)/, vars.get("HOME") ?? "~") : word.value;
+  let value = withHome(word, vars.get("HOME") ?? "~");
   for (const name of word.vars) {
     if (name === "") return { unknown: "$(…)" };
     const known = name === "PWD" ? cwd : vars.get(name);
@@ -286,7 +290,6 @@ export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 /** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
 const COMMIT_HOOK = "Commit hook runs checks";
 
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
@@ -299,7 +302,6 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   wrangler: /^dev$/,
   storybook: /^(dev)?$/,
 };
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
@@ -543,16 +545,7 @@ const lineReason = (
   const exported = new Set<string>();
   const nameOf = (word: Word) => word.value.slice(0, word.value.indexOf("="));
   const assigned = (word: Word, cwd: string) =>
-    literalValue(
-      // `D=~/x` expands the `~` when it is not quoted.
-      {
-        ...word,
-        value: word.value.slice(nameOf(word).length + 1),
-        tilde: source[word.start + nameOf(word).length + 1] === "~",
-      },
-      vars,
-      cwd,
-    );
+    literalValue(wordFrom(word, nameOf(word).length + 1), vars, cwd);
   const cwdAt = (scope: ReadonlyArray<number>): string | null => {
     const key = scope.join("/");
     if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
@@ -1082,7 +1075,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Jobs waiting for Linux to empty: it admits nobody else meanwhile. */
   const alone = new Set(waiting.filter(runsAlone).map((entry) => entry.id));
   let linuxCount = linuxRunning.length;
-  let macCount = macRunning.length;
+  /** A service holds no slot and never runs alone: it is load in the reading, nothing more. */
+  const isQuick = (entry: HeavyQueueEntry) => laneOf(input, entry) === "quick";
+  const holdsSlot = (entry: HeavyQueueEntry) => laneOf(input, entry) === "standard";
+  let macCount = macRunning.filter(holdsSlot).length;
   let lastLinuxStart = Math.max(
     -Infinity,
     ...linuxRunning.map((entry) => Date.parse(entry.startedAt!)),
@@ -1090,7 +1086,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
-  const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
+  const macExclusive =
+    queueOn && macRunning.some((entry) => holdsSlot(entry) && kindOf(entry) === "exclusive");
+  /** The Mac's room this pass: jobs routed there spend it, so two that fit alone don't both go. */
+  let macBudget = fresh ? budgetOf(input, sample, macRunning) : null;
   const linuxOverNow = linuxOverBy(health, machine);
   const okAt = health.okAt ?? -Infinity;
   const stale = now - okAt > readingGapMs(machine);
@@ -1111,7 +1110,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     alone.delete(entry.id);
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
-    macCount += 1;
+    if (holdsSlot(entry)) macCount += 1;
+    // Only what fits spends it, as in `plan`: a waiter too big to start takes no one's room.
+    const verdict = macBudget === null ? null : jobVerdict(input, sample!, entry, macBudget);
+    if (macBudget !== null && verdict !== null && verdict.hold === null) {
+      const { cost } = verdict;
+      macBudget = {
+        memoryBytes: macBudget.memoryBytes - cost.memoryBytes,
+        cpu: macBudget.cpu - cost.cpu,
+      };
+    }
     if (!queueOn) admits[entry.id] = { runner: "mac", ungated: true };
     // Its job's slot is its own: waiting for another could wait on that job (pause included). A
     // Linux call sent here leaves the queue instead, to run under its job (`leavesForMac`).
@@ -1134,14 +1142,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * limits, which only the sustained ones may turn into a move.
    */
   const macRoom = (entry: HeavyQueueEntry) =>
-    !macOver &&
-    !macExclusive &&
-    (!queueOn ||
-      (macCount < Math.max(1, input.maxRunning) &&
-        (macCount === 0 ||
-          !fresh ||
-          machineHold(sample, input) !== null ||
-          jobVerdict(input, sample, entry).hold === null)));
+    isQuick(entry)
+      ? // Quick work passes the slots and a job that runs alone; only its memory can keep it off.
+        !macOver &&
+        (macBudget === null || jobVerdict(input, sample!, entry, macBudget).hold !== "job-memory")
+      : !macOver &&
+        !macExclusive &&
+        (!queueOn ||
+          (macCount < Math.max(1, input.maxRunning) &&
+            (macCount === 0 ||
+              macBudget === null ||
+              machineHold(sample!, input) !== null ||
+              jobVerdict(input, sample!, entry, macBudget).hold === null)));
   /** Why Linux cannot take `entry` (of `worktree`) now, or null when it can. */
   const linuxBusy = (entry: HeavyQueueEntry, worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0 && !isCall(entry)) {
@@ -1184,6 +1196,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     return null;
   };
+  /** Why Linux cannot take `entry` now; a fresh-reading wait never applies to quick work. */
+  const busyFor = (entry: HeavyQueueEntry, worktree: string) => {
+    const busy = linuxBusy(entry, worktree);
+    return busy !== null && busy.kind === "reading" && isQuick(entry) ? null : busy;
+  };
   /** Hybrid's balance: this Mac's backlog per slot is no longer than Linux's (the Mac on a tie). */
   const macShorter = () =>
     macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
@@ -1214,6 +1231,14 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * "When Linux is offline" or "If a Linux run fails", with its question and deadline. A run Linux
    * hasn't confirmed stopped reruns nowhere yet, but every other choice acts now.
    */
+  /** Only an offline Linux "comes back"; online, the job is between attempts of its own. */
+  const linuxWait = (entry: HeavyQueueEntry) => {
+    const { linkFailures, linkError } = entry as QueuedEntry;
+    if (health.online === false) return "waiting for Linux to come back";
+    if (linkFailures === undefined) return "checking whether Linux is up";
+    const attempt = `retrying on Linux (attempt ${linkFailures} of ${linkAttempts(machine)})`;
+    return linkError === undefined ? attempt : `${attempt}: ${linkError}`;
+  };
   const follow = (entry: HeavyQueueEntry, config: RunnerProjectConfig) => {
     const reason: HeavyRunnerAskReason = droppedFinal(entry, machine) ? "dropped" : "unavailable";
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
@@ -1309,7 +1334,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     // A run that failed on Linux follows "If a Linux run fails" in every mode, below.
@@ -1327,7 +1352,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(entry, `${mode}: Linux is unavailable`);
         continue;
       }
-      const busy = linuxBusy(entry, worktree);
+      const busy = busyFor(entry, worktree);
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";
         linuxCount += 1;
@@ -1376,7 +1401,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     if (up) {
-      const busy = linuxBusy(entry, worktree);
+      const busy = busyFor(entry, worktree);
       if (busy !== null && !startsOnLinux(entry, busy)) linuxFullRoute(entry, config, busy);
       else toLinuxNow(entry, worktree);
       continue;
@@ -1387,7 +1412,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     // The user (or an expired question) already chose to wait.
     if (entry.route === "linux") {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     follow(entry, config);
@@ -1407,7 +1432,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     };
   }
   const mac = plan({ ...input, entries: [...macRunning, ...macWaiters] });
-  if (mac.admit !== null) admits[mac.admit] = { runner: "mac", ungated: false };
+  for (const id of mac.admits) admits[id] = { runner: "mac", ungated: false };
   return {
     admits,
     routes,

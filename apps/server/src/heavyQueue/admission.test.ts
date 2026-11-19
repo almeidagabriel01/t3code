@@ -4,7 +4,7 @@ import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   estimate,
-  kindOf,
+  laneOf,
   machineHold,
   plan,
   signatureOf,
@@ -14,6 +14,7 @@ import {
   type Run,
   type Sustained,
 } from "./admission.ts";
+import { kindOf } from "./commandShapes.ts";
 
 const GIB = 1024 ** 3;
 const NOW = Date.parse("2026-01-01T01:00:00.000Z");
@@ -72,7 +73,14 @@ describe("command kinds and signatures", () => {
     ["vp test run src/a.test.ts", "medium"],
     ["vp run check:changed", "medium"],
     ["xcrun simctl boot iPhone", "exclusive"],
-    ["vp run dev:desktop", "exclusive"],
+    ["vp run dev:desktop", "heavy"],
+    // A file's folders say nothing about the work; its own name and a folder argument do.
+    ["vp lint src/build/x.ts", "medium"],
+    ["vp fmt apps/web/src/browser/Foo.tsx", "medium"],
+    ["vp test run apps/compile/a.test.ts", "medium"],
+    ["vp test run src/a.browser.test.tsx", "heavy"],
+    ["vp test -c apps/web/playwright.config.ts", "heavy"],
+    ["cd apps/build && vp lint", "heavy"],
   ])("%s is %s", (label, kind) => {
     expect(kindOf({ label })).toBe(kind);
   });
@@ -108,6 +116,31 @@ describe("command kinds and signatures", () => {
     expect(signatureOf("vp test run src/a.test.ts")).not.toBe(
       signatureOf("vp test run src/b/c.test.ts"),
     );
+  });
+
+  // Keys the old signature learned in the incident (`vp fmt $=files 2>`, `git commit "feat`).
+  it.each([
+    [`files=(a.ts b.ts); vp fmt "$@" "\${files[@]}" 2>/dev/null`, "vp fmt"],
+    [`vp fmt --stdin-filepath="$f" < "$f" 2>&1 | diff -q - "$f"`, "vp fmt files"],
+    ["pnpm exec vp fmt apps/a.ts apps/b.ts", "vp fmt files"],
+    ["vp lint --no-ignore a.ts b.ts c.ts", "vp lint files"],
+    [`git commit -m "feat: x" a.ts 2>&1 | tail -8; git log --oneline -2`, "git commit"],
+    [`git commit -q -m "runex fix" apps/a.ts`, "git commit"],
+    ["pnpm --filter web run build", "pnpm web run build"],
+    ["cd apps/server && vp run typecheck 2>&1 | tail -20", "vp run typecheck"],
+    ["npx vitest run src/a.test.ts", "vitest run src/a.test.ts"],
+    ["vp lint a.ts && vp run dev", "vp lint files && vp run dev"],
+    [`bash -c 'cd /w && vp run typecheck'`, "vp run typecheck"],
+  ])("keys %s by its work, not its arguments", (line, signature) => {
+    expect(signatureOf(line)).toBe(signature);
+  });
+
+  it("keys a line by its full text when the label is cut at 200 characters", () => {
+    const line = `cd /w; files=(${"packages/x/src/a.ts ".repeat(12)}); for f in "\${files[@]}"; do vp fmt --stdin-filepath="$f" < "$f"; done`;
+    const history = { "vp fmt files": [run(1, 0.2, 2_000)] };
+    expect(
+      estimate(history, { label: line.slice(0, 200), line }, 10, HEAVY_QUEUE_DEFAULTS),
+    ).toEqual({ cpu: 1, memoryBytes: 0.2 * GIB, durationMs: 2_000 });
   });
 
   it("estimates from the median run and the most CPU, else by kind; unread CPU never counts", () => {
@@ -257,12 +290,10 @@ describe("admission plan", () => {
       reason: { a: "the one slot is busy" },
     },
     {
-      name: "ramp-up: the last start has not settled",
+      name: "a job that just started counts its estimate, not a whole settle window",
       entries: [entry("r", "vp run build", 5_000), entry("a", "vp run typecheck")],
       change: { lastStartAt: NOW - 5_000 },
-      admit: null,
-      hold: "settling",
-      reason: { a: "letting the last one ramp up" },
+      admit: "a",
     },
     {
       name: "ramp-up over: admit again",
@@ -287,7 +318,7 @@ describe("admission plan", () => {
       },
       admit: null,
       hold: "job-memory",
-      reason: { a: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare" },
+      reason: { a: "memory floor: 2.6 GB room, needs 4.0 GB" },
     },
     {
       name: "memory below the floor holds whatever the job needs",
@@ -373,8 +404,8 @@ describe("admission plan", () => {
       admit: "small",
       hold: "job-memory",
       reason: {
-        head: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
-        mid: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
+        head: "memory floor: 2.6 GB room, needs 4.0 GB",
+        mid: "memory floor: 2.6 GB room, needs 4.0 GB",
       },
     },
     {
@@ -425,11 +456,82 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
       change: {
         sample: { ...sixteen, pressureLevel: 2 },
-        history: { "vp run lint": [run(0.5, 400 / 1024, 5_000)] },
+        // Two minutes: a standard job, which the machine's limits hold; a quick one would pass.
+        history: { "vp run lint": [run(0.5, 400 / 1024, 120_000)] },
         lightJobMegabytes: 256,
       },
       admit: null,
       hold: "pressure",
+    },
+    {
+      name: "below the memory floor a light job starts: the floor is what it may pass",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.18 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+      },
+      admit: "a",
+    },
+    {
+      name: "holding for the reopen level, a light job still starts above the floor",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.22 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+        holding: true,
+      },
+      admit: "a",
+      holding: true,
+    },
+    {
+      name: "below the memory floor a light quick job starts",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.18 * 32 * GIB },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+      },
+      admit: "a",
+    },
+    // Pressure and swapping hold every job: the floor is all a light job may pass.
+    ...(
+      [
+        ["memory pressure", { pressureLevel: 2 }, "pressure"],
+        ["swapping", { swapInBytesPerSecond: 512 * 1024 ** 2 }, "swap-in"],
+      ] as const
+    ).flatMap(([why, signal, hold]) => [
+      {
+        name: `${why} holds a light job with room to spare`,
+        entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+        change: {
+          sample: { ...calm, ...signal },
+          history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
+        },
+        admit: null,
+        hold,
+        holding: true,
+      },
+      {
+        name: `${why} gives a light quick job nothing past the floor`,
+        entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+        change: {
+          sample: { ...calm, ...signal, availableMemoryBytes: 0.18 * 32 * GIB },
+          history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+        },
+        admit: null,
+        hold: "job-memory",
+        holding: true,
+      },
+    ]),
+    {
+      name: "a light job past the floor still needs the memory it uses",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.3 * GIB },
+        history: { "vp run lint": [run(0.5, 0.4, 120_000)] },
+      },
+      admit: null,
+      hold: "job-memory",
+      reason: { a: "memory floor: 0.3 GB room, needs 0.4 GB" },
     },
     {
       name: "28% free on 16 GB: a 4 GB guess holds a medium job never seen",
@@ -461,7 +563,7 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
       change: {
         sample: { ...sixteen, busyCores: 9.5 },
-        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+        history: { "vp run lint": [run(0.5, 0.1, 120_000)] },
       },
       admit: null,
       hold: "cpu",
@@ -488,11 +590,15 @@ describe("admission plan", () => {
     entries: ReadonlyArray<HeavyQueueEntry>;
     change?: Partial<Omit<PlanInput, "entries">>;
     admit: string | null;
+    admits?: ReadonlyArray<string>;
     hold?: string;
+    holding?: boolean;
     reason?: Record<string, string>;
-  }>)("$name", ({ entries, change, admit, hold, reason }) => {
+  }>)("$name", ({ entries, change, admit, admits, hold, reason, holding }) => {
     const result = plan({ ...base, ...change, entries });
-    expect(result.admit).toBe(admit);
+    // A light job past the floor leaves memory short of the reopen level.
+    if (holding !== undefined) expect(result.holding).toBe(holding);
+    expect(result.admits).toEqual(admits ?? (admit === null ? [] : [admit]));
     // Every held case names its enumerable reason; an admitted head has none.
     expect(result.hold).toBe(hold ?? null);
     for (const [id, text] of Object.entries(reason ?? {})) expect(result.reasons[id]).toBe(text);
@@ -519,17 +625,18 @@ describe("admission plan", () => {
       change: {},
       entries: [entry("r1", "xcrun simctl boot x", 60_000)],
     },
-    {
-      name: "a start moments ago",
-      change: { lastStartAt: NOW - 1_000, holding: true },
-      entries: [entry("r1", "vp run build", 1_000)],
-    },
   ])("switched off, holds no waiter despite $name", ({ change, entries }) => {
     const waiters = [entry("a", "xcrun simctl boot y"), entry("b", "vp run build")];
     const off = plan({ ...base, ...change, enabled: false, entries: [...entries, ...waiters] });
-    expect(off).toEqual({ admit: "a", reasons: {}, room: true, holding: false, hold: null });
+    expect(off).toEqual({
+      admits: ["a", "b"],
+      reasons: {},
+      room: true,
+      holding: false,
+      hold: null,
+    });
     const on = plan({ ...base, ...change, entries: [...entries, ...waiters] });
-    expect(on.admit).toBeNull();
+    expect(on.admits).toEqual([]);
     expect(Object.keys(on.reasons)).toEqual(["a", "b"]);
   });
   it.each([
@@ -555,27 +662,21 @@ describe("admission plan", () => {
     ({ change, entries }) => {
       const waiters = [entry("n", "vp run build"), forced("f", "vp run build")];
       const result = plan({ ...base, ...change, entries: [...entries, ...waiters] });
-      expect(result.admit).toBe("f");
+      expect(result.admits).toEqual(["f"]);
       expect(result.reasons["n"]).toBeDefined();
       const held = plan({ ...base, ...change, entries: [...entries, entry("n", "vp run build")] });
-      expect(held.admit).toBeNull();
+      expect(held.admits).toEqual([]);
     },
   );
 
-  it("admits forced waiters one per plan call, in queue order", () => {
+  it("admits every forced waiter at once, in queue order", () => {
     const entries = [
       ...full,
       entry("n", "vp run build"),
       forced("f2", "vp run build"),
       forced("f1", "vp run build"),
     ];
-    expect(plan({ ...base, paused: true, entries }).admit).toBe("f2");
-    const afterFirst = entries.map((e) => (e.id === "f2" ? { ...e, startedAt: at(0) } : e));
-    const reordered = [
-      ...afterFirst.filter((e) => e.startedAt !== null),
-      ...afterFirst.filter((e) => e.startedAt === null),
-    ];
-    expect(plan({ ...base, paused: true, entries: reordered }).admit).toBe("f1");
+    expect(plan({ ...base, paused: true, entries }).admits).toEqual(["f2", "f1"]);
   });
 
   it("asks for a higher memory level to reopen after pressure, so admission does not flap", () => {
@@ -583,8 +684,10 @@ describe("admission plan", () => {
     const history = { "vp run build": [run(2, 4, 60_000)] };
     // 11.9 - 4 GiB sits above the 20% floor (6.4) but below the 25% reopen level (8).
     const tight = { ...calm, availableMemoryBytes: 11.9 * GIB };
-    expect(plan({ ...base, history, entries, sample: tight, holding: false }).admit).toBe("a");
-    expect(plan({ ...base, history, entries, sample: tight, holding: true }).admit).toBeNull();
+    expect(plan({ ...base, history, entries, sample: tight, holding: false }).admits).toEqual([
+      "a",
+    ]);
+    expect(plan({ ...base, history, entries, sample: tight, holding: true }).admits).toEqual([]);
     const pressed = plan({ ...base, history, entries, sample: { ...calm, pressureLevel: 2 } });
     expect(pressed).toMatchObject({ holding: true, room: false });
     // A job too big to fit raises nothing, so a small one behind it still passes next time.
@@ -605,11 +708,458 @@ describe("admission plan", () => {
     ];
     const history = { "vp run build": [run(2, 4, 60_000)] };
     const first = plan({ ...base, history, entries, sample: sixteen });
-    expect(first.admit).toBe("small");
+    expect(first.admits).toEqual(["small"]);
     // Each waiter plans again under the lock with what the last plan stored.
-    expect(plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admit).toBe(
-      "small",
-    );
+    expect(
+      plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admits,
+    ).toEqual(["small"]);
+  });
+});
+
+describe("admission by real capacity", () => {
+  /** The reading in the incident's screenshot: CPU 26%, 4.2 GB free of 16, pressure 1. */
+  const q2 = {
+    ...calm,
+    busyCores: 2.6,
+    availableMemoryBytes: 4.2 * GIB,
+    totalMemoryBytes: 16 * GIB,
+    pressureLevel: 1,
+  };
+  const sized = { ...base, sample: q2 };
+  const history = {
+    "vp run build": [run(2, 2.5, 300_000)],
+    "vp run bundle": [run(1, 0.8, 60_000)],
+    "vp run compile": [run(1, 0.6, 60_000)],
+    "vp run e2e": [run(1, 1, 600_000)],
+    "vp run docker": [run(0.5, 0.05, 600_000)],
+  };
+  const aged = 10 * 60_000;
+
+  it.each([
+    {
+      row: 33,
+      name: "the 5th waiter that fits starts; the four too big for the room wait",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        ...["w1", "w2", "w3", "w4"].map((id) => entry(id, "vp run build")),
+        entry("w5", "vp run bundle"),
+      ],
+      admits: ["w5"],
+      hold: "job-memory",
+      reasons: { w1: "memory floor: 1.0 GB room, needs 2.5 GB" },
+    },
+    {
+      row: 34,
+      name: "two that fit alone: the first starts, the second counts it",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("a", "vp run compile"),
+        entry("b", "vp run compile"),
+      ],
+      admits: ["a"],
+      reasons: { b: "waiting for room: a job just started" },
+    },
+    {
+      row: 35,
+      name: "an aged head that fits once the queue's jobs end keeps its room",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run bundle"),
+      ],
+      admits: [],
+      hold: "job-memory",
+      reasons: { w: "waiting for room for the head job" },
+    },
+    {
+      row: 35,
+      name: "a light job behind the aged head does not take the floor it keeps",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("light", "vp run docker"),
+      ],
+      admits: [],
+      hold: "job-memory",
+      reasons: { light: "waiting for room for the head job" },
+    },
+    {
+      row: 48,
+      name: "an aged head short on room from load outside the queue blocks no one",
+      entries: [
+        entry("r", "vp run docker", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run bundle"),
+      ],
+      admits: ["w"],
+      hold: "job-memory",
+      reasons: { head: "memory floor: 1.0 GB room, needs 2.5 GB" },
+    },
+    {
+      row: 36,
+      name: "an exclusive head within its patience lets a job that fits start",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x"),
+        entry("w", "vp run compile"),
+      ],
+      admits: ["w"],
+      hold: "runs-alone",
+      reasons: { boot: "the next job runs alone" },
+    },
+    {
+      row: 37,
+      name: "an aged exclusive head drains: nothing new starts until it runs",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, aged),
+        entry("w", "vp run compile"),
+      ],
+      admits: [],
+      hold: "runs-alone",
+      reasons: { w: "waiting for the job that runs alone to start" },
+    },
+  ])("row $row: $name", ({ entries, admits, hold, reasons }) => {
+    const result = plan({ ...sized, history, entries });
+    expect(result.admits).toEqual(admits);
+    if (hold !== undefined) expect(result.hold).toBe(hold);
+    for (const [id, text] of Object.entries(reasons)) expect(result.reasons[id]).toBe(text);
+  });
+
+  it("row 50: a run's build daemons still alive are already in the reading, not in its cost", () => {
+    const daemonRun = { ...run(1, 2.4, 60_000), treeMemoryBytes: 0.8 * GIB };
+    const entries = [entry("r", "vp run docker", 60_000), entry("t", "vp run gradle")];
+    const books = { ...history, "vp run gradle": [daemonRun] };
+    const gone = plan({ ...sized, history: books, entries });
+    expect(gone.admits).toEqual([]);
+    expect(gone.reasons["t"]).toBe("memory floor: 1.0 GB room, needs 2.4 GB");
+    const alive = { ...q2, buildDaemonsAlive: true };
+    expect(plan({ ...sized, history: books, entries, sample: alive }).admits).toEqual(["t"]);
+  });
+
+  it("row 17: a job idle long enough is a service and frees its slot", () => {
+    const idle = {
+      ...entry("srv", "node server.js", 13 * 60_000),
+      idleSince: NOW - 12 * 60_000,
+    };
+    const result = plan({
+      ...sized,
+      sample: { ...q2, availableMemoryBytes: 8 * GIB },
+      history,
+      maxRunning: 1,
+      entries: [idle, entry("w", "vp run compile")],
+    });
+    expect(result.admits).toEqual(["w"]);
+    const busy = { ...idle, idleSince: NOW - 60_000 };
+    expect(
+      plan({
+        ...sized,
+        sample: { ...q2, availableMemoryBytes: 8 * GIB },
+        history,
+        maxRunning: 1,
+        entries: [busy, entry("w", "vp run compile")],
+      }).admits,
+    ).toEqual([]);
+  });
+
+  it("classes a Linux job by its Linux runs, else this Mac's; a Mac job only by this Mac's", () => {
+    const line = "vp run compile";
+    const linux = { [signatureOf(line)]: [{ durationMs: 4_000 }] };
+    const mac = { [signatureOf(line)]: [run(1, 1, 600_000)] };
+    const onLinux = { ...entry("l", line), runner: "linux" as const };
+    expect(laneOf({ history: {}, linuxHistory: linux }, onLinux)).toBe("quick");
+    expect(laneOf({ history: mac, linuxHistory: linux }, onLinux)).toBe("quick");
+    expect(laneOf({ history: mac, linuxHistory: linux }, entry("m", line))).toBe("standard");
+    expect(laneOf({ history: mac, linuxHistory: {} }, onLinux)).toBe("standard");
+    // Linux timings never make a Mac first run quick.
+    expect(laneOf({ history: {}, linuxHistory: linux }, entry("m", line))).toBe("standard");
+  });
+
+  it("starts the aged head as soon as its room appears", () => {
+    const entries = [
+      entry("r1", "vp run e2e", 60_000),
+      entry("head", "vp run build", null, aged),
+      entry("w", "vp run bundle"),
+    ];
+    const roomy = { ...q2, availableMemoryBytes: 6 * GIB };
+    expect(plan({ ...sized, history, entries, sample: roomy }).admits).toEqual(["head"]);
+  });
+
+  it("never admits past the room or the slots, whatever the order and class of waiters", () => {
+    const labels = [
+      ...Object.keys(history),
+      "vp fmt a.ts",
+      "vp lint a.ts b.ts",
+      "git commit -m x a.ts",
+      "vp run dev",
+    ];
+    const pick = () => labels[Math.floor(next() * labels.length)]!;
+    let seed = 7;
+    const next = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+    const lanes = { ...sized, history };
+    for (let round = 0; round < 500; round++) {
+      const running = Array.from({ length: Math.floor(next() * 4) }, (_, i) =>
+        entry(`r${i}`, pick(), 1_000 + next() * 60_000),
+      );
+      const waiters = Array.from({ length: 1 + Math.floor(next() * 7) }, (_, i) =>
+        entry(`w${i}`, pick(), null, next() * 2 * aged),
+      );
+      const sample = { ...q2, availableMemoryBytes: (3.5 + next() * 4) * GIB };
+      const input = { ...sized, history, sample, maxRunning: 3, entries: [...running, ...waiters] };
+      const result = plan(input);
+      const admitted = result.admits.map((id) => waiters.find((waiter) => waiter.id === id)!);
+      const count = (jobs: ReadonlyArray<HeavyQueueEntry>, lane: string) =>
+        jobs.filter((job) => laneOf(lanes, job) === lane).length;
+      for (const [lane, cap] of [
+        ["standard", 3],
+        ["quick", HEAVY_QUEUE_DEFAULTS.quickSlots],
+        ["commit", 1],
+      ] as const) {
+        expect(count(running, lane) + count(admitted, lane)).toBeLessThanOrEqual(
+          Math.max(
+            cap,
+            count(running, lane) +
+              (count(running, "standard") + count(running, "quick") + count(running, "commit") === 0
+                ? 1
+                : 0),
+          ),
+        );
+      }
+      // Outside the exceptions (nothing running, the commit slot), nothing passes the room.
+      if (running.every((job) => laneOf(lanes, job) === "service")) continue;
+      const fresh = running.filter((job) => NOW - Date.parse(job.startedAt!) < 15_000);
+      const cost = (job: HeavyQueueEntry) => estimate(history, job, q2.cpuCount, base);
+      const room =
+        sample.availableMemoryBytes -
+        0.2 * sample.totalMemoryBytes -
+        fresh.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
+      const counted = admitted.filter((job) => !["commit", "service"].includes(laneOf(lanes, job)));
+      const memory = (jobs: ReadonlyArray<HeavyQueueEntry>) =>
+        jobs.reduce((sum, job) => sum + cost(job).memoryBytes, 0);
+      // A light job may also use the floor; the others never pass the room.
+      const light = (job: HeavyQueueEntry) =>
+        Object.hasOwn(history, signatureOf(job.label)) && cost(job).memoryBytes < 512 * 1024 ** 2;
+      expect(memory(counted.filter((job) => !light(job)))).toBeLessThanOrEqual(
+        Math.max(0, room) + 1,
+      );
+      expect(memory(counted)).toBeLessThanOrEqual(
+        Math.max(0, room) + 0.2 * sample.totalMemoryBytes + 1,
+      );
+      // CPU binds standard jobs; a quick job passes it by design.
+      const cpuRoom =
+        q2.cpuCount * 0.7 - q2.busyCores - fresh.reduce((sum, job) => sum + cost(job).cpu, 0);
+      const standardCpu = admitted
+        .filter((job) => laneOf(lanes, job) === "standard")
+        .reduce((sum, job) => sum + cost(job).cpu, 0);
+      expect(standardCpu).toBeLessThanOrEqual(Math.max(0, cpuRoom) + 1e-9);
+    }
+  });
+
+  const fmt = (id: string, startedMsAgo: number | null = null) =>
+    entry(id, `vp fmt ${id}.ts`, startedMsAgo);
+  const roomy = { ...q2, availableMemoryBytes: 8 * GIB };
+
+  it.each([
+    {
+      row: 19,
+      name: "a device boot starts beside a running service",
+      entries: [
+        entry("dev", "vp run dev", 60_000),
+        { ...entry("boot", "Open iPhone 17"), server: true },
+      ],
+      admits: ["boot"],
+    },
+    {
+      row: 21,
+      name: "critical pressure holds a quick job, even with only a service running",
+      entries: [entry("dev", "vp run dev", 60_000), fmt("q")],
+      sample: { ...q2, pressureLevel: 4 },
+      admits: [],
+      reasons: { q: "memory pressure critical" },
+    },
+    {
+      row: 22,
+      name: "the pause holds a quick job",
+      entries: [entry("r", "vp run e2e", 60_000), fmt("q")],
+      paused: true,
+      admits: [],
+      reasons: { q: "paused" },
+    },
+    {
+      row: 23,
+      name: "two quick jobs start and the third waits only for them",
+      entries: [entry("r", "vp run e2e", 60_000), fmt("a"), fmt("b"), fmt("c")],
+      sample: roomy,
+      admits: ["a", "b"],
+      reasons: { c: "2 quick jobs running" },
+    },
+    {
+      row: "23b",
+      name: "a standard head that fits starts before the quick jobs behind it",
+      entries: [entry("r", "vp run e2e", 60_000), entry("head", "vp run compile"), fmt("a")],
+      sample: roomy,
+      admits: ["head", "a"],
+    },
+    {
+      row: "5",
+      name: "a quick job passes a full set of standard slots and a settling start",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("r3", "vp run compile", 2_000),
+        entry("w", "vp run build"),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+      reasons: { w: "all 3 slots busy" },
+    },
+    {
+      row: "5",
+      name: "a quick job passes a job that runs alone, running or at the head",
+      entries: [
+        { ...entry("boot", "Open iPhone 17", 60_000), server: true },
+        entry("next", "xcrun simctl boot y"),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+    },
+    {
+      row: "6",
+      name: "a quick job too big for the room waits with its own reason; the next one starts",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("big", "vp test run big.test.ts"),
+        fmt("q"),
+      ],
+      history: { "vp test run big.test.ts": [run(1, 2, 5_000)] },
+      admits: ["q"],
+      reasons: { big: "memory floor: 1.0 GB room, needs 2.0 GB" },
+    },
+    {
+      row: 32,
+      name: "a hooked commit fifth in line starts in its own slot whatever its memory",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        ...["w1", "w2", "w3", "w4"].map((id) => entry(id, "vp run build")),
+        entry("commit", "git commit -m x a.ts"),
+      ],
+      history: { [signatureOf("git commit -m x a.ts")]: [run(2, 3.6, 120_000)] },
+      admits: ["commit"],
+    },
+    {
+      row: 8,
+      name: "a second commit waits for the one running",
+      entries: [entry("c1", "git commit -m x a.ts", 5_000), entry("c2", "git commit -m y b.ts")],
+      admits: [],
+      reasons: { c2: "a commit is running" },
+    },
+    {
+      row: 35,
+      name: "a quick job starts past the aged head's reservation within twice its patience",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, 6 * 60_000),
+        entry("w", "vp run bundle"),
+        fmt("q"),
+      ],
+      admits: ["q"],
+      reasons: { w: "waiting for room for the head job" },
+    },
+    {
+      row: 49,
+      name: "past twice the head's patience a quick job respects its reservation",
+      entries: [
+        entry("r1", "vp run e2e", 60_000),
+        entry("r2", "vp run e2e", 60_000),
+        entry("head", "vp run build", null, aged),
+        fmt("q"),
+      ],
+      admits: [],
+      reasons: { q: "waiting for room for the head job" },
+    },
+    {
+      row: 48,
+      name: "an aged head short on CPU from load outside the queue blocks no one",
+      entries: [
+        entry("r", "vp run docker", 60_000),
+        entry("head", "vp run build", null, aged),
+        entry("w", "vp run compile"),
+      ],
+      sample: { ...roomy, busyCores: 6 },
+      admits: ["w"],
+      reasons: { head: "needs ~2.0 cores; CPU 60%, limit 70%" },
+    },
+    {
+      row: 37,
+      name: "within twice its patience an aged exclusive head lets quick jobs pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, 6 * 60_000),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: ["q"],
+    },
+    {
+      row: 37,
+      name: "past twice its patience an aged exclusive head holds quick jobs too",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        entry("boot", "xcrun simctl boot x", null, aged),
+        fmt("q"),
+      ],
+      sample: roomy,
+      admits: [],
+      reasons: { q: "waiting for the job that runs alone to start" },
+    },
+    {
+      row: 23,
+      name: "a forced quick job takes a quick slot in the same pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        fmt("q1", 5_000),
+        { ...fmt("f"), forced: true },
+        fmt("q2"),
+      ],
+      sample: roomy,
+      admits: ["f"],
+      reasons: { q2: "2 quick jobs running" },
+    },
+    {
+      row: 8,
+      name: "a forced commit takes the commit slot in the same pass",
+      entries: [
+        entry("r", "vp run e2e", 60_000),
+        { ...entry("c1", "git commit -m x a.ts"), forced: true },
+        entry("c2", "git commit -m y b.ts"),
+      ],
+      admits: ["c1"],
+      reasons: { c2: "a commit is running" },
+    },
+  ] as ReadonlyArray<{
+    row: number | string;
+    name: string;
+    entries: ReadonlyArray<HeavyQueueEntry>;
+    sample?: typeof q2;
+    paused?: boolean;
+    history?: Record<string, ReadonlyArray<Run>>;
+    admits: ReadonlyArray<string>;
+    reasons?: Record<string, string>;
+  }>)("row $row: $name", ({ entries, sample, paused, admits, reasons, ...rest }) => {
+    const result = plan({
+      ...sized,
+      history: { ...history, ...rest.history },
+      entries,
+      sample: sample ?? q2,
+      paused: paused ?? false,
+    });
+    expect(result.admits).toEqual(admits);
+    for (const [id, text] of Object.entries(reasons ?? {})) expect(result.reasons[id]).toBe(text);
   });
 });
 
@@ -643,7 +1193,7 @@ describe("the Mac's limits are settings", () => {
       entries,
       sample: tight,
     };
-    expect(plan(floor).admit).toBe("a");
+    expect(plan(floor).admits).toEqual(["a"]);
     expect(plan({ ...floor, holding: true }).hold).toBe("job-memory");
     const busy = plan({
       ...base,

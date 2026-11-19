@@ -748,6 +748,40 @@ describe("HeavyWorkSection", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("labels rows with their class and keeps a stopped agent's place with Stop", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) + 3 * 60_000 });
+    setup(
+      [entry("r", { startedAt: NOW }), entry("w"), entry("o", { orphanedAt: Date.parse(NOW) })],
+      {
+        reasons: { w: "all 3 slots busy" },
+        costs: {
+          r: { class: "quick", why: "usually 4 s" },
+          w: { class: "standard", why: "first run" },
+          o: { class: "service", why: "dev server" },
+        },
+      },
+    );
+    const view = await mount();
+    const text = view.host.textContent ?? "";
+    expect(text).toMatch(/Quick · .*Job · 1st · .*all 3 slots busy.*Keeps running · /s);
+    expect(text).toContain("Waiting for the agent to ask again · 7 min left");
+    // Only the waiter in line can start now; the orphan holds no place.
+    expect(view.host.textContent?.match(/Start now/g)).toHaveLength(1);
+    // Stops in order: the running row's menu, the orphan's menu, then the orphan's own Stop row.
+    const stops = [...view.host.querySelectorAll("button")].filter((b) => b.textContent === "Stop");
+    expect(stops).toHaveLength(3);
+    for (const [press, stop] of [1, 2].entries()) {
+      await act(async () => view.button("Stop", stop).click());
+      alertButtons(press).find((b) => b.text === "Remove")!.onPress!();
+    }
+    expect(mocks.commands.cancel).toHaveBeenCalledTimes(2);
+    expect(mocks.commands.cancel).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "o" },
+    });
+    await view.unmount();
+  });
+
   // Built from askAnswers, as on the web: only where it may run, never a rerun before Linux confirms.
   it.each([
     ["an unconfirmed drop", { unconfirmed: true }, {}, ["Run on this Mac", "Wait for Linux"]],

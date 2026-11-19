@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { RunnerWhere } from "./runner.ts";
 
@@ -13,6 +14,10 @@ export const HEAVY_QUEUE_LIMITS = {
   unseenMediumMegabytes: { min: 128, max: 8192, unit: "MB" },
   historyCommands: { min: 50, max: 10000, unit: "commands" },
   headPatienceMinutes: { min: 1, max: 60, unit: "minutes" },
+  quickSeconds: { min: 5, max: 300, unit: "seconds" },
+  quickSlots: { min: 1, max: 8, unit: "jobs" },
+  serviceIdleMinutes: { min: 2, max: 120, unit: "minutes" },
+  reclaimMinutes: { min: 1, max: 60, unit: "minutes" },
 } as const;
 export type HeavyQueueLimitKey = keyof typeof HEAVY_QUEUE_LIMITS;
 
@@ -26,6 +31,13 @@ export const HEAVY_QUEUE_DEFAULTS: Record<HeavyQueueLimitKey, number> = {
   unseenMediumMegabytes: 512,
   historyCommands: 1000,
   headPatienceMinutes: 5,
+  // A command that usually ends this fast runs in its own slots, beside long jobs.
+  quickSeconds: 30,
+  quickSlots: 2,
+  // A job that ran this long and sat idle counts as a service: load, not a slot.
+  serviceIdleMinutes: 10,
+  // An agent's stopped waiter keeps its place this long for the agent to ask again.
+  reclaimMinutes: 10,
 };
 
 /** How admission sizes jobs and lets them pass the head of the queue; set together in one call. */
@@ -35,6 +47,10 @@ export const HEAVY_QUEUE_ADMISSION_KEYS = [
   "unseenMediumMegabytes",
   "historyCommands",
   "headPatienceMinutes",
+  "quickSeconds",
+  "quickSlots",
+  "serviceIdleMinutes",
+  "reclaimMinutes",
 ] as const satisfies ReadonlyArray<HeavyQueueLimitKey>;
 export type HeavyQueueAdmissionKey = (typeof HEAVY_QUEUE_ADMISSION_KEYS)[number];
 
@@ -116,6 +132,14 @@ export const HeavyQueueEntry = Schema.Struct({
   /** Peak cores and resident bytes of its process tree so far, sampled while it runs. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Since when its tree's CPU stayed near zero; past a long run it then counts as a service. */
+  idleSince: Schema.optionalKey(Schema.Number),
+  /** An agent's request (sha1 of thread, folder and line): a retry of it takes back an orphaned place. */
+  requestKey: Schema.optionalKey(Schema.String),
+  /** When its agent's waiter stopped before starting; it keeps its place until reclaimed or expired. */
+  orphanedAt: Schema.optionalKey(Schema.Number),
+  /** Peak of its own tree alone, without the build daemons counted in `peakMemory`. */
+  peakTreeMemory: Schema.optionalKey(Schema.Number),
   /** Pids of build daemons outside its tree that work for it (Gradle's, Kotlin's), counted in its usage. */
   daemons: Schema.optionalKey(Schema.Array(Schema.Int)),
   /** T3 lowered it to background CPU priority while the Mac stayed over its CPU ceiling. */
@@ -189,8 +213,7 @@ export const HeavyQueueMachine = Schema.Struct({
 });
 export type HeavyQueueMachine = typeof HeavyQueueMachine.Type;
 
-/** What holds the next waiter back. */
-export const HeavyQueueHold = Schema.Literals([
+const HOLDS = Schema.Literals([
   "paused",
   "exclusive",
   "runs-alone",
@@ -204,7 +227,30 @@ export const HeavyQueueHold = Schema.Literals([
   "steadying",
   "job-memory",
   "job-cpu",
+  /** The head waited past its patience: its room is kept for it. */
+  "reserved",
+  /** The head runs alone and waited past its patience: nothing new joins what runs. */
+  "draining",
+  /** Room is there once the jobs that just started show their load. */
+  "committed",
+  /** Every quick slot is busy. */
+  "quick-slots",
+  /** A commit runs; one at a time. */
+  "commit-slot",
+  /** A hold this build does not know, from a newer server. */
+  "other",
 ]);
+const isKnownHold = Schema.is(HOLDS);
+/** What holds the next waiter back. Decodes a hold it does not know as `other` (remote ready). */
+export const HeavyQueueHold = Schema.String.pipe(
+  Schema.decodeTo(
+    HOLDS,
+    SchemaTransformation.transform<typeof HOLDS.Type, string>({
+      decode: (hold) => (isKnownHold(hold) ? hold : "other"),
+      encode: (hold) => hold,
+    }),
+  ),
+);
 export type HeavyQueueHold = typeof HeavyQueueHold.Type;
 
 const MB = 1024 ** 2;
@@ -220,6 +266,7 @@ export const heavyHoldText = (
     readonly swapInBytesPerSecond?: number | null;
   } | null,
   maxRunning: number,
+  quickSlots = 2,
 ): string => {
   switch (hold) {
     case "paused":
@@ -244,6 +291,18 @@ export const heavyHoldText = (
       return "CPU busy";
     case "steadying":
       return "making sure the room lasts";
+    case "reserved":
+      return "waiting for room for the head job";
+    case "draining":
+      return "waiting for the job that runs alone to start";
+    case "committed":
+      return "waiting for room: a job just started";
+    case "quick-slots":
+      return `${quickSlots} quick jobs running`;
+    case "commit-slot":
+      return "a commit is running";
+    case "other":
+      return "waiting for room";
   }
 };
 
@@ -255,6 +314,23 @@ export const HeavyQueueEstimate = Schema.Struct({
   memoryBytes: Schema.Number,
   durationMs: Schema.Number,
 });
+
+/** How a job is admitted: quick and service work never waits behind a standard job. */
+export const HeavyQueueCostClass = Schema.Literals(["quick", "standard", "service"]);
+export type HeavyQueueCostClass = typeof HeavyQueueCostClass.Type;
+
+export const HeavyQueueCost = Schema.Struct({
+  class: HeavyQueueCostClass,
+  /** Short and plain: "2 files", "usually 4 s", "keeps running". */
+  why: Schema.String,
+  /** A hooked commit: it runs in its own slot, never a quick one. */
+  commit: Schema.optionalKey(Schema.Boolean),
+});
+export type HeavyQueueCost = typeof HeavyQueueCost.Type;
+
+/** Whether a job fills one of its machine's `maxRunning` slots; a cost an older server never sent does. */
+export const fillsStandardSlot = (cost: HeavyQueueCost | undefined) =>
+  cost?.commit !== true && (cost?.class ?? "standard") === "standard";
 
 export const HeavyQueueState = Schema.Struct({
   /** Usual usage of each waiting entry that has history, by entry id. */
@@ -293,6 +369,20 @@ export const HeavyQueueState = Schema.Struct({
   headPatienceMinutes: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
   ),
+  quickSeconds: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.quickSeconds)),
+  ),
+  quickSlots: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.quickSlots)),
+  ),
+  serviceIdleMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.serviceIdleMinutes)),
+  ),
+  reclaimMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.reclaimMinutes)),
+  ),
+  /** Each entry's cost class and why, by entry id; absent from older servers. */
+  costs: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueCost)),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -362,6 +452,10 @@ export const HeavyQueueSetAdmissionLimitsInput = Schema.Struct({
   unseenMediumMegabytes: Schema.optionalKey(limit("unseenMediumMegabytes")),
   historyCommands: Schema.optionalKey(limit("historyCommands")),
   headPatienceMinutes: Schema.optionalKey(limit("headPatienceMinutes")),
+  quickSeconds: Schema.optionalKey(limit("quickSeconds")),
+  quickSlots: Schema.optionalKey(limit("quickSlots")),
+  serviceIdleMinutes: Schema.optionalKey(limit("serviceIdleMinutes")),
+  reclaimMinutes: Schema.optionalKey(limit("reclaimMinutes")),
 });
 export type HeavyQueueSetAdmissionLimitsInput = typeof HeavyQueueSetAdmissionLimitsInput.Type;
 
@@ -470,6 +564,8 @@ export const HeavyCommand = Schema.Struct({
   reason: Schema.optionalKey(Schema.String),
   /** Where a queue row runs; absent means this Mac. A Linux row carries no usage. */
   runner: Schema.optionalKey(HeavyRunner),
+  /** A dev server or watcher, which never finishes by itself. */
+  keepsRunning: Schema.optionalKey(Schema.Boolean),
 });
 export type HeavyCommand = typeof HeavyCommand.Type;
 

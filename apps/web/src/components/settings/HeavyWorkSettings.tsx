@@ -52,6 +52,10 @@ const LIMIT_ROWS: ReadonlyArray<{
   { key: "unseenMediumMegabytes", searchId: "heavy-work-unseen-medium" },
   { key: "historyCommands", searchId: "heavy-work-history" },
   { key: "headPatienceMinutes", searchId: "heavy-work-head-patience" },
+  { key: "quickSeconds", searchId: "heavy-work-quick-seconds" },
+  { key: "quickSlots", searchId: "heavy-work-quick-slots" },
+  { key: "serviceIdleMinutes", searchId: "heavy-work-service-idle" },
+  { key: "reclaimMinutes", searchId: "heavy-work-reclaim" },
 ];
 const isAdmission = (key: HeavyQueueLimitKey): key is HeavyQueueAdmissionKey =>
   (HEAVY_QUEUE_ADMISSION_KEYS as ReadonlyArray<HeavyQueueLimitKey>).includes(key);
@@ -84,13 +88,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   };
   // The Mac limits also steer Hybrid without the queue, so they follow the shared rule.
   const limits = LIMIT_ROWS.map((row) => {
-    // Letting jobs pass the head is the queue's own; the sizes also steer Hybrid's room on the Mac.
-    const idle =
-      row.key === "headPatienceMinutes"
-        ? state.enabled
-          ? null
-          : QUEUE_OFF_NOTE
-        : heavyLimitIdle(row.key, limitChoices);
+    const idle = heavyLimitIdle(row.key, limitChoices);
     return {
       ...row,
       shown: idle === null || target === searchableSetting(row.searchId).id,

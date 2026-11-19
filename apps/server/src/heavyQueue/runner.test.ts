@@ -299,8 +299,13 @@ describe("routing matrix", () => {
     const up = strained(READ);
     expect(shapes.map((_, at) => up.routes[`w${at}`])).toEqual(shapes.map(() => "linux"));
     expect(up.admits.w0).toEqual({ runner: "linux", ungated: false });
+    // Down, all stay here; a busy CPU holds standard work, while quick checks have their own slots.
     const down = strained(OFFLINE);
-    expect(shapes.map((_, at) => outcomeOf(down, `w${at}`))).toEqual(shapes.map(() => "mac-wait"));
+    expect(shapes.map((_, at) => outcomeOf(down, `w${at}`))).toEqual([
+      "mac-start",
+      "mac-start",
+      ...shapes.slice(2).map(() => "mac-wait"),
+    ]);
   });
 
   it("Hybrid with three Mac slots and five agents splits them by backlog per slot", () => {
@@ -802,7 +807,7 @@ describe("Mac first, Hybrid and Everything", () => {
     };
     expect(spans.hybrid).toBeLessThan(spans.mac);
     expect(spans.hybrid).toBeLessThan(spans.linux);
-    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 12 });
+    expect(spans).toEqual({ mac: 19, linux: 21, hybrid: 13 });
   });
 });
 
@@ -1037,6 +1042,42 @@ describe("the Mac↔Linux link", () => {
         { health: { ...ONLINE, okAt: NOW - 10_000 } },
       ),
     ).toBe(outcome);
+  });
+
+  // 40, 42: only an offline Linux "comes back"; online, the row names its own attempts.
+  it.each([
+    [
+      {},
+      { okAt: NOW - 60_000 },
+      "linux-wait",
+      "retrying on Linux (attempt 1 of 3): connection lost",
+    ],
+    [{ route: "linux" }, { online: false }, "linux-wait", "waiting for Linux to come back"],
+    [
+      { route: "linux" },
+      { okAt: NOW - 60_000 },
+      "linux-wait",
+      "retrying on Linux (attempt 1 of 3): connection lost",
+    ],
+    // The first heartbeat through after the failure makes it eligible, with no restart.
+    [{ route: "linux" }, { okAt: NOW }, "linux-start", undefined],
+  ] as const)("a lost link, %j, Linux %j: %s, %j", (extra, linux, outcome, reason) => {
+    const plan = planRoutes(
+      input(
+        [
+          job("a", "vp test run", {
+            linuxFailedAt: NOW - 500,
+            linkFailures: 1,
+            linkError: "connection lost",
+            ...extra,
+          } as never),
+        ],
+        { runnerWhere: "linux" },
+        { health: { ...ONLINE, ...linux } },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    expect(plan.reasons.a).toBe(reason);
   });
 
   const expired = { reason: "unavailable" as const, deadlineAt: ago(1) };
@@ -1635,10 +1676,11 @@ describe("runtime toggles", () => {
     const commits = "Changes this Mac's checkout: git commit";
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
-      commit: `${commits} · the one slot is busy`,
-      install: "Changes this Mac's checkout: pnpm install · waiting its turn",
-      moved: "Moved to this Mac · waiting its turn",
-      back: "Uses a file only this Mac has: /x · waiting its turn",
+      commit: `${commits} · a commit is running`,
+      // A running commit holds its own slot, not the standard one; its load is still counted.
+      install: "Changes this Mac's checkout: pnpm install · waiting for room: a job just started",
+      moved: "Moved to this Mac · waiting for room: a job just started",
+      back: "Uses a file only this Mac has: /x · waiting for room: a job just started",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).install).toMatch(
       /^Changes this Mac's checkout/,
@@ -1650,10 +1692,10 @@ describe("runtime toggles", () => {
     const hook = "Commit hook runs checks";
     expect(at({}, { runnerEnabled: false })).toEqual({
       run: hook,
-      commit: `${hook} · next in line`,
-      install: "waiting its turn",
-      moved: "waiting its turn",
-      back: "waiting its turn",
+      commit: `${hook} · a commit is running`,
+      install: "the one slot is busy",
+      moved: "the one slot is busy",
+      back: "the one slot is busy",
     });
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
@@ -1686,7 +1728,7 @@ describe("patterns and eligibility", () => {
     ["vp run build && vp test run", "linux", null],
     ["pnpm run build", "linux", null],
     ["xcodebuild -scheme App test", "mac-only", "Mac-only tool: xcodebuild"],
-    ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
+    ["vp run dev:desktop", "mac-only", "Serves a port used here: vp dev:desktop"],
     ["echo hi", "linux", null],
     ["./scripts/ci.sh", "linux", null],
     ["vp run check:changed", "linux", null],
@@ -2549,8 +2591,77 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     );
     expect(plan.routes.a).toBe("mac");
     expect(plan.reasons.a).toBe(
-      "Hybrid: shorter queue here · needs ~1.5 GB; 4.2 GB free, 3.2 GB kept spare",
+      "Hybrid: shorter queue here · memory floor: 1.0 GB room, needs 1.5 GB",
     );
+  });
+});
+
+describe("quick work never waits for Linux", () => {
+  const quick = (id: string, cwd = `/work/${id}`) =>
+    job(id, "vp test run a.test.ts b.test.ts", { cwd });
+  it.each([
+    {
+      row: 31,
+      name: "another job just started on Linux: no wait for a fresh reading",
+      entries: [
+        job("l", "vp test run", { startedAt: ago(500), runner: "linux" as const }),
+        quick("q"),
+      ],
+      over: { health: READ },
+      config: {},
+      runner: "linux",
+      why: undefined,
+    },
+    // Only "unavailable" changes for quick work: a run Linux dropped follows its own policy.
+    ...(["agent", "mac"] as const).map((policy) => ({
+      row: "25b",
+      name: `dropped with the PC gone, If dropped: ${policy}`,
+      entries: [
+        job("q", "vp test run a.test.ts b.test.ts", {
+          cwd: "/work/q",
+          dropped: true,
+          linkFailures: 3,
+          linuxFailedAt: NOW - 500,
+        } as never),
+      ],
+      over: { health: OFFLINE },
+      config: { runnerDropped: policy },
+      runner: policy === "agent" ? ("cancel" as const) : ("mac" as const),
+      why: policy === "agent" ? undefined : "Linux dropped it mid-run: running here",
+    })),
+  ])("row $row: $name", ({ entries, over, config, runner, why }) => {
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "linux", ...config }, { ...over, runnerOn: true }),
+    );
+    if (runner === "cancel") {
+      expect(plan.cancels.q).toBeDefined();
+      expect(plan.admits.q).toBeUndefined();
+      return;
+    }
+    expect(plan.admits.q).toEqual({ runner, ungated: false });
+    expect(plan.asks.q).toBeUndefined();
+    expect(plan.reasons.q).toBe(why);
+  });
+
+  it("a standard job in the same spots still waits for Linux", () => {
+    const entries = [
+      runningOn("l", "linux", "/work/w"),
+      job("s", "vp test run", { cwd: "/work/w" }),
+    ];
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "linux" }, { health: READ, runnerOn: true }),
+    );
+    expect(plan.admits.s).toBeUndefined();
+    expect(plan.reasons.s).toBe("waiting for Linux: this worktree is already running on Linux");
+  });
+
+  it("a service holds no Mac slot and never makes others run alone", () => {
+    const entries = [
+      job("dev", "vp run dev:desktop", { startedAt: ago(60_000) }),
+      job("w", "vp run build"),
+    ];
+    const plan = planRoutes(input(entries, { runnerWhere: "mac" }, { maxRunning: 1 }));
+    expect(plan.admits.w).toEqual({ runner: "mac", ungated: false });
   });
 });
 

@@ -195,6 +195,10 @@ it("saves each job sizing field and resets a changed one to its default", async 
     ["Memory guess for a new medium job", "1", { unseenMediumMegabytes: 128 }],
     ["Commands remembered", "200", { historyCommands: 200 }],
     ["Let smaller jobs pass for", "10", { headPatienceMinutes: 10 }],
+    ["Quick job length", "45", { quickSeconds: 45 }],
+    ["Quick jobs at once", "3", { quickSlots: 3 }],
+    ["Idle job counts as running in the background after", "20", { serviceIdleMinutes: 20 }],
+    ["Keep a stopped agent's place for", "15", { reclaimMinutes: 15 }],
   ] as const) {
     const field = sizing.getByLabelText(label, { exact: true });
     await field.fill(typed);
@@ -256,9 +260,14 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
   await using hybrid = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
   await expect.element(hybrid.getByLabelText("CPU limit", { exact: true })).toBeEnabled();
   await expect.element(hybrid.getByRole("heading", { name: "Keep memory free" })).toBeVisible();
-  expect(hybrid.getByRole("heading", { name: "Pause heavy work queue" }).elements()).toHaveLength(
-    0,
-  );
+  // The lanes are the queue's own, so Hybrid leaves them out too.
+  for (const title of [
+    "Pause heavy work queue",
+    "Quick job length",
+    "Keep a stopped agent's place for",
+  ]) {
+    expect(hybrid.getByRole("heading", { name: title }).elements()).toHaveLength(0);
+  }
 
   setup({ enabled: false, macCpuCeilingPercent: 60 });
   mocks.target = "heavy-work-cpu-ceiling";

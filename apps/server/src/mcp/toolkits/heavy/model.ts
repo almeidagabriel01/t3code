@@ -1,8 +1,10 @@
-import type {
-  HeavyCommand,
-  HeavyQueueEntry,
-  HeavyQueueState,
-  HeavyRunner,
+import {
+  fillsStandardSlot,
+  type HeavyCommand,
+  type HeavyQueueCostClass,
+  type HeavyQueueEntry,
+  type HeavyQueueState,
+  type HeavyRunner,
 } from "@t3tools/contracts";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 
@@ -22,6 +24,9 @@ export interface Destination {
   readonly linuxFull: boolean;
   /** It asked for Linux but needs this Mac: it ends with `reason`, so waiting is no question. */
   readonly canceled?: boolean;
+  /** How the queue admits it: quick and service work never waits behind a long job. */
+  readonly class?: HeavyQueueCostClass;
+  readonly classWhy?: string;
 }
 
 /** Each machine answers for itself: Linux jobs never count against this Mac, nor its pressure against them. */
@@ -45,6 +50,8 @@ export const heavyStatus = (input: {
   readonly linux: HeavyQueueState["linux"];
   /** Where each waiter would run if a slot opened now. */
   readonly routes: HeavyQueueState["routes"];
+  /** Each entry's cost class; absent from older servers, where every job fills a slot. */
+  readonly costs?: HeavyQueueState["costs"];
   readonly command: string;
   /** Every heavy command running now, queued or run directly, with its tree's usage on this Mac. */
   readonly commands: ReadonlyArray<HeavyCommand>;
@@ -63,23 +70,31 @@ export const heavyStatus = (input: {
   const runnerOf = (entry: HeavyQueueEntry): HeavyRunner =>
     (entry.startedAt === null ? input.routes[entry.id] : entry.runner) ?? "mac";
   const active = input.entries.filter((entry) => entry.startedAt !== null);
-  const macRunning = active.filter((entry) => runnerOf(entry) === "mac").length;
+  // Quick, commit and service work have their own lanes, as in the queue's plan.
+  const macRunning = active.filter(
+    (entry) => runnerOf(entry) === "mac" && fillsStandardSlot(input.costs?.[entry.id]),
+  ).length;
+  /** An orphan only keeps a place for its agent to take back: no machine and no position. */
+  const inLine = (entry: HeavyQueueEntry) =>
+    entry.startedAt === null && entry.orphanedAt === undefined;
+  const tagOf = (entry: HeavyQueueEntry) =>
+    entry.startedAt === null && !inLine(entry) ? {} : tag(runnerOf(entry));
   const positions: Record<HeavyRunner, number> = { mac: 0, linux: 0 };
   const waiting = input.entries
     .filter((entry) => entry.startedAt === null)
     .map((entry) => {
       const runsOn = runnerOf(entry);
-      positions[runsOn] += 1;
+      if (inLine(entry)) positions[runsOn] += 1;
       return {
         ...entry,
         name: heavyEntryName(entry),
         // Its place in the line for its own machine.
-        position: positions[runsOn],
+        position: inLine(entry) ? positions[runsOn] : 0,
         ...(input.reasons[entry.id] === undefined ? {} : { reason: input.reasons[entry.id] }),
-        ...tag(runsOn),
+        ...tagOf(entry),
       };
     });
-  const macWaiting = waiting.some((entry) => runnerOf(entry) === "mac");
+  const macWaiting = input.entries.some((entry) => inLine(entry) && runnerOf(entry) === "mac");
   // Ask only when work would wait here: pressure is high, or others queue and no slot is free soon.
   const macAsk =
     input.enabled && (high || (macWaiting && (macRunning >= input.maxRunning || !input.room)));
@@ -87,7 +102,12 @@ export const heavyStatus = (input: {
   const runnerOfEntry = new Map(input.entries.map((entry) => [entry.id, runnerOf(entry)]));
   return {
     askUser:
-      destination?.runsOn === "direct" || destination?.canceled === true
+      // A service runs outside the queue, and quick work that starts now in its own slots: neither
+      // waits. A canceled job never waits either.
+      destination?.runsOn === "direct" ||
+      destination?.canceled === true ||
+      (destination?.class === "quick" && destination.startsNow) ||
+      destination?.class === "service"
         ? false
         : destination?.runsOn === "linux"
           ? !destination.startsNow && destination.linuxFull
@@ -97,6 +117,9 @@ export const heavyStatus = (input: {
       : {
           runsOn: destination.runsOn,
           ...(destination.reason === null ? {} : { reason: destination.reason }),
+          ...(destination.class === undefined
+            ? {}
+            : { class: destination.class, classWhy: destination.classWhy }),
         }),
     mac: {
       pressure: {
@@ -121,7 +144,7 @@ export const heavyStatus = (input: {
       .map((entry) => ({
         id: entry.id,
         position: waiting.find((waiter) => waiter.id === entry.id)?.position ?? 0,
-        ...tag(runnerOf(entry)),
+        ...tagOf(entry),
       })),
     command: input.command,
     commands: input.commands.map((command) => {

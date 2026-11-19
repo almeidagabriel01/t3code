@@ -19,7 +19,6 @@ import {
   heavyRoute,
   heavySegment,
   isQueued,
-  lineParts,
   readLine,
   scriptOf,
   SHIMMED,
@@ -27,6 +26,8 @@ import {
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
+import { costOf } from "./costClass.ts";
+import { isShellLine, jobEntryOf, jobLine, jobOf, labelOf } from "./jobEntry.ts";
 import {
   appendTail,
   environmentFaultOf,
@@ -47,6 +48,7 @@ import {
   configFor,
   defaultQueueDir,
   enqueue,
+  orphan,
   finish,
   gitRootOf,
   modeFor,
@@ -56,10 +58,12 @@ import {
   recordSampleIfStale,
   remove,
   requeue,
+  SAMPLE_STALE_MS,
   scriptReader,
   setProgress,
   setQos,
   tryStart,
+  noticeLockWait,
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -71,7 +75,6 @@ import {
   macReasonOf,
   macReasonText,
   movedPart,
-  startFolder,
 } from "./runner.ts";
 import {
   bringBack,
@@ -127,15 +130,12 @@ export const launchOf = (
 
 const POLL_MS = 1000;
 /** A server writes readings every 2 s; past this a waiter takes over sampling. */
-const SAMPLE_STALE_MS = 5000;
-const LABEL_CHARS = 200;
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGINT: 130,
   SIGTERM: 143,
   SIGHUP: 129,
 };
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
@@ -195,39 +195,8 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   };
 };
 
-/**
- * The job a command really is. A shell line's leading `cd <dir> &&` steps become the folder it
- * starts from, so the queue, its project settings and Linux all see that folder, and an agent's own
- * `remoto` around the command is dropped.
- */
-export const jobOf = (
-  program: string,
-  args: ReadonlyArray<string>,
-  cwd: string,
-  home: string,
-): {
-  readonly cwd: string;
-  readonly program: string;
-  readonly args: ReadonlyArray<string>;
-  readonly remoto: boolean;
-} => {
-  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
-    return { cwd, program: args[0], args: args.slice(1), remoto: true };
-  }
-  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
-    return { cwd, program, args, remoto: false };
-  }
-  const parts = lineParts(args[1]);
-  return {
-    cwd: startFolder(parts.dirs, cwd, home),
-    program,
-    args: ["-c", parts.command, ...args.slice(2)],
-    remoto: parts.remoto,
-  };
-};
-
 export type HeavyLaunch =
-  | { readonly kind: "direct" }
+  | { readonly kind: "direct"; readonly service?: true }
   | {
       readonly kind: "queue";
       readonly cwd: string;
@@ -258,6 +227,12 @@ export const heavyLaunch = (
   // Inside a queue job the slot is already held; queuing again would wait on itself.
   if (inJob) return { kind: "direct" };
   const job = jobOf(command.program, command.args, cwd, home);
+  const line = jobLine(job.program, job.args);
+  // A dev server or a watcher never ends: it would hold a slot for good, so it runs outside.
+  // Asked for Linux, it is queued instead, so it ends saying why it can't run there.
+  if (command.where !== "linux" && costOf({ label: line, line }, null, 0).class === "service") {
+    return { kind: "direct", service: true };
+  }
   const mode = modeAt(job.cwd);
   // `--runner linux` queues even then: the queue cancels it with why instead of a Mac run.
   if (
@@ -281,23 +256,6 @@ export const heavyLaunch = (
     ...(commit === "first" ? { priority: "high" as const } : {}),
   };
 };
-
-/**
- * A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it.
- * Any other program by its name, as Linux runs it (`remoteCommand`).
- */
-export const labelOf = (program: string, args: ReadonlyArray<string>) =>
-  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
-    0,
-    LABEL_CHARS,
-  );
-
-const isShellLine = (program: string, args: ReadonlyArray<string>) =>
-  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
-
-/** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
-const jobLine = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
 
 const BIN_PATH = /(^|\/)node_modules\/\.bin\/([^/]+)$/;
 
@@ -659,7 +617,16 @@ const enterFolder = (cwd: string) => {
   }
 };
 
+/** How long the CLI waits for the queue's lock before saying who holds it. */
+const LOCK_NOTICE_MS = 1_000;
+
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
+  // It waits on a busy lock without limit, so the agent and the user see what it waits for.
+  noticeLockWait(
+    (pid) =>
+      process.stderr.write(`[t3 heavy] waiting for the queue's lock: process ${pid} holds it\n`),
+    LOCK_NOTICE_MS,
+  );
   if (argv[0] === "hook") {
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
     return;
@@ -689,40 +656,42 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     process.env[HEAVY_JOB_ENV] === "1",
     scriptReader,
   );
+  if (launch.kind === "direct" && launch.service === true) {
+    process.stderr.write(
+      `[t3 heavy] keeps running (${name ?? labelOf(program, args)}): runs outside the queue; its load counts in this Mac's reading.\n`,
+    );
+  }
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
     // The shell reports a folder it cannot enter itself, as it would without T3.
     runDirect(program, args, process.env);
     return;
   }
   // A repeated request (same tool call, same agent retry) lands on the same job.
-  const id =
+  let id =
     requestId === undefined
       ? NodeCrypto.randomUUID()
       : `req-${NodeCrypto.createHash("sha1").update(requestId).digest("hex").slice(0, 16)}`;
   const threadId = process.env.T3CODE_THREAD_ID ?? null;
   const agent = threadId !== null || process.env.CLAUDECODE === "1";
-  const label = labelOf(launch.program, launch.args);
-  const line = jobLine(launch.program, launch.args);
-  // The scripts it runs travel with the job: the Runner judges them by their text.
-  const scripts: Record<string, string | null> = {};
-  const readScript = scriptReader(launch.cwd);
-  readLine(line, (word) => (scripts[word] = readScript(word)));
   const entry: QueuedEntry = {
-    id,
-    pid: process.pid,
-    threadId,
-    label,
-    ...(line === label ? {} : { line }),
-    ...(name === undefined ? {} : { name }),
-    ...(Object.keys(scripts).length === 0 ? {} : { scripts }),
-    ...(routeReason === undefined ? {} : { routeReason }),
-    cwd: process.cwd(),
-    createdAt: new Date().toISOString(),
-    startedAt: null,
-    // Agents' jobs wait behind the user's own.
-    priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
-    ...(launch.where === undefined ? {} : { where: launch.where }),
-    ...(now ? { forced: true } : {}),
+    ...jobEntryOf(
+      {
+        id,
+        pid: process.pid,
+        threadId,
+        program: launch.program,
+        args: launch.args,
+        cwd: process.cwd(),
+        createdAt: new Date().toISOString(),
+        // Agents' jobs wait behind the user's own.
+        priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
+        ...(name === undefined ? {} : { name }),
+        ...(routeReason === undefined ? {} : { routeReason }),
+        ...(launch.where === undefined ? {} : { where: launch.where }),
+        ...(now ? { forced: true } : {}),
+      },
+      scriptReader(launch.cwd),
+    ),
     ...(process.env[CALL_ENV] === "1"
       ? { call: true }
       : where === "linux"
@@ -732,26 +701,46 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   // Another process owns this request's job: wait for it to end and answer with its code. An
   // owner that died without one leaves no result, so this process runs the job itself.
   for (let added = enqueue(dir, entry); added !== "added"; added = enqueue(dir, entry)) {
+    if (typeof added === "object" && "adopted" in added) {
+      id = added.adopted;
+      break;
+    }
     if (added !== "attached") process.exit(added.code);
-    while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
+    // An owner that stopped while waiting leaves an orphan, which the next enqueue adopts.
+    const owned = () =>
+      readDoc(dir).entries.some((each) => each.id === id && each.orphanedAt === undefined);
+    while (owned()) await pause(POLL_MS);
   }
+  let orphaned = false;
   // The code a failure notice reports; every exit path ends here.
   process.on("exit", (code) => {
     NodeFS.rmSync(envFile(dir, id), { force: true });
     for (const file of partRemoteFiles(dir, id)) NodeFS.rmSync(file, { force: true });
+    if (orphaned) return;
     finish(
       dir,
       id,
       code,
       Date.now(),
-      startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
+      startFailureOf(launch.program, Object.keys(entry.scripts ?? {}), entry.cwd, code),
       commandFailure,
     );
   });
 
-  /** What a signal does right now: exit while waiting, or stop the running attempt. */
-  let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
+  // An agent's waiter keeps its place for the agent's retry; the user's own Ctrl-C leaves.
+  const whileWaiting = (signal: (typeof SIGNALS)[number]) => {
+    // A job's own call dies with its job: nobody retries it.
+    const kept = threadId === null || entry.call === true ? null : orphan(dir, id);
+    if (kept !== null) {
+      orphaned = true;
+      process.stderr.write(
+        `[t3 heavy] stopped while waiting (position ${kept.position}); run the same command again within ${kept.minutes} min to keep this place.\n`,
+      );
+    }
     process.exit(WAITING_EXIT[signal]);
+  };
+  /** What a signal does right now: exit while waiting, or stop the running attempt. */
+  let onSignal: (signal: (typeof SIGNALS)[number]) => void = whileWaiting;
   for (const signal of SIGNALS) process.on(signal, () => onSignal(signal));
 
   const readHost = makeHostReader();
@@ -793,7 +782,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
             (handler) => (onSignal = handler),
           );
     if (outcome.kind === "exit") process.exit(outcome.code);
-    onSignal = (signal) => process.exit(WAITING_EXIT[signal]);
+    onSignal = whileWaiting;
   }
 };
 
@@ -1076,7 +1065,7 @@ const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}
 
 /** Linux never ran a part or dropped it, or the part can't run anywhere as it is. */
 type PartOutcome =
-  | RemoteOutcome
+  | (RemoteOutcome & { readonly error?: string })
   /** The worktree's own files broke the install there; `reason` is the fix. */
   | { readonly kind: "worktree"; readonly reason: string }
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
@@ -1300,6 +1289,7 @@ const runLinuxAttempt = async (
     requeue(dir, id, {
       linuxFailedAt: Date.now(),
       linkFailures: linkFailuresOf(dir, id),
+      ...(outcome.error === undefined ? {} : { linkError: outcome.error }),
       ...(clean ? {} : { unconfirmed: true }),
     });
     return { kind: "requeued" };
@@ -1820,7 +1810,8 @@ const runLinuxPart = async (
       127,
     );
   }
-  endLine(dir, id, outcome);
+  const error = lastError as string | null;
+  endLine(dir, id, error === null ? outcome : { ...outcome, error });
 };
 
 /** Brings one call's results back and adds what stayed there to its job; never fails the call. */

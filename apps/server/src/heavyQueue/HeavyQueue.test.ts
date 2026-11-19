@@ -315,6 +315,62 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  // A live owner's lock: never stale, so only its release lets anyone in.
+  const holdLock = (dir: string) => {
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    return () => NodeFS.rmSync(lock, { recursive: true });
+  };
+
+  it.effect("withSlot waits out a busy lock past the server's bound, then queues and runs", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const release = holdLock(dir);
+        const ran = yield* Deferred.make<string>();
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot("Open iPhone", null, Deferred.succeed(ran, "ran")),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["tests"]);
+        release();
+        Queue.remove(dir, holder.id);
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(fiber);
+        expect(yield* Deferred.await(ran)).toBe("ran");
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("withSlot retries leaving the queue while the lock is busy", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        Queue.remove(dir, holder.id);
+        let release = () => {};
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot(
+            "a",
+            null,
+            Effect.sync(() => {
+              release = holdLock(dir);
+            }),
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["a"]);
+        release();
+        yield* TestClock.adjust("50 millis");
+        yield* Fiber.join(fiber);
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("promote and cancel fail for the running entry and for unknown ids", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -365,6 +421,12 @@ describe("HeavyQueue", () => {
         const file = NodePath.join(dir, "queue.json");
         const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
         doc.entries[0] = { ...doc.entries[0], cpu: 0.1, memory: 9, peakCpu: 0.2, peakMemory: 9 };
+        // A minute-long run: a standard job, which waits for its worktree on Linux, not a quick one.
+        doc.history = Object.fromEntries(
+          Object.entries(doc.history as Record<string, ReadonlyArray<object>>).map(
+            ([key, runs]) => [key, runs.map((run) => ({ ...run, durationMs: 60_000 }))],
+          ),
+        );
         NodeFS.writeFileSync(file, JSON.stringify(doc));
         Queue.enqueue(dir, job("macWaiter", "/"));
         Queue.enqueue(dir, job("linuxWaiter"));
@@ -443,11 +505,12 @@ describe("HeavyQueue", () => {
           Queue.enqueue(dir, {
             ...holder,
             id,
-            label: "vp test run src/a.test.ts",
+            label: "vp run typecheck",
             createdAt: ago(1000),
           });
         }
         // Headroom has held for eight seconds of unbroken readings: 28% of 16 GB free, CPU quiet.
+        // That leaves 1.3 GB above the floor: two never-seen typechecks (0.5 GB each) fit.
         Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
         const started = () => Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
         const step = (at: number, sample: Partial<typeof MAC_28> = {}) => {
@@ -457,13 +520,14 @@ describe("HeavyQueue", () => {
           for (const id of ["a", "b", "c", "d"]) Queue.tryStart(dir, id, at);
         };
         step(LATER);
-        expect(started()).toEqual(["a"]);
-        // One start per settle window, each judged on a fresh reading.
+        expect(started()).toEqual(["a", "b"]);
+        // Once those starts show in the reading, the room is back for the third.
         step(LATER + 16_000);
-        step(LATER + 32_000);
         expect(started()).toEqual(["a", "b", "c"]);
-        yield* TestClock.setTime(LATER + 32_000);
+        yield* TestClock.setTime(LATER + 16_000);
         expect((yield* queue.state).reasons).toEqual({ d: "all 3 slots busy" });
+        // Each row's class, as admission sees it: a typecheck never run here is a standard job.
+        expect((yield* queue.state).costs?.d).toEqual({ class: "standard", why: "first run" });
 
         Queue.remove(dir, "b");
         Queue.remove(dir, "c");
@@ -512,25 +576,27 @@ describe("HeavyQueue", () => {
           const started = () =>
             Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
           for (const id of ["big", "small", "small2"]) Queue.tryStart(dir, id, LATER);
-          expect(started()).toEqual(["holder", "small"]);
-          // Once the start settles, the head says what it needs.
+          expect(started()).toEqual(["holder", "small", "small2"]);
+          // Once the starts settle and a slot frees, the head says what it needs.
+          Queue.remove(dir, "small2");
           Queue.recordSample(dir, { ...MAC_28, at: LATER + 8_000 }, {});
           Queue.recordSample(dir, { ...MAC_28, at: LATER + 16_000 }, {});
           yield* TestClock.setTime(LATER + 16_000);
           expect((yield* queue.state).reasons["big"]).toBe(
-            "needs ~1.5 GB; 4.5 GB free, 3.2 GB kept spare",
+            "memory floor: 1.3 GB room, needs 1.5 GB",
           );
 
           // Past its patience the head lets nothing by, and starts once the Mac frees up.
           const patient = LATER + 5 * 60_000;
           yield* TestClock.setTime(patient);
           Queue.remove(dir, "small");
+          Queue.enqueue(dir, job("late", "vp run typecheck"));
           Queue.recordSample(dir, { ...MAC_28, at: patient - 8_000 }, {});
           Queue.recordSample(dir, { ...MAC_28, at: patient }, {});
-          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          for (const id of ["big", "late"]) Queue.tryStart(dir, id, patient);
           expect(started()).toEqual(["holder"]);
           Queue.remove(dir, holder.id);
-          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          for (const id of ["big", "late"]) Queue.tryStart(dir, id, patient);
           expect(started()).toEqual(["big"]);
         }),
       ),
