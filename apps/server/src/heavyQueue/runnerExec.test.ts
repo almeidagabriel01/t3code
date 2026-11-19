@@ -597,15 +597,20 @@ describe("ssh calls around a Linux run", () => {
   const env = (ssh: string) => ({ ...process.env, T3CODE_RUNNER_SSH: ssh });
 
   it("a heartbeat reads load, cores and memory, or says why it failed", async () => {
-    const ok = fake("printf '0.50 0.4 0.3 1/2 3\\n4\\nMem: 100 10 20 0 0 80\\n'");
+    const ok = fake("printf '0.50 0.4 0.3 1/2 3\\n4\\nMemTotal: 100 kB\\nMemAvailable: 80 kB\\n'");
     expect(await checkLinux(DEFAULT_MACHINE_CONFIG, env(ok))).toEqual({
       ok: true,
       reading: {
         cpuPercent: null,
         load1: 0.5,
         cpuCount: 4,
-        totalMemoryBytes: 100,
-        availableMemoryBytes: 80,
+        totalMemoryBytes: 100 * 1024,
+        availableMemoryBytes: 80 * 1024,
+        swapTotalBytes: null,
+        swapFreeBytes: null,
+        pressure: null,
+        jobMemory: {},
+        outside: [],
       },
     });
     const refused = fake(
@@ -614,10 +619,12 @@ describe("ssh calls around a Linux run", () => {
     expect(await checkLinux(DEFAULT_MACHINE_CONFIG, env(refused))).toEqual({
       ok: false,
       error: "ssh: connect to host pc port 22: Connection refused",
+      unresponsive: false,
     });
     expect(await checkLinux(DEFAULT_MACHINE_CONFIG, env(fake("exit 255")))).toEqual({
       ok: false,
       error: "ssh exited 255",
+      unresponsive: false,
     });
   });
 

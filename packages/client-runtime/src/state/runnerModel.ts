@@ -8,6 +8,7 @@ import type {
   HeavyQueueState,
   HeavyRunner,
   HeavyRunnerLinux,
+  HeavyRunnerLinuxOver,
   HeavyRunnerPhase,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
@@ -16,7 +17,7 @@ import type {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
-import { HEAVY_QUEUE_DEFAULTS } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, formatBytes, linuxOverText } from "@t3tools/contracts";
 
 /** Every Runner setting's label and description; web and mobile both read these. */
 export const RUNNER_SETTING_COPY: Record<
@@ -318,12 +319,27 @@ export function heavyModeLine(mode: HeavyModeInput): string {
   }
 }
 
-const GB = 1024 ** 3;
+/**
+ * Why Linux is over its limits, for words shown beside its CPU and memory readings: those two
+ * limits name only their threshold, since the reading beside them carries the number.
+ */
+export function linuxOverReasons(linux: HeavyRunnerLinux): string | undefined {
+  if (linux.status !== "over-limit") return undefined;
+  const shown = (over: HeavyRunnerLinuxOver) =>
+    over.limit === "memory"
+      ? linux.availableMemoryBytes !== null
+      : over.limit === "cpu" && linux.cpuPercent !== undefined && linux.cpuPercent !== null;
+  const words = linux.overLimits?.map((over) => linuxOverText(over, shown(over))).join("; ");
+  return words || linux.overLimitBy;
+}
 
 /** "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free", or why it is not. */
 export function linuxLine(linux: HeavyRunnerLinux): string {
   const jobs = `${linux.running} of ${linux.slots} running`;
   if (linux.online === null) return `Checking Linux (${linux.host})…`;
+  if (linux.status === "unresponsive") {
+    return `Linux not responding, too loaded to answer${linux.error === undefined ? "" : `: ${linux.error}`}`;
+  }
   if (!linux.online) {
     return `Linux offline${linux.error === undefined ? "" : `: ${linux.error}`}`;
   }
@@ -336,10 +352,10 @@ export function linuxLine(linux: HeavyRunnerLinux): string {
       ? ""
       : ` · load ${linux.load1.toFixed(1)}${linux.cpuCount === null ? "" : ` on ${linux.cpuCount} cores`}`;
   const memory =
-    linux.availableMemoryBytes === null
-      ? ""
-      : ` · ${(linux.availableMemoryBytes / GB).toFixed(1)} GB free`;
-  return `Linux online · ${jobs}${cpu}${load}${memory}`;
+    linux.availableMemoryBytes === null ? "" : ` · ${formatBytes(linux.availableMemoryBytes)} free`;
+  const reasons = linuxOverReasons(linux);
+  const over = reasons === undefined ? "" : ` · over its limits: ${reasons}`;
+  return `Linux online · ${jobs}${cpu}${load}${memory}${over}`;
 }
 
 /** "4:05" until the deadline, never negative. */

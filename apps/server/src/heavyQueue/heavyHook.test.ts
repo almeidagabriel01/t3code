@@ -16,8 +16,11 @@ import {
   lineParts,
   queueBashCall,
   readLine,
+  shellQuote,
+  sshWork,
   workParts,
 } from "./heavyHook.ts";
+import { sshHostname } from "./sshHost.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
 const bash = (toolInput: Record<string, unknown>) => ({
@@ -474,6 +477,102 @@ describe("an agent's own remoto call", () => {
   });
 });
 
+describe("an agent's own ssh to the Runner's host", () => {
+  const runner = { runner: true, runnerHost: "remoto" };
+  // The heavy part of the remote line, or null when ssh stays direct.
+  it.each<[string, string | null]>([
+    [
+      `ssh remoto 'docker run --rm --label t3.thread=x alpine sh -c "yes > /dev/null"'`,
+      `docker run --rm --label t3.thread=x alpine sh -c "yes > /dev/null"`,
+    ],
+    [`ssh remoto "cd ~/runs/erp && npm test"`, "npm test"],
+    [`ssh -t remoto 'cd ~/runs/erp && pnpm build'`, "pnpm build"],
+    [
+      `ssh -o BatchMode=yes -p 22 dev@remoto docker compose up --build`,
+      "docker compose up --build",
+    ],
+    [`ssh -oConnectTimeout=5 -tt remoto -- vp test run`, "vp test run"],
+    [`ssh remoto -t -p 22 -- vp test run`, "vp test run"],
+    [`ssh remoto 'bash -c "npm test"'`, `bash -c "npm test"`],
+    // Its host as ssh resolves it (`ssh -G`): a name, an alias or the address all match.
+    [`ssh remoto.lan 'npm test'`, "npm test"],
+    [`ssh 192.168.10.109 'npm test'`, "npm test"],
+    [`ssh dev@pc 'npm test'`, "npm test"],
+    // A script there can't be read from here: like an unread one here, it stays direct.
+    [`ssh remoto 'bash ~/check.sh'`, null],
+    [`ssh remoto ./status.sh`, null],
+    [`ssh -oConnectTimeout=5 -tt remoto -- ./scripts/ci.sh`, null],
+    [`ssh remoto 'bash ci-local.sh 16'`, null],
+    [`cd /w && ssh remoto 'make test' 2>&1 | tail -5`, "make test"],
+    // Light work, a login, a log and other hosts stay direct.
+    [`ssh remoto 'docker ps'`, null],
+    [`ssh remoto 'tail -n 50 ~/runs/erp/ci.log'`, null],
+    [`ssh remoto ls ~/runs`, null],
+    [`ssh remoto`, null],
+    [`ssh -t remoto`, null],
+    [`ssh other 'npm test'`, null],
+    [`ssh -i remoto other 'npm test'`, null],
+    // ssh -G failing for a name falls back to comparing it as written.
+    [`ssh broken 'npm test'`, null],
+    // A host that reads as an ssh option never reaches ssh -G, and matches nothing.
+    [`ssh -- -oProxyCommand=x 'npm test'`, null],
+    [`echo "ssh remoto 'npm test'"`, null],
+  ])("%j: %j", (line, heavy) => {
+    const resolved: Record<string, string | null> = {
+      remoto: "192.168.10.109",
+      "remoto.lan": "192.168.10.109",
+      "192.168.10.109": "192.168.10.109",
+      pc: "192.168.10.109",
+      broken: null,
+    };
+    // Any other host goes through ssh -G, to a fake ssh that logs its arguments and fails.
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ssh-g-"));
+    const log = NodePath.join(bin, "calls");
+    NodeFS.writeFileSync(log, "");
+    NodeFS.writeFileSync(NodePath.join(bin, "ssh"), `#!/bin/sh\necho "$*" >> ${log}\nexit 255\n`);
+    NodeFS.chmodSync(NodePath.join(bin, "ssh"), 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin` };
+    const resolve = (host: string) => (host in resolved ? resolved[host]! : sshHostname(host, env));
+    expect(sshWork(line, "remoto", resolve)).toBe(heavy);
+    for (const call of NodeFS.readFileSync(log, "utf8").split("\n").filter(Boolean)) {
+      expect(call).toMatch(/^-G [^-]/);
+    }
+  });
+
+  it("resolves a host with ssh -G, and a failing ssh resolves nothing", () => {
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ssh-g-"));
+    const ssh = NodePath.join(bin, "ssh");
+    NodeFS.writeFileSync(
+      ssh,
+      '#!/bin/sh\n[ "$2" = pc ] && { echo "user dev"; echo "hostname 10.0.0.5"; exit 0; }\nexit 255\n',
+    );
+    NodeFS.chmodSync(ssh, 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin` };
+    expect(sshHostname("pc", env)).toBe("10.0.0.5");
+    expect(sshHostname("nowhere", env)).toBeNull();
+    expect(sshHostname("pc", { PATH: "/nonexistent" })).toBeNull();
+  });
+
+  it("queues heavy ssh for Linux itself, named by its remote work, and leaves light ssh alone", () => {
+    const command = `ssh remoto 'cd ~/runs/erp && npm test'`;
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, runner);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
+      `${PREFIX} --request-id 'toolu_1' --runner linux --name 'npm test' -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+    );
+    expect(
+      queueBashCall(bash({ command: "ssh remoto 'docker ps'" }), PREFIX, {}, runner),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["the Runner off", { runner: false, runnerHost: "remoto" }],
+    ["no Runner host known", { runner: true }],
+  ])("leaves ssh alone with %s", (_why, options) => {
+    const command = "ssh remoto 'npm test'";
+    expect(queueBashCall(bash({ command }), PREFIX, {}, options)).toBeNull();
+  });
+});
+
 describe("the one switch every entry point reads", () => {
   it.each([
     [true, false, "queue"],
@@ -541,6 +640,10 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
 
   it("hands a remoto call to T3, which decides whether the Runner takes it", () => {
     expect(run(reached, "remoto ./scripts/check.sh")).toBe("T3");
+  });
+
+  it("hands an ssh call to T3, which knows the Runner's host", () => {
+    expect(run(reached, "ssh remoto 'cd ~/runs/erp && npm test'")).toBe("T3");
   });
 
   it.each(["ls -la", "git status && git log --format=%H -3", "cat build.md", "rg TODO apps"])(

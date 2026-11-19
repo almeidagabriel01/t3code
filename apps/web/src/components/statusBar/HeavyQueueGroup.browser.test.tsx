@@ -1,10 +1,13 @@
 import {
   HEAVY_QUEUE_DEFAULTS,
+  linuxOverText,
   type EnvironmentId,
   type HeavyCommand,
   type HeavyCommandsState,
   type HeavyQueueEntry,
   type HeavyQueueState,
+  type HeavyRunnerLinux,
+  type HeavyRunnerLinuxOver,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -694,9 +697,9 @@ describe("MachineBar", () => {
       "offline",
       { ...LINUX, online: false, error: "ssh timed out" },
       "Offline",
-      "Linux offline: ssh timed out",
+      "remoto · offline · ssh timed out",
     ],
-    ["being checked", { ...LINUX, online: null }, "Checking…", "Checking Linux (remoto)…"],
+    ["being checked", { ...LINUX, online: null }, "Checking…", "remoto · checking"],
   ])("shows Linux %s instead of stale readings", async (_name, linux, shown, hint) => {
     setup([], { linux, machine: MACHINE });
     await using screen = await render(machineBar());
@@ -717,6 +720,56 @@ describe("MachineBar", () => {
       .toHaveTextContent("1/2");
     expect(screen.container.textContent).toMatch(/1\/2.*1\/3/s);
   });
+
+  const over = (...overLimits: ReadonlyArray<HeavyRunnerLinuxOver>): HeavyRunnerLinux => ({
+    ...LINUX,
+    status: "over-limit",
+    overLimitBy: linuxOverText(overLimits[0]!),
+    overLimits,
+  });
+  it.each<[string, HeavyRunnerLinux, string | null, string]>([
+    [
+      "over limits",
+      over(
+        { limit: "memory", value: 8 * 1024 ** 3, threshold: 10 },
+        { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
+      ),
+      "8.0 GB",
+      "remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
+    ],
+    [
+      "over limits",
+      over({ limit: "cpu-pressure", value: 95, threshold: 90 }),
+      "20%",
+      "remoto · over limits · CPU saturated: work waited 95% of the time",
+    ],
+    [
+      "not responding",
+      { ...LINUX, status: "unresponsive", error: "ssh timed out" },
+      null,
+      "remoto · not responding · ssh timed out",
+    ],
+    [
+      "offline",
+      { ...LINUX, online: false, status: "offline", error: "ssh timed out" },
+      null,
+      "remoto · offline · ssh timed out",
+    ],
+  ])(
+    "Tab to Linux's %s dot reads why, warning only its gauge",
+    async (chip, linux, warned, hint) => {
+      setup([], { linux, machine: MACHINE });
+      await using screen = await render(machineBar());
+      // This Mac's CPU, memory and slots come first in tab order.
+      await userEvent.keyboard("{Tab}{Tab}{Tab}{Tab}");
+      await expect.element(screen.getByLabelText(`Linux ${chip}`)).toHaveFocus();
+      await expect.element(screen.getByText(hint).last()).toBeVisible();
+      const warns = [...screen.container.querySelectorAll("[data-warn]")];
+      expect(
+        warns.map((meter) => meter.closest('[data-slot="tooltip-trigger"]')?.textContent),
+      ).toEqual(warned === null ? [] : [expect.stringContaining(warned)]);
+    },
+  );
 
   it("says the queue is off on the Mac's slots, and shows no Linux without the Runner", async () => {
     setup([], { enabled: false, machine: MACHINE });

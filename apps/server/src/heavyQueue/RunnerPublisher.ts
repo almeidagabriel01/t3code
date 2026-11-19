@@ -18,18 +18,25 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../config.ts";
 import { devWorktreeCleanupBlocked } from "../devWorktreeCleanupGuard.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
 import { whenLockFree } from "./whenLockFree.ts";
-import { runnerCopyId, type RunnerBlock } from "./runner.ts";
-import { checkLinux, drainLostRuns, removeRunnerCopy } from "./runnerExec.ts";
+import {
+  RUNNER_COPY_RETENTION_DAYS,
+  runnerCopyId,
+  type HealthCheck,
+  type RunnerBlock,
+} from "./runner.ts";
+import { checkLinux, drainLostRuns, idleRunnerCopies, removeRunnerCopy } from "./runnerExec.ts";
 
 const pick = <K extends string>(
   source: Readonly<Record<string, unknown>>,
@@ -60,6 +67,68 @@ export const runnerOnAnywhere = (block: RunnerBlock) =>
   block.global.runnerEnabled || block.projects.some((project) => project.config.runnerEnabled);
 
 const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+
+export interface CopyOrigin {
+  readonly threadId?: string;
+  readonly projectId?: string;
+}
+
+/**
+ * Whose checkout each `~/runs/<id>` copy is: a project's own folder, or a thread's worktree.
+ * `copyIdOf` is null for a folder that is gone.
+ */
+export const copyOrigins = (
+  projects: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>,
+  worktrees: ReadonlyArray<{ readonly threadId: string; readonly worktreePath: string }>,
+  copyIdOf: (path: string) => string | null,
+): ReadonlyMap<string, CopyOrigin> => {
+  const origins = new Map<string, CopyOrigin>();
+  for (const project of projects) {
+    const id = copyIdOf(project.workspaceRoot);
+    if (id !== null) origins.set(id, { projectId: project.id });
+  }
+  for (const worktree of worktrees) {
+    const id = copyIdOf(worktree.worktreePath);
+    if (id !== null) origins.set(id, { ...origins.get(id), threadId: worktree.threadId });
+  }
+  return origins;
+};
+
+/** The reading with each outside item's origin from its copy; a container's own label stays. */
+export const withCopyOrigins = (
+  check: HealthCheck,
+  origins: ReadonlyMap<string, CopyOrigin>,
+): HealthCheck =>
+  !check.ok || check.reading.outside === undefined
+    ? check
+    : {
+        ...check,
+        reading: {
+          ...check.reading,
+          outside: check.reading.outside.map((item) => {
+            const origin = item.runId === undefined ? undefined : origins.get(item.runId);
+            return origin === undefined ? item : { ...origin, ...item };
+          }),
+        },
+      };
+
+/** A folder's copy id by its real path, cached: the same path keeps its id while it exists. */
+const copyIdCache = () => {
+  const cache = new Map<string, string | null>();
+  return (path: string) => {
+    const known = cache.get(path);
+    if (known !== undefined) return known;
+    let id: string | null;
+    try {
+      id = runnerCopyId(NodeFS.realpathSync(path), sha1);
+    } catch {
+      id = null;
+    }
+    // A missing folder is asked again next time: it may be created later.
+    if (id !== null) cache.set(path, id);
+    return id;
+  };
+};
 
 /**
  * The Linux copy to delete with a removed worktree, or null when no Runner is set up here. `remoto`
@@ -104,12 +173,107 @@ export const drainCopyRemovals = async (
   return done.length;
 };
 
-export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLinux) =>
+const SWEEP_EVERY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Removes Linux copies idle past the retention, one at a time and only while nothing is queued: a
+ * waiter's sync may start into any copy before `remoto-rodar` takes its lock. The queue is read
+ * again before each removal, so a job queued mid-sweep stops it. `queued` when work kept it from
+ * listing, null when Linux is unreachable.
+ */
+export const sweepIdleCopies = async (
+  dir: string,
+  machine: RunnerBlock["machine"],
+  environment: Readonly<Record<string, string | undefined>>,
+  now: number,
+  list: typeof idleRunnerCopies = idleRunnerCopies,
+  remove: typeof removeRunnerCopy = removeRunnerCopy,
+): Promise<ReadonlyArray<string> | "queued" | null> => {
+  const quiet = () => {
+    const doc = QueueFile.readDoc(dir);
+    return doc.entries.length === 0 && doc.lostRuns.length === 0;
+  };
+  if (!quiet()) return "queued";
+  const idle = await list(machine, environment, RUNNER_COPY_RETENTION_DAYS, now);
+  if (idle === null) return null;
+  const removed: string[] = [];
+  for (const id of idle) {
+    if (!quiet()) break;
+    const result = await remove(machine, environment, id);
+    if (result === "unreachable") break;
+    if (result === "removed") removed.push(id);
+  }
+  return removed;
+};
+
+/**
+ * One sweep a day at most, and one at a time. The day counts from a sweep that listed: a busy
+ * queue or an unreachable Linux leaves it due, so the next quiet heartbeat sweeps.
+ */
+export const idleSweeper = (
+  dir: string,
+  list: typeof idleRunnerCopies = idleRunnerCopies,
+  remove: typeof removeRunnerCopy = removeRunnerCopy,
+) => {
+  /** In memory: a restart sweeps again, which the sweep's own rules make harmless. */
+  let sweptAt = -Infinity;
+  let sweeping = false;
+  return async (
+    machine: RunnerBlock["machine"],
+    environment: Readonly<Record<string, string | undefined>>,
+    now: number,
+  ): Promise<ReadonlyArray<string>> => {
+    if (sweeping || now - sweptAt < SWEEP_EVERY_MS) return [];
+    sweeping = true;
+    try {
+      const result = await sweepIdleCopies(dir, machine, environment, now, list, remove);
+      if (result === "queued" || result === null) return [];
+      sweptAt = now;
+      return result;
+    } finally {
+      sweeping = false;
+    }
+  };
+};
+
+export const layer = (
+  dir: string = QueueFile.defaultQueueDir(),
+  check = checkLinux,
+  listIdle: typeof idleRunnerCopies = idleRunnerCopies,
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
+      const scope = yield* Effect.scope;
       const settingsService = yield* ServerSettingsService;
       const removalsBlocked = yield* devWorktreeCleanupBlocked();
       const projectStore = yield* ProjectStoreV2;
+      const projections = yield* ProjectionStoreV2;
+      const copyIdOf = copyIdCache();
+      /** Origins only when an outside item names a copy: most beats have none. */
+      const originsFor = Effect.fn("RunnerPublisher.originsFor")(
+        function* (check: HealthCheck) {
+          if (
+            !check.ok ||
+            !(check.reading.outside ?? []).some((item) => item.runId !== undefined)
+          ) {
+            return check;
+          }
+          const projects = yield* projectStore.list();
+          const worktrees = yield* projections.getThreadWorktreePaths();
+          return withCopyOrigins(
+            check,
+            copyOrigins(
+              projects.map((project) => ({
+                id: project.projectId,
+                workspaceRoot: project.workspaceRoot,
+              })),
+              worktrees,
+              copyIdOf,
+            ),
+          );
+        },
+        (effect, check) => Effect.orElseSucceed(effect, () => check),
+      );
       const config = yield* ServerConfig;
       const publisher: RunnerBlock["publisher"] = {
         pid: process.pid,
@@ -146,6 +310,7 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
       );
       // The host last checked; null while the Runner is off, so turning it on checks at once.
       let checkedHost: string | null = null;
+      const sweepIdle = idleSweeper(dir, listIdle);
       const checkHealth = Effect.fn("RunnerPublisher.checkHealth")(function* (always: boolean) {
         const block = current;
         if (block === null || !owner || !runnerOnAnywhere(block)) {
@@ -154,7 +319,9 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
         }
         if (!always && checkedHost === block.machine.runnerHost) return;
         checkedHost = block.machine.runnerHost;
-        const reading = yield* Effect.promise(() => check(block.machine, process.env));
+        const reading = yield* originsFor(
+          yield* Effect.promise(() => check(block.machine, process.env)),
+        );
         yield* whenLockFree(
           () => QueueFile.recordHealth(dir, reading),
           (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
@@ -171,6 +338,23 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
             catch: (cause) =>
               new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
           }).pipe(Effect.ignore({ log: true }));
+        const now = yield* Clock.currentTimeMillis;
+        if (reading.ok && !removalsBlocked) {
+          // Deleting copies can take minutes: it runs beside the heartbeat, never in its way.
+          yield* Effect.tryPromise({
+            try: () => sweepIdle(block.machine, process.env, now),
+            catch: (cause) =>
+              new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+          }).pipe(
+            Effect.flatMap((removed) =>
+              removed.length === 0
+                ? Effect.void
+                : Effect.logInfo("Removed idle Linux copies", { removed: removed.length }),
+            ),
+            Effect.ignore({ log: true }),
+            Effect.forkIn(scope),
+          );
+        }
       });
 
       yield* settingsService.streamChanges.pipe(

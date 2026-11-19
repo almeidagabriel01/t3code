@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../config.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
@@ -26,7 +27,11 @@ import {
   drainCopyRemovals,
   layer,
   runnerBlockOf,
+  idleSweeper,
   runnerOnAnywhere,
+  sweepIdleCopies,
+  copyOrigins,
+  withCopyOrigins,
 } from "./RunnerPublisher.ts";
 import type { HealthCheck } from "./runner.ts";
 
@@ -181,7 +186,141 @@ describe("Linux copies of removed worktrees", () => {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("sweeps idle copies only while nothing is queued, and stops when a job arrives", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-sweep-"));
+    try {
+      const machine = block(true).machine;
+      const idle = ["a-00000000", "b-11111111", "c-22222222"];
+      const listed: string[] = [];
+      const list = async () => {
+        listed.push("list");
+        return idle;
+      };
+      const asked: string[] = [];
+      const job = {
+        id: "j",
+        pid: process.pid,
+        threadId: null,
+        label: "vp test run",
+        cwd: "/w/app",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: null,
+      };
+      // A job queued while the first copy goes: the rest stay for the next sweep.
+      const remove = async (_machine: unknown, _env: unknown, id: string) => {
+        asked.push(id);
+        QueueFile.enqueue(dir, job);
+        return "removed" as const;
+      };
+      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toEqual(["a-00000000"]);
+      expect(asked).toEqual(["a-00000000"]);
+      // Queued work: nothing is even listed.
+      expect(await sweepIdleCopies(dir, machine, {}, 0, list, remove)).toBe("queued");
+      expect(listed).toEqual(["list"]);
+      expect(
+        await sweepIdleCopies(
+          NodeFS.mkdtempSync(NodePath.join(dir, "e-")),
+          machine,
+          {},
+          0,
+          async () => null,
+        ),
+      ).toBeNull();
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+describe("the daily idle sweep", () => {
+  it("counts its day from a sweep that listed, never from one queued work or a lost Linux skipped", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-sweeper-"));
+    try {
+      const machine = runnerBlockOf(
+        { ...DEFAULT_SERVER_SETTINGS, runnerEnabled: true, runnerHost: "pc" },
+        [{ id: app, workspaceRoot: "/code/app" }],
+        publisher,
+      ).machine;
+      const HOUR = 3_600_000;
+      let reachable = false;
+      let lists = 0;
+      const list = async () => {
+        lists += 1;
+        return reachable ? [] : null;
+      };
+      const sweep = idleSweeper(dir, list);
+      QueueFile.enqueue(dir, {
+        id: "j",
+        pid: process.pid,
+        threadId: null,
+        label: "vp test run",
+        cwd: "/w/app",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: null,
+      });
+      await sweep(machine, {}, 0);
+      expect(lists).toBe(0);
+      QueueFile.remove(dir, "j");
+      // Linux unreachable: listed, but nothing learned, so still due.
+      await sweep(machine, {}, 1 * HOUR);
+      reachable = true;
+      await sweep(machine, {}, 2 * HOUR);
+      expect(lists).toBe(2);
+      // Swept at 2 h: the next one is a day after that, not after the queued attempt at 0.
+      await sweep(machine, {}, 25 * HOUR);
+      expect(lists).toBe(2);
+      await sweep(machine, {}, 26 * HOUR);
+      expect(lists).toBe(3);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("work outside the queue names its thread and project by its copy", () => {
+  const origins = copyOrigins(
+    [{ id: "erp", workspaceRoot: "/w/erp" }],
+    [
+      { threadId: "t-feat", worktreePath: "/w/.t3/feat" },
+      { threadId: "t-gone", worktreePath: "/w/.t3/gone" },
+    ],
+    (path) => (path.endsWith("gone") ? null : `${path.split("/").pop()}-0123abcd`),
+  );
+  const item = (extra: object) => ({
+    cgroup: "/s.scope",
+    pid: 1,
+    cpu: 2,
+    memoryBytes: 1,
+    command: "node",
+    ...extra,
+  });
+  it.each<[string, object, object]>([
+    ["a project's own checkout", { runId: "erp-0123abcd" }, { projectId: "erp" }],
+    ["a thread's worktree", { runId: "feat-0123abcd" }, { threadId: "t-feat" }],
+    ["a copy nobody here knows", { runId: "other-89abcdef" }, {}],
+    ["no copy at all", {}, {}],
+    [
+      "a container's own label wins",
+      { runId: "feat-0123abcd", threadId: "label" },
+      { threadId: "label" },
+    ],
+  ])("%s", (_name, given, expected) => {
+    const check = withCopyOrigins(
+      { ok: true, reading: { ...READING, outside: [item(given)] } },
+      origins,
+    );
+    expect(check.ok && check.reading.outside?.[0]).toEqual({ ...item(given), ...expected });
+  });
+});
+
+const READING = {
+  cpuPercent: 1,
+  load1: 1,
+  cpuCount: 6,
+  totalMemoryBytes: 8,
+  availableMemoryBytes: 4,
+};
 
 describe("the publisher layer", () => {
   it.effect(
@@ -222,11 +361,14 @@ describe("the publisher layer", () => {
                 },
               ]),
           } as unknown as ProjectStoreV2["Service"]),
+          Layer.succeed(ProjectionStoreV2, {
+            getThreadWorktreePaths: () => Effect.succeed([]),
+          } as unknown as ProjectionStoreV2["Service"]),
           Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
           NodeServices.layer,
         );
         yield* Effect.gen(function* () {
-          yield* Layer.build(layer(dir, check).pipe(Layer.provide(services)));
+          yield* Layer.build(layer(dir, check, async () => []).pipe(Layer.provide(services)));
           yield* Deferred.await(checks[0]!);
           settings = { ...settings, runnerHost: "pc" };
           yield* TestClock.adjust(`${RUNNER_DEFAULTS.runnerHeartbeatSeconds} seconds`);
@@ -275,6 +417,9 @@ describe("the publisher layer", () => {
         Layer.succeed(ProjectStoreV2, {
           list: () => Effect.succeed([]),
         } as unknown as ProjectStoreV2["Service"]),
+        Layer.succeed(ProjectionStoreV2, {
+          getThreadWorktreePaths: () => Effect.succeed([]),
+        } as unknown as ProjectionStoreV2["Service"]),
         Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
         NodeServices.layer,
       );

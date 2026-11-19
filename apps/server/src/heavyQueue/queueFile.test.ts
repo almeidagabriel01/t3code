@@ -165,6 +165,44 @@ describe("heavy queue file", () => {
     });
   });
 
+  it("a Linux run learns its session's peak memory from the heartbeats", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const GIB = 1024 ** 3;
+    const run = { ...entry("r1"), runner: "linux" as const, phase: "running" as const };
+    Queue.enqueue(
+      dir,
+      { ...run, startedAt: new Date(at).toISOString(), remote: { id: "w-0123abcd", pgid: 4242 } },
+      at,
+    );
+    // `ps` reports KiB: 2 GiB, then 1 GiB, and a copy no job here owns.
+    for (const kib of [2097152, 1048576]) {
+      const beat = `job w-0123abcd 4242 ${kib}\njob other-89abcdef 5000 4194304`;
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(beat) }, at + 1000);
+    }
+    expect(Queue.read(dir)[0]).toMatchObject({ memory: 1 * GIB, peakMemory: 2 * GIB });
+    Queue.finish(dir, "r1", 0, at + 60_000);
+    expect(Queue.readDoc(dir).linuxHistory.r1).toEqual([
+      { durationMs: 60_000, memoryBytes: 2 * GIB },
+    ]);
+  });
+
+  it.each([
+    { name: "a stale pgid file whose pid came back", phase: "running" as const, pgid: 4242 },
+    { name: "a run still syncing", phase: "syncing" as const, pgid: 5000 },
+    { name: "a run whose group is not known yet", phase: "running" as const, pgid: undefined },
+  ])("$name lends no memory to the run", ({ phase, pgid }) => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const remote = pgid === undefined ? { id: "w-0123abcd" } : { id: "w-0123abcd", pgid };
+    const run = { ...entry("r1"), runner: "linux" as const, phase, remote };
+    Queue.enqueue(dir, { ...run, startedAt: new Date(at).toISOString() }, at);
+    const beat = "job w-0123abcd 5000 4194304";
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(beat) }, at + 1000);
+    expect(Queue.read(dir)[0]?.memory).toBeUndefined();
+    expect(Queue.read(dir)[0]?.peakMemory).toBeUndefined();
+  });
+
   it("keeps the last 200 results", () => {
     const dir = tempDir();
     const at = Date.parse("2026-01-01T00:00:00.000Z");
@@ -1139,6 +1177,7 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW + 120_000)).toEqual({
       status: "canceled",
       reason: "Linux is unavailable and nobody answered in time: canceled",
+      t3Fault: false,
     });
     expect(Queue.read(dir)).toEqual([]);
     expect(Queue.readDoc(dir).events).toEqual([
@@ -1261,7 +1300,7 @@ describe("Runner in the queue file", () => {
         }),
         linkFailures: 3,
       });
-      expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason });
+      expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason, t3Fault: false });
       expect(Queue.read(dir)).toEqual([]);
       expect(Queue.readDoc(dir).events).toEqual([]);
     },
@@ -1892,11 +1931,11 @@ describe("Runner in the queue file", () => {
 
   const stops = (dir: string) =>
     Object.fromEntries(Queue.read(dir).map((e: QueuedEntry) => [e.id, e.stop ?? null]));
-  /** A heartbeat with `available` of 100 bytes free, and `/proc/uptime` when given. */
+  /** A heartbeat with `available` of 100 kB free, and `/proc/uptime` when given. */
   const reading = (available: number, uptime?: number) => ({
     ok: true as const,
     reading: parseHeartbeat(
-      `0.5 0.4 0.3 1/2 3\n6\nMem: 100 10 20 0 0 ${available}${uptime === undefined ? "" : `\n${uptime} 1000`}`,
+      `0.5 0.4 0.3 1/2 3\n6\nMemTotal: 100 kB\nMemAvailable: ${available} kB${uptime === undefined ? "" : `\n${uptime} 1000`}`,
     ),
   });
 

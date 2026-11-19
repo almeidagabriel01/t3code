@@ -562,7 +562,7 @@ describe("admission plan", () => {
           change: { sample: strained(0.11), history },
           admit: null,
           hold: "job-memory",
-          reason: { c: "memory short: 0.2 GB room keeping half the floor, needs 0.3 GB" },
+          reason: { c: "memory short: 164 MB room keeping half the floor, needs 307 MB" },
         },
         {
           name: "critical pressure holds the commit",
@@ -613,7 +613,7 @@ describe("admission plan", () => {
       },
       admit: null,
       hold: "job-memory",
-      reason: { a: "memory floor: 0.3 GB room, needs 0.4 GB" },
+      reason: { a: "memory floor: 307 MB room, needs 410 MB" },
     },
     {
       name: "28% free on 16 GB: a 4 GB guess holds a medium job never seen",

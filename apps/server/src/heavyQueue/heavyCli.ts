@@ -23,6 +23,7 @@ import {
   scriptOf,
   SHIMMED,
   shellQuote,
+  sshWork,
   type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
@@ -74,6 +75,9 @@ import {
   linkAttempts,
   linkMachine,
   needsBrowser,
+  linuxFailedNote,
+  linuxRetryNote,
+  SSH_JOB_ENV,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -102,6 +106,7 @@ import {
   routeKey,
 } from "./routeMemory.ts";
 import { ensureShims, realProgram, withoutShims } from "./shims.ts";
+import { cachedSshHostname } from "./sshHost.ts";
 
 /**
  * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
@@ -257,6 +262,8 @@ export type HeavyLaunch =
       readonly program: string;
       readonly args: ReadonlyArray<string>;
       readonly where: RunnerWhere | undefined;
+      /** Its heavy work goes to Linux over its own `ssh`: it runs as written, holding a Linux slot. */
+      readonly ssh?: true;
     }
   /** The caller's mistake, such as `remoto --help` with `remoto` taken out: never queued. */
   | { readonly kind: "refused"; readonly reason: string };
@@ -274,7 +281,11 @@ export const heavyLaunch = (
   },
   cwd: string,
   home: string,
-  modeAt: (cwd: string) => { readonly enabled: boolean; readonly runner: boolean },
+  modeAt: (cwd: string) => {
+    readonly enabled: boolean;
+    readonly runner: boolean;
+    readonly runnerHost?: string;
+  },
   inJob: boolean,
   readAt?: (cwd: string) => ReadScript,
 ): HeavyLaunch => {
@@ -307,6 +318,20 @@ export const heavyLaunch = (
   }
   const reason = commandRefusal(job.program, job.args, job.remoto);
   if (reason !== null) return { kind: "refused", reason };
+  if (
+    mode.runner &&
+    mode.runnerHost !== undefined &&
+    sshWork(line, mode.runnerHost, cachedSshHostname) !== null
+  ) {
+    return {
+      kind: "queue",
+      cwd: job.cwd,
+      program: job.program,
+      args: job.args,
+      where: command.where ?? "linux",
+      ssh: true,
+    };
+  }
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
   if (!job.remoto && isQueued(line, readAt?.(job.cwd))) return { kind: "direct" };
   if (!job.remoto && commitRoute(line) === "direct") return { kind: "direct" };
@@ -768,6 +793,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
         ...(name === undefined ? {} : { name }),
         ...(routeReason === undefined ? {} : { routeReason }),
         ...(launch.where === undefined ? {} : { where: launch.where }),
+        ...(launch.ssh === true ? { ssh: true } : {}),
         ...(now ? { forced: true } : {}),
       },
       scriptReader(launch.cwd),
@@ -845,7 +871,15 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     const outcome =
       start.runner === "linux"
         ? await runLinuxAttempt(
-            { dir, id, program: launch.program, args: launch.args, machine, environment },
+            {
+              dir,
+              id,
+              program: launch.program,
+              args: launch.args,
+              machine,
+              environment,
+              ssh: launch.ssh === true,
+            },
             (handler) => (onSignal = handler),
           )
         : await runMacAttempt(
@@ -902,6 +936,7 @@ const waitForStart = async (
     }
     if (start.status === "canceled") {
       process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
+      writeLinuxNote(dir, start.t3Fault ? "t3" : "retry");
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
     if (start.status === "started") {
@@ -928,6 +963,20 @@ const waitForStart = async (
 
 /** `remoto`'s own code for "the PC is unreachable"; also what a canceled question exits with. */
 const LINUX_UNAVAILABLE_EXIT = 75;
+
+/**
+ * Said where T3 itself ends a job for Linux, so a command's own 75 says nothing: `t3` when T3
+ * failed it (a card to file), `retry` when Linux was away or the job was canceled.
+ */
+const writeLinuxNote = (dir: string, kind: "t3" | "retry") => {
+  let host = "remoto";
+  try {
+    host = readDoc(dir).runner?.machine.runnerHost ?? host;
+  } catch {
+    // An unreadable queue file still gets the note.
+  }
+  process.stderr.write(kind === "t3" ? linuxFailedNote(host) : linuxRetryNote(host));
+};
 
 let healthCheckRunning = false;
 /** A waiter checks Linux itself when no server's heartbeat is fresh, so the CLI works alone. */
@@ -1150,7 +1199,13 @@ type PartOutcome =
   /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
   | { readonly kind: "command"; readonly reason: string }
   /** Its job asked for Linux, and Linux can't run this part: the job ends with `code`. */
-  | { readonly kind: "refused"; readonly reason: string; readonly code: number };
+  | {
+      readonly kind: "refused";
+      readonly reason: string;
+      readonly code: number;
+      /** Linux's copy or environment failed it (T3's bug), not Linux away or a Mac-only call. */
+      readonly t3Fault: boolean;
+    };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1195,12 +1250,14 @@ const runLinuxAttempt = async (
     readonly args: ReadonlyArray<string>;
     readonly machine: RunnerMachineConfig;
     readonly environment: NodeJS.ProcessEnv;
+    /** It reaches Linux over its own `ssh`: no copy, no `remoto`, the line as written. */
+    readonly ssh: boolean;
   },
   setSignal: SignalHook,
 ): Promise<Attempt> => {
   const { dir, id, machine, environment } = job;
   const remoto = resolveRemoto(environment);
-  if (remoto === null) {
+  if (remoto === null && !job.ssh) {
     process.stderr.write("[t3 heavy] remoto is not installed; Linux counts as unavailable.\n");
     recordHealth(dir, { ok: false, error: "remoto is not installed" });
     // This Mac can't reach Linux at all: no link to wait for, so the unavailable policy decides.
@@ -1212,7 +1269,8 @@ const runLinuxAttempt = async (
   // line read in full with no heavy call to pick out, is itself the work.
   const text = lineOf(job.program, job.args);
   const read = text === null ? null : readLine(text, scriptReader(process.cwd()));
-  const line = read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy));
+  const line =
+    job.ssh || (read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy)));
   const shell = line ? job.program : "/bin/sh";
   const run = withShims(
     dir,
@@ -1225,7 +1283,13 @@ const runLinuxAttempt = async (
           "-c",
           `${selfPrefix(dir, environment, "linux-part")} -- ${[job.program, ...job.args].map(shellQuote).join(" ")}`,
         ],
-    { ...environment, [HEAVY_JOB_ENV]: "1", T3CODE_REMOTO: remoto },
+    {
+      ...environment,
+      [HEAVY_JOB_ENV]: "1",
+      ...(remoto === null ? {} : { T3CODE_REMOTO: remoto }),
+      // ssh sends it on: the heartbeat finds this job's session there by it.
+      ...(job.ssh ? { [SSH_JOB_ENV]: id } : {}),
+    },
   );
   // Its own group, named for calls inside `timeout`, which starts a group of its own.
   const child = NodeChildProcess.spawn(
@@ -1352,6 +1416,7 @@ const runLinuxAttempt = async (
   if (outcome.kind === "refused") {
     commandFailure = outcome.reason;
     process.stderr.write(`[t3 heavy] ${outcome.reason}.\n`);
+    writeLinuxNote(dir, outcome.t3Fault ? "t3" : "retry");
     return { kind: "exit", code: outcome.code };
   }
   if (outcome.kind === "worktree") {
@@ -1588,6 +1653,7 @@ const runLinuxPart = async (
           kind: "refused",
           reason: `Asked for Linux, but it needs this Mac: ${reason}`,
           code: LINUX_UNAVAILABLE_EXIT,
+          t3Fault: false,
         })
       : queueCall(dir, "mac", [given, ...givenArgs], { reason });
   if (root === null || program === undefined) {
@@ -1667,6 +1733,7 @@ const runLinuxPart = async (
         kind: "refused",
         reason: `Linux couldn't run this: ${lacked.line}`,
         code,
+        t3Fault: true,
       });
     }
     if (spentInput || wroteOutput) {
@@ -1825,6 +1892,7 @@ const runLinuxPart = async (
     if (spentInput || wroteOutput) {
       const spent = spentInput ? "its input went to Linux" : "it already wrote output";
       process.stderr.write(`[t3 heavy] ${why}; ${spent}, so it does not run again.\n`);
+      writeLinuxNote(dir, "t3");
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
     const health = await checkLinux(linkMachine(machine, doc.sample), process.env);
@@ -1836,6 +1904,7 @@ const runLinuxPart = async (
           kind: "refused",
           reason: `Asked for Linux, but ${why}`,
           code: LINUX_UNAVAILABLE_EXIT,
+          t3Fault: false,
         });
       }
       const policy = lost.kind === "dropped" ? config.runnerDropped : config.runnerUnavailable;
@@ -1844,6 +1913,7 @@ const runLinuxPart = async (
       }
       if (policy !== "wait") {
         process.stderr.write(`[t3 heavy] Linux couldn't run this: ${why}.\n`);
+        writeLinuxNote(dir, "retry");
         process.exit(LINUX_UNAVAILABLE_EXIT);
       }
       jobNote(`[t3 heavy] ${why}: waiting for Linux to run this call again.\n`);

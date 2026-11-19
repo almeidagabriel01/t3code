@@ -1,6 +1,7 @@
 import {
   machineBar,
   type MachineBarRow,
+  type MachineStatusChip,
   type MachineGauge as MachineGaugeModel,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
@@ -248,12 +249,12 @@ function MachineSlots({ row }: { readonly row: MachineBarRow }) {
   );
 }
 
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-muted-foreground/60" }
-    : online
-      ? { text: "online", dot: "bg-success" }
-      : { text: "offline", dot: "bg-destructive" };
+const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
+  muted: "bg-muted-foreground/60",
+  ok: "bg-success",
+  warn: "bg-warning",
+  danger: "bg-destructive",
+};
 
 /** T3's own history, refreshed while the bar shows it. */
 function useT3History(environmentId: EnvironmentId) {
@@ -296,67 +297,81 @@ export function MachineBar({
   const { mac, linux } = machineBar(state, host.data, host.error !== null);
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
-    <div
-      role="group"
-      aria-label="Machines"
-      className="@container/machines grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
-    >
-      <MachineName Icon={LaptopIcon} name="This Mac" />
-      <MachineGauge gauge={mac.cpu} />
-      <MachineGauge gauge={mac.memory} unit="free" />
-      <MachineSlots row={mac} />
+    <div className="@container/machines">
+      <div
+        role="group"
+        aria-label="Machines"
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
+      >
+        <MachineName Icon={LaptopIcon} name="This Mac" />
+        <MachineGauge gauge={mac.cpu} />
+        <MachineGauge gauge={mac.memory} unit="free" />
+        <MachineSlots row={mac} />
 
-      {t3 === null ? null : (
-        <>
-          <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
-            <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
-          </Reading>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>
-              {formatCpu(
-                macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
-              )}
-            </span>
-            <span className={UNIT} />
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>{formatMemory(t3.rssBytes)}</span>
-            <span className={UNIT} />
-          </span>
-          <span />
-        </>
-      )}
-
-      {linux === null ? null : (
-        <>
-          <MachineName
-            Icon={ServerIcon}
-            name="Linux"
-            status={{ ...LINUX_STATUS(linux.online), hint: linux.statusHint ?? "" }}
-          />
-          {linux.offline === null ? (
-            <>
-              <MachineGauge gauge={linux.cpu} />
-              <MachineGauge gauge={linux.memory} unit="free" />
-            </>
-          ) : (
-            <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
-              <span
-                className={cn(
-                  "truncate text-2xs",
-                  linux.online === false ? "text-destructive-foreground" : "text-muted-foreground",
-                )}
-              >
-                {/* The error goes in the tooltip: a long one would starve the names' column. */}
-                {linux.offline.text}
-              </span>
+        {t3 === null ? null : (
+          <>
+            <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
+              <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
             </Reading>
-          )}
-          <MachineSlots row={linux} />
-        </>
-      )}
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatCpu(
+                  macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
+                )}
+              </span>
+              <span className={UNIT} />
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatMemory(t3.rssBytes)}
+              </span>
+              <span className={UNIT} />
+            </span>
+            <span />
+          </>
+        )}
+
+        {linux === null ? null : (
+          <>
+            <MachineName
+              Icon={ServerIcon}
+              name="Linux"
+              {...(linux.chip === null
+                ? {}
+                : {
+                    status: {
+                      text: linux.chip.text,
+                      dot: CHIP_DOT[linux.chip.tone],
+                      hint: linux.statusHint ?? "",
+                    },
+                  })}
+            />
+            {linux.offline === null ? (
+              <>
+                <MachineGauge gauge={linux.cpu} />
+                <MachineGauge gauge={linux.memory} unit="free" />
+              </>
+            ) : (
+              <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
+                <span
+                  className={cn(
+                    "truncate text-2xs",
+                    linux.online === false
+                      ? "text-destructive-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {/* The error goes in the tooltip: a long one would starve the names' column. */}
+                  {linux.offline.text}
+                </span>
+              </Reading>
+            )}
+            <MachineSlots row={linux} />
+          </>
+        )}
+      </div>
     </div>
   );
 }

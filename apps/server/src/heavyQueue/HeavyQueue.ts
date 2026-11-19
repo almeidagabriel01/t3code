@@ -13,6 +13,7 @@ import {
   type HeavyQueueState,
   type HeavyRunner,
   type HeavyRunnerLinux,
+  linuxOverText,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -41,7 +42,7 @@ import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 import * as RouteMemory from "./routeMemory.ts";
 import { whenLockFree } from "./whenLockFree.ts";
-import type { QueuedEntry } from "./runner.ts";
+import { linuxOutside, linuxOverBy, linuxStatus, type QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 /** A release finalizer can't wait forever, but a slow owner must not leave a server entry behind. */
@@ -201,6 +202,16 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     return null;
   }
   const { linux } = doc;
+  const status = linuxStatus(linux);
+  // An offline Linux's last list is stale: nothing there is known to run now.
+  const outside = linux.online === true ? linuxOutside(linux, doc.entries) : [];
+  const overLimits = status === "over-limit" ? linuxOverBy(linux, block.machine) : [];
+  const overLimitBy =
+    status !== "over-limit"
+      ? null
+      : overLimits[0] === undefined
+        ? "easing back under its limits"
+        : linuxOverText(overLimits[0]);
   return {
     host: block.machine.runnerHost,
     online: linux.online,
@@ -212,7 +223,13 @@ export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunn
     cpuCount: linux.cpuCount,
     availableMemoryBytes: linux.availableMemoryBytes,
     totalMemoryBytes: linux.totalMemoryBytes,
-    ...(linux.online === false && linux.error !== undefined ? { error: linux.error } : {}),
+    ...((status === "offline" || status === "unresponsive") && linux.error !== undefined
+      ? { error: linux.error }
+      : {}),
+    ...(status === undefined ? {} : { status }),
+    ...(overLimitBy === null ? {} : { overLimitBy }),
+    ...(overLimits.length === 0 ? {} : { overLimits }),
+    ...(outside.length === 0 ? {} : { outside }),
   };
 };
 
