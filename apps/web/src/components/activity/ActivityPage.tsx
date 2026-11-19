@@ -169,7 +169,9 @@ export function ActivityPage() {
   const rankedRows = (rank: ActivityRank) =>
     entries.filter((entry) => entry.rank === rank && !(rank === 1 && workingKeys.has(entry.key)));
   const workingEntries = working.flatMap((row): ActivityEntry[] =>
-    row.item.shell === null ? [] : [{ key: row.item.key, thread: row.item.shell, rank: 1 }],
+    row.item.shell === null
+      ? []
+      : [{ key: row.item.key, thread: row.item.shell, rank: 1, unread: false, readAt: null }],
   );
 
   const machineLabel = new Map(

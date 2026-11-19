@@ -1,3 +1,4 @@
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   markActivityRead,
   planActivityClear,
@@ -18,7 +19,6 @@ import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 const canOperate = (thread: EnvironmentThreadShell) =>
   readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);

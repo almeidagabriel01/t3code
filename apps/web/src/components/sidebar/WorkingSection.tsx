@@ -38,7 +38,7 @@ export function WorkingRowButton(props: {
       aria-current={props.selected ? "true" : undefined}
       className={cn(
         "flex w-full cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-hidden hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        props.selected && "bg-accent",
+        props.selected && "bg-foreground/8",
       )}
       onClick={props.onOpen}
     >
