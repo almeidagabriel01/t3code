@@ -73,6 +73,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -3699,10 +3700,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const eventHooks: Array<
+        (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>
+      > = [];
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             events.push(event);
+            for (const hook of eventHooks) yield* hook(event);
             if (event.type === "subagent.updated") {
               yield* Queue.offer(subagentReceipts, event);
             }
@@ -3756,6 +3761,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         continuationRequests,
         continuationReceipts,
         events,
+        eventHooks,
         terminalReceipts,
         subagentReceipts,
         systemNoticeReceipts,
@@ -7315,6 +7321,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("a turn's terminal event is published only after its turn slot is free", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const now = yield* DateTime.now;
+      const firstInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-slot-first"),
+        text: "Run sleep 60.",
+        attachments: [],
+        providerTurnOrdinal: 1,
+        nativeThreadHasTurns: false,
+      });
+      const firstTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${firstInput.attemptId}`,
+      });
+      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      harness.eventHooks.push((event) =>
+        event.type === "provider_turn.updated" &&
+        event.providerTurn.id === firstTurnId &&
+        event.providerTurn.status === "interrupted"
+          ? harness.runtime
+              .startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now,
+                  attemptId: RunAttemptId.make("attempt-claude-slot-next"),
+                  text: "Next.",
+                  attachments: [],
+                  providerTurnOrdinal: 2,
+                  nativeThreadHasTurns: true,
+                }),
+              )
+              .pipe(
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+              )
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(firstInput);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: firstTurnId,
+      });
+      const exit = yield* Deferred.await(nextStart);
+      assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+    }).pipe(
+      Effect.provideService(References.MaxOpsBeforeYield, 8),
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("an interrupted turn after a rollback stops resuming at the rolled-back head", () =>

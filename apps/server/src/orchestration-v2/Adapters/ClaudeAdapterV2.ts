@@ -8285,6 +8285,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 };
+          // The server starts the next turn once it sees the terminal event, so free the slot first.
+          yield* Ref.update(activeTurn, (current) =>
+            current?.providerTurnId === input.context.providerTurnId ? null : current,
+          );
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -8402,9 +8406,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               emitProviderEvent(terminalEvent),
             ],
             { concurrency: 1 },
-          );
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
