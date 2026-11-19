@@ -406,6 +406,25 @@ describe("t3 heavy", () => {
     },
   );
 
+  // A launcher that ignores the signal (`vp` dies without passing it): its child still gets it.
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "a direct run passes %s to its program's tree",
+    async (signal) => {
+      const dir = tempDir();
+      Queue.setEnabled(dir, false);
+      const grand = `process.on(${JSON.stringify(signal)},()=>process.exit(4));console.log("ready");setInterval(()=>{},1000)`;
+      const launcher = [
+        `process.on(${JSON.stringify(signal)},()=>{})`,
+        `const c=require("child_process").spawn(process.execPath,["-e",${JSON.stringify(grand)}],{stdio:"inherit"})`,
+        "c.on('exit',(code)=>process.exit(code))",
+      ].join(";");
+      const run = heavy(dir, [process.execPath, "-e", launcher]);
+      await run.until("out", "ready");
+      run.child.kill(signal);
+      expect(await run.exited).toBe(4);
+    },
+  );
+
   // Ctrl-C on a terminal reaches the program too; only a signal sent to us alone needs passing.
   it.each([
     ["SIGINT", true, false],

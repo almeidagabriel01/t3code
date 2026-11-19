@@ -695,10 +695,22 @@ export const forwardsSignal = (signal: (typeof SIGNALS)[number], onTerminal: boo
 /** Runs a program with this process's stdio; its exit code, 127 when it can't start. */
 const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
   new Promise<number>((resolve) => {
-    const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
     const onTerminal = process.stdin.isTTY === true;
+    // Off a terminal nobody signals the group: the program leads its own, and a signal sent to
+    // this PID reaches its whole tree, past a launcher that dies without passing it on.
+    const child = NodeChildProcess.spawn(program, args, {
+      stdio: "inherit",
+      env,
+      detached: !onTerminal,
+    });
     const forward = (signal: (typeof SIGNALS)[number]) => {
-      if (forwardsSignal(signal, onTerminal)) child.kill(signal);
+      if (!forwardsSignal(signal, onTerminal)) return;
+      try {
+        if (onTerminal || child.pid === undefined) child.kill(signal);
+        else process.kill(-child.pid, signal);
+      } catch {
+        // Already gone.
+      }
     };
     for (const signal of SIGNALS) process.on(signal, forward);
     const done = (code: number) => {
