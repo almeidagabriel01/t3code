@@ -78,6 +78,7 @@ import {
   openAssistantTeamDialog,
 } from "./assistantTeamState";
 import { openAssistantWork } from "./assistantWorkState";
+import { AssistantEnvironmentField } from "./AssistantEnvironmentField";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 const ROW =
@@ -370,6 +371,16 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
           <InfoField icon={GaugeIcon} label="Spending limit" value={spendLine(spend)} />
         ) : null}
       </Section>
+      <div className="px-2">
+        <AssistantEnvironmentField
+          environmentId={environmentId}
+          value={assistant.defaultEnvironment}
+          workspace={assistant.workspace}
+          scope={assistant.scope}
+          disabled={archived || !flows.canAct}
+          onChange={(next) => void flows.setDefaultEnvironment(assistant, next)}
+        />
+      </div>
       {archived ? (
         <ActionRow
           icon={ArchiveRestoreIcon}
@@ -564,6 +575,14 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
           );
         })}
       </Section>
+      <div className="px-2">
+        <AssistantEnvironmentField
+          environmentId={environmentId}
+          value={team.defaultEnvironment}
+          disabled={archived || !flows.canAct}
+          onChange={(next) => void flows.setDefaultEnvironment(team, next)}
+        />
+      </div>
       <ul className="m-0 flex flex-col p-0">
         {(
           [

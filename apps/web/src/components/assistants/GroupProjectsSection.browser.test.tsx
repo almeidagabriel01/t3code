@@ -55,6 +55,11 @@ vi.mock("../../state/entities", () => ({
     })),
 }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../state/peerLinks", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const offered = Atom.make(true);
+  return { offersLinkedEnvironmentsAtom: () => offered, peerLinkEnvironment: { list: () => null } };
+});
 vi.mock("../../providerInstances", async (original) => ({
   ...(await original<typeof import("../../providerInstances")>()),
   resolveDefaultProviderModelSelection: () => ({ instanceId: "codex", model: "gpt-5.4" }),
@@ -136,6 +141,28 @@ describe("group projects", () => {
     await vi.waitFor(() =>
       expect(state.updates).toEqual([
         { teamId: "t1", instructions: "", memories: [], defaultModelSelection: null },
+      ]),
+    );
+    appAtomRegistry.set(assistantGroupSettingsAtom, null);
+  });
+
+  it("saves the group's default environment", async () => {
+    state.updates = [];
+    state.team.defaultModelSelection = null;
+    await using _screen = await render(
+      <AppAtomRegistryProvider>
+        <AssistantGroupSettingsHost />
+      </AppAtomRegistryProvider>,
+    );
+    openAssistantGroupSettings({ environmentId: "env" as never, teamId: "t1" as never });
+    const trigger = page.getByRole("combobox", { name: "Default environment" });
+    await expect.element(trigger).toHaveTextContent("Local");
+    await userEvent.click(trigger);
+    await userEvent.click(page.getByRole("option", { name: /Auto/ }));
+    await userEvent.click(page.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(state.updates).toEqual([
+        { teamId: "t1", instructions: "", memories: [], defaultEnvironment: "auto" },
       ]),
     );
     appAtomRegistry.set(assistantGroupSettingsAtom, null);

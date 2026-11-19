@@ -9,6 +9,7 @@ import {
   DEFAULT_ASSISTANT_AUTONOMY,
   DEFAULT_ASSISTANT_INTEGRATIONS,
   type AssistantAutonomy,
+  type AssistantEnvironmentPreference,
   type AssistantIntegrations,
   type AssistantTeam,
   type AssistantTeamId,
@@ -104,6 +105,7 @@ import { AssistantIntegrationsField, sameIntegrations } from "./AssistantIntegra
 import { AssistantNotifications } from "./AssistantNotifications";
 import { InheritedProjectsList } from "./InheritedProjectsList";
 import { AssistantWorkspaceField } from "./AssistantWorkspaceField";
+import { AssistantEnvironmentField } from "./AssistantEnvironmentField";
 import { AssistantSchedules } from "./AssistantSchedules";
 import { AssistantWatches } from "./AssistantWatches";
 import { budgetFromDraft, budgetToDraft, spendLine, type BudgetDraft } from "./assistantBudget";
@@ -396,6 +398,9 @@ function AssistantDialog(props: {
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   /** Undefined until the user touches it; null clears the assistant's own default. */
   const [defaultDraft, setDefaultDraft] = useState<ModelSelection | null | undefined>(undefined);
+  const [environmentDraft, setEnvironmentDraft] = useState<
+    AssistantEnvironmentPreference | null | undefined
+  >(undefined);
   const [role, setRole] = useState(assistant?.role ?? "");
   const [budgetDraft, setBudgetDraft] = useState(() => budgetToDraft(assistant?.budget ?? null));
   const [autonomy, setAutonomy] = useState<AssistantAutonomy>(
@@ -538,6 +543,7 @@ function AssistantDialog(props: {
           ...(projectsChanged ? assistantProjectFields(pickedIds, homeId) : {}),
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           ...(defaultDraft === undefined ? {} : { defaultModelSelection: defaultDraft }),
+          ...(environmentDraft === undefined ? {} : { defaultEnvironment: environmentDraft }),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
@@ -732,6 +738,17 @@ function AssistantDialog(props: {
                 value={defaultDraft === undefined ? assistant.defaultModelSelection : defaultDraft}
                 inherited={defaultModel}
                 onChange={setDefaultDraft}
+              />
+            ) : null}
+            {assistant !== null && environmentId !== null ? (
+              <AssistantEnvironmentField
+                environmentId={environmentId}
+                value={
+                  environmentDraft === undefined ? assistant.defaultEnvironment : environmentDraft
+                }
+                workspace={workspace}
+                scope={allPicked ? "all" : "project"}
+                onChange={setEnvironmentDraft}
               />
             ) : null}
             <div className="flex flex-col gap-1.5">
