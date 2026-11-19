@@ -156,7 +156,9 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
 
   it("lists heavy work outside the queue by cgroup, one bad line hiding nothing", () => {
     const DOCKER = "a".repeat(64);
+    const MOUNTED = "b".repeat(64);
     const SESSION = "/user.slice/user-1001.slice/session-7.scope";
+    const SSH_SESSION = "/user.slice/user-1001.slice/session-12.scope";
     const lines = [
       "206.12 180.00 120.00 9/900 4321",
       "6",
@@ -169,6 +171,14 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
       `out 580 ${8 * GIB} 900 /system.slice/docker-${DOCKER}.scope`,
       `outcmd 900 yes`,
       `dock\t${DOCKER}\terp-ci-3\tnode:22\tthread-1\t`,
+      `mnt\t${DOCKER}\t/srv/cache /var/lib/data`,
+      // A job's container, by the bind of its copy: the queue's.
+      `out 100 ${2 * GIB} 990 /system.slice/docker-${MOUNTED}.scope`,
+      `dock\t${MOUNTED}\tpg\tpostgres:16\t\t`,
+      `mnt\t${MOUNTED}\t/home/dev/runs/t3-a-0123abcd/db /var/run/docker.sock`,
+      // An ssh job's session, by the job id its ssh sent along.
+      `out 200 ${GIB} 980 ${SSH_SESSION}`,
+      `outjob ${SSH_SESSION} ssh-job-1`,
       // A direct remoto run in its copy, not the queue's.
       `out 120 ${2 * GIB} 950 ${SESSION}`,
       "outcmd 950 node --test",
@@ -184,6 +194,8 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
       "out x y z",
       "out 50",
       "outcmd notapid ls",
+      "outjob",
+      "mnt\tnotanid\t/home/dev/runs/t3-a-0123abcd",
     ].join("\n");
     expect(parseHeartbeat(lines).outside).toEqual([
       {
@@ -195,6 +207,7 @@ describe("the heartbeat reads memory, swap, pressure and each run's memory", () 
         container: { id: DOCKER.slice(0, 12), name: "erp-ci-3", image: "node:22" },
         threadId: "thread-1",
       },
+      { cgroup: SSH_SESSION, pid: 980, cpu: 2, memoryBytes: GIB, command: "", jobId: "ssh-job-1" },
       {
         cgroup: SESSION,
         pid: 950,
@@ -409,7 +422,10 @@ describe("admission on Linux reserves each job's memory", () => {
       expect(outcome).toBe(expected);
       if (expected === "linux-wait") {
         expect(plan.reasons.w).toMatch(
-          outside === undefined ? /held for running jobs/ : /outside the queue/,
+          // A container nothing ties to a job or thread is named apart from loose work.
+          outside === undefined
+            ? /held for running jobs/
+            : /outside the queue: 1 using 5\.8 cores, [^·]*\(1 container of unknown origin\)/,
         );
       }
     }

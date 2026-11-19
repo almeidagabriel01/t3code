@@ -71,6 +71,7 @@ import {
   linkMachine,
   linuxFailedNote,
   linuxRetryNote,
+  SSH_JOB_ENV,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -1216,7 +1217,13 @@ const runLinuxAttempt = async (
           "-c",
           `${selfPrefix(dir, environment, "linux-part")} -- ${[job.program, ...job.args].map(shellQuote).join(" ")}`,
         ],
-    { ...environment, [HEAVY_JOB_ENV]: "1", ...(remoto === null ? {} : { T3CODE_REMOTO: remoto }) },
+    {
+      ...environment,
+      [HEAVY_JOB_ENV]: "1",
+      ...(remoto === null ? {} : { T3CODE_REMOTO: remoto }),
+      // ssh sends it on: the heartbeat finds this job's session there by it.
+      ...(job.ssh ? { [SSH_JOB_ENV]: id } : {}),
+    },
   );
   // Its own group, named for calls inside `timeout`, which starts a group of its own.
   const child = NodeChildProcess.spawn(

@@ -722,6 +722,16 @@ describe("Linux as clients see it", () => {
     };
     // Still syncing: its copy has no session yet, so the heartbeat cannot tell it is the queue's.
     const syncing = { ...container, cgroup: "/s.scope", runId: "app-0123abcd" };
+    // An ssh job's session, tagged by the job id its ssh sent: the job's, with its memory.
+    const session = { cgroup: "/u/session-12.scope", pid: 7, cpu: 2, memoryBytes: 3 * 1024 ** 3 };
+    Queue.enqueue(dir, {
+      ...holder,
+      id: "ssh-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      phase: "running",
+      ssh: true,
+    });
     Queue.enqueue(dir, {
       ...holder,
       startedAt: "2026-01-01T00:00:00.000Z",
@@ -729,9 +739,17 @@ describe("Linux as clients see it", () => {
       remote: { id: "app-0123abcd" },
     });
     const at = Date.parse("2026-01-01T00:00:00.000Z");
-    const reading = { ...parseHeartbeat("1 1 1 1/1 1\n6\n"), outside: [container, syncing] };
+    const tagged = { ...session, command: "", jobId: "ssh-1" };
+    const reading = {
+      ...parseHeartbeat("1 1 1 1/1 1\n6\n"),
+      outside: [container, syncing, tagged],
+    };
     Queue.recordHealth(dir, { ok: true, reading }, at);
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))?.outside).toEqual([container]);
+    expect(Queue.read(dir).find((entry) => entry.id === "ssh-1")).toMatchObject({
+      memory: 3 * 1024 ** 3,
+      peakMemory: 3 * 1024 ** 3,
+    });
     Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
     Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 120_000);
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("outside");

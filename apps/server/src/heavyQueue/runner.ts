@@ -836,6 +836,12 @@ export const parseHeartbeat = (text: string): LinuxReading => {
 /** `0::/a.slice` (cgroup v2) as `/a.slice`. */
 const cgroupPath = (text: string) => text.replace(/^0::/, "");
 
+/**
+ * Set on an ssh job's own ssh: `LC_` because ssh's default config sends `LC_*` and sshd accepts it,
+ * so the heartbeat finds the job's session there by it.
+ */
+export const SSH_JOB_ENV = "LC_T3_HEAVY_JOB";
+
 const RUN_DIR = /\/runs\/([A-Za-z0-9_-][A-Za-z0-9._-]*-[0-9a-f]{8})(?:\/|$)/;
 const CONTAINER_CGROUP = /(?:docker-|\/docker\/)([0-9a-f]{64})(?:\.scope)?$/;
 /** Heavy cgroups listed, busiest first: enough for a person, small on the wire. */
@@ -888,6 +894,21 @@ const outsideOf = (
         : [];
     }),
   );
+  const mountRuns = new Map(
+    lines.flatMap((line) => {
+      const [tag, id, ...sources] = line.split("\t");
+      const runId = sources.map((source) => RUN_DIR.exec(source)?.[1]).find(Boolean);
+      return tag === "mnt" && /^[0-9a-f]{64}$/.test(id ?? "") && runId !== undefined
+        ? [[id!, runId] as const]
+        : [];
+    }),
+  );
+  const jobs = new Map(
+    lines.flatMap((line) => {
+      const match = /^outjob (\/\S*) ([A-Za-z0-9._:-]+)$/.exec(line);
+      return match === null ? [] : [[match[1]!, match[2]!] as const];
+    }),
+  );
   const items: LinuxOutside[] = [];
   for (const line of lines) {
     const match = /^out (\d+) (\d+) (\d+) (\/\S*)$/.exec(line);
@@ -902,7 +923,10 @@ const outsideOf = (
     const pid = Number(pidText);
     const containerId = CONTAINER_CGROUP.exec(cgroup)?.[1];
     const container = containerId === undefined ? undefined : containers.get(containerId);
-    const runId = (RUN_DIR.exec(cwds.get(pid) ?? "") ?? RUN_DIR.exec(container?.dir ?? ""))?.[1];
+    const runId =
+      (RUN_DIR.exec(cwds.get(pid) ?? "") ?? RUN_DIR.exec(container?.dir ?? ""))?.[1] ??
+      (containerId === undefined ? undefined : mountRuns.get(containerId));
+    const jobId = jobs.get(cgroup);
     const cpu = Math.round((Number(ticks) / perCore) * 10) / 10;
     const memoryBytes = roundMemory(Number(bytes));
     if (cgroup === (self === undefined ? undefined : cgroupPath(self))) continue;
@@ -925,6 +949,7 @@ const outsideOf = (
             },
           }),
       ...(container?.thread ? { threadId: container.thread } : {}),
+      ...(jobId === undefined ? {} : { jobId }),
     });
   }
   return items
@@ -1043,19 +1068,29 @@ export const LINUX_EVICT_SHARE = 0.5;
  * Linux's heavy work outside the queue: the heartbeat already leaves out each job's own session,
  * and this the copies of jobs still syncing or installing, before they have a session to show.
  */
+/** Containers nothing ties to a job, thread or project: named apart from loose work. */
+const unknownContainersNote = (outside: ReadonlyArray<LinuxOutside>) => {
+  const count = outside.filter(
+    (item) =>
+      item.container !== undefined &&
+      item.runId === undefined &&
+      item.threadId === undefined &&
+      item.projectId === undefined,
+  ).length;
+  return count === 0 ? "" : ` (${count} container${count === 1 ? "" : "s"} of unknown origin)`;
+};
+
 export const linuxOutside = (
   health: Pick<LinuxHealth, "outside">,
   entries: ReadonlyArray<HeavyQueueEntry>,
 ): ReadonlyArray<LinuxOutside> => {
-  const queued = new Set(
-    entries.flatMap((entry) =>
-      entry.startedAt !== null && entry.runner === "linux" && entry.remote !== undefined
-        ? [entry.remote.id]
-        : [],
-    ),
-  );
+  const running = entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux");
+  const runIds = new Set(running.flatMap((entry) => (entry.remote ? [entry.remote.id] : [])));
+  const jobIds = new Set(running.map((entry) => entry.id));
   return (health.outside ?? []).filter(
-    (item) => item.runId === undefined || !queued.has(item.runId),
+    (item) =>
+      (item.runId === undefined || !runIds.has(item.runId)) &&
+      (item.jobId === undefined || !jobIds.has(item.jobId)),
   );
 };
 
@@ -1386,12 +1421,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const outsideNote =
     outside.length === 0
       ? ""
-      : ` · outside the queue: ${outside.length} using ${Math.round(outside.reduce((sum, item) => sum + item.cpu, 0) * 10) / 10} cores, ${formatBytes(outside.reduce((sum, item) => sum + item.memoryBytes, 0))}`;
-  // ponytail: an ssh job's session there has no pgid file, so no heartbeat measures it: it reserves
-  // nothing, and its work shows in MemAvailable and among the work outside the queue.
+      : ` · outside the queue: ${outside.length} using ${Math.round(outside.reduce((sum, item) => sum + item.cpu, 0) * 10) / 10} cores, ${formatBytes(outside.reduce((sum, item) => sum + item.memoryBytes, 0))}${unknownContainersNote(outside)}`;
   let linuxReserved = linuxRunning.reduce(
-    (sum, entry) =>
-      entry.ssh === true ? sum : sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
+    (sum, entry) => sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
     0,
   );
 
@@ -1906,7 +1938,10 @@ const OUTSIDE = [
   `O=$({ printf '%s\\n' "$A" | awk '{ print "a", $0 }'; printf '%s\\n' "$B"; } | awk '$1 == "a" { t[$2] = $3; next } { d = ($1 in t) ? $2 - t[$1] : 0; if (d < 0) d = 0; k = $4; c[k] += d; m[k] += $3 * 4096; if (!(k in b) || d > b[k]) { b[k] = d; top[k] = $1 } } END { for (k in c) if (c[k] >= 12 || m[k] >= 536870912) printf "out %.0f %.0f %d %s\\n", c[k], m[k], top[k], k }')`,
   `[ -z "$O" ] || printf '%s\\n' "$O"`,
   `for p in $(printf '%s\\n' "$O" | awk '{ print $4 }'); do printf 'outcmd %s %s\\n' "$p" "$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-300)"; printf 'outcwd %s %s\\n' "$p" "$(readlink /proc/$p/cwd 2>/dev/null)"; done`,
-  `case "$O" in *docker*) timeout 2 docker ps --no-trunc --format 'dock\\t{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Label "t3.thread"}}\\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null ;; esac`,
+  // An ssh job's session carries its id (`SSH_JOB_ENV`): the first process of the cgroup with it names the job.
+  `for k in $(printf '%s\\n' "$O" | awk '$5 !~ /docker/ { print $5 }'); do for p in $(printf '%s\\n' "$B" | awk -v k="$k" '$4 == k { print $1 }' | head -64); do j=$(tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | sed -n 's/^${SSH_JOB_ENV}=//p'); [ -n "$j" ] && { echo "outjob $k $j"; break; }; done; done`,
+  // A container's bind sources name the `runs/<id>` copy of the job that started it, when it mounts one.
+  `case "$O" in *docker*) timeout 2 docker ps --no-trunc --format 'dock\\t{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Label "t3.thread"}}\\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null; I=$(printf '%s\\n' "$O" | grep -o '[0-9a-f]\\{64\\}'); [ -z "$I" ] || timeout 2 docker inspect --format '{{printf "mnt\\t%s" .Id}}{{range .Mounts}}{{printf "\\t%s" .Source}}{{end}}' $I 2>/dev/null ;; esac`,
   `{ read -r s < /proc/self/cgroup; } 2>/dev/null; echo "self $s"`,
 ];
 // Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.

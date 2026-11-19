@@ -82,7 +82,6 @@ import {
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
-  type LinuxJobMemory,
   type QueuedEntry,
   type RoutePlan,
   type RunnerBlock,
@@ -1345,11 +1344,19 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
 /** A running Linux job's session memory from a heartbeat, and its peak, for what it reserves and learns. */
 const withLinuxMemory = (
   entry: QueuedEntry,
-  jobMemory: Readonly<Record<string, LinuxJobMemory>> | undefined,
+  linux: Pick<LinuxHealth, "jobMemory" | "outside">,
 ): QueuedEntry => {
+  const { jobMemory } = linux;
   const id = entry.remote?.id;
   if (entry.startedAt === null || entry.runner !== "linux" || entry.phase !== "running") {
     return entry;
+  }
+  if (entry.ssh === true) {
+    // Its own ssh session, found by the job id that ssh sent along.
+    const session = linux.outside?.find((item) => item.jobId === entry.id);
+    if (session === undefined) return entry;
+    const bytes = session.memoryBytes;
+    return { ...entry, memory: bytes, peakMemory: Math.max(entry.peakMemory ?? 0, bytes) };
   }
   const job =
     id !== undefined && jobMemory !== undefined && Object.hasOwn(jobMemory, id)
@@ -1381,7 +1388,7 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
         doc.lostRuns.filter((lost) => !lostRuns.includes(lost)).map((lost) => lost.entryId),
       );
       const entries = doc.entries.map((each: QueuedEntry): QueuedEntry => {
-        const entry = withLinuxMemory(each, linux.jobMemory);
+        const entry = withLinuxMemory(each, linux);
         const stop = stops[entry.id];
         // A restart outranks a memory stop: that run's process group is gone with it.
         if (stop !== undefined && (entry.stop === undefined || stop === "reboot")) {

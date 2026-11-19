@@ -203,6 +203,10 @@ export const HeavyRunnerLinuxOutside = Schema.Struct({
   command: Schema.String,
   /** The `~/runs/<id>` copy it works in: a checkout synced from this Mac. */
   runId: Schema.optionalKey(Schema.String),
+  /**
+   * A container's cgroup. With no `runId`, `threadId` or `projectId`, nothing ties it to a job:
+   * Docker records no process that started it, so show it as a container of unknown origin.
+   */
   container: Schema.optionalKey(
     Schema.Struct({ id: Schema.String, name: Schema.String, image: Schema.String }),
   ),
@@ -210,6 +214,8 @@ export const HeavyRunnerLinuxOutside = Schema.Struct({
   threadId: Schema.optionalKey(Schema.String),
   /** The project whose checkout its copy is. */
   projectId: Schema.optionalKey(Schema.String),
+  /** The queue job whose own ssh session this is: the job's load, never listed as outside. */
+  jobId: Schema.optionalKey(Schema.String),
 });
 export type HeavyRunnerLinuxOutside = typeof HeavyRunnerLinuxOutside.Type;
 
