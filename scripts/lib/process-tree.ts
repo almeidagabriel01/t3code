@@ -38,6 +38,7 @@ export const terminateDescendants = Effect.fn("DevRunner.terminateDescendants")(
     }
   });
   for (const pid of pids) signal(pid, "SIGTERM");
+  // ponytail: a pid reused within these 3 s gets SIGKILL too; compare start times if it ever bites.
   const alive = () => pids.filter((pid) => signal(pid, 0));
   for (let waited = 0; waited < 3000 && alive().length > 0; waited += 50) {
     yield* Effect.sleep("50 millis");

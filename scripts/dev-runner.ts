@@ -896,7 +896,11 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
 
   let exited = false;
   // A signal sent to this runner alone ends what `vp run dev` started too: vp does not pass it on.
-  yield* Effect.addFinalizer(() => (exited ? Effect.void : terminateDescendants(child.pid)));
+  // On a terminal Ctrl-C already reached them all; a second signal would cut their shutdown short.
+  const onTerminal = process.stdin.isTTY === true;
+  yield* Effect.addFinalizer(() =>
+    exited || onTerminal ? Effect.void : terminateDescendants(child.pid),
+  );
 
   const exitCode = yield* child.exitCode.pipe(
     Effect.mapError(
