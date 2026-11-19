@@ -96,13 +96,23 @@ export function backgroundWorkHoldsCompletion(
 }
 
 /**
- * Work the agent said it waits on. Only that keeps a process alive past settling, a move or the
- * idle ceiling: a subagent or task nobody waits on must not pin it forever.
+ * Work that would wake the agent when it ends: subagents and workflows report back on their own,
+ * anything else only when the agent awaits it. Closing its session loses that wake.
  */
-export function hasAwaitedBackgroundWork(
-  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "awaited">>,
-): boolean {
-  return tasks.some((task) => task.awaited === true);
+export function wakesAgentWhenDone(work: {
+  readonly kind: string;
+  readonly awaited?: boolean | undefined;
+}): boolean {
+  return work.awaited === true || work.kind === "subagent";
+}
+
+/** Pending work whose wake dies with the session; PR watches and delegated children outlive it. */
+export function sessionWorkWakesAgent(task: PendingBackgroundWorkTask): boolean {
+  return (
+    !isPullRequestWatchTask(task) &&
+    (task.kind !== "subagent" || task.childThreadId === undefined) &&
+    wakesAgentWhenDone(task)
+  );
 }
 
 // Commands and monitors are as often a dev server or its watchdog as a wait, so they hold

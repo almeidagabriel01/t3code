@@ -192,8 +192,6 @@ const harness = (options: Options = {}) => {
   /** What the projection answers for a runtime request, by id. */
   const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
-  /** Who wrote a run's message, by id; unlisted ones are the user's. */
-  const authors = new Map<string, string>();
   /** The last chat counters (`scopes_json`) refreshTeamChat published, by team. */
   const published = new Map<string, string | null>();
   const routeCalls: unknown[] = [];
@@ -268,15 +266,9 @@ const harness = (options: Options = {}) => {
           runs: (runs.get(threadId) ?? []).filter(
             (run) => statuses === undefined || statuses.includes(run.status),
           ),
-          messages: [
-            ...(runIds ?? []).flatMap((runId) =>
-              answers.has(runId) ? [{ role: "assistant", text: answers.get(runId) }] : [],
-            ),
-            ...((filter?.messageIds as ReadonlyArray<string> | undefined) ?? []).map((id) => ({
-              id,
-              createdBy: authors.get(id) ?? "user",
-            })),
-          ],
+          messages: (runIds ?? []).flatMap((runId) =>
+            answers.has(runId) ? [{ role: "assistant", text: answers.get(runId) }] : [],
+          ),
         });
       }) as never,
       dispatch: ((command: {
@@ -294,22 +286,12 @@ const harness = (options: Options = {}) => {
           );
           const otherProvider =
             thread.modelSelection.instanceId !== command.modelSelection!.instanceId;
-          if (busy && otherProvider) {
+          // Another provider ends the process, and with it work the agent waits on.
+          if ((busy || thread.awaitedWork === true) && otherProvider) {
             return Effect.fail(
               new Orchestrator.OrchestratorProviderSelectionBusyError({
                 commandId: command.commandId as never,
                 threadId: command.threadId as never,
-              }),
-            );
-          }
-          // Another provider ends the process, and with it work the agent waits on.
-          if (thread.awaitedWork === true && otherProvider) {
-            return Effect.fail(
-              new Orchestrator.OrchestratorThreadAwaitingBackgroundWorkError({
-                commandId: command.commandId as never,
-                threadId: command.threadId as never,
-                threadTitle: thread.title,
-                refused: "model",
               }),
             );
           }
@@ -654,7 +636,6 @@ const harness = (options: Options = {}) => {
     runs,
     limits,
     answers,
-    authors,
     runtimeRequests,
     live,
     deletedTeams,
@@ -1992,7 +1973,6 @@ it.effect("a model change refused over awaited work lands when the member's wake
 
     // The work finishes and wakes Ada; the move waited for that turn to end.
     h.fakeThreads.get(ada)!.awaitedWork = false;
-    h.authors.set("wake", "agent");
     h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
     yield* groups.handleRunEvent({
       type: "run.updated",
@@ -6649,22 +6629,17 @@ it.effect(
       // Ada ends her turn waiting on background work, so her conversation refuses to settle.
       h.fakeThreads.get(ada)!.awaitedWork = true;
       yield* h.finish(3, "completed", "Running the tests in the background");
-      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto, beto]);
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto, beto]);
       h.fakeThreads.get(ada)!.awaitedWork = false;
-      const ended = (id: string, createdBy: string) => {
-        h.authors.set(id, createdBy);
-        h.runs.get(ada)!.push({ id: `run:${id}`, userMessageId: id, status: "completed" });
-        return groups.handleRunEvent({
-          type: "run.updated",
-          payload: { id: `run:${id}`, threadId: ada, userMessageId: id, status: "completed" },
-        } as never as OrchestrationV2DomainEvent);
-      };
-      // The user's own turn in a closed request leaves the conversation active.
-      yield* ended("manual", "user");
-      assert.lengthOf(commands("thread.settle"), 5);
       // The work wakes Ada; the turn that wake starts settles what was refused.
-      yield* ended("wake", "agent");
-      assert.deepEqual(commands("thread.settle"), [ada, beto, ada, beto, beto, ada]);
+      h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
+      yield* Effect.forEach(["running", "completed"], (status) =>
+        groups.handleRunEvent({
+          type: status === "running" ? "run.created" : "run.updated",
+          payload: { id: "run:wake", threadId: ada, userMessageId: "wake", status },
+        } as never as OrchestrationV2DomainEvent),
+      );
+      assert.deepEqual(commands("thread.settle"), [beto, ada, ada, beto, beto, ada]);
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -6703,7 +6678,6 @@ it.effect.each([
       h.fakeThreads.get(ada)!.awaitedWork = false;
       if (via === "roster") yield* roster(false);
       else {
-        h.authors.set("wake", "agent");
         h.runs.get(ada)!.push({ id: "run:wake", userMessageId: "wake", status: "completed" });
         yield* groups.handleRunEvent({
           type: "run.updated",

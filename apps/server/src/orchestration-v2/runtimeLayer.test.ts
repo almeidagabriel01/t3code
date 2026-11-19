@@ -4875,10 +4875,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect.each([
     ["thread.settle", "command", true, false],
     ["thread.settle", "command", false, true],
-    // Only the agent's explicit wait holds the process; a forgotten subagent must not pin it.
-    ["thread.settle", "subagent", false, true],
+    ["thread.settle", "background_task", false, true],
+    // Claude's background Agent and Workflow are subagent items that wake the agent unasked.
+    ["thread.settle", "subagent", false, false],
+    // A delegated child runs in its own thread and session, so closing this one loses nothing.
+    ["thread.settle", "delegate", false, true],
     ["thread.metadata.update", "command", true, false],
-    ["thread.model-selection.set", "command", true, false],
     ["thread.archive", "command", true, true],
   ] as const)(
     "%s with a %s, awaited: %s, keeps the session: %s",
@@ -4946,12 +4948,50 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               payload: {
                 ...providerThread,
                 providerSessionId,
-                pendingBackgroundTasks: [
-                  { taskId: "be0fc333p", kind, ...(awaited ? { awaited } : {}) },
-                ],
+                pendingBackgroundTasks:
+                  kind === "subagent" || kind === "delegate"
+                    ? []
+                    : [{ taskId: "be0fc333p", kind, ...(awaited ? { awaited } : {}) }],
                 updatedAt: now,
               },
             },
+            ...(kind === "subagent" || kind === "delegate"
+              ? [
+                  {
+                    id: EventId.make(`${threadId}:subagent`),
+                    type: "turn-item.updated" as const,
+                    threadId,
+                    runId: run.id,
+                    occurredAt: now,
+                    payload: {
+                      id: TurnItemId.make(`${threadId}:subagent`),
+                      threadId,
+                      runId: run.id,
+                      nodeId: null,
+                      providerThreadId: providerThread.id,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      status: "running" as const,
+                      title: "Audit the tests",
+                      startedAt: now,
+                      completedAt: null,
+                      updatedAt: now,
+                      type: "subagent" as const,
+                      subagentId: NodeId.make(`${threadId}:subagent`),
+                      origin:
+                        kind === "delegate" ? ("app_owned" as const) : ("provider_native" as const),
+                      driver,
+                      providerInstanceId: modelSelection.instanceId,
+                      childThreadId:
+                        kind === "delegate" ? ThreadId.make(`${threadId}:child`) : null,
+                      prompt: "Audit the tests.",
+                      result: null,
+                    },
+                  },
+                ]
+              : []),
             {
               id: EventId.make(`${threadId}:completed`),
               type: "run.updated",
@@ -4973,14 +5013,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   threadId,
                   worktreePath: `${process.cwd()}/other-worktree`,
                 }
-              : commandType === "thread.model-selection.set"
-                ? {
-                    type: commandType,
-                    commandId,
-                    threadId,
-                    modelSelection: { ...modelSelection, instanceId: alternateInstanceId },
-                  }
-                : { type: commandType, commandId, threadId },
+              : { type: commandType, commandId, threadId },
           )
           .pipe(Effect.result);
         const detached = [
@@ -4998,7 +5031,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const refused = {
           "thread.settle": "be settled",
           "thread.metadata.update": "move to another worktree",
-          "thread.model-selection.set": "switch models",
           "thread.archive": "",
         }[commandType];
         if (result._tag === "Failure") {

@@ -1,7 +1,6 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { hasAwaitedBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -527,7 +526,10 @@ export const layerWithOptions = (
                       providerThread.providerSessionId === providerSessionId &&
                       (include.backgroundRoster === "any"
                         ? (providerThread.pendingBackgroundTasks ?? []).length > 0
-                        : hasAwaitedBackgroundWork(providerThread.pendingBackgroundTasks ?? [])),
+                        : // Narrower than wakesAgentWhenDone: an unawaited subagent must not pin forever.
+                          (providerThread.pendingBackgroundTasks ?? []).some(
+                            (task) => task.awaited === true,
+                          )),
                   )),
             ),
           ),

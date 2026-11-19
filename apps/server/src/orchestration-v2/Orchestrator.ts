@@ -89,8 +89,8 @@ import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
-  hasAwaitedBackgroundWork,
   pendingBackgroundTurnItems,
+  sessionWorkWakesAgent,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -335,8 +335,6 @@ export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<O
 const AWAITING_BACKGROUND_WORK_REFUSALS = {
   settle: "be settled",
   worktree: "move to another worktree",
-  model: "switch models",
-  runtimeMode: "change its runtime mode",
 } as const;
 
 /** Detaching would end the process running work the agent waits to be woken by. */
@@ -346,7 +344,7 @@ export class OrchestratorThreadAwaitingBackgroundWorkError extends Schema.Tagged
     commandId: CommandId,
     threadId: ThreadId,
     threadTitle: Schema.String,
-    refused: Schema.Literals(["settle", "worktree", "model", "runtimeMode"]),
+    refused: Schema.Literals(["settle", "worktree"]),
   },
 ) {
   override get message(): string {
@@ -4865,27 +4863,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       // Detaching ends the process, and with it work the agent is still waiting to be woken by.
       // Only archive closes it anyway; release then drops the roster so the thread never waits.
+      // Model and runtime mode changes already refused any session work above.
       if (
-        command.type !== "thread.archive" &&
+        (command.type === "thread.settle" || command.type === "thread.metadata.update") &&
         liveSessions.length > 0 &&
-        (yield* loadProjectionForCommand(command, ["providerThreads"])).providerThreads.some(
-          (providerThread) =>
-            liveSessions.some((session) => session.id === providerThread.providerSessionId) &&
-            hasAwaitedBackgroundWork(providerThread.pendingBackgroundTasks ?? []),
-        )
+        (
+          (yield* projectionStore
+            .getThreadShell(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            ))?.pendingBackgroundTasks ?? []
+        ).some(sessionWorkWakesAgent)
       ) {
         return yield* new OrchestratorThreadAwaitingBackgroundWorkError({
           commandId: command.commandId,
           threadId: command.threadId,
           threadTitle: thread.title,
-          refused:
-            command.type === "thread.settle"
-              ? "settle"
-              : command.type === "thread.metadata.update"
-                ? "worktree"
-                : command.type === "thread.runtime-mode.set"
-                  ? "runtimeMode"
-                  : "model",
+          refused: command.type === "thread.settle" ? "settle" : "worktree",
         });
       }
       yield* Effect.forEach(

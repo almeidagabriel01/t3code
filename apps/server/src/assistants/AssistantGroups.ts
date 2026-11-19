@@ -99,7 +99,7 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { routesAssistantGroups } from "@t3tools/provider-core/server/driver";
-import { hasAwaitedBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { wakesAgentWhenDone } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -1333,12 +1333,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (switched._tag === "Success") return "switched" as const;
-    if (
-      switched.failure._tag === "OrchestratorProviderSelectionBusyError" ||
-      switched.failure._tag === "OrchestratorThreadAwaitingBackgroundWorkError"
-    ) {
-      return "busy" as const;
-    }
+    if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") return "busy" as const;
     yield* Effect.logWarning("assistant groups: request thread kept its model", {
       threadId,
       cause: switched.failure,
@@ -1660,7 +1655,17 @@ const make = Effect.gen(function* () {
             Effect.logDebug("assistant groups: request thread not settled yet", {
               threadId: row.thread_id,
               cause,
-            }),
+            }).pipe(
+              // Refused (awaited work, a live run): held, so the run or work that ends retries it.
+              Effect.andThen(nowIso),
+              Effect.flatMap(
+                (heldAt) => sql`
+                  UPDATE assistant_group_request_threads
+                  SET settle_held_at = COALESCE(settle_held_at, ${heldAt})
+                  WHERE thread_id = ${row.thread_id}`,
+              ),
+              Effect.ignore,
+            ),
           ),
         );
     }
@@ -3376,7 +3381,7 @@ const make = Effect.gen(function* () {
     event: Extract<OrchestrationV2DomainEvent, { readonly type: "provider-thread.updated" }>,
   ) {
     if (!isAssistantGroupThreadId(event.threadId)) return;
-    if (hasAwaitedBackgroundWork(event.payload.pendingBackgroundTasks ?? [])) {
+    if ((event.payload.pendingBackgroundTasks ?? []).some(wakesAgentWhenDone)) {
       providerThreadsAwaitingWork.add(event.payload.id);
       return;
     }

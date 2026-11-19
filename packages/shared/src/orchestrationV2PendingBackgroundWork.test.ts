@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  sessionWorkWakesAgent,
+  wakesAgentWhenDone,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -13,6 +15,40 @@ describe("backgroundWorkHoldsCompletion", () => {
     ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+  });
+});
+
+describe("wakesAgentWhenDone", () => {
+  it.each([
+    ["an unawaited subagent or workflow", true, { kind: "subagent" }],
+    ["an awaited command", true, { kind: "command", awaited: true }],
+    ["an awaited restart shell", true, { kind: "shell", awaited: true }],
+    ["an unawaited command", false, { kind: "command" }],
+    ["an unawaited monitor", false, { kind: "monitor" }],
+    ["an unawaited background task", false, { kind: "background_task" }],
+    ["an unawaited restart task", false, { kind: "task" }],
+  ] as const)("%s wakes the agent: %s", (_case, wakes, work) => {
+    expect(wakesAgentWhenDone(work)).toBe(wakes);
+  });
+});
+
+describe("sessionWorkWakesAgent", () => {
+  it.each([
+    ["a native subagent nobody awaits", true, { taskId: "agent-1", kind: "subagent" }],
+    ["an awaited command", true, { taskId: "tests", kind: "command", awaited: true }],
+    ["an unawaited command", false, { taskId: "dev", kind: "command" }],
+    [
+      "a pull request watch",
+      false,
+      { taskId: "pull-request-watch:github:o/r#1", kind: "monitor", awaited: true },
+    ],
+    [
+      "a delegated child",
+      false,
+      { taskId: "delegate-1", kind: "subagent", childThreadId: ThreadId.make("child-1") },
+    ],
+  ] as const)("%s holds the session: %s", (_case, holds, task) => {
+    expect(sessionWorkWakesAgent(task)).toBe(holds);
   });
 });
 
