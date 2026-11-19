@@ -394,6 +394,7 @@ import {
 } from "./server.ts";
 import {
   HostResourcesSnapshot,
+  LinkedEnvironmentResources,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
   ResourceTelemetryRetryResult,
@@ -787,6 +788,7 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
+  serverGetLinkedEnvironmentResources: "server.getLinkedEnvironmentResources",
   serverListListeningPorts: "server.listListeningPorts",
   serverForkUpdateStatus: "server.forkUpdateStatus",
   serverKillListeningPort: "server.killListeningPort",
@@ -1350,6 +1352,15 @@ const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, 
   success: HostResourcesSnapshot,
   error: EnvironmentAuthorizationError,
 });
+
+const WsServerGetLinkedEnvironmentResourcesRpc = Rpc.make(
+  WS_METHODS.serverGetLinkedEnvironmentResources,
+  {
+    payload: Schema.Struct({}),
+    success: Schema.Array(LinkedEnvironmentResources),
+    error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+  },
+);
 
 const WsServerGetProcessResourceHistoryRpc = Rpc.make(WS_METHODS.serverGetProcessResourceHistory, {
   payload: ServerProcessResourceHistoryInput,
@@ -3189,6 +3200,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
+  WsServerGetLinkedEnvironmentResourcesRpc,
   WsServerListListeningPortsRpc,
   WsServerForkUpdateStatusRpc,
   WsServerKillListeningPortRpc,

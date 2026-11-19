@@ -312,6 +312,8 @@ const UNGUARDED_RPC_SCOPES = {
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
   // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
+  // The same readings as host resources, read from each linked environment over its link.
+  [WS_METHODS.serverGetLinkedEnvironmentResources]: AuthOrchestrationReadScope,
   // Lists every host process holding a port, not just this server's.
   [WS_METHODS.serverListListeningPorts]: AuthDiagnosticsReadScope,
   // Runs git (including a fetch) in a folder on the host.

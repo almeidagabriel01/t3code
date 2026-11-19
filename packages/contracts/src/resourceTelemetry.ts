@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
@@ -589,3 +594,35 @@ export const ResourceTelemetryRetryResult = Schema.Struct({
   snapshot: ResourceTelemetrySnapshot,
 });
 export type ResourceTelemetryRetryResult = typeof ResourceTelemetryRetryResult.Type;
+
+/** A linked environment's machine, as its own `t3_host` and `t3_heavy` reported it. */
+export const LinkedEnvironmentReading = Schema.Struct({
+  /** When the reading arrived here, on this environment's clock. */
+  readAt: Schema.DateTimeUtc,
+  cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  cpuCount: NonNegativeInt,
+  availableMemoryBytes: NonNegativeInt,
+  totalMemoryBytes: NonNegativeInt,
+  threadsRunning: NonNegativeInt,
+  threadsWaiting: NonNegativeInt,
+  subagentsRunning: NonNegativeInt,
+  /** Null when that environment's heavy queue could not be read. */
+  heavy: Schema.NullOr(
+    Schema.Struct({ running: NonNegativeInt, slots: NonNegativeInt, waiting: NonNegativeInt }),
+  ),
+});
+export type LinkedEnvironmentReading = typeof LinkedEnvironmentReading.Type;
+
+/**
+ * One linked environment and the last reading this environment got from it. `status` is the last
+ * attempt's outcome; when it is not `online`, `reading` is the last good one, kept to show as old.
+ */
+export const LinkedEnvironmentResources = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  status: Schema.Literals(["checking", "online", "offline", "expired"]),
+  /** Online: first answer after it was not. Offline: last time it answered. Null when unknown. */
+  since: Schema.NullOr(Schema.DateTimeUtc),
+  reading: Schema.NullOr(LinkedEnvironmentReading),
+});
+export type LinkedEnvironmentResources = typeof LinkedEnvironmentResources.Type;
