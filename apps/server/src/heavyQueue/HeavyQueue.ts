@@ -306,11 +306,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
-      // Usage is only known for this Mac's runs; a job headed for Linux shows none.
+      // Usage is only known for this Mac's sampled runs; a job headed for Linux shows none.
       if (
         entry.startedAt !== null ||
         plan.routes[entry.id] === "linux" ||
-        runsOf(doc.history, entry).length === 0
+        !runsOf(doc.history, entry).some((run) => run.memoryBytes !== undefined)
       ) {
         continue;
       }

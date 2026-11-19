@@ -804,7 +804,7 @@ describe("heavy queue file", () => {
     },
   );
 
-  it("keeps only the last runs per command and ignores finished entries without samples", () => {
+  it("keeps only the last runs per command; a run no sample read is kept only when it passed", () => {
     const dir = tempDir();
     const GIB = 1024 ** 3;
     for (let i = 0; i < 8; i += 1) {
@@ -835,16 +835,27 @@ describe("heavy queue file", () => {
         },
       );
       Queue.remove(dir, `r${i}`);
-      Queue.enqueue(dir, { ...entry("nosample"), label: "vp run lint" });
-      Queue.tryStart(dir, "nosample");
-      Queue.remove(dir, "nosample");
+      for (const [id, label, end] of [
+        ["passed", "vp run lint", 0],
+        ["failed", "vp run e2e", 1],
+        ["cancelled", "vp run bundle", null],
+      ] as const) {
+        // A finished id leaves a result, so each round is a new job.
+        Queue.enqueue(dir, { ...entry(`${id}${i}`), label });
+        Queue.tryStart(dir, `${id}${i}`);
+        if (end === null) Queue.remove(dir, `${id}${i}`);
+        else Queue.finish(dir, `${id}${i}`, end);
+      }
     }
     const { history } = Queue.readDoc(dir);
     expect((history["vp run build"] ?? []).map((r) => r.cpu)).toEqual([3, 4, 5, 6, 7]);
-    expect(history["vp run lint"]).toBeUndefined();
+    expect([history["vp run e2e"], history["vp run bundle"]]).toEqual([undefined, undefined]);
+    expect(history["vp run lint"]).toEqual(
+      Array.from({ length: 5 }, () => ({ durationMs: expect.any(Number) })),
+    );
     const commands = Object.keys(history);
     expect(commands).toHaveLength(1000);
-    expect([commands[0], commands.at(-1)]).toEqual(["old 1", "vp run build"]);
+    expect([commands[0], commands.at(-1)]).toEqual(["old 2", "vp run lint"]);
   });
 
   it("admits only after headroom held for a steady window, and a pressured sample breaks it", () => {

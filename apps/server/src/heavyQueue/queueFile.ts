@@ -1135,10 +1135,15 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
         after.historyCommands,
       );
     } else {
-      if (gone.peakMemory === undefined) continue;
+      // A run too short for a sample counts only once it ended cleanly: its time alone makes it
+      // quick next time, while one cancelled or failed early says nothing about the command.
+      const passed = after.results.some(
+        (result) => result.id === gone.id && result.at === now && result.code === 0,
+      );
+      if (gone.peakMemory === undefined && !passed) continue;
       const run = {
         ...(gone.peakCpu === undefined ? {} : { cpu: gone.peakCpu }),
-        memoryBytes: gone.peakMemory,
+        ...(gone.peakMemory === undefined ? {} : { memoryBytes: gone.peakMemory }),
         ...(gone.peakTreeMemory === undefined ? {} : { treeMemoryBytes: gone.peakTreeMemory }),
         durationMs,
       };

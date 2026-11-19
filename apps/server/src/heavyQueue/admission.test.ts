@@ -1172,6 +1172,13 @@ describe("admission by real capacity", () => {
       reasons: { big: "memory floor: 1.0 GB room, needs 2.0 GB" },
     },
     {
+      row: "6b",
+      name: "a command that always ended before a sample is quick and small, not unseen heavy",
+      entries: [entry("r", "vp run e2e", 60_000), entry("l", "emulator -list-avds")],
+      history: { [signatureOf("emulator -list-avds")]: [{ durationMs: 500 }] },
+      admits: ["l"],
+    },
+    {
       row: 32,
       name: "a hooked commit fifth in line starts in its own slot whatever its memory",
       entries: [

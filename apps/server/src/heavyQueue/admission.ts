@@ -84,7 +84,8 @@ export const sustain = (
 export interface Run {
   /** Absent when no sample read the job's processes. */
   readonly cpu?: number;
-  readonly memoryBytes: number;
+  /** Absent when the run ended before any sample read it. */
+  readonly memoryBytes?: number;
   /** Its own tree alone, when build daemons outside it were counted in `memoryBytes`. */
   readonly treeMemoryBytes?: number;
   readonly durationMs: number;
@@ -155,7 +156,11 @@ export interface SizingLimits {
   /** A head waiting this long stops anything from passing it. */
   readonly headPatienceMinutes: number;
 }
-type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes">;
+type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes"> & {
+  readonly quickSeconds?: number;
+};
+/** What a command that always ended before a sample read it is taken to need. */
+const UNSAMPLED_QUICK_MEGABYTES = 64;
 
 const TEST_RUN = /^(test|vitest|jest|playwright|pytest)$/;
 const COMMAND_WORD = /^[a-z@][\w:.@+-]*$/i;
@@ -240,15 +245,26 @@ export const estimate = (
   // The usual run, not the worst: admission starts one job per settle window, so a run that
   // outgrows it shows in the next reading before anything else starts.
   const memoryBytes = median(
-    runs.map((run) =>
-      buildDaemonsAlive ? (run.treeMemoryBytes ?? run.memoryBytes) : run.memoryBytes,
-    ),
+    runs.flatMap((run) => {
+      const bytes = buildDaemonsAlive ? (run.treeMemoryBytes ?? run.memoryBytes) : run.memoryBytes;
+      return bytes === undefined ? [] : [bytes];
+    }),
   );
   if (memoryBytes !== null) {
     return {
       cpu: learnedCpu(history, entry) ?? guessCpu,
       memoryBytes,
       durationMs: medianDuration(runs),
+    };
+  }
+  // Runs too short for any sample to read: a quick command, never the unseen heavy guess.
+  const durationMs = medianDuration(runs);
+  const quickMs = (guesses.quickSeconds ?? HEAVY_QUEUE_DEFAULTS.quickSeconds) * 1000;
+  if (durationMs !== null && durationMs <= quickMs) {
+    return {
+      cpu: learnedCpu(history, entry) ?? 1,
+      memoryBytes: UNSAMPLED_QUICK_MEGABYTES * MIB,
+      durationMs,
     };
   }
   return {
