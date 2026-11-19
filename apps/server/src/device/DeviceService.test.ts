@@ -681,8 +681,8 @@ describe("device setup consent", () => {
         });
         expect(refused.message).toContain(
           row.physical
-            ? "unlock its screen on the phone itself"
-            : "open it in the Device panel and unlock its screen there",
+            ? "enter its PIN, pattern or password on the phone itself"
+            : "open it in the Device panel and enter its PIN, pattern or password there",
         );
         const locked = yield* service.state;
         expect(locked.sessions).toEqual([]);

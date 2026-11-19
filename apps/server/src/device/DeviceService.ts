@@ -1820,10 +1820,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         deviceId: device.id,
         deviceName: device.name,
         reason: "locked",
-        // A headless emulator's only screen is the Device panel; a phone is unlocked in hand.
+        // Only a credential refuses, and a headless emulator's only screen is the Device panel.
         detail: device.physical
-          ? "unlock its screen on the phone itself"
-          : "open it in the Device panel and unlock its screen there",
+          ? "enter its PIN, pattern or password on the phone itself"
+          : "open it in the Device panel and enter its PIN, pattern or password there",
       });
   });
 
