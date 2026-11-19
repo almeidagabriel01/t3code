@@ -170,6 +170,19 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
   readonly agentDevice: DeviceHost.AgentDeviceEndpoint | null;
 }
 
+/** Whether `dumpsys lock_settings` names a PIN, pattern or password for `userId`.
+ * Android 11-12 print `CredentialType: Pin`, 14+ `PIN`. */
+const androidCredentialIsSecure = (dump: string, userId: string) => {
+  // Only `User State:` up to the next unindented section heading lists credentials per user.
+  const section = dump.split(/^User State:\s*$/m)[1]?.split(/^\S/m)[0] ?? "";
+  const blocks = section.split(/^\s*User (\d+)\s*$/m);
+  const index = blocks.indexOf(userId, 1);
+  const type =
+    index === -1 ? undefined : /^\s*CredentialType:\s*(\w+)/m.exec(blocks[index + 1] ?? "");
+  // Android 9 prints no type: an unknown or missing credential lets the agent in, as any unclear reading does.
+  return /^(?:pin|pattern|password)$/i.test(type?.[1] ?? "");
+};
+
 const DeviceHostName = Schema.Struct({ id: DeviceHostId, label: Schema.optional(Schema.String) });
 const hostName = (host: typeof DeviceHostName.Type) => host.label ?? `host ${host.id}`;
 
@@ -1679,6 +1692,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           });
         }
       }
+      // Only agents are refused: a hub-booted emulator has no window, so the user's own
+      // open is the way to its lock screen. Routed hosts check on the side running it.
+      const refusesLocked = context?.agent && device.platform === "android" && !ready.upstream;
       if (!device.booted && input.boot !== false) {
         if (device.physical)
           return yield* new DeviceActionUnavailableError({
@@ -1714,7 +1730,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         if (!device) {
           return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
         }
+        // The idle reaper owns what this boot started, even if the open fails from here on.
+        yield* markUsed(host.id, device.id);
+        if (refusesLocked) yield* ensureAndroidUnlocked(ready, device);
       } else if (device.booted) {
+        if (refusesLocked) yield* ensureAndroidUnlocked(ready, device);
         yield* ready.devices.attach(device, hostContext);
       }
       if (hosts.get(host.id) !== host)
@@ -1768,6 +1788,46 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return session;
     },
   );
+
+  // A PIN-protected Android user stays locked after a cold boot although sys.boot_completed
+  // is 1, and apps cannot start until someone unlocks it. Only an explicit locked reading
+  // refuses: a credential-free boot passes through RUNNING_UNLOCKING, and old or offline
+  // devices answer something else.
+  const ensureAndroidUnlocked = Effect.fn("DeviceService.ensureAndroidUnlocked")(function* (
+    ready: DeviceReadiness,
+    device: DeviceSummary,
+  ) {
+    const shell = (...args: ReadonlyArray<string>) =>
+      ready.run("adb", ["-s", device.id, "shell", ...args], { timeoutMs: 10_000 });
+    const current = yield* shell("am", "get-current-user");
+    const currentId = current.stdout.trim();
+    // Apps open as the foreground user; an unreadable answer means the primary one.
+    const userId = current.code === 0 && /^\d+$/.test(currentId) ? currentId : "0";
+    const user = yield* shell("am", "get-started-user-state", userId);
+    const storageLocked = user.code === 0 && /\bRUNNING_LOCKED\b/.test(user.stdout);
+    // A user unlocked once stays RUNNING_UNLOCKED behind a lock screen shown again; which
+    // of the two keyguard markers dumpsys prints depends on the Android version.
+    const screen = storageLocked ? null : yield* shell("dumpsys", "window");
+    const keyguard =
+      screen?.code === 0 &&
+      /\b(?:isKeyguardShowing|mDreamingLockscreen)=true\b/.test(screen.stdout);
+    // agent-device swipes a lock screen away itself, so only a PIN, pattern or password
+    // refuses. The keyguard's own `secure=` is a cached default that reads true without one.
+    const credential = keyguard ? yield* shell("dumpsys", "lock_settings") : null;
+    const screenLocked =
+      credential?.code === 0 && androidCredentialIsSecure(credential.stdout, userId);
+    if (storageLocked || screenLocked)
+      return yield* new DeviceNotReadyError({
+        hostId: device.hostId,
+        deviceId: device.id,
+        deviceName: device.name,
+        reason: "locked",
+        // Only a credential refuses, and a headless emulator's only screen is the Device panel.
+        detail: device.physical
+          ? "enter its PIN, pattern or password on the phone itself"
+          : "open it in the Device panel and enter its PIN, pattern or password there",
+      });
+  });
 
   const refreshAfterShutdown = (ready: DeviceReadiness) =>
     refresh(ready).pipe(

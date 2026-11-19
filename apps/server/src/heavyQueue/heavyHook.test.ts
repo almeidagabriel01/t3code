@@ -41,12 +41,14 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["yarn build", "yarn build"],
   ["vpr test:unit", "vpr test:unit"],
   ["npx vitest run", "npx vitest run"],
+  // pnpm, yarn and bun run a bin by name when the word is not one of their own commands.
+  ["pnpm vitest run", "pnpm vitest run"],
+  ["yarn vitest run src/a.test.ts", "yarn vitest run src/a.test.ts"],
+  ["bun vitest run", "bun vitest run"],
+  ["pnpm -F web vitest run", "pnpm -F web vitest run"],
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
-  ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
-  // git's own options take a value before the subcommand.
-  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -74,8 +76,8 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
     "nohup env -u CI timeout -s INT 10 vp test run",
     "nohup env -u CI timeout -s INT 10 vp test run",
   ],
-  // A formatter given its files is light: the heavy work beside it is the segment.
-  ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", "vp lint --no-ignore a.ts b.tsx"],
+  // A formatter or linter given its files is light: the heavy work beside it is the segment.
+  ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx && vp test run", "vp test run"],
   ['f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts', "vp test run src/a.test.ts"],
   [
     "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
@@ -88,6 +90,10 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["vp fmt . && vp lint", "vp fmt ."],
   ["vp fmt apps/web && vp lint a.ts", "vp fmt apps/web"],
   ["pnpm run format", "pnpm run format"],
+  ["vp lint", "vp lint"],
+  ["vp lint --no-ignore", "vp lint --no-ignore"],
+  ["oxlint .", "oxlint ."],
+  ["eslint src", "eslint src"],
   // An expansion may name a folder or the whole tree, unless the line shows it lists files.
   ["vp fmt $(git ls-files)", "vp fmt $(git ls-files)"],
   ['vp fmt "$DIR"', 'vp fmt "$DIR"'],
@@ -108,6 +114,12 @@ const LIGHT = [
   "ls -la",
   "git status && git log --format=%H -3",
   "git checkout -b fix-build",
+  // A local git write is quick, even with hooks: it runs here, outside the queue.
+  "git add a && git commit -m 'fix: x'",
+  "git -C apps/web -c user.name=t commit -m x",
+  "git commit --amend --no-edit",
+  "git merge foo",
+  "git rebase main",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
   "git -C web commit -n -m wip",
@@ -143,6 +155,28 @@ const LIGHT = [
   "./node_modules/.bin/vp fmt apps/web/src/a.tsx",
   "vpr fmt a.ts",
   "vp fmt --check a.ts",
+  "vp fmt --stdin-filepath a.ts < a.ts",
+  "vp fmt --stdin-filepath=a.ts < a.ts > out.ts",
+  "vp fmt --check --ignore-path=.fmt-empty-ignore a.ts b.tsx",
+  // A linter given its files touches only those, like a formatter.
+  "vp lint a.ts b.tsx",
+  "vp lint --no-ignore a.ts b.tsx",
+  'files=(a.ts b.tsx); vp lint --no-ignore "${files[@]}"',
+  "pnpm exec vp lint src/x.ts",
+  "oxlint src/a.ts",
+  "npx eslint --fix src/a.ts",
+  // A program named like an object's own key is just a program.
+  "constructor test",
+  "toString build x",
+  // A bin that is no heavy tool, or a package manager's own light command, stays light.
+  "pnpm dev",
+  "yarn why vitest",
+  // An in-place edit with nothing heavy beside it runs here, outside the queue.
+  `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
+  "perl -pi -e 's/vp test/x/' src/a.ts",
+  "echo 'vp test run' > notes.md",
+  "printf x | tee -a notes.md",
+  "grep 'pnpm exec vp test run' src/a.ts",
   'for f in $(git diff --name-only t3/fork2...HEAD); do command vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f || echo "fmt diff $f"; done; echo fmt-done',
 ];
 

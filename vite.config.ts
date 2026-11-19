@@ -160,9 +160,7 @@ export default defineConfig({
   staged: {
     // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
     "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
-    // knip checks the whole repo, so it takes no file list. Any code or manifest change can leave
-    // a file, export, or dependency unused.
-    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,knip.jsonc}": () => "vp run knip:check",
+    // knip reads the whole repo, so it runs in .vite-hooks/pre-push and pre-merge-commit for main.
   },
   fmt: {
     ignorePatterns: [
@@ -218,7 +216,11 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    // Packages merge this config and lint from their own folder: a relative path would miss it.
+    jsPlugins: [
+      NodeURL.fileURLToPath(new URL("./oxlint-plugin-t3code/index.ts", import.meta.url)),
+      "@shadcn/lint",
+    ],
     settings: {
       shadcn: { ui: "~/components/ui" },
     },

@@ -1,7 +1,10 @@
-import type { Assistant, AssistantTeam, ThreadId } from "@t3tools/contracts";
+import type { Assistant, AssistantTeam, OrchestrationV2Run, ThreadId } from "@t3tools/contracts";
 import { QUIET_REPLY } from "@t3tools/shared/assistantTaskEvents";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+
+import { settledWaitsNote, waitKeyOfWake } from "../autonomy/needsYou.ts";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
 import {
@@ -64,7 +67,7 @@ function teamsLines(
 const TASKS_FOLLOW =
   "It carries your instructions, model and access. You are woken when it finishes or needs the user, so never wait on it. When it needs the user, tell them what and where to answer, and never answer for them. When it finishes, check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user. A thread launched from a group task wakes that task, not this chat, and your answer there is what the group chat gets. A finished task leaves your list by itself once you have read its result; dismiss one (t3_assistant task_dismiss) only when the user asks to clear it.";
 /** Event turns reach the user's chat and phone; the detail stays one link away. */
-const TASK_EVENTS = `When a task or watch wakes you: if it brings the user nothing new (a result you already told them, a background check that only finished), reply with exactly ${QUIET_REPLY} and nothing else; it is never shown or sent. Otherwise tell the user what changed in at most 3 short lines (about 300 characters, no headings or bullet lists) with the task's link. Commits, counts, file lists and tables stay in the task thread; never paste them. A "Waiting on you" block, including one the user's own instructions ask for, appears only when the user has something to do now; with nothing pending, leave the block and its heading out, and never write "Waiting on you: nothing".`;
+const TASK_EVENTS = `When a task or watch wakes you: if it brings the user nothing new (a result you already told them, a background check that only finished), reply with exactly ${QUIET_REPLY} and nothing else; it is never shown or sent. Otherwise tell the user what changed in at most 3 short lines (about 300 characters, no headings or bullet lists) with the task's link. Commits, counts, file lists and tables stay in the task thread; never paste them. A "Waiting on you" block, including one the user's own instructions ask for, appears only when the user has something to do now; with nothing pending, leave the block and its heading out, and never write "Waiting on you: nothing". Waits get answered while you are not looking, so never list one from memory: right before you write the block, check what waits right now with t3_thread_list (allProjects, status waiting) and t3_decision list, and list only what they show.`;
 const TASKS_HOST = `Do quick things yourself, here: a question, a lookup, a small tweak. Real multi-step code work (changing several files, adding tests, running a suite) is never done in this conversation: start a thread for it with t3_thread_launch in the right project, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 const TASKS_SANDBOX = `Any change to files, and any command that changes anything, is work for a thread, never for this conversation: start it with t3_thread_launch in your sandbox, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 
@@ -158,4 +161,36 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
       ? yield* directory.value.projectTitles(named)
       : {};
   return assistantNoteFor({ ...assistant, projectIds }, userText, teams, sandbox, titles);
+});
+
+// Every turn start delivers the note for waits settled before it, so only a wait told in a
+// recent run can still need one. An older wait that settles goes unmentioned; the notice's
+// live check covers it.
+export const SETTLED_WAIT_RUN_WINDOW = 50;
+
+/**
+ * The waits this conversation was woken for that settled since its previous turn began, derived
+ * from its own runs: the note rides with the one turn after a wait ends, and no turn is spent on it.
+ */
+export const settledWaitsForTurn = Effect.fn("AssistantNote.settledWaits")(function* (
+  directory: Option.Option<AssistantDirectoryShape>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "startedAt" | "userMessageId">>,
+  current: Pick<OrchestrationV2Run, "ordinal">,
+  userText: string,
+) {
+  if (Option.isNone(directory) || directory.value.settledWaits === undefined) return "";
+  if (userText.trimStart().startsWith("/")) return "";
+  const read = runs
+    .filter((run) => run.ordinal < current.ordinal && run.startedAt !== null)
+    .toSorted((a, b) => b.ordinal - a.ordinal)
+    .slice(0, SETTLED_WAIT_RUN_WINDOW);
+  const previous = read[0];
+  if (previous?.startedAt == null) return "";
+  const keys = [...new Set(read.flatMap((run) => waitKeyOfWake(run.userMessageId) ?? []))];
+  if (keys.length === 0) return "";
+  const settled = yield* directory.value.settledWaits({
+    keys,
+    since: DateTime.formatIso(previous.startedAt),
+  });
+  return settledWaitsNote(settled);
 });

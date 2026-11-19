@@ -760,6 +760,7 @@ describe("ServerSettings project overrides across versions", () => {
     "runnerBringBackExclude",
     "runnerBringBackMaxMB",
     "runnerMacTools",
+    "runnerLinuxFull",
   ] as const;
   const EXCLUDE = RUNNER_DEFAULTS.runnerBringBackExclude;
   const TOOLS = RUNNER_DEFAULTS.runnerMacTools;
@@ -767,12 +768,12 @@ describe("ServerSettings project overrides across versions", () => {
     [
       "an older file reads the new defaults",
       {},
-      ["automatic", "agent", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS],
+      ["automatic", "agent", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
     ],
     [
       "a stored Ask me stays Ask me",
       { runnerWhere: "automatic", runnerDropped: "ask" },
-      ["automatic", "ask", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS],
+      ["automatic", "ask", 4, undefined, true, 7, 2, EXCLUDE, 200, TOOLS, "wait"],
     ],
     [
       "the new values",
@@ -787,8 +788,21 @@ describe("ServerSettings project overrides across versions", () => {
         runnerBringBackExclude: ["dist"],
         runnerBringBackMaxMB: 50,
         runnerMacTools: ["xcodebuild", "fastlane"],
+        runnerLinuxFull: "balance",
       },
-      ["macFirst", "agent", 32, true, false, 30, 1, ["dist"], 50, ["xcodebuild", "fastlane"]],
+      [
+        "macFirst",
+        "agent",
+        32,
+        true,
+        false,
+        30,
+        1,
+        ["dist"],
+        50,
+        ["xcodebuild", "fastlane"],
+        "balance",
+      ],
     ],
   ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
     const projectId = ProjectId.make("project-a");
@@ -835,6 +849,24 @@ describe("ServerSettings project overrides across versions", () => {
   it.each([0, 11, 1.5])("Learn a Linux failure after refuses %s", (value) => {
     expect(() => decodeServerSettingsPatch({ runnerRouteLearnAfter: value })).toThrow();
   });
+
+  it.each(["later", null, 1])(
+    "a stored When Linux is full of %j reads as Wait for Linux",
+    (stored) => {
+      const projectId = ProjectId.make("project-a");
+      const settings = decodeServerSettings({
+        runnerWhere: "linux",
+        runnerLinuxFull: stored,
+        projectSettingsOverrides: {
+          [projectId]: { runnerWhere: "linux", runnerLinuxFull: stored },
+        },
+      });
+      expect(settings.runnerWhere).toBe("linux");
+      expect(settings.runnerLinuxFull).toBe("wait");
+      expect(settings.projectSettingsOverrides[projectId]).toEqual({ runnerWhere: "linux" });
+      expect(() => decodeServerSettingsPatch({ runnerLinuxFull: stored })).toThrow();
+    },
+  );
 });
 
 describe("resolveProjectProviderInstanceEnabled", () => {

@@ -57,6 +57,8 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
+  /** Teams draws the thread whatever the project scope, so opening it keeps the scope. */
+  readonly listedInTeams: (thread: T) => boolean;
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
   const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
     input;
@@ -65,6 +67,7 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
   const widensScope =
     thread !== undefined &&
+    !input.listedInTeams(thread) &&
     scopedProjectKeys !== null &&
     filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
     filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;

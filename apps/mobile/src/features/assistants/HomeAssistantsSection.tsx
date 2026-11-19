@@ -32,6 +32,11 @@ import {
   type AssistantTeamEntry,
 } from "../../state/assistants";
 import { ThreadListV2SubagentRow } from "../threads/thread-list-v2-items";
+import { DraftMark, DRAFT_MARK_LABEL } from "../threads/draft-mark";
+import { DISCARD_DRAFT_ACTION } from "../threads/thread-menu";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { assistantGroupDraftKey } from "../../state/assistant-group-draft-key";
+import { discardComposerDraft, useHasUnsentDraft } from "../../state/use-composer-drafts";
 import type { ThreadListV2ThreadListItem } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -339,6 +344,8 @@ const AssistantRow = memo(function AssistantRow(props: {
   readonly environmentLabel: string | null;
   readonly sidebar: boolean;
   readonly nested: boolean;
+  /** Its conversation is the one on screen, which never marks its own draft. */
+  readonly open: boolean;
   readonly onToggleFold: (key: string) => void;
 }) {
   const { assistant, environmentId } = props;
@@ -348,6 +355,9 @@ const AssistantRow = memo(function AssistantRow(props: {
   const openInfo = useOpenAssistantInfo();
   const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
   const [metaWidth, setMetaWidth] = useState(Number.POSITIVE_INFINITY);
+  const draftKey =
+    assistant.threadId === null ? null : scopedThreadKey(environmentId, assistant.threadId);
+  const hasDraft = useHasUnsentDraft(draftKey) && !props.open;
   const meta = [rowWidth >= ROLE_MIN_ROW_WIDTH ? assistant.role : "", props.environmentLabel ?? ""]
     .filter((part) => part !== "")
     .join(" · ");
@@ -360,6 +370,7 @@ const AssistantRow = memo(function AssistantRow(props: {
           true,
         );
   const actions: MenuAction[] = [
+    ...(hasDraft ? [DISCARD_DRAFT_ACTION] : []),
     { id: "info", title: "Assistant info", image: "info.circle" },
     {
       id: "reset",
@@ -377,7 +388,8 @@ const AssistantRow = memo(function AssistantRow(props: {
     },
   ];
   const onAction = (id: string) => {
-    if (id === "info") openInfo.assistant(environmentId, assistant.id);
+    if (id === DISCARD_DRAFT_ACTION.id && draftKey !== null) discardComposerDraft(draftKey);
+    else if (id === "info") openInfo.assistant(environmentId, assistant.id);
     else if (id === "reset") flows.reset(assistant, { openAfter: true });
     else if (id === "work") openWork(environmentId, assistant.id);
     else if (id === "settings") openEditor(environmentId, assistant);
@@ -396,7 +408,12 @@ const AssistantRow = memo(function AssistantRow(props: {
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={[assistant.name, assistant.role || null, status]
+            accessibilityLabel={[
+              assistant.name,
+              assistant.role || null,
+              hasDraft ? DRAFT_MARK_LABEL : null,
+              status,
+            ]
               .filter(Boolean)
               .join(", ")}
             disabled={assistant.threadId === null}
@@ -431,6 +448,7 @@ const AssistantRow = memo(function AssistantRow(props: {
                 </Text>
               ) : null}
             </View>
+            {hasDraft ? <DraftMark iconOnly={rowWidth < FOLDER_WORDS_MIN_ROW_WIDTH} /> : null}
             {props.indicatorKind === null ? null : (
               <IndicatorBadge
                 kind={props.indicatorKind}
@@ -482,6 +500,7 @@ function AssistantBlock(props: {
   readonly renderThread?: ((item: ThreadListV2ThreadListItem) => ReactNode) | undefined;
   readonly onSetSubagentPinned: (thread: EnvironmentThreadShell, pinned: boolean) => void;
   readonly pinningEnvironmentIds: ReadonlySet<string>;
+  readonly openConversationKey: string | null;
 }) {
   const { entry, presence, indicator } = props.member;
   const flows = useAssistantFlows(entry.environmentId);
@@ -508,6 +527,11 @@ function AssistantBlock(props: {
         environmentLabel={props.environmentLabel}
         sidebar={props.sidebar}
         nested={props.nested}
+        open={
+          entry.assistant.threadId !== null &&
+          scopedThreadKey(entry.environmentId, entry.assistant.threadId) ===
+            props.openConversationKey
+        }
         onToggleFold={props.onToggleFold}
       />
       {expanded ? (
@@ -558,6 +582,8 @@ const FolderRow = memo(function FolderRow(props: {
   readonly indicatorKind: ZoneIndicator["kind"] | null;
   readonly indicatorCount: number;
   readonly sidebar: boolean;
+  /** Its chat is the one on screen, which never marks its own draft. */
+  readonly open: boolean;
   readonly onToggle: (foldKey: string) => void;
 }) {
   const openTeam = useOpenAssistantTeam();
@@ -570,6 +596,8 @@ const FolderRow = memo(function FolderRow(props: {
   const empty = props.members.length === 0;
   const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
   const narrow = rowWidth < FOLDER_WORDS_MIN_ROW_WIDTH;
+  const draftKey = assistantGroupDraftKey(environmentId, team.id);
+  const hasDraft = useHasUnsentDraft(draftKey) && !props.open;
   return (
     <View
       className="flex-row items-center"
@@ -596,7 +624,13 @@ const FolderRow = memo(function FolderRow(props: {
       )}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={empty ? `${team.name}, ${EMPTY_GROUP_LABEL}` : team.name}
+        accessibilityLabel={[
+          team.name,
+          empty ? EMPTY_GROUP_LABEL : null,
+          hasDraft ? DRAFT_MARK_LABEL : null,
+        ]
+          .filter(Boolean)
+          .join(", ")}
         onPress={() => openTeam.chat(environmentId, team.id)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 pr-2 active:opacity-70"
       >
@@ -629,6 +663,7 @@ const FolderRow = memo(function FolderRow(props: {
             {EMPTY_GROUP_LABEL}
           </Text>
         ) : null}
+        {hasDraft ? <DraftMark iconOnly={narrow} /> : null}
       </Pressable>
       {props.indicatorKind !== null ? (
         <FolderIndicator
@@ -644,6 +679,7 @@ const FolderRow = memo(function FolderRow(props: {
         label={`${team.name} actions`}
         sidebar={props.sidebar}
         actions={[
+          ...(hasDraft ? [DISCARD_DRAFT_ACTION] : []),
           { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
           { id: "info", title: "Group info", image: "info.circle" },
           unread > 0
@@ -669,7 +705,8 @@ const FolderRow = memo(function FolderRow(props: {
           },
         ]}
         onAction={(id) => {
-          if (id === "chat") openTeam.chat(environmentId, team.id);
+          if (id === DISCARD_DRAFT_ACTION.id) discardComposerDraft(draftKey);
+          else if (id === "chat") openTeam.chat(environmentId, team.id);
           else if (id === "info") openInfo.group(environmentId, team.id);
           else if (id === "read") void flows.markRead(team);
           else if (id === "unread") void flows.markUnread(team);
@@ -707,8 +744,11 @@ export function HomeAssistantsSection(props: {
   >;
   /** The host list's thread row, so task rows get its menu, swipes and selection. */
   readonly renderThread?: (item: ThreadListV2ThreadListItem) => ReactNode;
+  /** The draft key of the conversation on screen beside the list (tablet sidebar). */
+  readonly openConversationKey?: string | null;
 }) {
   const model = useAssistantSectionModel();
+  const openConversationKey = props.openConversationKey ?? null;
   const { listed, hiddenInList, ungrouped, folders } = model;
   const navigation = useNavigation();
   const openEditor = useOpenAssistantEditor();
@@ -747,6 +787,7 @@ export function HomeAssistantsSection(props: {
       renderThread={props.renderThread}
       onSetSubagentPinned={setSubagentPinned}
       pinningEnvironmentIds={pinningEnvironmentIds}
+      openConversationKey={openConversationKey}
     />
   );
   const mutedIcon = sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
@@ -833,6 +874,10 @@ export function HomeAssistantsSection(props: {
                     : 0
                 }
                 sidebar={sidebar}
+                open={
+                  assistantGroupDraftKey(folder.team.environmentId, folder.team.team.id) ===
+                  openConversationKey
+                }
                 onToggle={toggleAssistantsGroup}
               />
               {folder.expanded ? folder.members.map((member) => block(member, true)) : null}

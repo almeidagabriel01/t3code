@@ -9,6 +9,7 @@ import {
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
   type HeavyQueueEntry,
+  type RunnerLinuxFullPolicy,
   type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
@@ -22,11 +23,14 @@ import {
   intentOf,
   linkMachine,
   LINUX_EVICT_SHARE,
+  LINUX_FULL_SHORTER,
+  LINUX_FULL_WAITING,
   linuxStops,
   macReasonText,
   matchesAny,
   mayPublish,
   nextHealth,
+  needsBrowser,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -862,6 +866,144 @@ describe("Mac first, Hybrid and Everything", () => {
   });
 });
 
+describe("When Linux is full", () => {
+  const MAC_OVER = { ...CALM, busyCores: 9, headroomSince: null, overLimit: true };
+  const STALE: LinuxHealth = { ...READ, okAt: NOW - 3_600_000 };
+  const linuxJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`l${at}`, "linux"));
+  const macJobs = (count: number) =>
+    Array.from({ length: count }, (_, at) => runningOn(`m${at}`, "mac"));
+  const a = (extra: Partial<HeavyQueueEntry> = {}) => job("a", "vp test run", extra);
+  /** Why Linux holds `a` back: each row's entries, health and Mac sample. */
+  const HOLDS = {
+    slots: { entries: [...linuxJobs(2), a()], health: READ },
+    limits: { entries: [a()], health: OVERLOADED },
+    worktree: { entries: [runningOn("l0", "linux", "/work/a"), a()], health: READ },
+    reading: { entries: [a()], health: STALE },
+    alone: { entries: [a(), job("z", "vp test run", { evictions: 2 } as never)], health: READ },
+    aloneMemory: {
+      entries: [...linuxJobs(1), a({ evictions: 2 } as never)],
+      health: READ,
+    },
+  } as const;
+  const MAC_STATES = {
+    room: {},
+    noRoom: { entries: macJobs(1), over: { maxRunning: 1 } },
+    over: { over: { sample: MAC_OVER } },
+  } as const;
+  type Expect = "mac" | "shorter" | "wait" | "busier";
+  const REASON: Record<Expect, RegExp> = {
+    mac: /^Linux is full: running on this Mac$/,
+    shorter: /^Linux is full: shorter queue on this Mac$/,
+    busier: /^Linux is full: waiting \(this Mac is busier\)$/,
+    wait: /^waiting for Linux: /,
+  };
+  type Hold = keyof typeof HOLDS;
+  type MacState = keyof typeof MAC_STATES;
+  const expectOf = (hold: Hold, policy: RunnerLinuxFullPolicy, mac: MacState): Expect => {
+    if ((hold !== "slots" && hold !== "limits") || policy === "wait") return "wait";
+    if (mac !== "room") return policy === "balance" ? "busier" : "wait";
+    return policy === "mac" ? "mac" : "shorter";
+  };
+  const rows = (Object.keys(HOLDS) as Hold[]).flatMap((hold) =>
+    (Object.keys(MAC_STATES) as MacState[]).flatMap((mac) =>
+      (["wait", "mac", "balance"] as const).map(
+        (policy) => [hold, policy, mac, expectOf(hold, policy, mac)] as const,
+      ),
+    ),
+  );
+
+  it.each(rows)("held by %s, policy %s, Mac %s: %s", (hold, policy, macState, expected) => {
+    const { entries, health } = HOLDS[hold];
+    const state: { entries?: ReadonlyArray<HeavyQueueEntry>; over?: Partial<RoutePlanInput> } =
+      MAC_STATES[macState];
+    const plan = planRoutes(
+      input(
+        [...(state.entries ?? []), ...entries],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health, runnerOn: true, ...state.over },
+      ),
+    );
+    expect(plan.routes.a).toBe(expected === "mac" || expected === "shorter" ? "mac" : "linux");
+    expect(plan.admits.a?.runner).not.toBe("linux");
+    expect(plan.reasons.a).toMatch(REASON[expected]);
+  });
+
+  // Backlog per slot, the job's own place included; a machine that can't start it now counts one.
+  it.each([
+    // [name, maxRunning, Mac jobs, policy, route]
+    ["Mac has room", 3, 0, "balance", "mac"],
+    ["no room, but 1/4 waits against Linux's 1/2", 4, 4, "balance", "mac"],
+    ["the same queue under mac: no room, Linux", 4, 4, "mac", "linux"],
+    ["1/2 against 1/2 is a tie: Linux", 2, 2, "balance", "linux"],
+    ["1/1 against 1/2: Linux", 1, 1, "balance", "linux"],
+  ] as const)("balance by wait: %s", (_, maxRunning, mac, policy, route) => {
+    const plan = planRoutes(
+      input(
+        [...macJobs(mac), ...linuxJobs(2), a()],
+        { runnerWhere: "linux", runnerLinuxFull: policy },
+        { health: READ, maxRunning, runnerOn: true },
+      ),
+    );
+    expect(plan.routes.a).toBe(route);
+    if (policy === "balance") {
+      const reason = route === "mac" ? LINUX_FULL_SHORTER : LINUX_FULL_WAITING;
+      expect(plan.reasons.a?.split(" · ")[0]).toBe(reason);
+    }
+  });
+
+  // A move is for good: only a Mac short of slots alone may take it, never one holding it back.
+  it.each([
+    ["memory pressure", { ...CALM, pressureLevel: 2 }],
+    ["the job's own memory", { ...CALM, availableMemoryBytes: 7 * GIB }],
+  ] as const)("free Mac slots holding the job back for %s: no move", (_, sample) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...macJobs(1), ...linuxJobs(2), a()],
+          { runnerWhere: "linux", runnerLinuxFull: policy },
+          { health: READ, maxRunning: 3, runnerOn: true, sample },
+        ),
+      );
+      expect(plan.routes.a).toBe("linux");
+      expect(plan.moved).toEqual({});
+    }
+  });
+
+  it.each([
+    ["asked for Linux", a({ where: "linux", linuxOnly: true } as never), {}, READ, "linux-wait"],
+    ["Start now", a({ forced: true }), {}, READ, "linux-start"],
+    // Slots never hold a call: only limits do.
+    ["a job's own call", a({ where: "linux", call: true } as never), {}, OVERLOADED, "linux-wait"],
+    ["the user chose to wait for Linux", a({ route: "linux" }), {}, READ, "linux-wait"],
+    ["the queue paused", a(), { paused: true }, READ, "linux-wait"],
+    ["a Runner set to this Mac", a({ where: "linux" }), { mode: "mac" }, READ, "linux-wait"],
+    ["Linux offline", a(), {}, OFFLINE, "ask"],
+    [
+      "an unconfirmed run",
+      a({ unconfirmed: true, dropped: true } as never),
+      {},
+      READ,
+      "linux-wait",
+    ],
+  ] as const)("%s: never moves, whatever the policy", (_, entry, over, health, outcome) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...linuxJobs(2), entry],
+          {
+            runnerWhere: "mode" in over ? over.mode : "linux",
+            runnerLinuxFull: policy,
+          },
+          { health, runnerOn: true, ...("paused" in over ? { paused: true } : {}) },
+        ),
+      );
+      expect(outcomeOf(plan, "a")).toBe(outcome);
+      expect(plan.reasons.a ?? "").not.toMatch(/^Linux is full/);
+    }
+  });
+});
+
 describe("the Mac↔Linux link", () => {
   const sample = (
     over: Partial<typeof CALM> & { pressureLevel?: number; swapInBytesPerSecond?: number },
@@ -1561,8 +1703,7 @@ describe("runtime toggles", () => {
 
   it("once a Runner is on, every Mac row says why it stays, beside what it waits for here", () => {
     const entries = [
-      job("run", "git commit -m x", { startedAt: ago(1000) }),
-      job("commit", "git commit -m 'fix: t3 heavy'"),
+      job("run", "xcodebuild -scheme App build", { startedAt: ago(1000) }),
       job("install", "pnpm install"),
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
@@ -1574,11 +1715,9 @@ describe("runtime toggles", () => {
     const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
       planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
         .reasons;
-    const commits = "Changes this Mac's checkout: git commit";
     expect(at({ runnerOn: true })).toEqual({
-      run: commits,
-      commit: `${commits} · the one slot is busy`,
-      install: "Changes this Mac's checkout: pnpm install · waiting its turn",
+      run: "Mac-only tool: xcodebuild",
+      install: "Changes this Mac's checkout: pnpm install · the one slot is busy",
       moved: "Moved to this Mac · waiting its turn",
       back: "Uses a file only this Mac has: /x · waiting its turn",
       forced: "Runner set to Linux",
@@ -1589,16 +1728,12 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
       install: "Runner off for this project",
     });
-    // With every Runner off, rows read as they always did, but a commit still says why it waits.
-    const hook = "Commit hook runs checks";
+    // With every Runner off, rows say only what they wait for.
     expect(at({}, { runnerEnabled: false })).toEqual({
-      run: hook,
-      commit: `${hook} · next in line`,
-      install: "waiting its turn",
+      install: "next in line",
       moved: "waiting its turn",
       back: "waiting its turn",
     });
-    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
 });
 
@@ -1618,6 +1753,9 @@ describe("patterns and eligibility", () => {
     ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
     ["vue-tsc --noEmit", "tsc", true],
     ["tsgo --noEmit", "test", false],
+    // A pattern named like an object's own key matches as written.
+    ["vp test run", "constructor", false],
+    ["toString x", "toString", true],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
@@ -1768,7 +1906,6 @@ describe("patterns and eligibility", () => {
     "npx vite build",
     "pnpm run build",
     "./scripts/ci.sh",
-    "npm run watch:css",
     "cargo fmt --check",
     "go mod tidy",
     "pnpm exec playwright test --base-url http://localhost:4173",
@@ -1915,6 +2052,7 @@ describe("patterns and eligibility", () => {
     ["mac-tool", "xcodebuild", "Mac-only tool: xcodebuild"],
     ["mac-env", "~/.t3/userdata", "Uses a file only this Mac has: ~/.t3/userdata"],
     ["mac-state", "git commit", "Changes this Mac's checkout: git commit"],
+    ["mac-repo", "git push", "Uses this Mac's git repository: git push"],
     ["pinned", "--runner mac", "Pinned to this Mac: --runner mac"],
     ["serves-port", "vite", "Serves a port used here: vite"],
     [
@@ -2330,8 +2468,58 @@ describe("an install unfinished in a fresh Linux copy", () => {
     ["AssertionError: expected 1 to be 2", null],
     ["Error: EEXIST: file already exists, mkdir '/tmp/out'", null],
     ["FAIL src/node_modules.test.ts > writes the folder", null],
+    // Text that only quotes one: a test runner listing test names, a command echoed as data.
+    [
+      '     \u001b[2m\u001b[90m↓\u001b[39m\u001b[22m an install that really fails while installing is an install failure of ["echo \\"Error: EEXIST: file already exists, mkdir \'node_modules/sharp/vendor\'\\" >&2"]',
+      null,
+    ],
+    ["  ✓ Electron failed to install correctly reruns once", null],
+    // An installer's own error, miette style.
+    [
+      "  × failed to create directory '/home/dev/runs/a/node_modules/.pnpm/electron@44.10.1/node_modules/electron/dist': File exists (os error 17)",
+      "electron",
+    ],
+    ['  × reports "Error: Could not find Chrome (ver. 1)" as puppeteer', null],
   ] as const)("%j is an install failure of %j", (line, pkg) => {
     expect(installFailure(line)).toBe(pkg);
+  });
+});
+
+describe("whether a Linux run needs Chromium", () => {
+  const FILES: Record<string, string> = {
+    "/w/package.json": JSON.stringify({
+      scripts: {
+        "ci:local": "node scripts/ci-local/run.mjs",
+        "test:e2e": "playwright test",
+        test: "vitest run",
+      },
+    }),
+    "/w/apps/web/package.json": JSON.stringify({
+      devDependencies: { "@vitest/browser-playwright": "5.0.5" },
+    }),
+    "/w/apps/server/package.json": JSON.stringify({ dependencies: { "playwright-core": "1" } }),
+    "/w/apps/broken/package.json": "{",
+  };
+  const read = (path: string) => FILES[path] ?? null;
+  it.each([
+    ["npx playwright test --list", "/w", true],
+    ["npm run ci:local", "/w", false],
+    ["pnpm test:e2e", "/w", true],
+    ["npm run test:e2e", "/w", true],
+    ["node scripts/x.mjs", "/w", false],
+    ["vitest --browser.enabled", "/w", true],
+    // The root's tests depend on no browser.
+    ["pnpm test", "/w", false],
+    ["vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["pnpm exec vp test run src/a.browser.test.tsx", "/w/apps/web", true],
+    ["vp test run apps/web/src/a.browser.test.tsx", "/w", true],
+    ["vp test run src/preview/ServerBrowser.test.ts", "/w/apps/server", true],
+    ["vp test run src/a.test.ts", "/w/apps/other", false],
+    ["vp test run src/a.test.ts", "/w/apps/broken", false],
+    ["vp lint src/a.ts", "/w/apps/web", false],
+    ["vp lint playwright.config.ts", "/w", false],
+  ] as const)("%s from %s: %s", (line, cwd, needs) => {
+    expect(needsBrowser(line.split(" "), cwd, "/w", read)).toBe(needs);
   });
 });
 
@@ -2401,10 +2589,14 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // Commands that left the group (setsid, a daemon) still carry the copy's tag.
+    expect(script).toContain("grep -qzs '^REMOTO_RUN=app-1a2b3c4d:'");
+    expect(script).toContain("kill -KILL $(tagged)");
+    expect(remoteStopScript("app.1-2", null, 5)).toContain("'^REMOTO_RUN=app\\.1-2:'");
     // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
     const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
     expect(group).toContain('kill -TERM -- "-$p"');
-    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid/);
+    expect(group).not.toMatch(/pkill|pgrep -f|\.pgid|REMOTO_RUN/);
     expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
     // `kill -- -1` would reach every process there.
     for (const pgid of [0, 1, -3, 1.5]) {

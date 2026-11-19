@@ -69,10 +69,12 @@ When several agents run tests, builds or simulators at once, they queue on the
 Mac that hosts T3 Code (with the [Runner](#runner-heavy-work-on-a-linux-pc) on,
 heavy commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
-commands (tests, builds, type checks, `git commit` with its hooks, simulators)
-go through the queue on their own, even when the agent forgets. A `git commit`
-waits only when the repository has a commit hook, and then goes ahead of other
-waiting jobs; without one it runs at once. Open the **Resource Manager** in the status bar:
+commands (tests, builds, type checks, simulators) go through the queue on their
+own, even when the agent forgets. Local git writes (`git commit`, `merge`,
+`rebase`) never queue, even with commit hooks: they run at once on this Mac.
+A heavy pre-commit hook (a full test run, say) therefore runs outside the
+queue; move that work to a pre-push hook.
+Open the **Resource Manager** in the status bar:
 its top bar shows each machine's CPU, free memory and slots, and a gauge turns
 amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
 the reading). **Heavy work** lists each job once, by machine, running first and
@@ -230,25 +232,37 @@ work queue, and each section says what the two do together.
   - **Uses a file only this Mac has**: an argument, or a variable set for the
     command (`T3CODE_HOME=~/.t3/dev vp test run`, `env`, `export`), names a
     path outside the project, such as `~/.t3`, `~/Library` or another checkout.
-  - **Changes this Mac's checkout**: git commands that write (commits run here,
-    since the pre-commit hook edits this Mac's repository) and installs.
+  - **Changes this Mac's checkout**: installs, and git commands that write
+    when Linux would run them (with `remoto`, for example).
+  - **Uses this Mac's git repository**: `git push`, which needs this Mac's
+    repository and credentials; Linux's copy has neither.
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,
-    `expo start`, a `dev`, `start` or `serve` script or `turbo`/`nx` task, or a
-    test runner's `--ui`.
-  - **Watches this Mac's files**: `--watch`, or `-w` on a test runner or `tsc`.
-    On Linux it would watch a copy your edits never reach.
+    `expo start`, `react-native start`, `storybook dev`, a `dev`, `start`,
+    `serve`, `preview` or `storybook` script or `turbo`/`nx` task, or a test
+    runner's `--ui`.
+  - **Watches this Mac's files**: `--watch`, `-w` on a test runner or `tsc`, or
+    a `watch` script. On Linux it would watch a copy your edits never reach.
+
+  A server or watcher runs until you stop it, so it starts here at once and
+  never takes a slot in the queue.
   - **Uses this Mac's Docker**: `docker` and `podman` commands that act on the
     images and containers in this Mac's daemon, such as `ps`, `exec`, `logs`
     or `compose down`. A fresh `docker build` or `docker run` goes to Linux,
     unless it publishes a port (`-p`, `--network host`); `docker compose up`
-    serves ports here.
+    serves ports here unless it ends with its containers
+    (`--abort-on-container-exit`, `--exit-code-from`). In a script's body,
+    Docker and package installs belong to the Linux copy.
   - **Talks to a port open here**: an argument or variable names `localhost`,
     `127.0.0.1` or `::1` with a port something on this Mac listens on, such as
     `--base-url http://localhost:5733`.
+  - **Edits this Mac's files in place**: `sed -i`, `perl -pi`, `ruby -pi`,
+    `tee` or a `>`/`>>` redirect into the project, in a command Linux runs
+    whole (one with no heavy call, or one sent with `remoto`). Beside a heavy
+    call the edit runs here and only the heavy call goes to Linux.
 
-  A tenth reason is learned: **Linux couldn't run this before** (see **If a
+  A twelfth reason is learned: **Linux couldn't run this before** (see **If a
   Linux run fails**). Waiting for a slot or for a machine under its limits is
   never a reason; the row shows it separately. Simulators, emulators, device
   opens and `dev:desktop` also run here, alone, as **Always on this Mac**.

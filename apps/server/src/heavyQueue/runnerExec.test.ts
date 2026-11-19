@@ -21,6 +21,7 @@ import {
   resolveRemoto,
   startLinuxRun,
   stopRemote,
+  touchStartMarker,
   withProjectBins,
 } from "./runnerExec.ts";
 
@@ -473,6 +474,28 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
       ["echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2"],
       "sharp",
     ],
+    [
+      "the Electron settle failing before the command",
+      "installing",
+      [`printf '${M} install=electron\\n' >&2`],
+      "electron",
+    ],
+    [
+      "a marker the command prints",
+      "running",
+      [
+        `printf '${M} phase=command\\n' >&2`,
+        `printf '${M} install=electron\\n' >&2`,
+        `printf '${M} missing=vp\\n' >&2`,
+      ],
+      null,
+    ],
+    [
+      "the command's last line without a newline",
+      "running",
+      [`printf '${M} phase=command\\n' >&2`, "printf 'no newline' >&2"],
+      null,
+    ],
   ] as const)("%s while %s is an install failure of %j", async (_case, phase, lines, install) => {
     const { run } = runWith(
       fake(
@@ -623,6 +646,16 @@ describe("ssh calls around a Linux run", () => {
 });
 
 describe("bringing results back", () => {
+  it("lists a file written right after the start marker, even on a coarse clock", () => {
+    const at = NodeFS.mkdtempSync(NodePath.join(dir, "marker-"));
+    // Counts the rounds whose file `find -cnewer` misses.
+    const missed = `n=0; for i in $(seq 50); do ${touchStartMarker('"$1/m"')}; echo x > "$1/f$i"; [ -n "$(find "$1" -name "f$i" -cnewer "$1/m")" ] || n=$((n+1)); done; echo $n`;
+    const out = NodeChildProcess.execFileSync("bash", ["-c", missed, "t3", at], {
+      encoding: "utf8",
+    });
+    expect(out.trim()).toBe("0");
+  });
+
   const T0 = 1_800_000_000;
   const COPY = "app-0123abcd";
   /** Linux's home with the copy and the job's start marker, and the Mac checkout. */

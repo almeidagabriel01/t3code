@@ -51,7 +51,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
-import { assistantNote } from "../assistants/assistantNote.ts";
+import { assistantNote, settledWaitsForTurn } from "../assistants/assistantNote.ts";
 import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -897,6 +897,7 @@ export const layer: Layer.Layer<
       });
       const restartNote = [
         yield* assistantNote(assistantDirectory, projection.thread.id, userText),
+        yield* settledWaitsForTurn(assistantDirectory, projection.runs, run, userText),
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork),

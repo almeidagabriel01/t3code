@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { assistantGroupDraftThreadId } from "@t3tools/client-runtime/assistantGroupChat";
 import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProjectAccess";
 import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
@@ -37,17 +38,21 @@ import {
   RefreshCwIcon,
   SettingsIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { useThreadHasUnsentDraft } from "~/composerDraftStore";
+import { discardComposerDraft } from "~/lib/discardComposerDraft";
 import { cn } from "~/lib/utils";
 import { updateClientSettings } from "../../hooks/useSettings";
 import type { AssistantEntry, AssistantTeamEntry } from "../../state/assistants";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { draftSurfaceClassName, SidebarDraftIndicator } from "../sidebar/SidebarDraftIndicator";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { SubagentRows } from "../sidebar/SidebarSubagentRows";
 import { JumpHintBadge } from "../sidebar/JumpHintBadge";
@@ -222,6 +227,7 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
   const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
   const thread = useThreadShell(threadRef);
+  const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isActive;
   const localLastVisitedAt = useUiStateStore((state) =>
     threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
   );
@@ -290,7 +296,7 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
               className={cn(
                 "group/sidebar-row flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
                 FOCUS_RING,
-                props.isActive && "bg-sidebar-row-active",
+                props.isActive ? "bg-sidebar-row-active" : hasUnsentDraft && draftSurfaceClassName,
               )}
               onClick={open}
               onKeyDown={onKeyDown}
@@ -318,6 +324,9 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
               </span>
             )}
           </span>
+          {hasUnsentDraft ? (
+            <SidebarDraftIndicator testId={`sidebar-draft-indicator-${assistant.threadId}`} />
+          ) : null}
           {props.indicatorKind === null ? null : (
             <ZoneIndicatorMark kind={props.indicatorKind} count={props.indicatorCount} />
           )}
@@ -365,6 +374,12 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
                 <InfoIcon />
                 Assistant info
               </MenuItem>
+              {hasUnsentDraft && threadRef !== null ? (
+                <MenuItem onClick={() => discardComposerDraft(threadRef)}>
+                  <XIcon />
+                  Discard draft
+                </MenuItem>
+              ) : null}
               <MenuItem
                 disabled={!flows.canAct || working}
                 onClick={() => void flows.reset(assistant, { openAfter: true })}
@@ -580,6 +595,8 @@ const FolderRow = memo(function FolderRow(props: {
   const foldKey = `group:${environmentId}:${teamId}`;
   const unread = team.chat?.unreadCount ?? 0;
   const open = () => props.onOpenGroup(environmentId, teamId);
+  const draftRef = scopeThreadRef(environmentId, assistantGroupDraftThreadId(teamId));
+  const hasUnsentDraft = useThreadHasUnsentDraft(draftRef) && !props.active;
   const empty = props.members.length === 0;
   return (
     <li className="list-none py-px">
@@ -587,7 +604,7 @@ const FolderRow = memo(function FolderRow(props: {
         data-testid="sidebar-assistant-fold"
         className={cn(
           "@container/folder flex h-8 w-full items-center gap-1 rounded-md ps-1 pe-(--sidebar-row-content-inset) text-sm font-medium text-sidebar-foreground hover:bg-sidebar-row-hover",
-          props.active && "bg-sidebar-row-active",
+          props.active ? "bg-sidebar-row-active" : hasUnsentDraft && draftSurfaceClassName,
         )}
       >
         {empty ? (
@@ -631,6 +648,9 @@ const FolderRow = memo(function FolderRow(props: {
           </TooltipTrigger>
           <TooltipPopup side="top">{team.name}</TooltipPopup>
         </Tooltip>
+        {hasUnsentDraft ? (
+          <SidebarDraftIndicator testId={`sidebar-draft-indicator-${draftRef.threadId}`} />
+        ) : null}
         {props.indicatorKind === null ? null : (
           <FolderIndicator
             kind={props.indicatorKind}
@@ -657,6 +677,12 @@ const FolderRow = memo(function FolderRow(props: {
               <InfoIcon />
               Group info
             </MenuItem>
+            {hasUnsentDraft ? (
+              <MenuItem onClick={() => discardComposerDraft(draftRef)}>
+                <XIcon />
+                Discard draft
+              </MenuItem>
+            ) : null}
             {unread > 0 ? (
               <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
                 <MailOpenIcon />

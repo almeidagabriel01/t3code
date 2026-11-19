@@ -1,8 +1,8 @@
 import { threadOwnerResolver, type ZoneShell } from "@t3tools/client-runtime/sidebarZones";
 
 /**
- * Who started each thread, from the assistants' tasks and groups. Owned threads leave the project
- * lists (and their ordering) for the Teams zone; an archived assistant's work goes back to projects.
+ * Who started each thread, from the assistants' tasks and groups. Teams draws an owned thread under
+ * its assistant, and its project still lists it.
  */
 export function buildThreadOwnership(input: {
   readonly shells: ReadonlyArray<ZoneShell>;
@@ -42,17 +42,7 @@ export function buildThreadOwnership(input: {
       input.active.map(({ environmentId, assistant }) => `${environmentId}:${assistant.id}`),
     ),
   });
-  const ownedThreadKeys = new Set(
-    input.shells.flatMap((shell) =>
-      ownerOf(shell).kind === "assistant" ? [`${shell.environmentId}:${shell.id}`] : [],
-    ),
-  );
-  return { ownerOf, ownedThreadKeys };
+  return { ownerOf };
 }
 
 export type ThreadOwnership = ReturnType<typeof buildThreadOwnership>;
-
-/** The same set when its keys did not change, so list memos keyed on it hold. */
-export function sameKeySet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  return a.size === b.size && [...a].every((key) => b.has(key));
-}

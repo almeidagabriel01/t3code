@@ -9,7 +9,7 @@ import {
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
 import { isNewTaskDraftKey } from "./new-task-draft-key";
-import type { ComposerDraft } from "./use-composer-drafts";
+import { composerDraftHasUserContent, type ComposerDraft } from "./use-composer-drafts";
 import { resolveNewTaskDraftWorkspace } from "../features/threads/new-task-context-presentation";
 
 export type PendingNewTask = PendingQueuedTask | PendingDraftTask;
@@ -39,10 +39,6 @@ export interface PendingDraftTask {
   readonly createdAt: string;
   readonly draftKey: string;
   readonly draft: ComposerDraft;
-}
-
-function composerDraftHasUserContent(draft: ComposerDraft): boolean {
-  return draft.text.trim().length > 0 || draft.attachments.length > 0;
 }
 
 function draftTitle(draft: ComposerDraft): string {

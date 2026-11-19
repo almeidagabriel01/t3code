@@ -11,6 +11,7 @@ import type {
   HeavyRunnerPhase,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
+  RunnerLinuxFullPolicy,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
@@ -76,6 +77,11 @@ export const RUNNER_SETTING_COPY: Record<
   runnerUnavailable: {
     title: "When Linux is offline",
     description: "What a job headed for Linux does while Linux is offline.",
+  },
+  runnerLinuxFull: {
+    title: "When Linux is full",
+    description:
+      "What a job headed for Linux does while every Linux slot is taken or Linux is past its limits.",
   },
   runnerDropped: {
     title: "If a Linux run fails",
@@ -180,6 +186,20 @@ export const RUNNER_POLICY_LABEL: Record<RunnerUnavailablePolicy, string> = {
   ask: "Ask me",
   mac: "Run on this Mac",
   wait: "Wait for Linux",
+};
+
+/** In the order the choice shows them. */
+export const RUNNER_LINUX_FULL_LABEL: Record<RunnerLinuxFullPolicy, string> = {
+  wait: "Wait for Linux",
+  mac: "Use this Mac",
+  balance: "Balance by load",
+};
+
+export const RUNNER_LINUX_FULL_DESCRIPTION: Record<RunnerLinuxFullPolicy, string> = {
+  wait: "Jobs wait for a free Linux slot.",
+  mac: "When Linux is full and this Mac has room, the job runs here.",
+  balance:
+    "When Linux is full and this Mac's wait is shorter, the job waits here even with no room now. It does not go back.",
 };
 
 export const RUNNER_FAILED_POLICY_LABEL: Record<RunnerFailedPolicy, string> = {
@@ -478,7 +498,9 @@ export function runnerModeFieldApplies(
   everything: boolean | null,
 ): boolean {
   if (key === "runnerMacFirstAfter") return where === null || where === "macFirst";
-  if (key === "runnerLinuxEverything") return where === null || where === "linux";
+  if (key === "runnerLinuxEverything" || key === "runnerLinuxFull") {
+    return where === null || where === "linux";
+  }
   if (key === "runnerLinuxCommands") return !runnerEverythingOn(where, everything);
   return true;
 }

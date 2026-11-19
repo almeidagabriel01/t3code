@@ -28,12 +28,15 @@ import {
   type Sustained,
 } from "./admission.ts";
 import {
-  commitOnly,
+  entryOf,
+  EXECUTORS,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
   PACKAGE_SCRIPT,
+  pmBinAt,
   readLine,
+  RUNNERS as PACKAGE_MANAGERS,
   shellQuote,
   TYPE_CHECKERS,
   workParts,
@@ -48,6 +51,7 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
   runnerWhere: RUNNER_DEFAULTS.runnerWhere,
   runnerUnavailable: RUNNER_DEFAULTS.runnerUnavailable,
+  runnerLinuxFull: RUNNER_DEFAULTS.runnerLinuxFull,
   runnerAskMinutes: RUNNER_DEFAULTS.runnerAskMinutes,
   runnerDeadlineAction: RUNNER_DEFAULTS.runnerDeadlineAction,
   runnerDropped: RUNNER_DEFAULTS.runnerDropped,
@@ -151,7 +155,7 @@ const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
 
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
   patterns
-    .flatMap((pattern) => [pattern, ...(KIND_TOOLS[pattern.trim().toLowerCase()] ?? [])])
+    .flatMap((pattern) => [pattern, ...(entryOf(KIND_TOOLS, pattern.trim().toLowerCase()) ?? [])])
     .some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
 
 export type Eligibility = "linux" | "exclusive" | "mac-only";
@@ -166,9 +170,11 @@ export interface MacReason {
     | "native-build"
     | "mac-env"
     | "mac-state"
+    | "mac-repo"
     | "pinned"
     | "serves-port"
     | "watches"
+    | "edits-in-place"
     | "mac-docker"
     | "mac-port"
     | "learned";
@@ -188,9 +194,11 @@ const MAC_REASON_TEXT: Readonly<Record<MacReason["code"], string>> = {
   "native-build": "Builds native code for this Mac",
   "mac-env": "Uses a file only this Mac has",
   "mac-state": "Changes this Mac's checkout",
+  "mac-repo": "Uses this Mac's git repository",
   pinned: "Pinned to this Mac",
   "serves-port": "Serves a port used here",
   watches: "Watches this Mac's files",
+  "edits-in-place": "Edits this Mac's files in place",
   "mac-docker": "Uses this Mac's Docker",
   "mac-port": "Talks to a port open here",
   learned: "Linux couldn't run this before",
@@ -279,29 +287,42 @@ const outsidePath = (arg: string, cwd: string, root: string): string | null => {
 };
 
 const BOTH_AT_LIMITS = "Both machines are at their limits";
+const LINUX_FULL_MAC = "Linux is full: running on this Mac";
+export const LINUX_FULL_SHORTER = "Linux is full: shorter queue on this Mac";
+export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
-/** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
-const COMMIT_HOOK = "Commit hook runs checks";
-
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
-  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
-const DEV_SERVER = /^(dev|start|serve|preview)([:._-].*)?$/;
-// ponytail: the first word only; a flag's value before it (`vite --port 5173`) hides the server.
+  /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|pull|fetch)$/;
+const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
+/** A finite step a script's name may also name: `serve-static-build` builds and ends. */
+const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
+/**
+ * A script or task that never ends: a watch segment anywhere in its name watches; a server word
+ * leading it with no finite step after serves.
+ */
+const scriptCode = (name: string): "watches" | "serves-port" | null => {
+  const [head = "", ...rest] = name.split(/[:._-]/);
+  if (head === "watch" || rest.includes("watch")) return "watches";
+  const serves = DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
+  return serves ? "serves-port" : null;
+};
 const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   vite: /^(dev|serve|preview)?$/,
   next: /^(dev|start)$/,
   expo: /^start$/,
   wrangler: /^dev$/,
   storybook: /^(dev)?$/,
+  "start-storybook": /^/,
+  "react-native": /^start$/,
+  metro: /^(serve|start)?$/,
 };
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
-const EXEC = /^(exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
-const WATCH = /^--watch(All)?(=true)?$/;
+const WATCH = /^--watch(All|-path(=.*)?)?(=true)?$/;
+/** Runners that restart on file changes: watching is what they are for. */
+const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 const COMPOSE_SUBCOMMAND =
   /^(attach|build|commit|config|cp|create|down|events|exec|export|images|kill|logs|ls|pause|port|ps|pull|push|restart|rm|run|scale|start|stats|stop|top|unpause|up|version|wait|watch)$/;
@@ -376,7 +397,46 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
   if (NATIVE_TOOLS.has(program)) return program;
   // `cargo +nightly build`: a toolchain pick comes before the subcommand.
   const sub = words.find((word) => !word.startsWith("+")) ?? "";
-  return NATIVE_SUBCOMMANDS[program]?.test(sub) === true ? `${program} ${sub}` : null;
+  return entryOf(NATIVE_SUBCOMMANDS, program)?.test(sub) === true ? `${program} ${sub}` : null;
+};
+
+/**
+ * Flags that take the next word as their value, so it is never the subcommand: a package
+ * manager's workspace and folder (`pnpm -F web dev`), a server's address (`vite --port 5174`),
+ * a config file, a git setting (`git -c k=v commit`).
+ */
+// ponytail: these flags only; a program's own value flag before its subcommand needs a row here.
+const VALUE_FLAGS = new Set([
+  "-F",
+  "--filter",
+  "--filter-prod",
+  "-C",
+  "--dir",
+  "--prefix",
+  "--cwd",
+  "--port",
+  "-p",
+  "--host",
+  "--hostname",
+  "-H",
+  "--mode",
+  "-m",
+  "--config",
+  "-c",
+]);
+
+/**
+ * A program's subcommand words, past its flags and their values and a Yarn `workspace <name>`
+ * (`yarn workspace web dev` → `dev`).
+ */
+const subcommandWords = (program: string, after: ReadonlyArray<string>) => {
+  // npm's `-w <name>` is a workspace; pnpm's `-w` is the workspace root and takes no value.
+  const takesValue = (flag: string) =>
+    VALUE_FLAGS.has(flag) || (program === "npm" && (flag === "-w" || flag === "--workspace"));
+  const words = after.filter(
+    (value, at) => !value.startsWith("-") && !takesValue(after[at - 1] ?? ""),
+  );
+  return program === "yarn" && words[0] === "workspace" ? words.slice(2) : words;
 };
 
 /**
@@ -390,23 +450,23 @@ const programReason = (
   macTools: ReadonlyArray<string>,
   inScript: boolean,
 ): MacReason | null => {
-  let { program, words } = part;
+  let { program } = part;
   let after = part.values.slice(part.programAt + 1);
-  // `pnpm -F web exec vitest`: a flag's value can sit before `exec`.
-  const execAt = EXECUTORS.has(program)
-    ? -1
-    : !PACKAGE_MANAGERS.has(program)
-      ? null
-      : EXEC.test(words[0] ?? "")
-        ? 0
-        : part.flags.length > 0 && EXEC.test(words[1] ?? "")
-          ? 1
-          : null;
+  let words = subcommandWords(program, after);
+  const binAt = pmBinAt(program, words);
+  const execAt = EXECUTORS.has(program) ? -1 : binAt === 1 ? 0 : null;
+  // `pnpm tsc --watch` is `pnpm exec tsc --watch` when no script is named tsc: judge the bin first.
+  if (binAt === 0) {
+    const at = part.programAt + 1;
+    const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
+    const bin = programReason({ ...part, values }, macTools, inScript);
+    if (bin !== null) return bin;
+  }
   if (execAt !== null) {
     const raw = words[execAt + 1] ?? "";
-    program = raw.split("/").pop() ?? "";
-    words = words.slice(execAt + 2);
+    program = programName(raw);
     after = after.slice(after.indexOf(raw) + 1);
+    words = subcommandWords(program, after);
   }
   const [first = "", second = ""] = words;
   const named = `${program} ${first}`.trim();
@@ -417,17 +477,24 @@ const programReason = (
     return { code: "mac-tool", subject: named };
   }
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
-  if (DEV_PROGRAMS[program]?.test(first) === true) return { code: "serves-port", subject: named };
+  // A push changes no checkout, but Linux's copy has no `.git` and none of this Mac's credentials.
+  if (named === "git push") return { code: "mac-repo", subject: named };
+  if (entryOf(DEV_PROGRAMS, program)?.test(first) === true) {
+    return { code: "serves-port", subject: named };
+  }
   if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
-  const task = TASK_RUNNERS.has(program)
-    ? words.find((word) => word.split(":").some((each) => DEV_SERVER.test(each)))
-    : undefined;
-  if (task !== undefined) return { code: "serves-port", subject: `${program} ${task}` };
+  if (TASK_RUNNERS.has(program)) {
+    for (const task of words) {
+      const code = task.split(":").map(scriptCode).find(Boolean);
+      if (code) return { code, subject: `${program} ${task}` };
+    }
+  }
   const watch = after.find(
     (word) => WATCH.test(word) || (word === "-w" && SHORT_WATCH.has(program)),
   );
   if (watch !== undefined) return { code: "watches", subject: `${program} ${watch}` };
-  if (program === "vitest" && /^(watch|dev)$/.test(first)) {
+  if (WATCHERS.has(program)) return { code: "watches", subject: program };
+  if ((program === "vitest" && /^(watch|dev)$/.test(first)) || named === "tsx watch") {
     return { code: "watches", subject: named };
   }
   if (DOCKERS.has(program) && first !== "") {
@@ -442,7 +509,78 @@ const programReason = (
     return { code: "mac-state", subject: `${program} ${install}` };
   }
   const script = runs ? second : first;
-  return DEV_SERVER.test(script) ? { code: "serves-port", subject: `${program} ${script}` } : null;
+  const code = scriptCode(script);
+  return code === null ? null : { code, subject: `${program} ${script}` };
+};
+
+/**
+ * A line that runs until it is stopped: some part of it serves a port or watches. A queue slot
+ * would be held for good, so it runs on this Mac outside the queue.
+ */
+export const neverEnds = (line: string, read?: ReadScript) =>
+  readLine(line, read).parts.some((part) => {
+    const code = part.handsOffInside ? undefined : programReason(part, [], false)?.code;
+    return code === "serves-port" || code === "watches";
+  });
+
+/** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
+const scriptName = (values: ReadonlyArray<string>) => {
+  if (!PACKAGE_MANAGERS.has(programName(values[0]))) return null;
+  const [first, second] = subcommandWords(programName(values[0]), values.slice(1));
+  return first === "run" || first === "run-script" ? (second ?? null) : (first ?? null);
+};
+
+const BROWSER_TOOL =
+  /(^|[\s;&|()'"/])(playwright|cypress|puppeteer)(?=[\s;&|()'"]|$)|(^|\s)--browser(?=[\s=.]|$)/m;
+const TEST_RUNNER = /(^|[\s;&|()'"/])(vitest|jest)(?=[\s;&|()'"]|$)|(^|[\s;&|()'"/])vp\s+test\b/m;
+const BROWSER_DEPENDENCY =
+  /^(playwright|playwright-core|@playwright\/test|@vitest\/browser.*|puppeteer|cypress)$/;
+
+/**
+ * Whether a Linux run needs Playwright's Chromium there (`REMOTO_BROWSER`): the command, or the
+ * package.json script it runs, calls a browser tool or `--browser`; or it runs tests in a package
+ * (of its folder or of a file it names) that depends on one. `read` gives a file's text or null.
+ */
+export const needsBrowser = (
+  values: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  read: (path: string) => string | null,
+): boolean => {
+  const manifestOf = (dir: string): Record<string, unknown> | null => {
+    for (let at = dir; inside(at, root); at = at.slice(0, at.lastIndexOf("/")) || "/") {
+      const text = read(`${at}/package.json`);
+      if (text !== null) {
+        try {
+          const json: unknown = JSON.parse(text);
+          return json !== null && typeof json === "object" ? (json as Record<string, unknown>) : {};
+        } catch {
+          return {};
+        }
+      }
+      if (at === root) break;
+    }
+    return null;
+  };
+  const field = (json: Record<string, unknown> | null, key: string) => {
+    const value = json?.[key];
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  };
+  const name = scriptName(values);
+  const script = name === null ? undefined : field(manifestOf(cwd), "scripts")[name];
+  const text = [...values, typeof script === "string" ? script : ""].join(" ");
+  if (BROWSER_TOOL.test(text)) return true;
+  if (!TEST_RUNNER.test(text)) return false;
+  const named = values
+    .slice(1)
+    .filter((value) => !value.startsWith("-") && value.includes("/"))
+    .map((value) => resolvePath(cwd, value));
+  return [cwd, ...named.map((path) => path.slice(0, path.lastIndexOf("/")) || "/")].some((dir) => {
+    const json = manifestOf(dir);
+    return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some(
+      (key) => Object.keys(field(json, key)).some((dep) => BROWSER_DEPENDENCY.test(dep)),
+    );
+  });
 };
 
 /**
@@ -536,7 +674,7 @@ export const movedPart = (
     }
   } else {
     // ponytail: read before the subcommand only, as these tools take them.
-    const flags = FOLDER_FLAGS[programName(values[0])] ?? [];
+    const flags = entryOf(FOLDER_FLAGS, programName(values[0])) ?? [];
     for (let at = 1; at < values.length; at++) {
       const value = values[at]!;
       const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
@@ -566,6 +704,48 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 const CASE_ARM = /(^|[\n;]|\sin)\s+\(?[^\s();]+\)(?=\s)/g;
 
+const IN_PLACE: Readonly<Record<string, RegExp>> = {
+  sed: /^(-[^-]*i|--in-place)/,
+  perl: /^-\w*i/,
+  ruby: /^-\w*i/,
+};
+
+/**
+ * An edit into the checkout a text makes when Linux runs it whole: Linux's copy never comes back.
+ * Redirects count only there; beside a heavy call this Mac's shell opens them.
+ */
+const editReason = (
+  part: Part,
+  cwd: string | null,
+  vars: ReadonlyMap<string, string | null>,
+  rootOf: (cwd: string) => string | null,
+  redirects: boolean,
+): MacReason | null => {
+  const root = cwd === null ? null : rootOf(cwd);
+  const intoCheckout = (word: Word) => {
+    const value = cwd === null ? null : literalValue(word, vars, cwd);
+    return root !== null && value !== null && inside(resolvePath(cwd!, value), root);
+  };
+  const { program } = part;
+  const args = part.values.slice(part.programAt + 1);
+  // An editor's files are relative to its folder: outside any checkout it edits nothing of one.
+  const inPlace = root === null ? undefined : entryOf(IN_PLACE, program);
+  const flag = inPlace && args.find((word) => inPlace.test(word));
+  if (flag) return { code: "edits-in-place", subject: `${program} ${flag}` };
+  if (program === "tee") {
+    const file = part.command.words
+      .slice(part.programAt + 1)
+      .find((word) => !word.value.startsWith("-") && intoCheckout(word));
+    if (file !== undefined) return { code: "edits-in-place", subject: `tee ${file.value}` };
+  }
+  if (!redirects) return null;
+  for (const { op, target } of part.command.redirects) {
+    if (target === null || op.includes("<") || op.endsWith("&") || !intoCheckout(target)) continue;
+    return { code: "edits-in-place", subject: `${op.replace(/^\d+/, "")} ${target.value}` };
+  }
+  return null;
+};
+
 /**
  * The first reason a line's work must stay on this Mac. Only the work parts leave (heavy commands
  * and `remoto` calls; with none, every program the job runs), so only they are judged, each from
@@ -577,6 +757,7 @@ const lineReason = (
   start: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript | undefined,
+  nested = false,
   inScript = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
@@ -587,6 +768,8 @@ const lineReason = (
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
   const { parts } = source === line ? parsed : readLine(source, read);
   const work = new Set(workParts(parts));
+  // A text sent whole, or a line with no heavy or `remoto` part, runs whole where it is sent.
+  const whole = nested || !parts.some((part) => part.heavy || part.remoto !== null);
   const cwds = new Map<string, string | null>([["", start]]);
   const vars = new Map<string, string | null>([["HOME", home]]);
   // What reaches a command's environment from earlier in the line; plain `K=V;` does not.
@@ -611,6 +794,10 @@ const lineReason = (
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
+    if (whole || part.remoto !== null) {
+      const edit = editReason(part, cwd, vars, rootOf, whole);
+      if (edit !== null) return edit;
+    }
     if (work.has(part)) {
       // A part naming a folder in another checkout runs from there (`linux-part` does the same).
       const moved =
@@ -640,8 +827,11 @@ const lineReason = (
         env.filter((value) => value !== null),
         inScript,
       );
-      if (mac !== null) return mac;
-      if (at !== null) learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
+      // A pattern matches the text a shell runs too: what that text runs says why first.
+      if (mac !== null && mac.code !== "pinned") return mac;
+      if (mac === null && at !== null) {
+        learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
+      }
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
@@ -662,11 +852,14 @@ const lineReason = (
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
           // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
           part.script === null ? read : undefined,
+          // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
+          whole || part.remoto !== null,
           inScript || scriptBody !== undefined,
         );
         if (inner?.code === "learned") learned ??= inner;
         else if (inner !== null) return inner;
       }
+      if (mac !== null) return mac;
     }
     // A substitution runs in its own subshell: its folder and variables end with it.
     if (command.substituted) continue;
@@ -1024,6 +1217,8 @@ export interface RoutePlanInput extends PlanInput {
 interface LinuxBusy {
   readonly kind: "slots" | "worktree" | "limits" | "reading";
   readonly why: string;
+  /** Held for a job that runs there alone: never "full" for "When Linux is full". */
+  readonly alone?: true;
 }
 
 export interface Admit {
@@ -1043,6 +1238,8 @@ export interface RoutePlan {
   readonly asks: Readonly<Record<string, HeavyRunnerAskReason>>;
   /** Waiters whose unanswered question ended in Cancel. */
   readonly cancels: Readonly<Record<string, string>>;
+  /** Waiters "When Linux is full" moved to this Mac, with why: they stay there (`route`). */
+  readonly moved: Readonly<Record<string, string>>;
   readonly room: boolean;
   readonly holding: boolean;
   readonly mac: Plan | null;
@@ -1096,8 +1293,7 @@ export const intentOf = (
 ): { readonly intent: RunnerWhere; readonly reason: string; readonly cancel?: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
-    // Only a commit whose hook runs is queued, so the queue can say why it waits.
-    const why = commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK;
+    const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
   const verdict = eligibilityOf(entry, context);
@@ -1171,16 +1367,17 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const reasons: Record<string, string> = {};
   const asks: Record<string, HeavyRunnerAskReason> = {};
   const cancels: Record<string, string> = {};
+  const moved: Record<string, string> = {};
   const linuxOver: Record<string, string> = {};
   const macWaiters: HeavyQueueEntry[] = [];
   /** Why each job runs on this Mac, shown with what it waits for there. */
   const macWhy: Record<string, string> = {};
 
-  /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
-  const shows = (reason: string) => input.runnerOn === true || reason === COMMIT_HOOK;
+  /** Mac rows say why only once a Runner is on. */
+  const shows = input.runnerOn === true;
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
     alone.delete(entry.id);
-    if (shows(reason)) macWhy[entry.id] = reason;
+    if (shows) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
     if (!queueOn) admits[entry.id] = { runner: "mac", ungated: true };
@@ -1190,6 +1387,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       admits[entry.id] = { runner: "mac", ungated: false };
     } else macWaiters.push(entry);
   };
+  // A running job keeps saying why it runs on this Mac, as its row did while it waited.
+  for (const entry of macRunning) {
+    const why = (entry as QueuedEntry).routeReason;
+    if (why !== undefined && shows) reasons[entry.id] = why;
+  }
   const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
@@ -1230,7 +1432,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     // Linux drains for a job that runs there alone: admitting others would starve it.
     if (!isCall(entry) && [...alone].some((id) => id !== entry.id)) {
-      return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
+      return {
+        kind: "slots",
+        why: "Linux is kept free for a job that runs there alone",
+        alone: true,
+      };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
     if (health.overLimit) {
@@ -1243,12 +1449,56 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       return {
         kind: "limits",
         why: "Linux ran short of memory beside other jobs: waiting to run there alone",
+        alone: true,
       };
     }
     if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
       return { kind: "reading", why: "a reading a minute after the last job started there" };
     }
     return null;
+  };
+  /** Each machine's wait for `entry` in rounds of its slots; one that can't start it now counts one. */
+  /**
+   * Nothing but its slots keeps this Mac from starting `entry`: no sustained or instant limit, no
+   * job running alone, and the job fits beside the others. A Linux-full move is for good, so a
+   * Mac holding the job back for any other reason never takes it.
+   */
+  const macTakes = (entry: HeavyQueueEntry) =>
+    !macOver &&
+    !macExclusive &&
+    (!queueOn ||
+      macCount === 0 ||
+      !fresh ||
+      (machineHold(sample, input) === null && jobVerdict(input, sample, entry).hold === null));
+  const macWaitsLess = (entry: HeavyQueueEntry) => {
+    const macSlots = Math.max(1, input.maxRunning);
+    const macWait = macRoom(entry) ? 0 : Math.max(1, macCount + 1 - macSlots) / macSlots;
+    const linuxSlots = machine.runnerLinuxSlots;
+    return macWait < Math.max(1, linuxCount + 1 - linuxSlots) / linuxSlots;
+  };
+  /**
+   * "When Linux is full", in Linux mode: a waiter that only Linux's slots or limits hold back may
+   * take this Mac. A job that asked for Linux, a job's own call or a chosen wait never moves.
+   */
+  const linuxFullRoute = (entry: HeavyQueueEntry, config: RunnerProjectConfig, busy: LinuxBusy) => {
+    const full =
+      config.runnerWhere === "linux" &&
+      (busy.kind === "slots" || busy.kind === "limits") &&
+      busy.alone !== true &&
+      !askedLinux(entry) &&
+      !isCall(entry) &&
+      entry.route !== "linux";
+    const policy = full ? config.runnerLinuxFull : "wait";
+    const move = (reason: string) => {
+      moved[entry.id] = reason;
+      toMac(entry, reason);
+    };
+    if (policy === "mac" && macTakes(entry) && macRoom(entry)) return move(LINUX_FULL_MAC);
+    if (policy === "balance" && macTakes(entry) && macWaitsLess(entry)) {
+      return move(LINUX_FULL_SHORTER);
+    }
+    toLinux(entry, busy);
+    if (policy === "balance") reasons[entry.id] = LINUX_FULL_WAITING;
   };
   /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
   const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
@@ -1315,7 +1565,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
 
   for (const entry of macRunning) {
     const { intent, reason } = intentOf(entry, input.contextOf(entry.cwd));
-    if (intent === "mac" && shows(reason)) macWhy[entry.id] = reason;
+    if (intent === "mac" && shows) macWhy[entry.id] = reason;
   }
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);
@@ -1419,7 +1669,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     if (up) {
       const busy = linuxBusy(entry, worktree);
-      if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
+      if (busy !== null && !startsOnLinux(entry, busy)) linuxFullRoute(entry, config, busy);
       else {
         toLinuxNow(
           entry,
@@ -1455,6 +1705,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       linuxOver,
       asks,
       cancels,
+      moved,
       room: true,
       holding: false,
       mac: null,
@@ -1478,6 +1729,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     linuxOver,
     asks,
     cancels,
+    moved,
     room: mac.room,
     holding: mac.holding,
     mac,
@@ -1498,6 +1750,8 @@ export interface RemoteProgress {
   readonly missing: string | null;
   /** A package whose install the wrapper could not finish there before the command. */
   readonly install: string | null;
+  /** The command itself started: its output may print markers, so only `exit=` still counts. */
+  readonly commandStarted: boolean;
 }
 
 export const NO_PROGRESS: RemoteProgress = {
@@ -1509,9 +1763,14 @@ export const NO_PROGRESS: RemoteProgress = {
   exit: null,
   missing: null,
   install: null,
+  commandStarted: false,
 };
 
-/** Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. */
+/**
+ * Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. After
+ * `phase=command` only `remoto`'s own `exit=` folds; any other marker is the command's output and
+ * returns `progress` itself.
+ */
 export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgress => {
   const fields = Object.fromEntries(
     line
@@ -1523,6 +1782,11 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
   const phase = fields.phase;
   const int = (value: string | undefined) =>
     value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  // ponytail: the command can still print an `exit=`; a per-run nonce in the markers closes that.
+  if (progress.commandStarted) {
+    const exit = int(fields.exit);
+    return exit === null ? progress : { ...progress, exit };
+  }
   // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
   const group = int(fields.pgid);
   return {
@@ -1544,6 +1808,7 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
       typeof fields.install === "string" && fields.install !== ""
         ? fields.install
         : progress.install,
+    commandStarted: phase === "command",
   };
 };
 
@@ -1631,6 +1896,9 @@ export const remoteStopScript = (
   // folder under `pgidOnly`: neither the pattern nor the pgid file it rewrites names the lost run.
   const pattern = `[r]uns/${id}( |/|$)`;
   const byFolder = (command: string) => (pgidOnly ? "" : ` ${command};`);
+  // `remoto-rodar` tags the copy's commands (`REMOTO_RUN=<id>:<nonce>`): this also reaches the
+  // ones that left its process group, as a daemon or `setsid` does.
+  const tag = `^REMOTO_RUN=${id.replaceAll(".", "\\.")}:`;
   return [
     `p=${pgid ?? ""};${pgidOnly ? "" : ` [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`}`,
     `case "$p" in *[!0-9]*|0|1) p= ;; esac`,
@@ -1638,12 +1906,17 @@ export const remoteStopScript = (
     // processes still works inside the run's folder, where `remoto-rodar` started it.
     `owned() { for q in $(pgrep -g "$p" 2>/dev/null); do case "$(readlink "/proc/$q/cwd" 2>/dev/null)" in "$HOME/runs/${id}"|"$HOME/runs/${id}/"*) return 0 ;; esac; done; return 1; }`,
     `[ -z "$p" ] || owned || p=`,
-    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null${pgidOnly ? "" : ` || pgrep -f '${pattern}' >/dev/null`}; }`,
+    ...(pgidOnly
+      ? []
+      : [
+          `tagged() { for e in /proc/[0-9]*/environ; do grep -qzs '${tag}' "$e" && { q=\${e#/proc/}; echo "\${q%/environ}"; }; done; }`,
+        ]),
+    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null${pgidOnly ? "" : ` || pgrep -f '${pattern}' >/dev/null || [ -n "$(tagged)" ]`}; }`,
     `alive || { echo gone; exit 0; }`,
-    `{ [ -n "$p" ] && kill -TERM -- "-$p";${byFolder(`pkill -TERM -f '${pattern}'`)} } 2>/dev/null`,
+    `{ [ -n "$p" ] && kill -TERM -- "-$p";${byFolder(`pkill -TERM -f '${pattern}'; kill -TERM $(tagged)`)} } 2>/dev/null`,
     `i=0; while alive && [ "$i" -lt ${Math.max(1, Math.floor(waitSeconds))} ]; do sleep 1; i=$((i+1)); done`,
     `alive || { echo stopped; exit 0; }`,
-    `{ [ -n "$p" ] && kill -KILL -- "-$p";${byFolder(`pkill -KILL -f '${pattern}'`)} } 2>/dev/null; sleep 1`,
+    `{ [ -n "$p" ] && kill -KILL -- "-$p";${byFolder(`pkill -KILL -f '${pattern}'; kill -KILL $(tagged)`)} } 2>/dev/null; sleep 1`,
     `if alive; then echo alive; exit 1; else echo killed; fi`,
   ].join("\n");
 };
@@ -1656,18 +1929,41 @@ export const remotePgidScript = (id: string) => {
 
 export const INSTALL_FAILED = "Dependency install on Linux failed";
 
+const PLAYWRIGHT_MISSING = /Executable doesn't exist at \S*ms-playwright/;
+const withoutAnsi = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+/** A test runner's row (`✓ name`): it only quotes a failure. */
+const TEST_ROW = /^\s*[✓↓×✗○❯→√]/;
+/** A row of a test that passed, was skipped or runs: never a failure, of the run or an install. */
+const GOOD_ROW = /^\s*[✓↓○❯→√]/;
+/** `pattern` is in `line` outside a double-quoted string, which only quotes it. */
+const saysUnquoted = (line: string, pattern: RegExp) => {
+  const at = line.search(pattern);
+  return at >= 0 && (line.slice(0, at).match(/(?<!\\)"/g)?.length ?? 0) % 2 === 0;
+};
+
+/** The command's own output says Playwright's browser is not installed there. */
+export const browserMissing = (output: string) => {
+  const line = withoutAnsi(output);
+  return !TEST_ROW.test(line) && saysUnquoted(line, PLAYWRIGHT_MISSING);
+};
+
 // A package install or lazy download that was unfinished, or raced, when the run started there.
 const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
   [/Electron failed to install correctly/, "electron"],
-  [/Executable doesn't exist at \S*ms-playwright/, "playwright"],
+  [PLAYWRIGHT_MISSING, "playwright"],
   [/Could not find Chrom(?:e|ium) \(ver\./, "puppeteer"],
   [/Cypress (?:binary is missing|executable not found)/i, "cypress"],
-  [/^(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))(?=.*node_modules\/)/, null],
+  // Matched where the failure is named, so a quote around it shows.
+  [/(?:\bEEXIST\b|File exists \(os error 17\))(?=.*node_modules\/)/, null],
+  [/\S*node_modules\/\S*(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))/, null],
 ];
 
 /** The package an output line says is not installed yet there, else null. */
-export const installFailure = (line: string): string | null => {
-  const hit = INSTALL_FAILURES.find(([pattern]) => pattern.test(line));
+export const installFailure = (output: string): string | null => {
+  const line = withoutAnsi(output);
+  // Read before the command only: a `×` there is an installer's error (miette), not a test's.
+  if (GOOD_ROW.test(line)) return null;
+  const hit = INSTALL_FAILURES.find(([pattern]) => saysUnquoted(line, pattern));
   if (hit === undefined) return null;
   return (
     hit[1] ??

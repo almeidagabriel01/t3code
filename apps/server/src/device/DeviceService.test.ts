@@ -84,6 +84,54 @@ it.effect.each([400, 500])(
     }),
 );
 
+type AdbAnswer = { readonly code: number; readonly stdout: string; readonly stderr: string };
+const adbAnswer = (stdout: string, code = 0): AdbAnswer => ({ code, stdout, stderr: "" });
+type FakeAdb = {
+  currentUser: AdbAnswer;
+  users: Record<string, AdbAnswer>;
+  window: AdbAnswer;
+  lockSettings: AdbAnswer;
+};
+/** `dumpsys lock_settings` as Android 11-12 (`Pin`) and 14+ (`PIN`) print a user's credential. */
+const lockSettings = (credential: string) =>
+  adbAnswer(`User State:\n  User 0\n    Quality: 0\n    CredentialType: ${credential}\n`);
+const KEYGUARD = adbAnswer("    isKeyguardShowing=true\n");
+const NO_KEYGUARD = adbAnswer(
+  "    isKeyguardShowing=false\n    mShowingDream=false mDreamingLockscreen=false\n",
+);
+/** Ways a fake Android phone reads as locked to an agent. */
+const ANDROID_LOCKS = {
+  storage: (adb: FakeAdb) => {
+    adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+  "current user": (adb: FakeAdb) => {
+    adb.currentUser = adbAnswer("10\n");
+    adb.users["10"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+  "PIN lock screen": (adb: FakeAdb) => {
+    adb.window = KEYGUARD;
+    adb.lockSettings = lockSettings("PIN");
+  },
+  "older pattern lock screen": (adb: FakeAdb) => {
+    adb.window = adbAnswer("    mShowingDream=false mDreamingLockscreen=true\n");
+    adb.lockSettings = lockSettings("Pattern");
+  },
+  "PIN lock screen after a stray user line": (adb: FakeAdb) => {
+    adb.window = KEYGUARD;
+    adb.lockSettings = adbAnswer(
+      `Keys:\n  User 0\n    CredentialType: NONE\n${lockSettings("PIN").stdout}Storage:\n`,
+    );
+  },
+  "unreadable current user": (adb: FakeAdb) => {
+    adb.currentUser = adbAnswer("", 1);
+    adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+  },
+};
+const unlockAndroid = (adb: FakeAdb) => {
+  for (const user of Object.keys(adb.users)) adb.users[user] = adbAnswer("RUNNING_UNLOCKED\n");
+  adb.window = NO_KEYGUARD;
+};
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
@@ -209,22 +257,42 @@ const fixture = Effect.fn("fixture")(function* (
       );
     }),
   );
-  const run = (command: string) =>
-    command === "emulator"
-      ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : Ref.get(encoderResult);
+  /** What the fake phone's `adb shell` answers, by command; started-user states by user id. */
+  const adb = {
+    currentUser: adbAnswer("0\n"),
+    users: { "0": adbAnswer("RUNNING_UNLOCKED\n") } as Record<string, AdbAnswer>,
+    window: NO_KEYGUARD,
+    lockSettings: lockSettings("NONE"),
+  };
+  const run = (command: string, args: ReadonlyArray<string> = []) => {
+    if (command === "emulator")
+      return Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" });
+    if (command !== "adb") return Ref.get(encoderResult);
+    const shell = args.slice(args.indexOf("shell") + 1);
+    if (shell.join(" ") === "am get-current-user") return Effect.succeed(adb.currentUser);
+    if (shell.join(" ") === "dumpsys window") return Effect.succeed(adb.window);
+    if (shell.join(" ") === "dumpsys lock_settings") return Effect.succeed(adb.lockSettings);
+    if (shell[0] === "am" && shell[1] === "get-started-user-state")
+      return Effect.succeed(adb.users[shell[2] ?? ""] ?? adbAnswer("Unknown user\n"));
+    return Effect.succeed(adbAnswer(""));
+  };
+  const attaches: string[] = [];
+  const hubOperations = makeDeviceHubOperations({
+    hostId: LOCAL_DEVICE_HOST_ID,
+    origin: "http://device.test",
+    http,
+    run,
+    platformAvailable: (platform) => Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
+  });
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     devices: {
-      ...makeDeviceHubOperations({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        origin: "http://device.test",
-        http,
-        run,
-        platformAvailable: (platform) =>
-          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
-      }),
+      ...hubOperations,
+      attach: (device, context) => {
+        attaches.push(device.id);
+        return hubOperations.attach(device, context);
+      },
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -353,6 +421,8 @@ const fixture = Effect.fn("fixture")(function* (
     connection,
     devices,
     encoderResult,
+    adb,
+    attaches,
     discoveryErrors,
     androidAvailable,
     iosAvailable,
@@ -535,6 +605,182 @@ describe("device setup consent", () => {
       const state = yield* service.state;
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      case: "an emulator it boots",
+      deviceId: "Pixel_API_35",
+      booted: false,
+      physical: false,
+      lock: "storage" as const,
+    },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "storage" as const,
+    },
+    {
+      case: "a physical phone",
+      deviceId: "physical-android",
+      booted: true,
+      physical: true,
+      lock: "storage" as const,
+    },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "current user" as const,
+    },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "unreadable current user" as const,
+    },
+    {
+      case: "a running emulator",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "PIN lock screen" as const,
+    },
+    {
+      case: "a physical phone",
+      deviceId: "physical-android",
+      booted: true,
+      physical: true,
+      lock: "older pattern lock screen" as const,
+    },
+    {
+      case: "an emulator whose dump names its user earlier",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "PIN lock screen after a stray user line" as const,
+    },
+  ])(
+    "refuses agents $case while it reads as locked ($lock), and the user opens it to unlock",
+    (row) =>
+      Effect.gen(function* () {
+        const { service, devices, adb, attaches, requests } = yield* fixture();
+        if (row.booted)
+          devices.push({
+            id: DeviceId.make(row.deviceId),
+            name: row.deviceId,
+            platform: "android",
+            version: "Android 15",
+            booted: true,
+            physical: row.physical,
+          });
+        yield* service.configure({ enabled: true });
+        ANDROID_LOCKS[row.lock](adb);
+        const agentThread = ThreadId.make("locked-android");
+        const asAgent = { agent: { ask: () => Effect.succeed("allowed" as const) } };
+        const refused = yield* service
+          .open({ threadId: agentThread, deviceId: row.deviceId, platform: "android" }, asAgent)
+          .pipe(Effect.flip);
+        expect(refused).toMatchObject({
+          _tag: "DeviceNotReadyError",
+          reason: "locked",
+          // The refusal names the running device, which is what a retry opens.
+          deviceId: row.booted ? row.deviceId : "emulator-5554",
+        });
+        expect(refused.message).toContain(
+          row.physical
+            ? "enter its PIN, pattern or password on the phone itself"
+            : "open it in the Device panel and enter its PIN, pattern or password there",
+        );
+        const locked = yield* service.state;
+        expect(locked.sessions).toEqual([]);
+        expect(locked.bootingDevices ?? []).toEqual([]);
+        expect(locked.devices.every((device) => (device.issues ?? []).length === 0)).toBe(true);
+        // Refused before attaching, so nothing was set up for the agent.
+        expect(attaches).toEqual([]);
+
+        const running = (refused as { deviceId: string }).deviceId;
+        // A headless emulator's lock screen is reachable only through the user's own open.
+        const user = yield* service.open({
+          threadId: ThreadId.make("user-unlocks"),
+          deviceId: running,
+          platform: "android",
+        });
+        expect(user.deviceId).toBe(running);
+
+        unlockAndroid(adb);
+        const session = yield* service.open(
+          { threadId: agentThread, deviceId: running, platform: "android" },
+          asAgent,
+        );
+        expect(session.deviceId).toBe(running);
+        expect((yield* service.state).sessions).toEqual([user, session]);
+        // Unlocking needed no reboot.
+        expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(row.booted ? 0 : 1);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("powers off an emulator it booted locked once it sits idle", () =>
+    Effect.gen(function* () {
+      const { service, adb, requests } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
+      yield* service
+        .open(
+          {
+            threadId: ThreadId.make("locked-idle"),
+            deviceId: "Pixel_API_35",
+            platform: "android",
+          },
+          { agent: {} },
+        )
+        .pipe(Effect.flip);
+      yield* TestClock.adjust("21 minutes");
+      yield* service.reapIdleDevices(20);
+      expect(requests.filter((url) => url.endsWith("/shutdown"))).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { case: "adb fails", adb: { users: { "0": adbAnswer("", 1) } } },
+    { case: "the state is unknown", adb: { users: { "0": adbAnswer("Unknown command\n") } } },
+    {
+      case: "the user is still unlocking",
+      adb: { users: { "0": adbAnswer("RUNNING_UNLOCKING\n") } },
+    },
+    {
+      case: "its lock screen only asks for a swipe",
+      adb: { window: KEYGUARD, lockSettings: lockSettings("NONE") },
+    },
+    {
+      // Android 9 prints no credential type.
+      case: "its lock screen's credential is unknown",
+      adb: { window: KEYGUARD, lockSettings: adbAnswer("    User 0\n        SID = 0\n") },
+    },
+    {
+      case: "only a later section names a credential",
+      adb: {
+        window: KEYGUARD,
+        lockSettings: adbAnswer(
+          "User State:\n  User 0\n    Quality: 0\nStrongAuth:\n    CredentialType: PIN\n",
+        ),
+      },
+    },
+  ])("opens an Android device when $case, since only a locked reading refuses", (row) =>
+    Effect.gen(function* () {
+      const { service, adb } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      Object.assign(adb, row.adb);
+      const session = yield* service.open(
+        { threadId: ThreadId.make("unknown-lock"), deviceId: "Pixel_API_35", platform: "android" },
+        { agent: {} },
+      );
+      expect(session.deviceId).toBe("emulator-5554");
     }).pipe(Effect.scoped),
   );
 

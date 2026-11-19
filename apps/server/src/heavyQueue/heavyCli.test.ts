@@ -245,12 +245,48 @@ describe("t3 heavy", () => {
     expect(await holder.exited).toBe(0);
   });
 
-  it("reports a missing program and a program that cannot start", async () => {
+  it.each([
+    // [case, options, command, exit code, text, stream]
+    ["no command", ["--"], [], 2, "Usage: t3 heavy", "err"],
+    ["no command and no separator", [], [], 2, "Usage: t3 heavy", "err"],
+    ["--help", [], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["-h", [], ["-h"], 0, "Usage: t3 heavy", "out"],
+    ["--help among options", ["--now", "--help"], [], 0, "Usage: t3 heavy", "out"],
+    [
+      "--help with a command",
+      ["--now", "--help", "--"],
+      ["vp", "test"],
+      2,
+      "put it after `--`",
+      "err",
+    ],
+    ["--help after the separator", ["--"], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["an unknown option", [], ["-x"], 2, "use `--` before the command", "err"],
+    ["an unknown option after the separator", ["--"], ["-x"], 2, "use `--` before", "err"],
+    ["an option missing its value", [], ["--name"], 2, "use `--` before", "err"],
+  ] as const)(
+    "%s never queues and answers with its usage",
+    async (_, options, command, code, text, stream) => {
+      const dir = tempDir();
+      const run = heavy(dir, command, {}, options);
+      expect(await run.exited).toBe(code);
+      expect(stream === "out" ? run.stdout() : run.stderr()).toContain(text);
+      expect(Queue.readDoc(dir)).toMatchObject({ entries: [], events: [] });
+    },
+  );
+
+  it.each([
+    ["a command's own --help", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "--help"], "--help\n"],
+    ["a command's own -x", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "-x"], "-x\n"],
+  ])("runs %s after the separator", async (_, command, out) => {
     const dir = tempDir();
-    const none = heavy(dir, []);
-    expect(await none.exited).toBe(2);
-    expect(none.stderr()).toContain("Usage: t3 heavy");
-    expect(none.stderr()).toContain("t3 heavy routes [--forget <key|all>]");
+    const run = heavy(dir, command);
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe(out);
+  });
+
+  it("reports a program that cannot start", async () => {
+    const dir = tempDir();
     const missing = heavy(dir, ["/nonexistent/t3-heavy-program"]);
     expect(await missing.exited).toBe(127);
     expect(Queue.read(dir)).toEqual([]);
@@ -604,16 +640,25 @@ describe("t3 heavy", () => {
     it("runs a call that turns out to need this Mac as its own Mac job, never rerunning the line", async () => {
       const { dir, env } = setup(echoArgs);
       const marker = NodePath.join(dir, "marker");
-      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp lint a.ts`;
+      const line = `echo x >> ${marker}; F=$(echo /etc/hosts); vp test run $F; vp check a.ts`;
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(
-        `vp on mac: test run /etc/hosts\nvp|lint|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
+        `vp on mac: test run /etc/hosts\nvp|check|a.ts| in ${NodeFS.realpathSync(dir)}\n`,
       );
       expect(run.stderr()).toContain(
         "Uses a file only this Mac has: /etc/hosts; running this call on this Mac",
       );
       expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
+    });
+
+    it("judges the variables a line set for a call like its arguments", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = `export T3CODE_HOME=$(echo /etc/t3home); vp test run a; vp check a.ts`;
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run a\nvp on mac: check a.ts\n");
+      expect(run.stderr()).toContain("Uses a file only this Mac has: /etc/t3home");
     });
 
     it("runs the line here as written and sends each heavy call to Linux expanded", async () => {
@@ -624,10 +669,10 @@ describe("t3 heavy", () => {
         NodeFS.writeFileSync(NodePath.join(dir, "src", file), "");
       const real = NodeFS.realpathSync(dir);
       const lint =
-        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp lint "${files[@]}"';
+        'files=($(git status --porcelain --untracked-files=all src | cut -c4-)); vp check "${files[@]}"';
       const linted = heavyHere(dir, ["/bin/bash", "-c", lint], env, ["--"], dir);
       expect(await linted.exited).toBe(0);
-      expect(linted.stdout()).toBe(`vp|lint|src/a.ts|src/b.ts| in ${real}\n`);
+      expect(linted.stdout()).toBe(`vp|check|src/a.ts|src/b.ts| in ${real}\n`);
       const cased = heavyHere(
         dir,
         [
@@ -668,7 +713,7 @@ describe("t3 heavy", () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n' >&2; printf '${M} exit=3\\n' >&2; exit 3`,
       );
-      const line = 'vp lint a.ts; echo "status $?"; exit 5';
+      const line = 'vp check a.ts; echo "status $?"; exit 5';
       const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(5);
       expect(run.stdout()).toBe("status 3\n");
@@ -856,6 +901,12 @@ describe("t3 heavy", () => {
         { cwd: dir, encoding: "utf8" },
       );
       expect(listed).toContain(key);
+      const help = NodeChildProcess.execFileSync(
+        process.execPath,
+        [BIN, "heavy", "routes", "--queue-dir", dir, "--help"],
+        { cwd: dir, encoding: "utf8" },
+      );
+      expect(help).toBe("Usage: t3 heavy routes [--forget <key|all>]\n");
       NodeChildProcess.execFileSync(
         process.execPath,
         [BIN, "heavy", "routes", "--queue-dir", dir, "--forget", key],
@@ -949,11 +1000,11 @@ describe("t3 heavy", () => {
     it.each([
       ["vp test run < in.txt", "vp|test|run|input\n"],
       ["echo x | vp test run", "vp|test|run|x\n"],
-      ["echo x | vp lint --stdin-filepath=a.ts", "vp|lint|--stdin-filepath=a.ts|x\n"],
-      ['while read f; do vp lint "$f"; done < files.txt', "vp|lint|a.ts|b.ts\nvp|lint|b.ts|\n"],
+      ["echo x | vp check --stdin-filepath=a.ts", "vp|check|--stdin-filepath=a.ts|x\n"],
+      ['while read f; do vp check "$f"; done < files.txt', "vp|check|a.ts|b.ts\nvp|check|b.ts|\n"],
       [
-        "printf 'a.ts\\nb.ts\\n' | while read f; do vp lint \"$f\"; done",
-        "vp|lint|a.ts|\nvp|lint|b.ts|\n",
+        "printf 'a.ts\\nb.ts\\n' | while read f; do vp check \"$f\"; done",
+        "vp|check|a.ts|\nvp|check|b.ts|\n",
       ],
     ])("hands Linux the stdin of %j", async (line, expected) => {
       const { dir, env } = setup(
@@ -973,10 +1024,10 @@ describe("t3 heavy", () => {
     // Linux already read the pipe it was handed, so a rerun here would get none; a file it read by
     // position is still all here.
     it.each([
-      ["cat in.txt | vp lint --stdin-filepath=a.ts", "code 127\n", true],
+      ["cat in.txt | vp check --stdin-filepath=a.ts", "code 127\n", true],
       [
-        "vp lint --stdin-filepath=a.ts < in.txt",
-        "vp on mac: lint --stdin-filepath=a.ts\ncode 0\n",
+        "vp check --stdin-filepath=a.ts < in.txt",
+        "vp on mac: check --stdin-filepath=a.ts\ncode 0\n",
         false,
       ],
     ])("%s after Linux lacked its tool", async (call, output, spent) => {
@@ -1033,13 +1084,34 @@ describe("t3 heavy", () => {
         );
         expect(run.stderr()).toContain("Dependency install on Linux failed");
         expect(
-          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+          run
+            .stderr()
+            .includes("Linux couldn't run this: Dependency install on Linux failed: electron"),
         ).toBe(fails === 2);
         expect(faults(dir).map((fault) => fault.cause)).toEqual(
           fails === 2 ? ["linux-install:electron"] : [],
         );
       },
     );
+
+    // Sent without Chromium (`REMOTO_BROWSER=0`), a run Playwright found no browser for goes once
+    // more there with it: Linux lacked a download, never this Mac's to run.
+    it("a run that needed Chromium runs again on Linux with it", async () => {
+      const { dir, env } = setup(
+        [
+          `echo "$REMOTO_BROWSER" >> "$0.browser"`,
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `if [ "$REMOTO_BROWSER" = 0 ]; then echo "browserType.launch: Executable doesn't exist at /x/ms-playwright/chromium/chrome" >&2; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+          "echo linux-ok",
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("linux-ok\n");
+      expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.browser"), "utf8")).toBe("0\n1\n");
+      expect(faults(dir)).toEqual([]);
+    });
 
     // `./node_modules/.bin/effect-tsgo` from a package whose bins live at the root. A bare name
     // may exist on Linux alone, so it goes there and only Linux's own pre-flight can refuse it.
@@ -1529,7 +1601,7 @@ describe("t3 heavy", () => {
           "vp",
           [
             `touch "${home}/up-$2"`,
-            `while [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; do sleep 0.05; done`,
+            `while [ -d "${home}" ] && { [ ! -e "${home}/up-a" ] || [ ! -e "${home}/up-b" ]; }; do sleep 0.05; done`,
             command(dir),
           ].join("\n"),
         );
@@ -1548,7 +1620,7 @@ describe("t3 heavy", () => {
         );
         const run = heavyHere(
           dir,
-          ["/bin/sh", "-c", "vp lint a & vp lint b & wait"],
+          ["/bin/sh", "-c", "vp check a & vp check b & wait"],
           { ...env, T3CODE_REMOTO: remoto, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
           ["--"],
           dir,
@@ -1568,7 +1640,7 @@ describe("t3 heavy", () => {
         // `b` ends only once `a`'s results are back here, after `a` listed what changed there.
         const { dir, run } = parallel(
           (mac) =>
-            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
+            `echo "$2" > "$2.txt"; [ "$2" = a ] || while [ -d ${mac} ] && [ ! -e ${mac}/a.txt ]; do sleep 0.05; done`,
         );
         expect(await run.exited).toBe(0);
         expect(run.stderr()).not.toContain("Could not copy");
@@ -1609,7 +1681,7 @@ describe("t3 heavy", () => {
         const { dir, env } = setup(
           [
             `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2`,
-            `while [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
+            `while [ -d "\${0%/*}" ] && [ ! -e "$0.drop" ]; do sleep 0.05; done; exit 255`,
           ].join("\n"),
           { runnerDropped: "agent", runnerUnavailable: "mac" },
         );
@@ -1908,7 +1980,22 @@ describe("t3 heavy", () => {
         false,
       ],
       ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
-      ["bare remoto, no command", ["remoto"], "/w", "remoto", [], false],
+      [
+        "login shell remoto after cd",
+        [SH, "-lc", "cd apps/server && remoto vp test run"],
+        "/w/apps/server",
+        SH,
+        ["-lc", "vp test run"],
+        true,
+      ],
+      [
+        "--login shell remoto",
+        [SH, "--login", "-c", "remoto vp test"],
+        "/w",
+        SH,
+        ["--login", "-c", "vp test"],
+        true,
+      ],
     ] as const;
     const modes = [
       ["queue on, Runner on", true, true],
@@ -1935,6 +2022,62 @@ describe("t3 heavy", () => {
           : { kind: "queue", cwd, program, args, where: remoto ? "linux" : undefined },
       );
     });
+
+    // [case, command, an agent's `remoto` T3 takes out, what the refusal says]
+    const notCommands = [
+      [
+        "bare remoto --help",
+        ["remoto", "--help"],
+        true,
+        "remoto runs a command; `--help` is not one",
+      ],
+      [
+        "wrapped remoto -h",
+        [SH, "-c", "remoto -h"],
+        true,
+        "remoto runs a command; `-h` is not one",
+      ],
+      [
+        "remoto -x after cd",
+        [SH, "-c", "cd apps/server && remoto -x"],
+        true,
+        "remoto runs a command; `-x` is not one",
+      ],
+      ["bare remoto alone", ["remoto"], true, "remoto <command> [args...]"],
+      ["wrapped option", [SH, "-c", "--help"], false, "`--help` is not a command"],
+      ["quoted option", [SH, "-c", "'-x' a"], false, "`-x` is not a command"],
+      ["login shell option", [SH, "-lc", "--x"], false, "`--x` is not a command"],
+      ["clustered -c option", [SH, "-ec", "-x"], false, "`-x` is not a command"],
+      ["--login -c option", [SH, "--login", "-c", "-x"], false, "`-x` is not a command"],
+    ] as const;
+
+    it.each(
+      notCommands.flatMap((shape) =>
+        modes.map((mode) => [shape[0], mode[0], shape, mode] as const),
+      ),
+    )(
+      "refuses to queue %s, %s",
+      (_shape, _mode, [, command, remoto, text], [, enabled, runner]) => {
+        const launch = heavyLaunch(
+          { program: command[0], args: command.slice(1), where: undefined },
+          "/w",
+          "/home/me",
+          () => ({ enabled, runner }),
+          false,
+        );
+        // Run as written when T3 would not queue it: what the caller sees is the same as without T3.
+        if ((!enabled && !runner) || (remoto && !runner))
+          expect(launch).toEqual({ kind: "direct" });
+        else {
+          expect(launch).toMatchObject({ kind: "refused" });
+          if (launch.kind === "refused") {
+            expect(launch.reason).toContain(text);
+            // An agent that typed `remoto` never called `t3 heavy`: the answer speaks of `remoto`.
+            if (remoto) expect(launch.reason).not.toContain("t3 heavy");
+          }
+        }
+      },
+    );
 
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
@@ -1988,6 +2131,63 @@ describe("t3 heavy", () => {
       }
     });
 
+    // A server runs until it is stopped: queued, it would hold a Mac slot for good.
+    it.each([
+      ["npx expo start --dev-client --port 8082 --clear", "direct"],
+      ["expo start -c", "direct"],
+      ["vite", "direct"],
+      ["vite dev --port 5174", "direct"],
+      ["next dev", "direct"],
+      ["npx react-native start --reset-cache", "direct"],
+      ["metro serve", "direct"],
+      ["storybook dev -p 6006", "direct"],
+      ["start-storybook -p 6006", "direct"],
+      ["pnpm run storybook", "direct"],
+      ["pnpm -F web dev", "direct"],
+      ["pnpm --filter web start", "direct"],
+      ["npm -w web run serve", "direct"],
+      ["yarn workspace web preview", "direct"],
+      ["pnpm run watch", "direct"],
+      ["vitest --watch", "direct"],
+      ["nodemon src/index.ts", "direct"],
+      ["npx nodemon", "direct"],
+      ["pnpm exec tsc -w", "direct"],
+      ["pnpm tsc --watch", "direct"],
+      ["npx tsx watch src/a.ts", "direct"],
+      ["node --watch-path=src src/a.js", "direct"],
+      ["ts-node-dev --respawn src/a.ts", "direct"],
+      ["cd apps/web && pnpm build && pnpm preview", "direct"],
+      ["vite build", "queue"],
+      ["next build", "queue"],
+      ["pnpm serve-static-build", "queue"],
+      ["vp test run", "queue"],
+    ] as const)("%s: %s", (line, kind) => {
+      for (const runner of [true, false]) {
+        const launch = heavyLaunch(
+          { program: SH, args: ["-c", line], where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner }),
+          false,
+        );
+        expect(launch.kind).toBe(kind);
+      }
+    });
+
+    it("runs an agent's remoto call to a server here, outside the queue", () => {
+      const launch = heavyLaunch(
+        { program: SH, args: ["-c", "cd /p && remoto npx expo start"], where: undefined },
+        "/w",
+        "/h",
+        () => ({ enabled: true, runner: true }),
+        false,
+      );
+      expect(launch).toEqual({
+        kind: "direct",
+        run: { cwd: "/p", program: SH, args: ["-c", "npx expo start"] },
+      });
+    });
+
     it("still queues a script with heavy work of its own beside the hand-off", () => {
       const read = () => () => "vp lint\nt3 heavy -- vp test run\n";
       expect(
@@ -2002,7 +2202,7 @@ describe("t3 heavy", () => {
       ).toMatchObject({ kind: "queue" });
     });
 
-    it("runs a commit with no hook as written, and queues a hooked one first", () => {
+    it("runs a local git write as written, even where a commit hook runs", () => {
       const parent = tempDir();
       const root = NodePath.join(parent, "repo");
       NodeFS.mkdirSync(root);
@@ -2013,18 +2213,15 @@ describe("t3 heavy", () => {
       expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
       expect(heavyLaunch(direct, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
-      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toMatchObject({
-        kind: "queue",
-        cwd: root,
-        priority: "high",
-      });
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      const rebase = { program: "git", args: ["rebase", "main"], where: undefined };
+      expect(heavyLaunch(rebase, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
     });
 
     const config = { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true };
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
       CHECKOUTS.find((root) => cwd === root || cwd.startsWith(`${root}/`)) ?? null;
-    const COMMITS = "Changes this Mac's checkout: git commit";
     const OUTSIDE = "Uses a file only this Mac has: ";
     /** What the hook, the queue and a Linux attempt each make of an agent's Bash line. */
     const placed = (line: string) => {
@@ -2192,8 +2389,12 @@ describe("t3 heavy", () => {
       // A build goes there too: its output comes back.
       ["vp run build", "linux", "vp run build"],
       // The rest of what keeps work here, each with its reason.
-      ["git commit -m 'fix: t3 heavy'", COMMITS],
-      ['git add a && git commit -m "x" && vp test run', COMMITS],
+      // A commit beside a heavy call runs in this Mac's shell; only the call crosses.
+      [
+        'git add a && git commit -m "x" && vp test run',
+        "linux",
+        'git add a && git commit -m "x" && vp test run',
+      ],
       ["xcodebuild -scheme App test", "Mac-only tool: xcodebuild"],
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
       // A line it can't follow is no reason to keep it here.
@@ -2205,6 +2406,13 @@ describe("t3 heavy", () => {
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],
       ["git commit -n -m wip", "light"],
+      ["git commit -m 'fix: t3 heavy'", "light"],
+      ['git commit -m "x" a.ts', "light"],
+      ["git commit --amend --no-edit", "light"],
+      ["git merge foo", "light"],
+      ["git rebase main", "light"],
+      ["git add a.ts && git commit -m x", "light"],
+      ["git push", "light"],
       ["echo remoto && ls", "light"],
       ["t3 heavy -- vp test run", "queued"],
       ["ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q' -- vp test run", "queued"],
@@ -2426,6 +2634,7 @@ describe("t3 heavy", () => {
       name: undefined,
       priority: undefined,
       now: false,
+      help: undefined,
       program: "vp",
       args: ["test"],
     });

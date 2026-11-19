@@ -83,7 +83,16 @@ export interface ThreadMenuInput {
   readonly assistantTask?: { readonly dismissed: boolean; readonly canDismiss: boolean } | null;
   /** An assistant's subagent: it lives under the assistant, in no project of its own. */
   readonly outsideProjects?: boolean;
+  /** List only: the thread holds an unsent draft the row can throw away. */
+  readonly discardDraft?: boolean;
 }
+
+export const DISCARD_DRAFT_ACTION: MenuAction = {
+  id: "discard-draft",
+  title: "Discard draft",
+  image: "xmark",
+  attributes: { destructive: true },
+};
 
 const PROJECT_IDS = new Set(["new-thread-on-branch", "notes", "project", "turn-into-project"]);
 const ASSISTANT_HIDDEN_IDS = new Set([
@@ -103,9 +112,10 @@ export const isAssistantSubagent = (thread: {
 
 export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
   const base = buildBaseThreadMenuActions(input);
-  const actions = input.outsideProjects
+  const scoped = input.outsideProjects
     ? base.filter((action) => !PROJECT_IDS.has(action.id ?? ""))
     : base;
+  const actions = input.discardDraft === true ? [DISCARD_DRAFT_ACTION, ...scoped] : scoped;
   if (!input.assistant) return actions;
   return [
     ...actions.filter((action) => !ASSISTANT_HIDDEN_IDS.has(action.id ?? "")),
@@ -306,6 +316,7 @@ export interface ThreadMenuHandlers {
   readonly dismissTask?: () => void;
   readonly restoreTask?: () => void;
   readonly resetAssistant?: () => void;
+  readonly discardDraft?: () => void;
   readonly assistantWork?: () => void;
   readonly assistantSettings?: () => void;
   readonly delete: () => void;
@@ -373,6 +384,8 @@ export function runThreadMenuEvent(
       return handlers.dismissTask?.();
     case "restore-task":
       return handlers.restoreTask?.();
+    case "discard-draft":
+      return handlers.discardDraft?.();
     case "reset-assistant":
       return handlers.resetAssistant?.();
     case "assistant-work":

@@ -19,6 +19,7 @@ import { recordRouteFault, routeFolder, routeKey } from "./routeMemory.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
+  LINUX_FULL_SHORTER,
   LINUX_SETTLE_MS,
   parseHeartbeat,
   runnerCopyId,
@@ -1447,6 +1448,13 @@ describe("Runner in the queue file", () => {
     ["runnerRouteMemoryDays", 91],
     ["runnerRouteLearnAfter", null],
     ["runnerRouteLearnAfter", 0],
+    ["runnerLinuxFull", undefined],
+    ["runnerLinuxFull", "later"],
+    ["runnerLinuxFull", null],
+    ["runnerWhere", "cloud"],
+    ["runnerUnavailable", null],
+    ["runnerDeadlineAction", "retry"],
+    ["runnerDropped", 1],
   ] as const)("a stored %s of %j reads as its default", (key, stored) => {
     const dir = tempDir();
     const bad = { ...config(), [key]: stored } as unknown as RunnerProjectConfig;
@@ -1721,14 +1729,56 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir).find((e) => e.id === "lost")).not.toHaveProperty("unconfirmed");
   });
 
-  it("probe: Linux with every slot busy is full and the command would wait", () => {
-    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+  it.each([
+    ["wait", "linux", "waiting for Linux: all 2 Linux slots are busy"],
+    ["mac", "mac", "Linux is full: running on this Mac"],
+  ] as const)(
+    "probe: Linux with every slot busy is full; When Linux is full %s runs it on %s",
+    (runnerLinuxFull, runsOn, reason) => {
+      const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull })));
+      startOnLinux(dir, ["a", "b"]);
+      expect(Queue.probe(dir, "vp test run", checkout("c"), NOW + 3)).toMatchObject({
+        runsOn,
+        linuxFull: true,
+        reason,
+      });
+    },
+  );
+
+  it.each([
+    ["mac", "Linux is full: running on this Mac"],
+    ["balance", LINUX_FULL_SHORTER],
+  ] as const)("%s: a job Linux-full sent here keeps its reason while it runs", (policy, why) => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: policy })));
     startOnLinux(dir, ["a", "b"]);
-    expect(Queue.probe(dir, "vp test run", checkout("c"), NOW + 3)).toMatchObject({
-      runsOn: "linux",
-      startsNow: false,
-      linuxFull: true,
-      reason: "waiting for Linux: all 2 Linux slots are busy",
+    Queue.enqueue(dir, test("c"));
+    expect(Queue.tryStart(dir, "c", NOW + 3)).toMatchObject({ status: "started" });
+    expect(Queue.readPlan(dir, NOW + 4).plan.reasons.c).toBe(why);
+  });
+
+  it("balance: a job moved to wait on this Mac stays there once Linux frees a slot", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: "balance" })));
+    Queue.setMaxRunning(dir, 2);
+    const macOnly = "vp test run --project ios -- xcodebuild";
+    Queue.enqueue(dir, { ...test("m1"), label: macOnly, forced: true });
+    Queue.enqueue(dir, { ...test("m2"), label: macOnly, forced: true });
+    expect(Queue.tryStart(dir, "m1", NOW)).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "m2", NOW)).toMatchObject({ status: "started" });
+    startOnLinux(dir, ["l1", "l2"]);
+    Queue.enqueue(dir, test("w"));
+    Queue.enqueue(dir, test("c"));
+    // Linux: 2 running and w waiting, a full round; the Mac: half of one.
+    expect(Queue.tryStart(dir, "c", NOW + 3)).toMatchObject({
+      status: "waiting",
+      runner: "mac",
+      reason: expect.stringContaining(LINUX_FULL_SHORTER),
+    });
+    Queue.remove(dir, "l1");
+    // Without the move, w taking that slot leaves Linux half a round: a tie, which stays on Linux.
+    expect(Queue.tryStart(dir, "c", NOW + 4)).toMatchObject({ status: "waiting", runner: "mac" });
+    expect(Queue.read(dir).find((e) => e.id === "c")).toMatchObject({
+      route: "mac",
+      routeReason: LINUX_FULL_SHORTER,
     });
   });
 
@@ -1786,7 +1836,7 @@ describe("Runner in the queue file", () => {
       ).toBeNull();
     });
 
-    it("queues a commit only where a commit hook runs, judged in the folder its cd names", () => {
+    it("runs a commit directly, even where a commit hook runs", () => {
       const dir = queueWith(block(config({ runnerEnabled: false })));
       const parent = tempDir();
       const root = NodePath.join(parent, "repo");
@@ -1796,22 +1846,20 @@ describe("Runner in the queue file", () => {
       expect(Queue.answerBashCall(dir, commit, PREFIX)).toBeNull();
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toEqual({
         runsOn: "direct",
-        reason: "No commit hook in this repository: runs directly",
+        reason: "A local git write: runs directly",
         startsNow: true,
         linuxFull: false,
         canceled: false,
       });
       NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
-      expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();
-      // It would go ahead of an agent's waiting build.
+      // A busy slot does not hold it either.
       Queue.enqueue(dir, test("busy"));
       expect(Queue.tryStart(dir, "busy", NOW)).toMatchObject({ status: "started" });
-      Queue.enqueue(dir, { ...test("build"), priority: "low" });
+      expect(Queue.answerBashCall(dir, commit, PREFIX)).toBeNull();
       expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toMatchObject({
-        runsOn: "mac",
-        startsNow: false,
+        runsOn: "direct",
+        startsNow: true,
       });
-      expect(Queue.read(dir).map((e) => e.id)).toEqual(["busy", "build"]);
     });
   });
 });

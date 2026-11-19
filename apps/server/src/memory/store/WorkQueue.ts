@@ -186,11 +186,12 @@ export const makeWorkQueue = (
   });
   const cancelThreadWork = Effect.fn("MemoryStore.cancelThreadWork")(function* (
     input: M.ScopedThreadRef,
+    failureCode: M.MemoryFailureCode,
   ) {
     const thread = yield* threadCodec.decode(yield* threadCodec.encode(input), strict);
     const rows = yield* stored(
       "cancel-thread-work",
-      sql`UPDATE memory_outbox SET status='cancelled',payload_ref=NULL,claimed_by=NULL,claimed_until=NULL WHERE kind IN ('summary','consolidate') AND status IN ('pending','running','retry') AND json_extract(metadata_json,'$.kind')='summary' AND json_extract(metadata_json,'$.sourceThread.environmentId')=${thread.environmentId} AND json_extract(metadata_json,'$.sourceThread.threadId')=${thread.threadId} RETURNING id`,
+      sql`UPDATE memory_outbox SET status='cancelled',payload_ref=NULL,claimed_by=NULL,claimed_until=NULL,failure_code=${failureCode} WHERE kind IN ('summary','consolidate') AND status IN ('pending','running','retry') AND json_extract(metadata_json,'$.kind')='summary' AND json_extract(metadata_json,'$.sourceThread.environmentId')=${thread.environmentId} AND json_extract(metadata_json,'$.sourceThread.threadId')=${thread.threadId} RETURNING id`,
     );
     return rows.length;
   });
@@ -206,7 +207,8 @@ export const makeWorkQueue = (
   const commitThreadHook = Effect.fn("MemoryStore.commitThreadHook")(function* (input: {
     expectedWatermark: number;
     throughWatermark: number;
-    work: ReadonlyArray<MemoryWork>;
+    /** A pre-settled `cancelled` row carries the code that settled it. */
+    work: ReadonlyArray<MemoryWork & { readonly failureCode?: M.MemoryFailureCode }>;
   }) {
     yield* transact(
       Effect.gen(function* () {
@@ -221,7 +223,14 @@ export const makeWorkQueue = (
           return yield* new MemoryStoreConflict({ code: "revision_changed" });
         if (input.work.some((work) => work.id === threadHookId))
           return yield* new MemoryStoreConflict({ code: "identity_mismatch" });
-        for (const work of input.work) yield* enqueueWork(work);
+        for (const { failureCode, ...work } of input.work) {
+          yield* enqueueWork(work);
+          if (failureCode !== undefined)
+            yield* stored(
+              "thread-hook-settled-code",
+              sql`UPDATE memory_outbox SET failure_code=${failureCode} WHERE id=${work.id} AND status='cancelled' AND failure_code IS NULL`,
+            );
+        }
         // Completed marker is never runnable; no transcript is retained in hook metadata.
         yield* stored(
           "thread-hook-commit",
@@ -285,13 +294,14 @@ export const makeWorkQueue = (
     id: string,
     status: "completed" | "cancelled" | "failed",
     result?: M.MemoryHubReceipt,
+    failureCode?: M.MemoryFailureCode,
   ) {
     yield* transact(
       Effect.gen(function* () {
         yield* clearTerminalSubmission(id);
         yield* stored(
           "finish-work",
-          sql`UPDATE memory_outbox SET status=${status},terminal_at=${yield* Clock.currentTimeMillis},claimed_by=NULL,claimed_until=NULL,completed_receipt_json=${result ? yield* receiptCodec.encode(result) : null},payload_ref=NULL WHERE id=${id}`,
+          sql`UPDATE memory_outbox SET status=${status},terminal_at=${yield* Clock.currentTimeMillis},claimed_by=NULL,claimed_until=NULL,completed_receipt_json=${result ? yield* receiptCodec.encode(result) : null},payload_ref=NULL,failure_code=CASE WHEN ${status}='completed' THEN ${failureCode ?? null} ELSE coalesce(${failureCode ?? null},failure_code) END WHERE id=${id}`,
         );
       }),
     );

@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NeedsUser from "../autonomy/NeedsUser.ts";
@@ -573,6 +574,59 @@ it.effect("a settled wait also takes back the default assistant's queued notice"
 });
 
 it.effect(
+  "a settled wait of a group request's thread still takes back the default's queued notice",
+  () => {
+    const jarvis = waitWakeId(ThreadId.make("assistant:jarvis:1"), "request:req-command");
+    const { sends, dispatched, layer } = harness({
+      requestLaunches: [taskThread],
+      ownerRuns: [{ id: "run-jarvis", status: "queued", userMessageId: jarvis }],
+    });
+    return Effect.gen(function* () {
+      yield* setup(false, "assistant:jarvis:g-0123456789abcdef");
+      yield* (yield* Reactor.AssistantTaskReactor).handleWait(
+        requestChange(taskThread, "command", "resolved")!,
+      );
+      assert.strictEqual(sends.length, 0);
+      assert.deepStrictEqual(
+        dispatched.map((command) => [command.threadId, command.runId]),
+        [["assistant:jarvis:1", "run-jarvis"]],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a request settled within its grace wakes no one; one still open wakes after it", () => {
+  const h = harness({
+    changes: [
+      requestChange(taskThread, "command")!,
+      requestChange(taskThread, "command", "resolved")!,
+      requestChange(taskThread, "file-change")!,
+      // Woken at once: its wake marks the end of the changes.
+      decisionChange()!,
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    const sent = yield* Queue.unbounded<unknown>();
+    h.onSend.current = (input) => Queue.offer(sent, input).pipe(Effect.asVoid);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* (yield* Reactor.AssistantTaskReactor).start();
+        yield* Queue.take(sent);
+        assert.strictEqual(h.sends.length, 1);
+        yield* TestClock.adjust(Reactor.REQUEST_WAKE_GRACE);
+        yield* Queue.take(sent);
+      }),
+    );
+    const ada = ThreadId.make("assistant:ada:1");
+    assert.deepStrictEqual(
+      h.sends.map((send) => send.messageId),
+      [waitWakeId(ada, "decision:dec-1"), waitWakeId(ada, "request:req-file-change")],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
   "the default's own task wakes it under the id its notice uses, so it is told once",
   () => {
     const { sends, layer } = harness();
@@ -661,8 +715,15 @@ it.effect("start wakes for what already waits, and a second start repeats the sa
     const sent = yield* Queue.unbounded<unknown>();
     h.onSend.current = (input) => Queue.offer(sent, input).pipe(Effect.asVoid);
     const reactor = yield* Reactor.AssistantTaskReactor;
+    // The decision wakes at once; the request after its grace.
     const startAndAwaitTwoWakes = Effect.scoped(
-      reactor.start().pipe(Effect.andThen(Queue.take(sent)), Effect.andThen(Queue.take(sent))),
+      reactor
+        .start()
+        .pipe(
+          Effect.andThen(Queue.take(sent)),
+          Effect.andThen(TestClock.adjust(Reactor.REQUEST_WAKE_GRACE)),
+          Effect.andThen(Queue.take(sent)),
+        ),
     );
     yield* startAndAwaitTwoWakes;
     yield* startAndAwaitTwoWakes;

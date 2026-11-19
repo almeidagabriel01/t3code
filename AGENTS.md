@@ -230,7 +230,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - CI does not run on this fork (every run is cancelled for lack of runners). `vp run check:changed` plus the test files you ran are the only gate before a release, so say exactly what you ran.
 - On a busy Mac, browser tests that boot the whole app (`AssistantDialog.browser.test.tsx`) time out in the full gate and every later test in the file fails with them. Rerun as `VITEST_MAX_WORKERS=2 vp run check:changed` before suspecting the code.
 - After an upstream merge, `check:changed` touches most of the repo and its default 900s budget kills the test step: pass `--timeout 3300`.
-- With the Linux Runner on, the heavy hook can send a Bash call that runs `check:changed` or a test-named commit to the PC, which has no `.git`: queue it as `t3 heavy --runner mac -- <command>`. Tests sent to the PC run as `pnpm exec vp …`; `vp` is not on its PATH.
+- With the Linux Runner on, the heavy hook can send a Bash call that runs `check:changed` to the PC, which has no `.git`: queue it as `t3 heavy --runner mac -- <command>`. Tests sent to the PC run as `pnpm exec vp …`; `vp` is not on its PATH.
 - In a worktree under `~/.t3`, the `.t3` gitignore entry makes `vp fmt` and `vp lint` skip every file and still exit 0: format with `vp fmt --stdin-filepath=<f> < <f>` and compare, and lint with `vp lint --no-ignore <files>`, passing the files as an array (`"${files[@]}"`): zsh keeps `$FILES` one argument, and the resulting "No files found" looks like a clean run.
 - `vp run mobile:install android` needs `ANDROID_HOME` (usually `~/Library/Android/sdk`) when the shell does not set it.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
@@ -250,6 +250,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Linked environments need no second machine: run `node apps/server/src/bin.ts serve --base-dir <worktree>/.t3/<name> --port <p>` beside dev, set `linkedEnvironmentsEnabled` in both homes' `settings.json`, then `environment link http://127.0.0.1:<p> --base-dir <worktree>/.t3 --pairing-code <Token from pair> --access full-access`. Unlink and delete that home after.
 - A T3 running from a checkout uses `<checkout>/.t3/heavy-queue-dev`, not the machine-wide `~/.t3/heavy-queue`, and never writes the installed hook script or Claude settings outside its checkout. Setting `T3CODE_HEAVY_QUEUE_DIR` to the real queue drives every project's jobs.
 - The Linux runner's copy of a worktree has no `.git` and no global `vp`: run `check:changed` and coverage scoring on the Mac (`t3 heavy --runner mac`), call `./node_modules/.bin/vp` there, and copy lcov files out of the synced folder in the same run (the next sync wipes them). A command line that mentions `vp test`/`vp run` is rerouted whole.
+- knip runs when you push main or merge into it, not when you commit, and a push needs a clean working tree (untracked files block it too). Through `remoto`, call `pnpm run <script>`: it does not put `node_modules/.bin` on PATH, so a bare `vp` exits 127 there.
 - During an unfinished merge, `git add` the resolved files before starting `vp run dev`: git re-reads unmerged files on every status poll, and that makes the server's `node --watch` restart in a loop.
 
 ### Layout and design
@@ -307,5 +308,6 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 ### Working with parallel agents in one worktree
 
+- Start every new t3code branch or worktree from the current local `main`, and merge `main` into an older branch before its next commit: hooks come from the branch's own `vite.config.ts`, so a stale base still runs knip on every commit.
 - The pre-commit runs `vp staged --no-stash`: a stash-and-restore on a failed hook would reset every other agent's unsaved edits. Never re-enable the stash.
 - Commit with `git commit <paths>` only. The pre-commit hook can sweep other agents' staged files into your commit, so stage only a new file of your own, right before committing it, with `git add <file>` (the hook refuses `git add -N` files). Never stash and never reset the index.

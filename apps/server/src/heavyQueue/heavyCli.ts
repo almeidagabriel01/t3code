@@ -68,9 +68,11 @@ import {
   DEFAULT_MACHINE_CONFIG,
   askedLinux,
   eligibilityOf,
+  neverEnds,
   INSTALL_FAILED,
   linkAttempts,
   linkMachine,
+  needsBrowser,
   macReasonOf,
   macReasonText,
   movedPart,
@@ -139,6 +141,39 @@ const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGHUP: 129,
 };
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
+const HELP = new Set(["--help", "-h"]);
+const USAGE =
+  "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n";
+const REMOTO_USAGE = "Usage: remoto <command> [args...]\n";
+const ROUTES_USAGE = "Usage: t3 heavy routes [--forget <key|all>]\n";
+
+/**
+ * What to tell the caller when a command cannot be queued, or null. No program starts with `-`,
+ * so a first word that does is an option that missed its place; a shell line is judged by its first
+ * word. An agent that typed `remoto` never called `t3 heavy`, so that answer speaks of `remoto`.
+ */
+const commandRefusal = (
+  program: string | undefined,
+  args: ReadonlyArray<string>,
+  remoto = false,
+) => {
+  const line = program === undefined ? null : lineOf(program, args);
+  const first =
+    program === undefined
+      ? ""
+      : line !== null
+        ? (line.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
+        : program;
+  if (first !== "" && !first.startsWith("-")) return null;
+  if (remoto) {
+    return `remoto runs a command; ${first === "" ? "none was given" : `\`${first}\` is not one`}.\n${REMOTO_USAGE}`;
+  }
+  return `[t3 heavy] ${
+    first === ""
+      ? "no command given: use `--` before the command."
+      : `\`${first}\` is not a command or a t3 heavy option: use \`--\` before the command.`
+  }\n${USAGE}`;
+};
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
@@ -149,6 +184,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let requestId: string | undefined;
   let routeReason: string | undefined;
   let now = false;
+  let help: string | undefined;
   const options = [
     "--queue-dir",
     "--name",
@@ -162,9 +198,15 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     flag !== undefined && flag !== "--" && flag.startsWith("--") && args.includes("--");
   while (
     rest[0] === "--now" ||
+    HELP.has(rest[0]!) ||
     (rest[1] !== undefined && options.includes(rest[0]!)) ||
     foreign(rest[0])
   ) {
+    if (HELP.has(rest[0]!)) {
+      help = rest[0];
+      rest = rest.slice(1);
+      continue;
+    }
     if (rest[0] !== "--now" && !options.includes(rest[0]!)) {
       rest = rest.slice(rest[1]!.startsWith("-") ? 1 : 2);
       continue;
@@ -185,8 +227,11 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
+  // `<command> --help`, the prefix the agent tools hand out, asks for help after the separator.
+  if (rest.length === 1 && HELP.has(rest[0]!)) [help, rest] = [rest[0], []];
   return {
     dir,
+    help,
     name,
     priority,
     where,
@@ -214,32 +259,40 @@ export const jobOf = (
   readonly args: ReadonlyArray<string>;
   readonly remoto: boolean;
 } => {
-  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
-    return { cwd, program: args[0], args: args.slice(1), remoto: true };
+  if (NodePath.basename(program) === "remoto") {
+    // `remoto` alone has no command: an empty one, which the queue refuses as `remoto`'s misuse.
+    return { cwd, program: args[0] ?? "", args: args.slice(1), remoto: true };
   }
-  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
-    return { cwd, program, args, remoto: false };
-  }
-  const parts = lineParts(args[1]);
+  const at = lineAt(program, args);
+  if (at === null) return { cwd, program, args, remoto: false };
+  const parts = lineParts(args[at]!);
   return {
     cwd: startFolder(parts.dirs, cwd, home),
     program,
-    args: ["-c", parts.command, ...args.slice(2)],
+    args: args.with(at, parts.command),
     remoto: parts.remoto,
   };
 };
 
 export type HeavyLaunch =
-  | { readonly kind: "direct" }
+  | {
+      readonly kind: "direct";
+      /** What runs instead of the command as written: a server an agent sent to `remoto`. */
+      readonly run?: {
+        readonly cwd: string;
+        readonly program: string;
+        readonly args: ReadonlyArray<string>;
+      };
+    }
   | {
       readonly kind: "queue";
       readonly cwd: string;
       readonly program: string;
       readonly args: ReadonlyArray<string>;
       readonly where: RunnerWhere | undefined;
-      /** A commit whose hook runs goes ahead of other waiters: it is short and blocks its agent. */
-      readonly priority?: "high";
-    };
+    }
+  /** The caller's mistake, such as `remoto --help` with `remoto` taken out: never queued. */
+  | { readonly kind: "refused"; readonly reason: string };
 
 /**
  * Run the command as written, or queue it. An agent's own `remoto` call never holds a Mac slot:
@@ -269,19 +322,23 @@ export const heavyLaunch = (
   ) {
     return { kind: "direct" };
   }
+  const reason = commandRefusal(job.program, job.args, job.remoto);
+  if (reason !== null) return { kind: "refused", reason };
+  const line = jobLine(job.program, job.args);
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
-  if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
-    return { kind: "direct" };
+  if (!job.remoto && isQueued(line, readAt?.(job.cwd))) return { kind: "direct" };
+  // A server serves this Mac and never ends: no slot, and no Linux copy whose port nobody here sees.
+  if (command.where !== "linux" && neverEnds(line, readAt?.(job.cwd))) {
+    const { cwd, program, args } = job;
+    return job.remoto ? { kind: "direct", run: { cwd, program, args } } : { kind: "direct" };
   }
-  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
-  if (commit === "direct") return { kind: "direct" };
+  if (!job.remoto && commitRoute(line) === "direct") return { kind: "direct" };
   return {
     kind: "queue",
     cwd: job.cwd,
     program: job.program,
     args: job.args,
     where: job.remoto ? (command.where ?? "linux") : command.where,
-    ...(commit === "first" ? { priority: "high" as const } : {}),
   };
 };
 
@@ -290,17 +347,28 @@ export const heavyLaunch = (
  * Any other program by its name, as Linux runs it (`remoteCommand`).
  */
 export const labelOf = (program: string, args: ReadonlyArray<string>) =>
-  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
-    0,
-    LABEL_CHARS,
-  );
+  (lineOf(program, args) ?? [NodePath.basename(program), ...args].join(" ")).slice(0, LABEL_CHARS);
 
-const isShellLine = (program: string, args: ReadonlyArray<string>) =>
-  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
+/**
+ * Where a shell's `-c` line sits among its words: `sh -c`, `bash -lc`, `bash -ec`, `bash --login -c`.
+ * Null for any other program, or a shell option that takes a value (`-o pipefail`) before `-c`.
+ */
+const lineAt = (program: string, args: ReadonlyArray<string>) => {
+  if (!SHELLS.has(NodePath.basename(program))) return null;
+  for (let at = 0; at + 1 < args.length && args[at]!.startsWith("-") && args[at] !== "--"; at++) {
+    if (/^-[a-z]*c[a-z]*$/i.test(args[at]!)) return at + 1;
+  }
+  return null;
+};
+
+const lineOf = (program: string, args: ReadonlyArray<string>) => {
+  const at = lineAt(program, args);
+  return at === null ? null : args[at]!;
+};
 
 /** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
 const jobLine = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
+  lineOf(program, args) ?? [program, ...args].map(shellQuote).join(" ");
 
 const BIN_PATH = /(^|\/)node_modules\/\.bin\/([^/]+)$/;
 
@@ -418,13 +486,15 @@ const cargoJobs = (text: string) => {
 };
 
 /** The program name and words after it of each command a job runs, its shell line's included. */
-const commandsOf = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args)
-    ? readLine(args[1]!).parts.map((part) => ({
+const commandsOf = (program: string, args: ReadonlyArray<string>) => {
+  const line = lineOf(program, args);
+  return line !== null
+    ? readLine(line).parts.map((part) => ({
         name: NodePath.basename(part.values[part.programAt] ?? ""),
         rest: part.values.slice(part.programAt + 1),
       }))
     : [{ name: NodePath.basename(program), rest: args }];
+};
 
 /**
  * The cap is a ceiling: a tool keeps a lower count its own config sets, and CMake's level only
@@ -540,11 +610,13 @@ export const withWorkers = (
   const own = ownCounts(program, args, environment, project);
   const keep = new Set(own.gradle < workers ? ["gradle", "gradlew"] : []);
   const direct = flagIndex(program, args, workers, keep);
-  const capped = isShellLine(program, args)
-    ? [args[0]!, lineWithWorkers(args[1]!, workers, keep), ...args.slice(2)]
-    : direct === null
-      ? args
-      : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
+  const at = lineAt(program, args);
+  const capped =
+    at !== null
+      ? args.with(at, lineWithWorkers(args[at]!, workers, keep))
+      : direct === null
+        ? args
+        : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
   return {
     args: capped,
     env: {
@@ -676,14 +748,25 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     runCall(part.dir, part.program, part.args, argv[0] === "call");
     return;
   }
-  const { dir, name, priority, where, now, requestId, routeReason, program, args } =
+  const { dir, name, priority, where, now, help, requestId, routeReason, program, args } =
     parseHeavyArgs(argv);
-  if (program === undefined) {
-    process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n       t3 heavy routes [--forget <key|all>]\n",
-    );
-    process.exit(2);
+  // A usage error exits before the queue sees it, so it never becomes a job or a problem card.
+  const refuse = (reason: string): never => {
+    process.stderr.write(reason);
+    return process.exit(2);
+  };
+  if (help !== undefined && program === undefined) {
+    process.stdout.write(USAGE);
+    process.exit(0);
   }
+  // Help with a command would run nothing yet exit 0, which a script reads as the command passing.
+  if (help !== undefined) {
+    return refuse(
+      `[t3 heavy] \`${help}\` shows this usage and runs nothing; to pass it to the command, put it after \`--\`: t3 heavy -- ${program} ${help}\n${USAGE}`,
+    );
+  }
+  const refusal = commandRefusal(program, args);
+  if (refusal !== null || program === undefined) return refuse(refusal ?? "");
   const launch = heavyLaunch(
     { program, args, where },
     process.cwd(),
@@ -692,9 +775,12 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     process.env[HEAVY_JOB_ENV] === "1",
     scriptReader,
   );
+  if (launch.kind === "refused") return refuse(launch.reason);
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
+    const { run } = launch.kind === "direct" ? launch : {};
     // The shell reports a folder it cannot enter itself, as it would without T3.
-    runDirect(program, args, process.env);
+    if (run !== undefined && enterFolder(run.cwd)) runDirect(run.program, run.args, process.env);
+    else runDirect(program, args, process.env);
     return;
   }
   // A repeated request (same tool call, same agent retry) lands on the same job.
@@ -721,7 +807,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     createdAt: new Date().toISOString(),
     startedAt: null,
     // Agents' jobs wait behind the user's own.
-    priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
+    priority: priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
     ...(process.env[CALL_ENV] === "1"
@@ -1029,11 +1115,12 @@ const withShims = (
   environment: NodeJS.ProcessEnv,
 ) => {
   const call = selfPrefix(dir, environment, "call");
+  const at = lineAt(program, args);
   const env = {
     ...environment,
     PATH: `${ensureShims(dir, call)}:${environment.PATH ?? ""}`,
     [idEnv]: id,
-    ...(isShellLine(program, args) && READS_STDIN.test(args[1]!) ? { [LINE_READS_ENV]: "1" } : {}),
+    ...(at !== null && READS_STDIN.test(args[at]!) ? { [LINE_READS_ENV]: "1" } : {}),
   };
   NodeFS.writeFileSync(
     envFile(dir, id),
@@ -1043,9 +1130,7 @@ const withShims = (
     { mode: 0o600 },
   );
   return {
-    args: isShellLine(program, args)
-      ? [args[0]!, callingBins(args[1]!, call), ...args.slice(2)]
-      : args,
+    args: at === null ? args : args.with(at, callingBins(args[at]!, call)),
     env,
   };
 };
@@ -1143,9 +1228,8 @@ const runLinuxAttempt = async (
   takeOutcome(dir, id);
   // A shell line runs here as written, its heavy calls through the shims. A program alone, or a
   // line read in full with no heavy call to pick out, is itself the work.
-  const read = isShellLine(job.program, job.args)
-    ? readLine(job.args[1]!, scriptReader(process.cwd()))
-    : null;
+  const text = lineOf(job.program, job.args);
+  const read = text === null ? null : readLine(text, scriptReader(process.cwd()));
   const line = read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy));
   const shell = line ? job.program : "/bin/sh";
   const run = withShims(
@@ -1319,16 +1403,20 @@ const runLinuxAttempt = async (
   return { kind: "requeued" };
 };
 
-/** Why a call (program first) runs on this Mac: a reason of its own, or a learned route. */
+/**
+ * Why a call (program first) runs on this Mac: a reason of its own, or a learned route. The
+ * variables its line set (`NAME=value`) are judged like its arguments.
+ */
 const callMacReason = (
   dir: string,
   values: ReadonlyArray<string>,
   cwd: string,
   config: RunnerProjectConfig,
+  env: ReadonlyArray<string>,
 ) => {
   const learned = learnedOf(dir, Date.now());
   return macReasonOf(
-    values,
+    env.length === 0 ? values : ["env", ...env, ...values],
     cwd,
     {
       config,
@@ -1346,6 +1434,10 @@ const callMacReason = (
 
 /** `t3 heavy routes [--forget <key|all>]`: lists or forgets what route memory learned. */
 const runRoutes = (args: ReadonlyArray<string>) => {
+  if (args.some((arg) => HELP.has(arg))) {
+    process.stdout.write(ROUTES_USAGE);
+    return;
+  }
   const valueOf = (flag: string) => {
     const at = args.indexOf(flag);
     return at === -1 ? undefined : (args[at + 1] ?? "");
@@ -1353,7 +1445,7 @@ const runRoutes = (args: ReadonlyArray<string>) => {
   const dir = valueOf("--queue-dir") || defaultQueueDir();
   const forget = valueOf("--forget");
   if (forget === "") {
-    process.stderr.write("Usage: t3 heavy routes [--forget <key|all>]\n");
+    process.stderr.write(ROUTES_USAGE);
     process.exit(2);
   }
   if (forget !== undefined) {
@@ -1449,7 +1541,9 @@ const runCall = (
   const doc = readDoc(dir);
   const config = configFor(doc, cwd);
   const root = gitRootOf(cwd);
-  const mac = root === null || callMacReason(dir, [given, ...args], cwd, config) !== null;
+  const mac =
+    root === null ||
+    callMacReason(dir, [given, ...args], cwd, config, lineEnv(dir, macJob!)) !== null;
   if (mac || !config.runnerEnabled) return runHere(given, args, true);
   queueCall(dir, "linux", [given, ...args], { keys: lineKeys(dir, macJob!) });
 };
@@ -1502,13 +1596,18 @@ const runLinuxPart = async (
   if (root === null || program === undefined) {
     return toMac(macReasonText({ code: "mac-env", subject: cwd }));
   }
-  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
-  const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
+  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`). No program
+  // starts with `-`: that is an option that missed its command's, never Linux's to lack.
+  const absent = program.startsWith("-")
+    ? `${program}: not a command`
+    : program.includes("/")
+      ? notFoundHere(program, cwd, root)
+      : undefined;
   if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
   const days = config.runnerRouteMemoryDays;
-  const here = callMacReason(dir, [program, ...args], cwd, config);
+  const here = callMacReason(dir, [program, ...args], cwd, config, lineEnv(dir, id));
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),
@@ -1538,6 +1637,7 @@ const runLinuxPart = async (
   let since = 0;
   // This call's own start marker there: parallel calls of one job each list what they wrote.
   const call = `${id}-${process.pid}`;
+  let browser = needsBrowser([command.program, ...command.args], cwd, root, readText);
   const fault = (seen: FaultSeen) => {
     const found = faultOf(seen, unreachable ?? failure ?? lastError, {
       command: labelOf(program, args),
@@ -1607,6 +1707,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
+      browser,
       ...(bringsBack ? { startMarker: call } : {}),
       ...(input === undefined ? {} : { input }),
       ...(inputStart === null ? {} : { inputStart }),
@@ -1657,8 +1758,25 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install, worktree, spentInput: spent } = await run.done;
+  const first = await run.done;
+  let { outcome, progress, platform, install, worktree, spentInput: spent } = first;
   spentInput ||= spent;
+  // Sent without Chromium, it needed one: once more there, with it. Never this Mac's to run.
+  if (
+    !stopped &&
+    !spentInput &&
+    first.browserMissing &&
+    outcome.kind === "finished" &&
+    outcome.code !== 0
+  ) {
+    jobNote("[t3 heavy] Linux: this command needs Chromium, running it again with it\n");
+    browser = true;
+    recorded = null;
+    failure = null;
+    run = start();
+    ({ outcome, progress, platform, install, worktree, spentInput: spent } = await run.done);
+    spentInput ||= spent;
+  }
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     // The first run read the input: a rerun would get none.
@@ -1673,7 +1791,7 @@ const runLinuxPart = async (
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return fallBack(
-        { kind: "install", subject: install, line: INSTALL_FAILED },
+        { kind: "install", subject: install, line: `${INSTALL_FAILED}: ${install}` },
         outcome.code ?? 1,
       );
     }

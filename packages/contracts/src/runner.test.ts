@@ -19,6 +19,15 @@ describe("Runner settings", () => {
     expect(result._tag === "Some" ? result.value : null).toBe(read);
   });
 
+  it("lists every program the Always-on-this-Mac defaults name as a Mac-only tool", () => {
+    // Bare program names; "simulator" is a word in a command, not a program.
+    const programs = RUNNER_DEFAULTS.runnerMacOnly.filter(
+      (pattern) => /^[\w-]+$/.test(pattern) && pattern !== "simulator",
+    );
+    const missing = programs.filter((program) => !RUNNER_DEFAULTS.runnerMacTools.includes(program));
+    expect(missing).toEqual([]);
+  });
+
   it("reads a project config saved with the retired Linux allowlist, and drops it", () => {
     const current = {
       runnerEnabled: true,
@@ -35,6 +44,7 @@ describe("Runner settings", () => {
     // Saved before route memory, the bring-back limits and the Mac tools existed, it reads their defaults too.
     expect(decodeProjectConfig(saved)).toEqual({
       ...current,
+      runnerLinuxFull: "wait",
       runnerRouteMemoryDays: 7,
       runnerRouteLearnAfter: 2,
       runnerBringBackExclude: RUNNER_DEFAULTS.runnerBringBackExclude,

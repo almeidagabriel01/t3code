@@ -15,6 +15,7 @@ import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
 import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
 import {
+  browserMissing,
   foldMarker,
   HEARTBEAT_COMMAND,
   MARKER,
@@ -189,11 +190,13 @@ export const withProjectBins = (
   const passthrough = `b="\${T3_COPY%/*}/.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
   // Bring results back: what the command writes after this is newer than the marker.
   const mark =
-    startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
+    startMarker === null
+      ? ""
+      : ` ${touchStartMarker(`"$T3_COPY"${shellQuote(markerSuffix(startMarker))}`)};`;
   return [
     "bash",
     "-c",
-    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} eval "$t3v"; exec "$@"`,
+    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} printf '\\036remoto phase=command\\n' >&2; eval "$t3v"; exec "$@"`,
     "t3",
     ...command,
   ];
@@ -221,6 +224,14 @@ const envHeader = (env: ReadonlyArray<string>, input: boolean) => {
 const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
 /** Beside the copy (`runs/<id>.t3-start-<job>`), so `remoto`'s sync never deletes it. */
+/**
+ * Shell that stamps a run's start marker (a shell word) for `bringBack`'s `find -cnewer`. Linux
+ * stamps files from a coarse clock, so a file written in the marker's tick would look no newer:
+ * it waits for the clock to tick past the marker first (bash compares nanoseconds).
+ */
+export const touchStartMarker = (marker: string) =>
+  `touch -- ${marker} && until touch -- ${marker}.tick && [ ${marker}.tick -nt ${marker} ]; do :; done; rm -f -- ${marker}.tick`;
+
 const markerSuffix = (job: string) => {
   if (!SAFE_NAME.test(job)) throw new Error(`Unsafe job id: ${job}`);
   return `.t3-start-${job}`;
@@ -692,6 +703,8 @@ export interface LinuxRunOptions {
   readonly input?: number;
   /** Reads `input` by position from here (`fileOffset`), never moving its offset, so never spent. */
   readonly inputStart?: number;
+  /** It needs Playwright's Chromium there (`needsBrowser`). Unset, `remoto-rodar` decides alone. */
+  readonly browser?: boolean;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -709,6 +722,8 @@ export interface LinuxRun {
     readonly worktree: string | null;
     /** It took bytes off an `input` read in place: a rerun would not get them. */
     readonly spentInput: boolean;
+    /** Sent without Chromium, its own output says Playwright found none. */
+    readonly browserMissing: boolean;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -782,6 +797,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         REMOTO_FALLBACK: "nao",
         REMOTO_HOST: machine.runnerHost,
         REMOTO_MARKERS: "1",
+        ...(options.browser === undefined ? {} : { REMOTO_BROWSER: options.browser ? "1" : "0" }),
         REMOTO_TIMEOUT: String(machine.runnerSshTimeoutSeconds),
       },
     },
@@ -807,10 +823,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const platform = new Set<string>();
   let install: string | null = null;
   let worktree: string | null = null;
+  let lacksBrowser = false;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    if (options.browser === false) lacksBrowser ||= browserMissing(line);
     // Only the steps before the command: its own output may quote the same errors (a test name).
-    if (progress.running) return;
+    if (progress.running || progress.commandStarted) return;
     install ??= installFailure(line);
     worktree ??= worktreeProblemOf(line);
   };
@@ -818,9 +836,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const err = lineSplitter((line, newline) => {
     // A command whose last line has no newline puts the exit marker right after its text.
     const at = line.indexOf(MARKER);
-    if (at >= 0) {
+    const next = at >= 0 ? foldMarker(progress, line.slice(at)) : progress;
+    if (at >= 0 && next !== progress) {
       if (at > 0) options.stderr(line.slice(0, at));
-      progress = foldMarker(progress, line.slice(at));
+      progress = next;
       options.onProgress(progress);
       return;
     }
@@ -839,6 +858,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     install: string | null;
     worktree: string | null;
     spentInput: boolean;
+    browserMissing: boolean;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -853,6 +873,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         install: progress.install ?? install,
         worktree,
         spentInput,
+        browserMissing: lacksBrowser,
       });
     };
     child.on("error", (error) => {

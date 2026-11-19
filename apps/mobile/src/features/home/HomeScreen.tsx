@@ -401,7 +401,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const attentionProjectKeys = new Set(
     props.threads.flatMap((thread) =>
       thread.archivedAt === null &&
-      !zones.ownedThreadKeys.has(scopedThreadKey(thread.environmentId, thread.id)) &&
       thread.settledOverride !== "settled" &&
       thread.lineage.relationshipToParent !== "subagent" &&
       !isSideChatThread(thread) &&
@@ -518,7 +517,6 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
-    hiddenThreadKeys: zones.ownedThreadKeys,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.

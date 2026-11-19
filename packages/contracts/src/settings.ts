@@ -62,6 +62,7 @@ import {
   RunnerLinuxCpuCeilingPercent,
   RunnerLinuxEvictionsBeforeAlone,
   RunnerUnavailablePolicy,
+  RunnerLinuxFullPolicy,
   RunnerWhere,
 } from "./runner.ts";
 import { ProviderBudget, UsageLimitAlerts, UsageLimitAlertsPatch } from "./usage.ts";
@@ -1395,6 +1396,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerEnabled",
   "runnerWhere",
   "runnerUnavailable",
+  "runnerLinuxFull",
   "runnerAskMinutes",
   "runnerDeadlineAction",
   "runnerDropped",
@@ -1472,6 +1474,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  // A value this build does not know reads as unset, so the machine's choice applies.
+  runnerLinuxFull: ForwardCompatibleOptional(RunnerLinuxFullPolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
@@ -1771,6 +1775,10 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerUnavailable: RunnerUnavailablePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
+  ),
+  runnerLinuxFull: RunnerLinuxFullPolicy.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome(RUNNER_DEFAULTS.runnerLinuxFull)),
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxFull)),
   ),
   runnerAskMinutes: RunnerAskMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerAskMinutes)),
@@ -2350,6 +2358,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerLinuxFull: Schema.optionalKey(RunnerLinuxFullPolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),

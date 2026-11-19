@@ -17,11 +17,16 @@ import {
   type HeavyQueueRule,
   type HeavyRunner,
   RunnerBringBackMaxMB,
+  RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerLinuxEvictionsBeforeAlone,
+  RunnerLinuxFullPolicy,
   RunnerPatterns,
   type RunnerProjectConfig,
   RunnerRouteLearnAfter,
   RunnerRouteMemoryDays,
+  RunnerUnavailablePolicy,
+  RunnerWhere,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -284,6 +289,11 @@ const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey
 
 /** Keys read whole only when valid: a null or bad one would throw where it is used. */
 const CHECKED_PROJECT_KEYS = {
+  runnerWhere: Schema.is(RunnerWhere),
+  runnerUnavailable: Schema.is(RunnerUnavailablePolicy),
+  runnerLinuxFull: Schema.is(RunnerLinuxFullPolicy),
+  runnerDeadlineAction: Schema.is(RunnerDeadlineAction),
+  runnerDropped: Schema.is(RunnerFailedPolicy),
   runnerRouteMemoryDays: Schema.is(RunnerRouteMemoryDays),
   runnerRouteLearnAfter: Schema.is(RunnerRouteLearnAfter),
   runnerBringBackExclude: Schema.is(RunnerPatterns),
@@ -694,6 +704,10 @@ const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decid
       ...(workers === null ? {} : { workers }),
       ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
       ...(admit.ungated ? { ungated: true } : {}),
+      // Why "When Linux is full" sent it here, shown while it runs.
+      ...(admit.runner === "mac" && decision.moved[id] !== undefined
+        ? { routeReason: decision.moved[id] }
+        : {}),
       ...(admit.runner === "linux" && (ask !== undefined || route !== undefined)
         ? {
             held: {
@@ -726,22 +740,15 @@ const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decid
     };
   }
   const ask = decision.asks[id];
-  const asked =
-    ask === undefined
-      ? entries
-      : entries.map((e) =>
-          e.id === id
-            ? {
-                ...e,
-                ask: {
-                  reason: ask,
-                  deadlineAt: new Date(
-                    now + configFor(doc, e.cwd).runnerAskMinutes * 60_000,
-                  ).toISOString(),
-                },
-              }
-            : e,
-        );
+  const moved = decision.moved[id];
+  const asked = entries.map((e) => {
+    if (e.id !== id) return e;
+    // A job moved for "When Linux is full" stays on this Mac once Linux frees up.
+    if (moved !== undefined) return { ...e, route: "mac" as const, routeReason: moved };
+    if (ask === undefined) return e;
+    const deadlineAt = now + configFor(doc, e.cwd).runnerAskMinutes * 60_000;
+    return { ...e, ask: { reason: ask, deadlineAt: new Date(deadlineAt).toISOString() } };
+  });
   // Counted on the machine it waits for, as the Resource Manager groups rows.
   const runner = decision.routes[id] ?? "mac";
   const machineOf = (e: HeavyQueueEntry) =>
@@ -959,7 +966,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   const doc = readDoc(dir);
   const parts = lineParts(line);
   const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
-  const commit = commitRoute(parts.command, at);
+  const commit = commitRoute(parts.command);
   const handedOff = !parts.remoto && isQueued(parts.command, scriptReader(at));
   if (commit === "direct" || handedOff) {
     return {
@@ -981,8 +988,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     cwd: at,
     createdAt: new Date(now).toISOString(),
     startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
-    priority: commit === "first" ? "high" : "low",
+    // As `t3 heavy` queues an agent's job, behind the user's own.
+    priority: "low",
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(dir, withProbe, now);
@@ -1691,16 +1698,7 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  const answer = interceptBashCall(
-    hookInput,
-    prefix,
-    modeFor(doc, at),
-    environment,
-    scriptReader(at),
-  );
-  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
-    ? null
-    : answer;
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at));
 };
 
 /** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */
