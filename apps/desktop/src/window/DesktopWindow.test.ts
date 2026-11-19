@@ -1089,6 +1089,7 @@ describe("DesktopWindow", () => {
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const prompts: Electron.MessageBoxOptions[] = [];
       const prompted = yield* Deferred.make<void>();
+      const secondPrompt = yield* Deferred.make<void>();
       const answers = yield* Queue.unbounded<number>();
       const crashed = yield* Deferred.make<void>();
       fakeWindow.forcefullyCrashRenderer.mockImplementation(() => {
@@ -1102,7 +1103,7 @@ describe("DesktopWindow", () => {
           Effect.sync(() => {
             assert.strictEqual(owner, fakeWindow.window);
             prompts.push(options);
-            Deferred.doneUnsafe(prompted, Exit.void);
+            Deferred.doneUnsafe(prompts.length === 1 ? prompted : secondPrompt, Exit.void);
           }).pipe(
             Effect.andThen(Queue.take(answers)),
             Effect.map((response) => ({ response, checkboxChecked: false })),
@@ -1154,6 +1155,25 @@ describe("DesktopWindow", () => {
         yield* crash("crashed");
         assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 4);
         assert.equal(prompts.length, 1);
+
+        // The reloaded window hangs again: a new episode prompts again.
+        emit("unresponsive");
+        yield* TestClock.adjust(10_000);
+        yield* Deferred.await(secondPrompt);
+        assert.equal(prompts.length, 2);
+        yield* Queue.offer(answers, 1);
+
+        // After "Wait", the menu's Reload cannot rely on the hung renderer, so it crashes it.
+        yield* desktopWindow.runMainContentsCommand("reload");
+        assert.equal(fakeWindow.forcefullyCrashRenderer.mock.calls.length, 2);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
+        yield* crash("killed");
+        assert.equal(fakeWindow.loadURL.mock.calls.length, initialLoads + 5);
+
+        // A responsive window reloads normally.
+        yield* desktopWindow.runMainContentsCommand("reload");
+        assert.equal(fakeWindow.reload.mock.calls.length, 1);
+        assert.equal(fakeWindow.forcefullyCrashRenderer.mock.calls.length, 2);
       }).pipe(Effect.provide(layer));
     }),
   );

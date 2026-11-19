@@ -300,6 +300,8 @@ export const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
+  // A hung renderer cannot run its own reload, so reload commands crash it first while it hangs.
+  const hungRendererRecoveries = new WeakMap<Electron.BrowserWindow, () => boolean>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
@@ -727,8 +729,19 @@ export const make = Effect.gen(function* () {
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
     let rendererRecoveryTimestamps: number[] = [];
     let rendererHangFiber: Fiber.Fiber<void, never> | undefined;
+    let rendererUnresponsive = false;
     let userRequestedRendererRecovery = false;
+    const recoverHungRenderer = () => {
+      userRequestedRendererRecovery = true;
+      window.webContents.forcefullyCrashRenderer();
+    };
+    hungRendererRecoveries.set(window, () => {
+      if (!rendererUnresponsive || window.isDestroyed()) return false;
+      recoverHungRenderer();
+      return true;
+    });
     const endRendererHang = () => {
+      rendererUnresponsive = false;
       if (rendererHangFiber === undefined) return;
       const hangFiber = rendererHangFiber;
       rendererHangFiber = undefined;
@@ -836,14 +849,14 @@ export const make = Effect.gen(function* () {
       );
       if (response !== 0 || window.isDestroyed()) return;
       yield* logWindowWarning("reloading unresponsive main window at the user's request");
-      userRequestedRendererRecovery = true;
-      window.webContents.forcefullyCrashRenderer();
+      recoverHungRenderer();
     }).pipe(
       Effect.catch((error) =>
         logWindowWarning("unresponsive window prompt failed", { error: error.message }),
       ),
     );
     window.webContents.on("unresponsive", () => {
+      rendererUnresponsive = true;
       // Electron repeats this event during one hang; "Wait" re-arms on the next repeat.
       if (rendererHangFiber !== undefined || window.isDestroyed()) return;
       const hangFiber: Fiber.Fiber<void, never> = runFork(
@@ -1154,6 +1167,9 @@ export const make = Effect.gen(function* () {
       const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
+      if (command !== "toggleDevTools" && hungRendererRecoveries.get(window.value)?.() === true) {
+        return;
+      }
       if (command === "reload") webContents.reload();
       else if (command === "forceReload") webContents.reloadIgnoringCache();
       else webContents.toggleDevTools();
