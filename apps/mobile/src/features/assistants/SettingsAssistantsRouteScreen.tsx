@@ -35,7 +35,7 @@ import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
-import { AssistantStatus, useAssistantAttention, useGroupAttention } from "./assistantAttention";
+import { ZoneIndicatorStatus } from "./ZoneIndicatorStatus";
 import { assistantStatusText } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
@@ -57,9 +57,10 @@ function AssistantCard(props: {
   const openWork = useOpenAssistantWork();
   const archived = assistant.archivedAt !== null;
   const taskSections = useAssistantTaskSections(props.entry);
-  const { attention } = useAssistantAttention(props.entry);
   const limitLabel = useUsageLimitLabel();
-  const presence = useAssistantStatus().of(environmentId, assistant, limitLabel);
+  const assistantStatus = useAssistantStatus();
+  const presence = assistantStatus.of(environmentId, assistant, limitLabel);
+  const indicator = assistantStatus.indicator(environmentId, assistant.id, presence);
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;
   const status = archived ? "Archived" : assistantStatusText(presence, props.nowMs);
@@ -85,8 +86,12 @@ function AssistantCard(props: {
             <Text textRole="body" className="min-w-0 flex-1 text-foreground" numberOfLines={2}>
               {assistant.name}
             </Text>
-            {archived || attention === null ? null : (
-              <AssistantStatus attention={attention} testID="assistant-status" />
+            {archived || indicator === null ? null : (
+              <ZoneIndicatorStatus
+                indicator={indicator}
+                subject="assistant"
+                testID="assistant-status"
+              />
             )}
           </View>
           {assistant.role === "" ? null : (
@@ -323,7 +328,6 @@ export function SettingsAssistantsRouteScreen() {
   const openEditor = useOpenAssistantEditor();
   const projects = useProjects();
   const status = useAssistantStatus();
-  const groupAttention = useGroupAttention();
   const nowMs = useNowMinuteMs();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentIds = useAssistantsEnvironmentIds();
@@ -338,16 +342,18 @@ export function SettingsAssistantsRouteScreen() {
 
   // Every member counts, also one listed under "Needs you" instead of its group.
   const groupStatus = (entry: AssistantTeamEntry) => {
-    const attention = groupAttention(
+    const indicator = status.group(
       entry,
-      active.filter(
-        (member) =>
-          member.environmentId === entry.environmentId &&
-          entry.team.memberIds.includes(member.assistant.id),
-      ),
+      active
+        .filter(
+          (member) =>
+            member.environmentId === entry.environmentId &&
+            entry.team.memberIds.includes(member.assistant.id),
+        )
+        .map((member) => member.assistant),
     );
-    return attention === null ? null : (
-      <AssistantStatus attention={attention} testID="group-status" />
+    return indicator === null ? null : (
+      <ZoneIndicatorStatus indicator={indicator} subject="group" testID="group-status" />
     );
   };
   const projectName = (environmentId: string, projectId: string) =>

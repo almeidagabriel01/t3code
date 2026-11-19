@@ -1,5 +1,16 @@
 import type { Assistant, AssistantToolAccess, EnvironmentId } from "@t3tools/contracts";
-import { LockIcon, PenLineIcon, ShieldOffIcon, type LucideIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleDashedIcon,
+  CirclePauseIcon,
+  ClockAlertIcon,
+  LockIcon,
+  MailIcon,
+  MessageCircleQuestionIcon,
+  PenLineIcon,
+  ShieldOffIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -7,8 +18,7 @@ import {
   ASSISTANT_ICON_VIEWBOX,
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
-import type { AssistantAttention } from "@t3tools/client-runtime/assistantList";
-import { ASSISTANT_GROUP_STATUS_LABEL } from "@t3tools/client-runtime/assistantGroupChat";
+import { type ZoneIndicator, zoneIndicatorLabel } from "@t3tools/client-runtime/sidebarZones";
 import {
   assistantClusterLayout,
   type AssistantClusterCell,
@@ -23,11 +33,6 @@ import {
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { useAssistantEntries } from "~/state/assistants";
-import {
-  resolveSidebarTopStatus,
-  TopStatusIcon,
-  type SidebarTopStatus,
-} from "../sidebar/sidebarTopStatus";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { AssistantRobot } from "./AssistantRobot";
 
@@ -263,46 +268,46 @@ export function AssistantCluster(props: {
   );
 }
 
-/** An assistant's or a group's state in the words and colors a thread row uses for the same state. */
-function assistantTopStatus(attention: AssistantAttention): SidebarTopStatus {
-  if (attention === "paused") {
-    // A task stopped at a limit waits on the user like a question does; the label is the chat's own.
-    return {
-      label: ASSISTANT_GROUP_STATUS_LABEL.paused,
-      icon: "waiting",
-      className: "text-warning-foreground",
-    };
-  }
-  return resolveSidebarTopStatus({
-    status: attention === "decision" || attention === "done" ? "ready" : attention,
-    hasOpenDecision: attention === "decision",
-    isWoke: false,
-    isUnread: attention === "done",
-  })!;
-}
+/** Each zone indicator's icon, shared by the sidebar and the Assistants page. */
+export const ZONE_INDICATOR_ICON = {
+  needs: MessageCircleQuestionIcon,
+  running: CircleDashedIcon,
+  failed: CircleAlertIcon,
+  limited: ClockAlertIcon,
+  paused: CirclePauseIcon,
+  unread: MailIcon,
+} as const satisfies Record<ZoneIndicator["kind"], LucideIcon>;
 
-/** An assistant's or a group's status in a thread row's words: its icon, then its label. */
-export function AssistantAttentionStatus(props: {
-  readonly attention: AssistantAttention;
-  /** Hides the label, for instance in a narrow row. */
-  readonly labelClassName?: string;
+export const ZONE_INDICATOR_TONE = {
+  needs: "text-warning-foreground",
+  running: "text-info-foreground",
+  failed: "text-destructive-foreground",
+  limited: "text-warning-foreground",
+  paused: "text-warning-foreground",
+  unread: "text-info-foreground",
+} as const satisfies Record<ZoneIndicator["kind"], string>;
+
+/** An assistant's or a group's one status, as the sidebar shows it: its icon, then its words. */
+export function ZoneIndicatorStatus(props: {
+  readonly indicator: ZoneIndicator;
+  readonly subject: "assistant" | "group";
   readonly testId?: string;
 }) {
-  const status = assistantTopStatus(props.attention);
+  const { kind } = props.indicator;
+  const label = zoneIndicatorLabel(props.indicator, props.subject);
+  const Icon = ZONE_INDICATOR_ICON[kind];
   return (
     <span
       data-testid={props.testId ?? "assistant-status"}
-      data-status={props.attention}
-      aria-label={status.label}
+      data-status={kind}
+      aria-label={label}
       className={cn(
         "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
-        status.className,
+        ZONE_INDICATOR_TONE[kind],
       )}
     >
-      <TopStatusIcon icon={status.icon} className="size-3" />
-      <span aria-hidden className={props.labelClassName}>
-        {status.label}
-      </span>
+      <Icon aria-hidden className="size-3" />
+      <span aria-hidden>{label}</span>
     </span>
   );
 }

@@ -46,38 +46,56 @@ export const afterBoundarySql = (team: string, seq: string) =>
     WHERE b.team_id = ${team} AND b.kind = 'boundary' ORDER BY b.seq DESC LIMIT 1), 0)`;
 
 /**
- * The oldest request of `team`'s tab `scope` ('' for General) that waits on the user, as JSON, or
- * NULL: an open wait, tasks that need the user (after the newest boundary), or, in General, the
- * lead's question about the project before work starts. Waits and project questions stay open
- * until answered, whatever boundary follows them.
+ * The rows that make a request of `team`'s tab `scope` ('' for General) wait on the user: an open
+ * wait, tasks needing the user after the newest boundary, or the lead's project question. `rank`
+ * reads a request's owner as `assistantGroupWaitingRequests` does: wait, then project, then task.
  */
 // Open waits and project questions are few: their partial indexes beat walking the tab's lines.
+const scopeWaitRowsSql = (team: string, scope: string) =>
+  `(SELECT q.request_id, 'wait' AS reason, NULL AS task_reason, q.assistant_id, q.seq AS at,
+        q.wait_key, 0 AS rank
+      FROM assistant_group_messages q
+      WHERE q.team_id = ${team} AND q.wait_key IS NOT NULL AND q.wait_resolved_at IS NULL
+        AND COALESCE(q.request_project_id, '') = ${scope}
+    UNION ALL
+    SELECT k.request_id, CASE k.status WHEN 'failed' THEN 'failed' ELSE 'paused' END,
+        k.reason, k.owner_id, m.seq, NULL, 2
+      FROM assistant_group_tasks k
+      JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+      JOIN assistant_group_messages r ON r.message_id = k.request_id
+      WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
+        AND r.request_project_id IS NULLIF(${scope}, '') AND ${taskNeedsUserSql("k")}
+        AND ${afterBoundarySql(team, "m.seq")} AND ${tasksNeedUserSql("k.request_id")}
+    UNION ALL
+    SELECT a.request_id, 'project', NULL, NULL, a.seq, NULL, 1 FROM assistant_group_messages a
+      WHERE ${scope} = '' AND a.team_id = ${team} AND a.request_project_id IS NULL
+        AND a.asks_project = 1
+        AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks z WHERE z.request_id = a.request_id))`;
+
+/** The oldest request of `team`'s tab `scope` that waits on the user, as JSON, or NULL. */
 export const scopeWaitingRequestSql = (team: string, scope: string) =>
   `(SELECT json_object('requestId', h.message_id,
       'title', NULLIF(h.title, ''), 'text', substr(h.text, 1, 400),
       'reason', w.reason, 'taskReason', w.task_reason, 'assistantId', w.assistant_id)
-    FROM (
-      SELECT q.request_id, 'wait' AS reason, NULL AS task_reason, q.assistant_id, q.seq AS at
-        FROM assistant_group_messages q
-        WHERE q.team_id = ${team} AND q.wait_key IS NOT NULL AND q.wait_resolved_at IS NULL
-          AND COALESCE(q.request_project_id, '') = ${scope}
-      UNION ALL
-      SELECT k.request_id, CASE k.status WHEN 'failed' THEN 'failed' ELSE 'paused' END,
-          k.reason, k.owner_id, m.seq
-        FROM assistant_group_tasks k
-        JOIN assistant_group_messages m ON m.message_id = k.request_message_id
-        JOIN assistant_group_messages r ON r.message_id = k.request_id
-        WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
-          AND r.request_project_id IS NULLIF(${scope}, '') AND ${taskNeedsUserSql("k")}
-          AND ${afterBoundarySql(team, "m.seq")} AND ${tasksNeedUserSql("k.request_id")}
-      UNION ALL
-      SELECT a.request_id, 'project', NULL, NULL, a.seq FROM assistant_group_messages a
-        WHERE ${scope} = '' AND a.team_id = ${team} AND a.request_project_id IS NULL
-          AND a.asks_project = 1
-          AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks z WHERE z.request_id = a.request_id)
-    ) w
+    FROM ${scopeWaitRowsSql(team, scope)} w
     JOIN assistant_group_messages h ON h.message_id = w.request_id
-    ORDER BY h.seq, w.at LIMIT 1)`;
+    ORDER BY h.seq, w.rank, w.at LIMIT 1)`;
+
+/**
+ * Every request of `team`'s tab `scope` that waits on the user, oldest first, as a JSON array of
+ * its owner (null for the lead) and its open wait keys (`request:<id>`, `decision:<id>`), so a
+ * client counts each request once and skips one it already lists by that wait.
+ */
+export const scopeWaitingRequestsSql = (team: string, scope: string) =>
+  `(SELECT json_group_array(json_object('assistantId', o.assistant_id, 'waitKeys', json(o.keys)))
+    FROM (SELECT w.assistant_id, h.seq,
+        ROW_NUMBER() OVER (PARTITION BY w.request_id ORDER BY w.rank, w.at) AS n,
+        json_group_array(w.wait_key) FILTER (WHERE w.wait_key IS NOT NULL)
+          OVER (PARTITION BY w.request_id) AS keys
+      FROM ${scopeWaitRowsSql(team, scope)} w
+      JOIN assistant_group_messages h ON h.message_id = w.request_id
+      ORDER BY h.seq) o
+    WHERE o.n = 1)`;
 
 /** A task counts toward the group's `working`: queued, running or waiting. */
 export const workingTaskStatusesSql = list(ASSISTANT_GROUP_WORKING_TASK_STATUSES);
