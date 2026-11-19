@@ -1,16 +1,22 @@
 import { assert, it } from "@effect/vitest";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { waitWakeId } from "../autonomy/needsYou.ts";
 import { assistantNote, SETTLED_WAIT_RUN_WINDOW, settledWaitsForTurn } from "./assistantNote.ts";
 import * as Directory from "./AssistantDirectory.ts";
-import { effectiveProjectIdsOf, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
+import {
+  effectiveProjectIdsOf,
+  HOST_CONTAINER_NOTE_LINE,
+  projectScopeRefusal,
+} from "./AssistantSandboxPolicy.ts";
 
 const seed = (id: string, extra: { role?: string; archived?: boolean } = {}) =>
   Effect.gen(function* () {
@@ -347,3 +353,65 @@ it.effect("a member's group conversation reaches its own projects and that group
     assert.include(note, "You work in: p1, web.");
   }).pipe(Effect.provide(directoryLayer)),
 );
+
+it.effect("the note says where launches run by default, by the rule launches follow", () => {
+  const links = { enabled: true };
+  const layer = Layer.mergeAll(
+    directoryLayer,
+    Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.sync(() => ({ linkedEnvironmentsEnabled: links.enabled }) as never),
+    }),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("env-self")),
+    }),
+  );
+  return Effect.gen(function* () {
+    const directory = Option.some(yield* Directory.AssistantDirectory);
+    const sql = yield* SqlClient.SqlClient;
+    yield* seed("ann");
+    yield* teamRow("t1", ["ann"]);
+    const groupThread = ThreadId.make("assistant:ann:g-1111111111111111");
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+      VALUES ('t1', 'ann', ${groupThread})`;
+    yield* sql`INSERT INTO peer_environment_links
+      (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
+      VALUES ('env-devbox', 's', 'devbox', '[]', 'full-access', 't', 't')`;
+    const here = HOST_CONTAINER_NOTE_LINE;
+    const on = (where: string) => `Work you launch runs on ${where} by default.`;
+    const cases: ReadonlyArray<{
+      readonly own: string | null;
+      readonly group?: string;
+      readonly scope?: string;
+      readonly enabled?: boolean;
+      readonly thread?: ThreadId;
+      readonly line: string;
+    }> = [
+      { own: null, line: here },
+      { own: "local", line: here },
+      { own: "env-self", line: here },
+      { own: "env-devbox", line: on("devbox") },
+      { own: "auto", line: on("the least loaded environment") },
+      { own: "env-gone", line: on("env-gone") },
+      { own: "env-devbox", enabled: false, line: here },
+      { own: "env-devbox", scope: "project", line: here },
+      // A group's default wins in its own threads only.
+      {
+        own: "env-devbox",
+        group: "auto",
+        thread: groupThread,
+        line: on("the least loaded environment"),
+      },
+      { own: "env-devbox", group: "auto", line: on("devbox") },
+      { own: null, group: "local", thread: groupThread, line: here },
+    ];
+    for (const entry of cases) {
+      links.enabled = entry.enabled ?? true;
+      yield* sql`UPDATE assistants SET default_environment = ${entry.own},
+        scope = ${entry.scope ?? null}, project_ids_json = '["p1"]' WHERE assistant_id = 'ann'`;
+      yield* sql`UPDATE assistant_teams SET default_environment = ${entry.group ?? null}`;
+      const note = yield* assistantNote(directory, entry.thread ?? thread("ann"), "hi");
+      assert.include(note, entry.line, JSON.stringify(entry));
+      if (entry.line !== here) assert.notInclude(note, "everything else runs here");
+    }
+  }).pipe(Effect.provide(layer));
+});
