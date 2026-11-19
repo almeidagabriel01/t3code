@@ -111,7 +111,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
-      refreshIntervalMs: 1_000,
+      refreshIntervalMs: 3_000,
       isFinal: (result) => result.incomplete !== true,
       execute: (input) =>
         fileMetadata.seedAfterRead(
