@@ -95,28 +95,48 @@ describe("registerOwner", () => {
 
 const environmentId = EnvironmentId.make("mac");
 const providerInstanceId = ProviderInstanceId.make("codex");
-const shell = (
-  id: string,
-  lineage: { parentThreadId: string | null; relationshipToParent: "fork" | "subagent" | null },
-) => ({
-  id: ThreadId.make(id),
-  providerInstanceId,
-  lineage: {
-    parentThreadId: lineage.parentThreadId === null ? null : ThreadId.make(lineage.parentThreadId),
-    relationshipToParent: lineage.relationshipToParent,
-    rootThreadId: ThreadId.make(lineage.parentThreadId ?? id),
-  },
+const lineage = (id: string, parent?: string, relationshipToParent?: "fork" | "subagent") => ({
+  parentThreadId: parent === undefined ? null : ThreadId.make(parent),
+  relationshipToParent: relationshipToParent ?? null,
+  rootThreadId: ThreadId.make(parent ?? id),
 });
 
 describe("consumerOf", () => {
+  const delegatedFrom = {
+    environmentId: EnvironmentId.make("vps"),
+    threadId: ThreadId.make("remote-parent"),
+    title: "Parent",
+  };
   it.each([
-    ["a plain thread", "t1", null, null, null, { kind: "thread" }],
-    ["a fork reads as its own thread", "t2", "t1", "fork", null, { kind: "thread" }],
-    ["a subagent", "t3", "t1", "subagent", null, { kind: "subagent", parentThreadId: "t1" }],
+    ["a plain thread", "t1", lineage("t1"), null, null, { kind: "thread" }],
+    [
+      "a fork reads as its own thread",
+      "t2",
+      lineage("t2", "t1", "fork"),
+      null,
+      null,
+      { kind: "thread" },
+    ],
+    [
+      "a subagent",
+      "t3",
+      lineage("t3", "t1", "subagent"),
+      null,
+      null,
+      { kind: "subagent", parentThreadId: "t1" },
+    ],
+    [
+      "a task delegated from a linked environment",
+      "t4",
+      lineage("t4"),
+      delegatedFrom,
+      null,
+      { kind: "subagent", parentThreadId: "remote-parent" },
+    ],
     [
       "an assistant",
       "assistant:ana:2",
-      null,
+      lineage("assistant:ana:2"),
       null,
       null,
       { kind: "assistant", assistantId: "ana" },
@@ -124,15 +144,28 @@ describe("consumerOf", () => {
     [
       "a group member",
       "assistant:ana:g-0123456789abcdef",
-      null,
+      lineage("assistant:ana:g-0123456789abcdef"),
       null,
       "team:1",
       { kind: "groupMember", assistantId: "ana", groupId: "team:1" },
     ],
-  ] as const)("%s", (_name, id, parentThreadId, relationshipToParent, groupId, expected) => {
+    [
+      "a group member whose group row is missing",
+      "assistant:ana:g-0123456789abcdef",
+      lineage("assistant:ana:g-0123456789abcdef"),
+      null,
+      null,
+      { kind: "groupMember", assistantId: "ana" },
+    ],
+  ] as const)("%s", (_name, id, threadLineage, delegated, groupId, expected) => {
     expect(
       consumerOf({
-        thread: shell(id, { parentThreadId, relationshipToParent }),
+        thread: {
+          id: ThreadId.make(id),
+          providerInstanceId,
+          lineage: threadLineage,
+          ...(delegated === null ? {} : { delegatedFrom: delegated }),
+        },
         groupId,
         environmentId,
       }),

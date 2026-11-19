@@ -1,5 +1,6 @@
 import {
   assistantIdFromThreadId,
+  isAssistantGroupThreadId,
   type EnvironmentId,
   type OrchestrationV2ThreadShell,
   type ResourceTelemetryConsumer,
@@ -25,7 +26,10 @@ export function liveOwners(
 
 /** Who an agent process works for. `groupId` comes from the group thread tables: the id only hashes it. */
 export function consumerOf(input: {
-  readonly thread: Pick<OrchestrationV2ThreadShell, "id" | "lineage" | "providerInstanceId">;
+  readonly thread: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "lineage" | "providerInstanceId" | "delegatedFrom"
+  >;
   readonly groupId: string | null;
   readonly environmentId: EnvironmentId;
 }): ResourceTelemetryConsumer {
@@ -36,14 +40,15 @@ export function consumerOf(input: {
     providerInstanceId: thread.providerInstanceId,
   };
   const assistantId = assistantIdFromThreadId(thread.id);
-  if (assistantId !== null && groupId !== null) {
-    return { ...base, kind: "groupMember", assistantId, groupId };
+  if (assistantId !== null && isAssistantGroupThreadId(thread.id)) {
+    return { ...base, kind: "groupMember", assistantId, ...(groupId === null ? {} : { groupId }) };
   }
   if (assistantId !== null) return { ...base, kind: "assistant", assistantId };
-  const parentThreadId = thread.lineage.parentThreadId;
-  if (thread.lineage.relationshipToParent === "subagent" && parentThreadId !== null) {
-    return { ...base, kind: "subagent", parentThreadId };
-  }
+  // A task delegated from a linked environment answers to a parent on that machine.
+  const parentThreadId =
+    thread.delegatedFrom?.threadId ??
+    (thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null);
+  if (parentThreadId !== null) return { ...base, kind: "subagent", parentThreadId };
   return { ...base, kind: "thread" };
 }
 

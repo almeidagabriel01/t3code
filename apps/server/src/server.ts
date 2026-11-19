@@ -894,6 +894,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ModelSelectionSeeds.start),
 ).pipe(
   Layer.provideMerge(layerChannels),
+  // Names the thread, assistant, member or subagent behind each agent process in resource telemetry.
+  Layer.provideMerge(ResourceConsumers.layer),
   Layer.provideMerge(layerOrchestrationApplication),
   // Provider turns read the snapshot; it sits below the orchestration runtime that consumes it.
   Layer.provideMerge(layerMemorySnapshot),
@@ -1063,8 +1065,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     layerRegisteredMemoryHub,
-    // Names the thread, assistant, member or subagent behind each agent process in resource telemetry.
-    Ws.layer.pipe(Layer.provide(ResourceConsumers.layer)),
+    Ws.layer,
     speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(
