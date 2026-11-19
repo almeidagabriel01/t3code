@@ -75,6 +75,7 @@ const setup = (input: {
       unlink: () => Effect.die("unused"),
       resolve: () => Effect.die("unused"),
       recordOutcome: () => Effect.void,
+      renewAll: Effect.die("unused"),
     });
     const peers = PeerMcpClient.PeerMcpClient.of({
       call: (request) =>
