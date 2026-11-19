@@ -68,7 +68,6 @@ import {
 } from "@t3tools/contracts";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { teamModelLayer } from "@t3tools/shared/modelSelectionPrecedence";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -123,7 +122,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CollapsibleMessageBody } from "../chat/CollapsibleMessageBody";
-import { getDisplayModelName } from "../chat/providerIconUtils";
+import { modelSelectionDisplayName } from "../chat/providerIconUtils";
 import {
   isTimelineMinimapRowVisible,
   resolveTimelineMinimapCurrentIndex,
@@ -232,12 +231,7 @@ function GroupHeader(props: {
   const navigate = useNavigate();
   const exceptions = useMemberModelExceptions(environmentId, modelProject?.id ?? null);
   const providers = useEnvironmentProviders().get(environmentId);
-  const modelName = (selection: ModelSelection) => {
-    const found = providers
-      ?.find((provider) => provider.instanceId === selection.instanceId)
-      ?.models.find((model) => model.slug === selection.model);
-    return found ? getDisplayModelName(found) : formatModelSlugName(selection.model);
-  };
+  const modelName = (selection: ModelSelection) => modelSelectionDisplayName(providers, selection);
   const archived = team.archivedAt !== null;
   const status = useAssistantStatus();
   const limitLabel = useUsageLimitLabel();

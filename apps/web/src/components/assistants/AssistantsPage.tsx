@@ -36,7 +36,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import {
-  AssistantAttentionStatus,
+  ZoneIndicatorStatus,
   AssistantAvatar,
   assistantStatusText,
   MOOD_TEXT,
@@ -46,7 +46,6 @@ import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
-import { useAssistantAttention, useGroupAttention } from "./useAssistantAttention";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 function AssistantCard(props: {
@@ -59,8 +58,9 @@ function AssistantCard(props: {
   const flows = useAssistantFlows(environmentId);
   const archived = assistant.archivedAt !== null;
   const taskSections = useAssistantTaskSections(props.entry);
-  const { attention } = useAssistantAttention(props.entry);
-  const presence = useAssistantStatus().of(environmentId, assistant, useUsageLimitLabel());
+  const status = useAssistantStatus();
+  const presence = status.of(environmentId, assistant, useUsageLimitLabel());
+  const indicator = status.indicator(environmentId, assistant.id, presence);
   return (
     <article
       data-testid="assistant-card"
@@ -80,8 +80,8 @@ function AssistantCard(props: {
             <h3 className="line-clamp-2 min-w-0 flex-1 text-sm font-medium break-words">
               {assistant.name}
             </h3>
-            {archived || attention === null ? null : (
-              <AssistantAttentionStatus attention={attention} />
+            {archived || indicator === null ? null : (
+              <ZoneIndicatorStatus indicator={indicator} subject="assistant" />
             )}
           </div>
           {assistant.role === "" ? null : (
@@ -247,7 +247,6 @@ export function AssistantsPage() {
   const { active, archived, teams, activeTeams, archivedTeams } = useAssistantEntries();
   const environmentIds = useAssistantsEnvironmentIds();
   const projects = useProjects();
-  const groupAttention = useGroupAttention();
   const status = useAssistantStatus();
   const nowMs = useNowMinuteMs();
   const navigate = useNavigate();
@@ -261,16 +260,18 @@ export function AssistantsPage() {
 
   // Every member counts, also one listed under "Needs you" instead of its group.
   const groupStatus = (entry: AssistantTeamEntry) => {
-    const attention = groupAttention(
+    const indicator = status.group(
       entry,
-      active.filter(
-        (member) =>
-          member.environmentId === entry.environmentId &&
-          entry.team.memberIds.includes(member.assistant.id),
-      ),
+      active
+        .filter(
+          (member) =>
+            member.environmentId === entry.environmentId &&
+            entry.team.memberIds.includes(member.assistant.id),
+        )
+        .map((member) => member.assistant),
     );
-    return attention === null ? null : (
-      <AssistantAttentionStatus attention={attention} testId="group-status" />
+    return indicator === null ? null : (
+      <ZoneIndicatorStatus indicator={indicator} subject="group" testId="group-status" />
     );
   };
   const projectName = (environmentId: string, projectId: string) =>

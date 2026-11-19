@@ -30,6 +30,13 @@ export function modelDisplayName(options: ReadonlyArray<ModelOption>, selection:
   );
 }
 
+/** A model's display name as its environment lists it for the project. */
+export function useModelDisplayName(environmentId: EnvironmentId, projectId: ProjectId | null) {
+  const config = useEnvironmentServerConfig(environmentId);
+  return (selection: ModelSelection) =>
+    modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
+}
+
 /** A Settings model picker over one environment's models, with effort for the picked one. */
 export function SettingsModelPicker(props: {
   readonly title: string;

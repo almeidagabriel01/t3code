@@ -70,6 +70,16 @@ const decodeScopes = Schema.decodeOption(
             }),
           ),
         ),
+        waitingRequests: Schema.optionalKey(
+          Schema.NullOr(
+            Schema.Array(
+              Schema.Struct({
+                assistantId: Schema.NullOr(Schema.String),
+                waitKeys: Schema.Array(Schema.String),
+              }),
+            ),
+          ),
+        ),
       }),
     ),
   ),
@@ -170,6 +180,14 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
                         : { taskReason: scope.waitingRequest.taskReason }),
                       assistantId: scope.waitingRequest.assistantId as AssistantId | null,
                     },
+                  }),
+              ...(scope.waitingRequests == null || scope.waitingRequests.length === 0
+                ? {}
+                : {
+                    waitingRequests: scope.waitingRequests.map((request) => ({
+                      assistantId: request.assistantId as AssistantId | null,
+                      waitKeys: request.waitKeys,
+                    })),
                   }),
             }),
           ),

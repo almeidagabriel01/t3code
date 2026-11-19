@@ -19,7 +19,6 @@ import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
 import { AssistantId, AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { useEffect, type ReactNode } from "react";
 import { View } from "react-native";
 
@@ -27,7 +26,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button, type ButtonProps } from "../../components/ui/Button";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRow } from "../../components/ui/ListRow";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
+import { useModelDisplayName } from "../settings/components/SettingsModelPicker";
 import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -110,10 +111,15 @@ function useCloseWhenGone(environmentId: EnvironmentId, found: boolean) {
   }, [gone, navigation]);
 }
 
-function Field(props: { readonly label: string; readonly value?: string }) {
+function Field(props: {
+  readonly label: string;
+  readonly value?: string;
+  readonly icon?: AppSymbolName;
+}) {
   return (
     <ListRowLayout
       label={props.label}
+      {...(props.icon === undefined ? {} : { icon: props.icon })}
       {...(props.value === undefined ? {} : { detail: props.value })}
       accessory={null}
     />
@@ -137,6 +143,7 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
   const shells = useThreadShells();
   const status = useAssistantStatus();
   const limitLabel = useUsageLimitLabel();
+  const modelName = useModelDisplayName(environmentId, assistant.projectId);
   const work = useAssistantLiveWork();
   const nowMs = useNowMinuteMs();
   const { teams } = useAssistantEntries();
@@ -243,20 +250,26 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
         </ListSection>
       )}
       <ListSection title="Access">
-        <Field label="Tool access" value={toolAccessLabel(assistant.toolAccess)} />
+        <Field icon="key" label="Tool access" value={toolAccessLabel(assistant.toolAccess)} />
         <Field
+          icon="questionmark.bubble"
           label="Asks before acting"
           value={assistantAskBeforeActingLabel(assistant.askBeforeActing)}
         />
         {thread ? (
-          <Field label="Model" value={formatModelSlugName(thread.modelSelection.model)} />
+          <Field icon="brain" label="Model" value={modelName(thread.modelSelection)} />
         ) : null}
         <Field
+          icon="wrench.and.screwdriver"
           label={PROBLEM_LEVEL_LEGEND}
           value={problemLevelLabel(assistant.autonomy.onProblem)}
         />
         {assistant.budget !== null && spend ? (
-          <Field label="Spending limit" value={budgetSpendLine(spend)} />
+          <Field
+            icon="gauge.with.dots.needle.50percent"
+            label="Spending limit"
+            value={budgetSpendLine(spend)}
+          />
         ) : null}
       </ListSection>
       <ListSection>

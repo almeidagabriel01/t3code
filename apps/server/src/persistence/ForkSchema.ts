@@ -10,6 +10,7 @@ import {
   needsUserTaskScopesSql,
   pausedTaskNeedsUserSql,
   scopeWaitingRequestSql,
+  scopeWaitingRequestsSql,
   taskCountsByScopeSql,
   workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
@@ -980,7 +981,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             ORDER BY r.id) g) AS removed_project_ids_json,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
             'unreadCount', x.unread, 'waiting', x.waiting_request IS NOT NULL,
-            'waitingRequest', json(x.waiting_request), 'readSeq', x.read_seq,
+            'waitingRequest', json(x.waiting_request),
+            'waitingRequests', json(x.waiting_requests), 'readSeq', x.read_seq,
             'openTasks', x.open_tasks, 'doneTasks', x.done_tasks, 'general', x.general,
             'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
@@ -990,6 +992,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                   AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
               ${sql.literal(scopeWaitingRequestSql("t.team_id", "c.scope"))} AS waiting_request,
+              ${sql.literal(scopeWaitingRequestsSql("t.team_id", "c.scope"))} AS waiting_requests,
               c.working AS open_tasks,
               c.stopped AS done_tasks,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
