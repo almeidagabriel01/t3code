@@ -42,7 +42,8 @@ const stopDuringStart = (
     | "starting-snapshot"
     | "next-message"
     | "slow-release"
-    | "never-released",
+    | "never-released"
+    | "stop-in-window",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -298,6 +299,13 @@ const stopDuringStart = (
         const next = yield* Effect.forkChild(send("next").pipe(Effect.andThen(worker.drain())));
         if (scenario !== "next-message") {
           yield* Deferred.await(refusedAfterRecovery);
+          if (scenario === "stop-in-window") {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("stop-next"),
+              threadId,
+            });
+          }
           yield* TestClock.adjust("15 seconds");
         }
         yield* Fiber.join(next);
@@ -305,6 +313,19 @@ const stopDuringStart = (
         const nextFailed = after.turnItems.some(
           (item) => item.runId === after.runs[1]?.id && item.type === "error",
         );
+        if (scenario === "stop-in-window") {
+          // The start gives up quietly: the Stop already settled the run.
+          assert.lengthOf(started, 1);
+          assert.equal(after.runs[1]?.status, "interrupted");
+          assert.isFalse(nextFailed);
+          assert.deepEqual(
+            after.turnItems
+              .filter((item) => item.runId === after.runs[1]?.id)
+              .map((item) => item.type),
+            ["user_message", "run_interrupt_request", "run_interrupt_result"],
+          );
+          return;
+        }
         if (scenario === "never-released") {
           // The retry window is bounded: one try after the interrupt plus 40 retries.
           assert.equal(refusalsAfterRecovery, 41);
@@ -349,4 +370,8 @@ it.effect("the next message waits for a stopped turn that frees its slot late", 
 
 it.effect("the next message gives up after the retry window when the slot never frees", () =>
   stopDuringStart("never-released"),
+);
+
+it.effect("a Stop during the retry window ends the start without an error", () =>
+  stopDuringStart("stop-in-window"),
 );
