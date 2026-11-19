@@ -651,19 +651,24 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   // Lists that arrange threads read this, so a running thread's streaming
   // ticks reach only what reads its live shell.
-  let previousQuietThreadShells: ReadonlyArray<EnvironmentThreadShell> = [];
-  const quietThreadShellsAtom = Atom.make((get) => {
-    const next: EnvironmentThreadShell[] = [];
-    const hidden = get(hiddenThreadKeysAtom);
-    for (const ref of get(threadRefsAtom)) {
-      if (hidden.has(threadKey(ref))) continue;
-      const shell = get(quietThreadShellAtomFamily(threadKey(ref)));
-      if (shell !== null) next.push(shell);
-    }
-    if (arrayElementsEqual(previousQuietThreadShells, next)) return previousQuietThreadShells;
-    previousQuietThreadShells = next;
-    return next;
-  }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
+  const quietShellList = (withHidden: boolean, label: string) => {
+    let previous: ReadonlyArray<EnvironmentThreadShell> = [];
+    return Atom.make((get) => {
+      const next: EnvironmentThreadShell[] = [];
+      const hidden = withHidden ? NO_HIDDEN_THREADS : get(hiddenThreadKeysAtom);
+      for (const ref of get(threadRefsAtom)) {
+        if (hidden.has(threadKey(ref))) continue;
+        const shell = get(quietThreadShellAtomFamily(threadKey(ref)));
+        if (shell !== null) next.push(shell);
+      }
+      if (arrayElementsEqual(previous, next)) return previous;
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(label));
+  };
+  const quietThreadShellsAtom = quietShellList(false, "environment-quiet-thread-shell-list");
+  /** Tag-hidden threads included, for what counts work in progress: a hidden agent still works. */
+  const quietAllThreadShellsAtom = quietShellList(true, "environment-quiet-all-thread-shell-list");
 
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
@@ -729,6 +734,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     hiddenThreadKeysAtom,
     anyEnvironmentHidingAtom,
     quietThreadShellsAtom,
+    quietAllThreadShellsAtom,
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,
     pendingSubagentRequestsAtom,

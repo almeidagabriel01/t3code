@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { threadOwnerResolver, type ThreadOwner, type ZoneShell } from "./sidebarZones.ts";
+import type { EnvironmentThreadShell } from "./state/models.ts";
+import { collectUsageSessions } from "./state/usageSessions.ts";
 import {
+  isWorkingShell,
   workingConsumerLine,
   workingItems,
   type WorkingItem,
@@ -20,7 +23,11 @@ const shell = (id: string, patch: ShellPatch = {}) =>
     environmentId: "mac",
     id,
     title: id,
+    projectId: "site",
     providerInstanceId: "claude-work",
+    modelSelection: { instanceId: "claude-work", model: "m" },
+    deletedAt: null,
+    updatedAt: "2026-11-19T10:00:00.000Z",
     archivedAt: null,
     delegatedFrom: null,
     sideChatOf: null,
@@ -28,7 +35,7 @@ const shell = (id: string, patch: ShellPatch = {}) =>
     hasPendingUserInput: false,
     pendingSubagentRequest: null,
     pendingGuestMessageCount: 0,
-    runtime: { status: "running" },
+    runtime: { status: "running", providerInstanceId: patch.providerInstanceId ?? "claude-work" },
     blockedOnThreadWait: false,
     createdAt: "2026-11-01T00:00:00.000Z",
     latestRun: null,
@@ -41,7 +48,9 @@ const shell = (id: string, patch: ShellPatch = {}) =>
       rootThreadId: id,
       ...patch.lineage,
     },
-  }) as unknown as WorkingShell & ZoneShell;
+  }) as unknown as WorkingShell & ZoneShell & EnvironmentThreadShell;
+
+const none: ReadonlySet<string> = new Set();
 
 const vps = "vps" as WorkingShell["environmentId"];
 const at = (minute: number) => ({ startedAt: `2026-11-19T10:0${minute}:00.000Z` });
@@ -81,7 +90,12 @@ const ref = (kind: string, threadId: string, environmentId: string, extra: objec
 
 describe("workingItems", () => {
   it("lists assistants, their tasks and routed work, group members and subagents, newest first", () => {
-    const items = workingItems({ shells, ownerOf, teams: teams(["ada", "bo"]) });
+    const items = workingItems({
+      shells,
+      ownerOf,
+      teams: teams(["ada", "bo"]),
+      openDecisionThreadKeys: none,
+    });
     expect(items.map((item) => [item.key, item.consumer, item.ownerAssistantId])).toEqual([
       // An assistant's work routed to a linked machine is the assistant's, on that machine.
       ["vps:routed", ref("assistant", "routed", "vps", { assistantId: "ada" }), "ada"],
@@ -97,6 +111,8 @@ describe("workingItems", () => {
         ref("assistant", "assistant:ada:1", "mac", { assistantId: "ada" }),
         "ada",
       ],
+      // A project thread with a turn in progress is working too.
+      ["mac:plain", ref("thread", "plain", "mac", {}), null],
       // Ada already shows through her group thread; Bo runs before his thread arrives.
       [
         "member:mac:dev:bo",
@@ -115,7 +131,12 @@ describe("workingItems", () => {
   it("lists a linked machine's task for a project thread as that thread's subagent", () => {
     const remote = shell("remote", { environmentId: vps, delegatedFrom: from("plain") });
     const project = (): ThreadOwner => ({ kind: "project" });
-    const [item] = workingItems({ shells: [remote], ownerOf: project, teams: [] });
+    const [item] = workingItems({
+      shells: [remote],
+      ownerOf: project,
+      teams: [],
+      openDecisionThreadKeys: none,
+    });
     expect(item?.consumer).toMatchObject({
       kind: "subagent",
       environmentId: "vps",
@@ -125,7 +146,125 @@ describe("workingItems", () => {
 
   it("does not add a running member whose thread waits on the user", () => {
     const asking = shell(group, { hasPendingApprovals: true });
-    expect(workingItems({ shells: [asking], ownerOf, teams: teams(["ada"]) })).toEqual([]);
+    expect(
+      workingItems({
+        shells: [asking],
+        ownerOf,
+        teams: teams(["ada"]),
+        openDecisionThreadKeys: none,
+      }),
+    ).toEqual([]);
+  });
+});
+
+/**
+ * One state, every surface: Activity's Working section and the sidebar's Working zone draw
+ * `workingItems`, the Resource Manager marks `isWorkingShell`, and the usage bar's Sessions count
+ * `collectUsageSessions` per provider instance. All must name the same working set.
+ */
+describe("working parity", () => {
+  const codex = { providerInstanceId: "codex" as WorkingShell["providerInstanceId"] };
+  const cases = [
+    ["project thread mid-turn", shell("p-run"), "working"],
+    [
+      "project thread starting",
+      shell("p-start", { runtime: { status: "starting" } as never }),
+      "working",
+    ],
+    [
+      "project thread waiting on its children",
+      shell("p-wait", { blockedOnThreadWait: true }),
+      "working",
+    ],
+    // Background work the agent waits on parks the run at idle; the turn is still open.
+    [
+      "project thread held by background work",
+      shell("p-bg", { runtime: { status: "idle" } as never }),
+      "working",
+    ],
+    // A live provider session with no turn has no runtime in the shell.
+    ["project thread with an idle live session", shell("p-idle", { runtime: null }), "idle"],
+    ["project thread asking approval", shell("p-ask", { hasPendingApprovals: true }), "needsYou"],
+    ["project thread asking input", shell("p-input", { hasPendingUserInput: true }), "needsYou"],
+    ["project thread waiting on a decision", shell("p-decide"), "needsYou"],
+    ["assistant on the VPS", shell("assistant:ada:1", { environmentId: vps, ...codex }), "working"],
+    [
+      "assistant asking approval",
+      shell("assistant:ada:2", { hasPendingApprovals: true }),
+      "needsYou",
+    ],
+    ["group member", shell(group), "working"],
+    [
+      "subagent on the VPS",
+      shell("sub-vps", { environmentId: vps, lineage: subagentOf("p-run"), ...codex }),
+      "working",
+    ],
+    ["idle subagent", shell("sub-idle", { lineage: subagentOf("p-run"), runtime: null }), "idle"],
+    ["side chat mid-turn", shell("side", { sideChatOf: "p-run" } as never), "off"],
+    ["archived mid-turn", shell("old", { archivedAt: "2026-11-02T00:00:00.000Z" }), "off"],
+  ] as const;
+  const state = cases.map(([, thread]) => thread);
+  const decisions = new Set(["mac:p-decide"]);
+  const owners = threadOwnerResolver({
+    shells: state,
+    taskAssistantByThreadKey: new Map(),
+    teamKeyByThreadKey: new Map([[`mac:${group}`, "mac:dev"]]),
+    activeAssistantKeys: new Set(["mac:ada"]),
+  });
+  const items = workingItems({
+    shells: state,
+    ownerOf: owners,
+    teams: teams(["bo"]),
+    openDecisionThreadKeys: decisions,
+  });
+  const listed = new Set(items.map((item) => item.key));
+  const usage = (["mac", "vps"] as const).flatMap((environmentId) =>
+    (["claude-work", "codex"] as const).flatMap((instanceId) =>
+      collectUsageSessions({
+        threads: state,
+        instanceId: instanceId as never,
+        environmentIds: [environmentId as never],
+        isWorking: (thread) => isWorkingShell(thread, decisions),
+        now: Date.parse("2026-11-19T10:30:00.000Z"),
+      }),
+    ),
+  );
+  const usageState = new Map(usage.map((s) => [`${s.environmentId}:${s.threadId}`, s.state]));
+
+  it.each(cases)("%s is %s on every surface", (_, thread, expected) => {
+    const key = `${thread.environmentId}:${thread.id}`;
+    const working = expected === "working";
+    expect(listed.has(key)).toBe(working);
+    expect(isWorkingShell(thread, decisions)).toBe(working);
+    expect(usageState.get(key) === "working").toBe(working);
+    if (expected === "needsYou" && !key.endsWith("p-decide")) {
+      expect(usageState.get(key)).toBe("waiting");
+    }
+  });
+
+  it("counts the same working set everywhere, across environments", () => {
+    const threadItems = items.filter((item) => item.shell !== null);
+    const usageWorking = usage.filter((s) => s.state === "working");
+    // Bo runs before his thread arrives: no thread, so no provider instance to count him under.
+    expect(items.length - threadItems.length).toBe(1);
+    expect(usageWorking.map((s) => `${s.environmentId}:${s.threadId}`).toSorted()).toEqual(
+      threadItems.map((item) => item.key).toSorted(),
+    );
+    expect(state.filter((thread) => isWorkingShell(thread, decisions))).toHaveLength(
+      threadItems.length,
+    );
+    expect(new Set(threadItems.map((item) => item.consumer.environmentId))).toEqual(
+      new Set(["mac", "vps"]),
+    );
+    expect(threadItems.map((item) => item.consumer.kind).toSorted()).toEqual([
+      "assistant",
+      "groupMember",
+      "subagent",
+      "thread",
+      "thread",
+      "thread",
+      "thread",
+    ]);
   });
 });
 
@@ -134,6 +273,7 @@ describe("workingConsumerLine", () => {
     assistant: (_: string, id: string) => (id === "ada" ? "Ada" : undefined),
     group: (_: string, id: string) => (id === "dev" ? "Backend" : undefined),
     thread: (_: string, id: string) => (id === "plain" ? "Fix login" : undefined),
+    project: (_: string, id: string) => (id === "site" ? "Website" : undefined),
     environment: (id: string) => (id === "vps" ? "VPS" : undefined),
   };
 
@@ -152,10 +292,14 @@ describe("workingConsumerLine", () => {
       null,
       "Subagent of a thread",
     ],
+    [{ kind: "thread" }, null, "Website · VPS"],
   ] as const)("%o reads %s", (consumer, ownerAssistantId, expected) => {
-    const item = { consumer: ref("", "t", "vps", consumer), ownerAssistantId };
+    const item = { consumer: ref("", "t", "vps", consumer), ownerAssistantId, shell: shell("t") };
     expect(
-      workingConsumerLine(item as Pick<WorkingItem, "consumer" | "ownerAssistantId">, names),
+      workingConsumerLine(
+        item as unknown as Pick<WorkingItem, "consumer" | "ownerAssistantId" | "shell">,
+        names,
+      ),
     ).toBe(expected);
   });
 });

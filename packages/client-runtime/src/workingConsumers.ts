@@ -27,6 +27,7 @@ export type WorkingShell = Pick<
   | "blockedOnThreadWait"
   | "createdAt"
   | "title"
+  | "projectId"
 > & { readonly latestRun: { readonly startedAt?: string | null | undefined } | null };
 
 /** A group member the server reports running before its thread reaches this client. */
@@ -75,8 +76,38 @@ export interface WorkingItem<S extends WorkingShell = WorkingShell> {
 }
 
 /**
- * Work the project lists do not show as a row of its own: assistants, group members and
- * subagents that run now, newest first. Work waiting on the user is a Needs you item instead.
+ * Whether `workingItems` lists this thread. Working: a turn is in progress (starting, running,
+ * waiting on its children or on background work) and nothing waits on the user. A merely live
+ * provider session, Needs you (approval, answer, decision), archived and side chats are not.
+ */
+export function isWorkingShell(
+  shell: Pick<
+    WorkingShell,
+    | "environmentId"
+    | "id"
+    | "archivedAt"
+    | "sideChatOf"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "pendingGuestMessageCount"
+    | "runtime"
+    | "blockedOnThreadWait"
+  >,
+  openDecisionThreadKeys: ReadonlySet<string>,
+): boolean {
+  return (
+    shell.archivedAt === null &&
+    shell.sideChatOf == null &&
+    !openDecisionThreadKeys.has(`${shell.environmentId}:${shell.id}`) &&
+    sidebarStatusIsRunning(resolveSidebarThreadStatus(shell))
+  );
+}
+
+/**
+ * Everything working now, the one set every count and list of working agents reads: project
+ * threads, assistants, group members and subagents (`isWorkingShell`), newest first. Feed it
+ * every thread, tag-hidden ones included: a hidden agent still works.
  */
 export function workingItems<S extends WorkingShell>(input: {
   readonly shells: ReadonlyArray<S>;
@@ -88,21 +119,23 @@ export function workingItems<S extends WorkingShell>(input: {
       readonly chat?: { readonly runningMemberIds?: ReadonlyArray<AssistantId> } | null | undefined;
     };
   }>;
+  /** Scoped thread keys with an open decision (`openDecisionThreadKeys`); those need the user. */
+  readonly openDecisionThreadKeys: ReadonlySet<string>;
 }): ReadonlyArray<WorkingItem<S>> {
   const items: Array<WorkingItem<S> & { readonly at: string }> = [];
   const covered = new Set<string>();
   for (const shell of input.shells) {
     if (shell.archivedAt !== null || shell.sideChatOf != null) continue;
+    const key = `${shell.environmentId}:${shell.id}`;
     const owner = input.ownerOf(shell);
     const consumer = consumerOf(shell, owner);
-    if (consumer.kind === "thread") continue;
     // A member whose thread waits on the user is a Needs you item, not a second working row.
     if (consumer.kind === "groupMember") {
       covered.add(`${shell.environmentId}:${consumer.groupId}:${consumer.assistantId}`);
     }
-    if (!sidebarStatusIsRunning(resolveSidebarThreadStatus(shell))) continue;
+    if (!isWorkingShell(shell, input.openDecisionThreadKeys)) continue;
     items.push({
-      key: `${shell.environmentId}:${shell.id}`,
+      key,
       consumer,
       ownerAssistantId:
         owner.kind === "assistant"
@@ -138,14 +171,15 @@ export function workingItems<S extends WorkingShell>(input: {
 
 /**
  * The line every client shows under a working row: who works and on which machine, such as
- * "Ada · Backend · MacBook" or "Subagent of Fix login · VPS".
+ * "Ada · Backend · MacBook", "Subagent of Fix login · VPS" or "Website · MacBook".
  */
 export function workingConsumerLine(
-  item: Pick<WorkingItem, "consumer" | "ownerAssistantId">,
+  item: Pick<WorkingItem, "consumer" | "ownerAssistantId" | "shell">,
   names: {
     readonly assistant: (environmentId: string, assistantId: string) => string | undefined;
     readonly group: (environmentId: string, groupId: string) => string | undefined;
     readonly thread: (environmentId: string, threadId: string) => string | undefined;
+    readonly project: (environmentId: string, projectId: string) => string | undefined;
     readonly environment: (environmentId: string) => string | undefined;
   },
 ): string {
@@ -158,7 +192,9 @@ export function workingConsumerLine(
   const who =
     consumer.kind === "subagent"
       ? `Subagent of ${assistant ?? names.thread(environmentId, consumer.parentThreadId) ?? "a thread"}`
-      : assistant;
+      : consumer.kind === "thread" && item.shell !== null
+        ? names.project(environmentId, item.shell.projectId)
+        : assistant;
   const group =
     consumer.kind === "groupMember"
       ? consumer.groupId === null
