@@ -26,6 +26,10 @@ export type PeerLink = typeof PeerLink.Type;
 export const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
 export type PeerLinkStatus = typeof PeerLinkStatus.Type;
 
+/** The peer's view of a link's session; asking renews it there while it is still live. */
+export const PeerLinkSessionState = Schema.Struct({ expiresAt: Schema.DateTimeUtc });
+export type PeerLinkSessionState = typeof PeerLinkSessionState.Type;
+
 export const PeerLinkSummary = Schema.Struct({
   ...PeerLink.fields,
   status: PeerLinkStatus,
