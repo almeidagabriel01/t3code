@@ -246,7 +246,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - The Devices panel in an isolated home needs `enableDeviceSupport` and `deviceOnboardingCompleted` in its `settings.json`, then a dev server restart: the device service reads them at startup.
 - Linked environments need no second machine: run `node apps/server/src/bin.ts serve --base-dir <worktree>/.t3/<name> --port <p>` beside dev, set `linkedEnvironmentsEnabled` in both homes' `settings.json`, then `environment link http://127.0.0.1:<p> --base-dir <worktree>/.t3 --pairing-code <Token from pair> --access full-access`. Unlink and delete that home after.
 - A dev server shares the machine-wide heavy queue (`~/.t3/heavy-queue`), so switching it off or pausing it there releases or holds every other project's jobs. Start dev with `T3CODE_HEAVY_QUEUE_DIR=<worktree>/.t3/heavy-queue-dev` before testing queue controls.
-- knip runs when you push main, not when you commit, and only from a clean checkout of main (untracked files block it too). Through `remoto`, call `pnpm run <script>`: it does not put `node_modules/.bin` on PATH, so a bare `vp` exits 127 there.
+- knip runs when you push main or merge into it, not when you commit, and a push needs a clean working tree (untracked files block it too). Through `remoto`, call `pnpm run <script>`: it does not put `node_modules/.bin` on PATH, so a bare `vp` exits 127 there.
 - During an unfinished merge, `git add` the resolved files before starting `vp run dev`: git re-reads unmerged files on every status poll, and that makes the server's `node --watch` restart in a loop.
 
 ### Layout and design
@@ -302,4 +302,5 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 ### Working with parallel agents in one worktree
 
+- Start every new t3code branch or worktree from the current local `main`, and merge `main` into an older branch before its next commit: hooks come from the branch's own `vite.config.ts`, so a stale base still runs knip on every commit.
 - Commit with `git commit <paths>` only. The pre-commit hook can sweep other agents' staged files into your commit, so stage only a new file of your own, right before committing it, with `git add <file>` (the hook refuses `git add -N` files). Never stash and never reset the index.

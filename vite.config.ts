@@ -160,7 +160,7 @@ export default defineConfig({
   staged: {
     // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
     "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
-    // knip reads the whole repo, so `.vite-hooks/pre-push` runs it on pushes to main, not per commit.
+    // knip reads the whole repo, so it runs in .vite-hooks/pre-push and pre-merge-commit for main.
   },
   fmt: {
     ignorePatterns: [

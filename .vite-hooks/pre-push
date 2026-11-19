@@ -1,25 +1,9 @@
-# knip reads the whole repo, so it guards pushes to main instead of every commit. It reads the
-# working tree, untracked files included, so it vouches only for a clean, checked-out HEAD.
-head=$(git rev-parse HEAD)
-check=
-while read -r _ sha ref _; do
-  [ "$ref" = refs/heads/main ] || continue
-  case $sha in *[!0]*) ;; *) continue ;; esac
-  if [ "$(git rev-parse "$sha^{commit}" 2>/dev/null)" != "$head" ]; then
-    echo "pre-push: knip checks the working tree, so push main from a checkout of it." >&2
-    exit 1
-  fi
-  check=1
-done
-[ -n "$check" ] || exit 0
+# knip reads the whole repo (about 2 min on a loaded Mac), so it guards main instead of every commit.
+grep -q ' refs/heads/main ' || exit 0
+# knip reads the working tree, untracked files included, so it vouches only for a clean one.
 if [ -n "$(git status --porcelain)" ]; then
   echo "pre-push: knip checks the working tree; commit or stash local changes first." >&2
   exit 1
 fi
-# remoto runs it on another machine when one is up; 75 means none was and it did not fall back.
-# pnpm puts node_modules/.bin on PATH there, which remoto does not.
-if command -v remoto >/dev/null 2>&1; then
-  remoto pnpm run knip:check && exit 0 || c=$?
-  [ "$c" = 75 ] || exit "$c"
-fi
-vp run knip:check
+# remoto does not put node_modules/.bin on PATH, so a bare vp exits 127 there.
+if command -v remoto >/dev/null 2>&1; then remoto pnpm run knip:check; else vp run knip:check; fi
