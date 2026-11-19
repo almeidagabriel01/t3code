@@ -69,6 +69,20 @@ export const oldestPendingGuestMessageAt = (
       null,
     );
 
+/** When the newest message still waiting on the owner arrived; null when none waits. */
+export const latestPendingGuestMessageAt = (
+  share: ThreadGuestShare | null | undefined,
+): string | null =>
+  (share?.messages ?? [])
+    .filter((message) => message.status === "pending")
+    .reduce<string | null>(
+      (latest, message) =>
+        latest === null || Date.parse(message.submittedAt) > Date.parse(latest)
+          ? message.submittedAt
+          : latest,
+      null,
+    );
+
 export const GuestShareCreateInput = Schema.Struct({ threadId: ThreadId });
 export type GuestShareCreateInput = typeof GuestShareCreateInput.Type;
 

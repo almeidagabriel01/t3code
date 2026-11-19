@@ -1,5 +1,9 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { oldestPendingGuestMessageAt, pendingGuestMessageCount } from "@t3tools/contracts";
+import {
+  latestPendingGuestMessageAt,
+  oldestPendingGuestMessageAt,
+  pendingGuestMessageCount,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1723,6 +1727,7 @@ export function threadShellFromProjection(
     pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
     oldestPendingGuestMessageAt: oldestPendingGuestMessageAt(projection.thread.guestShare),
+    latestPendingGuestMessageAt: latestPendingGuestMessageAt(projection.thread.guestShare),
     queuedMessageCount: runs.filter((run) => run.status === "queued").length,
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -2024,6 +2029,7 @@ function shellFromState(input: {
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
     oldestPendingGuestMessageAt: oldestPendingGuestMessageAt(input.state.thread.guestShare),
+    latestPendingGuestMessageAt: latestPendingGuestMessageAt(input.state.thread.guestShare),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,

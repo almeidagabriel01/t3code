@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { GuestRedeemRequest, oldestPendingGuestMessageAt } from "./guestShare.ts";
+import {
+  GuestRedeemRequest,
+  latestPendingGuestMessageAt,
+  oldestPendingGuestMessageAt,
+} from "./guestShare.ts";
 
 const isRedeem = Schema.is(GuestRedeemRequest);
 
@@ -21,7 +25,7 @@ describe("GuestRedeemRequest", () => {
   });
 });
 
-describe("oldestPendingGuestMessageAt", () => {
+describe("pending guest message times", () => {
   const message = (id: string, status: "pending" | "sent" | "dismissed", submittedAt: string) =>
     ({ id, text: id, status, submittedAt }) as never;
   const share = (...messages: never[]) =>
@@ -35,19 +39,21 @@ describe("oldestPendingGuestMessageAt", () => {
     }) as never;
 
   it.each([
-    { name: "no share", share: null, expected: null },
+    { name: "no share", share: null, expected: null, latest: null },
     {
       name: "nothing pending",
       share: share(message("a", "sent", "2026-03-09T10:00:00.000Z")),
       expected: null,
+      latest: null,
     },
     {
-      name: "the oldest pending wins, in any order",
+      name: "oldest and newest pending, in any order",
       share: share(
         message("b", "pending", "2026-03-09T10:05:00.000Z"),
         message("a", "pending", "2026-03-09T10:01:00.000Z"),
       ),
       expected: "2026-03-09T10:01:00.000Z",
+      latest: "2026-03-09T10:05:00.000Z",
     },
     {
       name: "a resolved message no longer counts",
@@ -56,8 +62,10 @@ describe("oldestPendingGuestMessageAt", () => {
         message("b", "pending", "2026-03-09T10:05:00.000Z"),
       ),
       expected: "2026-03-09T10:05:00.000Z",
+      latest: "2026-03-09T10:05:00.000Z",
     },
-  ])("$name", ({ share, expected }) => {
+  ])("$name", ({ share, expected, latest }) => {
     expect(oldestPendingGuestMessageAt(share)).toBe(expected);
+    expect(latestPendingGuestMessageAt(share)).toBe(latest);
   });
 });
