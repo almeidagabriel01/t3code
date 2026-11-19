@@ -383,6 +383,10 @@
       "types": "./src/assistantCluster.ts",
       "default": "./src/assistantCluster.ts"
     },
+    "./assistantEnvironment": {
+      "types": "./src/assistantEnvironment.ts",
+      "default": "./src/assistantEnvironment.ts"
+    },
     "./assistantInfo": {
       "types": "./src/assistantInfo.ts",
       "default": "./src/assistantInfo.ts"
