@@ -1665,6 +1665,63 @@
       "expect": "watches:tsc --watch"
     },
     {
+      "line": "pnpm tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc --watch",
+      "why": "pnpm, yarn and bun run a bin by name: the reason names the bin"
+    },
+    {
+      "line": "pnpm exec tsc -w",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc -w"
+    },
+    {
+      "line": "npx nodemon",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "yarn nodemon src/index.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:nodemon"
+    },
+    {
+      "line": "bun tsc -w",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc -w"
+    },
+    {
+      "line": "pnpm -F web tsc --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:tsc --watch"
+    },
+    {
+      "line": "pnpm vite",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "serves-port:vite"
+    },
+    {
+      "line": "pnpm test --watch",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "watches:pnpm --watch",
+      "why": "test is pnpm's own command for the test script, not a bin"
+    },
+    {
+      "line": "pnpm dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "serves-port:pnpm dev",
+      "why": "a script name that is no known bin stays the script"
+    },
+    {
       "line": "tsx src/a.ts",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "QA 2026-11-18",

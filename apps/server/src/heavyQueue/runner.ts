@@ -313,6 +313,9 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
 };
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
+/** pnpm, yarn and bun run a bin by name (`pnpm tsc`); these words are their own commands instead. */
+const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
+const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
@@ -407,6 +410,14 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     : PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? "")
       ? 0
       : null;
+  const head = words[0] ?? "";
+  // `pnpm tsc --watch` is `pnpm exec tsc --watch` when no script is named tsc: judge the bin first.
+  if (execAt === null && BIN_RUNNERS.has(program) && head !== "" && !OWN_COMMANDS.test(head)) {
+    const at = part.programAt + 1;
+    const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
+    const bin = programReason({ ...part, values }, macTools);
+    if (bin !== null) return bin;
+  }
   if (execAt !== null) {
     const raw = words[execAt + 1] ?? "";
     program = programName(raw);
