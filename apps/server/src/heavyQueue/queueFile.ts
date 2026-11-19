@@ -689,6 +689,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       ...(workers === null ? {} : { workers }),
       ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
       ...(admit.ungated ? { ungated: true } : {}),
+      // Why "When Linux is full" sent it here, shown while it runs.
+      ...(admit.runner === "mac" && decision.moved[id] !== undefined
+        ? { routeReason: decision.moved[id] }
+        : {}),
       ...(admit.runner === "linux" && (ask !== undefined || route !== undefined)
         ? {
             held: {

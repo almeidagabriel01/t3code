@@ -1697,6 +1697,17 @@ describe("Runner in the queue file", () => {
     },
   );
 
+  it.each([
+    ["mac", "Linux is full: running on this Mac"],
+    ["balance", LINUX_FULL_SHORTER],
+  ] as const)("%s: a job Linux-full sent here keeps its reason while it runs", (policy, why) => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: policy })));
+    startOnLinux(dir, ["a", "b"]);
+    Queue.enqueue(dir, test("c"));
+    expect(Queue.tryStart(dir, "c", NOW + 3)).toMatchObject({ status: "started" });
+    expect(Queue.readPlan(dir, NOW + 4).plan.reasons.c).toBe(why);
+  });
+
   it("balance: a job moved to wait on this Mac stays there once Linux frees a slot", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerLinuxFull: "balance" })));
     Queue.setMaxRunning(dir, 2);

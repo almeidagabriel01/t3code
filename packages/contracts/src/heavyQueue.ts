@@ -293,7 +293,7 @@ export const HeavyQueueState = Schema.Struct({
   headPatienceMinutes: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
   ),
-  /** Why a waiting entry is not starting, by entry id. */
+  /** Why a waiting entry is not starting, or why a running one runs on this Mac, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),

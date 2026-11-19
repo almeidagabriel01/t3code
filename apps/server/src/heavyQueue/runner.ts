@@ -1248,6 +1248,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       admits[entry.id] = { runner: "mac", ungated: false };
     } else macWaiters.push(entry);
   };
+  // A running job keeps saying why it runs on this Mac, as its row did while it waited.
+  for (const entry of macRunning) {
+    const why = (entry as QueuedEntry).routeReason;
+    if (why !== undefined && shows(why)) reasons[entry.id] = why;
+  }
   const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
