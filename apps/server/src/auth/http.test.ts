@@ -9,6 +9,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -157,6 +158,21 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(restrictedCookies).toHaveLength(1);
           expect(restrictedCookies[0]).toMatch(/^t3_session_/);
           expect(restrictedCookies[0]).not.toContain("t3_dev_session_");
+
+          const restrictedCookieHeader = restrictedCookies[0]?.split(";", 1)[0] ?? "";
+          const restrictedSession = await environmentA.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: restrictedCookieHeader },
+            }),
+            requestContext,
+          );
+          expect(restrictedSession.status).toBe(200);
+          const { expiresAt } = (await restrictedSession.json()) as { expiresAt: string };
+          const refreshedCookie = restrictedSession.headers.getSetCookie()[0] ?? "";
+          expect(refreshedCookie.startsWith(`${restrictedCookieHeader};`)).toBe(true);
+          expect(refreshedCookie).toContain(
+            `Expires=${DateTime.toDateUtc(DateTime.makeUnsafe(expiresAt)).toUTCString()}`,
+          );
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),

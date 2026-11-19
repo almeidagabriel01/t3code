@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -18,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -554,6 +556,142 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           [previous.sessionId, unrelated.sessionId].sort(),
         );
       }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+
+  it.effect("slides a session in use past its signed expiry without changing what it grants", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        runtimeModeCeiling: "approval-required",
+        peerLink: true,
+      });
+
+      yield* TestClock.adjust(Duration.days(14));
+      const early = yield* sessions.verify(issued.token);
+      expect(early.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+
+      yield* TestClock.adjust(Duration.days(2));
+      const renewed = yield* sessions.verify(issued.token);
+      expect(renewed.expiresAt.epochMilliseconds).toBe(Duration.toMillis(Duration.days(46)));
+
+      yield* TestClock.adjust(Duration.days(20));
+      const pastSignedExpiry = yield* sessions.verify(issued.token);
+      expect(pastSignedExpiry).toMatchObject({
+        sessionId: issued.sessionId,
+        method: "bearer-access-token",
+        subject: "mcp-client",
+        scopes: ["orchestration:read"],
+        runtimeModeCeiling: "approval-required",
+        peerLink: true,
+      });
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a short ttl as a hard bound, in use or on a socket", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "cli",
+        ttl: Duration.days(7),
+      });
+      yield* sessions.markConnected(issued.sessionId);
+
+      yield* TestClock.adjust(Duration.days(6));
+      expect((yield* sessions.verify(issued.token)).expiresAt.epochMilliseconds).toBe(
+        Duration.toMillis(Duration.days(7)),
+      );
+      yield* sessions.renewConnected();
+      const [listed] = yield* sessions.listActive();
+      expect(listed?.expiresAt.epochMilliseconds).toBe(Duration.toMillis(Duration.days(7)));
+
+      yield* TestClock.adjust(Duration.days(2));
+      const error = yield* Effect.flip(sessions.verify(issued.token));
+      expect(error._tag).toBe("SessionTokenExpiredError");
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect.each([
+    { name: "expired", expectedTag: "SessionTokenExpiredError" },
+    { name: "revoked", expectedTag: "SessionTokenRevokedError" },
+  ] as const)("never renews a $name session", ({ name, expectedTag }) =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const issued = yield* sessions.issue({ method: "bearer-access-token", subject: "phone" });
+      if (name === "revoked") {
+        yield* TestClock.adjust(Duration.days(20));
+        yield* sessions.revoke(issued.sessionId);
+      } else {
+        yield* TestClock.adjust(Duration.days(31));
+      }
+
+      const error = yield* Effect.flip(sessions.verify(issued.token));
+      expect(error._tag).toBe(expectedTag);
+      const row = yield* repository.getById({ sessionId: issued.sessionId });
+      expect(Option.getOrThrow(row).expiresAt.epochMilliseconds).toBe(
+        issued.expiresAt.epochMilliseconds,
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect.each([
+    { name: "a revoked row", revoke: true, now: 0, target: 40 },
+    { name: "an expired row", revoke: false, now: 31, target: 61 },
+    { name: "an earlier expiry", revoke: false, now: 0, target: 10 },
+  ])("refuses to extend $name", ({ revoke, now, target }) =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const issued = yield* sessions.issue({ method: "bearer-access-token", subject: "phone" });
+      if (revoke) yield* sessions.revoke(issued.sessionId);
+      const day = Duration.toMillis(Duration.days(1));
+
+      const extended = yield* repository.extendExpiry({
+        sessionId: issued.sessionId,
+        now: DateTime.makeUnsafe(now * day),
+        expiresAt: DateTime.makeUnsafe(target * day),
+      });
+      expect(Option.isNone(extended)).toBe(true);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps DPoP sessions on their signed expiry", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue(relaySessionInput);
+      yield* TestClock.adjust(Duration.minutes(40));
+      const verified = yield* sessions.verify(issued.token);
+      expect(verified.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("renews a session kept alive only by its socket and keeps the socket open", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ method: "bearer-access-token", subject: "desktop" });
+      // A socket opens with a ticket the client asked for with its token.
+      yield* sessions.verify(issued.token);
+      yield* sessions.markConnected(issued.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(issued.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+
+      yield* TestClock.adjust(Duration.days(20));
+      yield* sessions.renewConnected();
+      yield* TestClock.adjust(Duration.days(15));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+
+      yield* TestClock.adjust(Duration.days(15));
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>

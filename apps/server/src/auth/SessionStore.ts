@@ -54,7 +54,7 @@ export interface VerifiedSession {
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
-  readonly expiresAt?: DateTime.DateTime;
+  readonly expiresAt: DateTime.DateTime;
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
@@ -425,12 +425,20 @@ export class SessionStore extends Context.Service<
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
+    /** Slides sessions that are only alive through an open socket, which never re-verifies. */
+    readonly renewConnected: () => Effect.Effect<void>;
   }
 >()("t3/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+// DPoP tokens are short and re-minted by their client; everything else slides while in use.
+const RENEWABLE_METHODS: ReadonlySet<ServerAuthSessionMethod> = new Set([
+  "browser-session-cookie",
+  "bearer-access-token",
+]);
+const isRenewableMethod = (method: ServerAuthSessionMethod) => RENEWABLE_METHODS.has(method);
 // How often one watcher per store checks whether another process (the `t3 auth` CLI) wrote.
 const EXTERNAL_WRITE_CHECK_INTERVAL = Duration.seconds(2);
 
@@ -509,6 +517,9 @@ const make = Effect.gen(function* () {
   // Newest session per DPoP key. A live socket moves to it at expiry, so a
   // client that renews its short-lived token keeps its socket.
   const latestSessionByProofKey = new Map<string, AuthSessionId>();
+  // The lifetime each verified token was issued with, so a socket's session slides by its own
+  // ttl. Only the tick reads it, and it drops entries for sessions without a socket.
+  const verifiedTtlBySession = new Map<AuthSessionId, number>();
   // Sessions with a live socket waiting in awaitInvalidation, counted per waiter.
   const watchedSessions = new Map<AuthSessionId, number>();
   const cookieInput = {
@@ -647,6 +658,70 @@ const make = Effect.gen(function* () {
       ),
       Effect.withSpan("SessionStore.markDisconnected"),
     );
+
+  /**
+   * Slides a live session to `now + ttl` once less than half its lifetime remains. A session
+   * minted with a shorter ttl than the default (`--ttl`) keeps it as a hard bound.
+   */
+  const renewIfDue = Effect.fn("SessionStore.renewIfDue")(function* (
+    row: AuthSessions.AuthSessionRecord,
+    ttlMillis: number,
+    now: DateTime.Utc,
+  ) {
+    const remaining = row.expiresAt.epochMilliseconds - now.epochMilliseconds;
+    if (ttlMillis < Duration.toMillis(DEFAULT_SESSION_TTL) || remaining * 2 >= ttlMillis) {
+      return row.expiresAt;
+    }
+    const renewed = yield* authSessions
+      .extendExpiry({
+        sessionId: row.sessionId,
+        now,
+        expiresAt: DateTime.add(now, { milliseconds: ttlMillis }),
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to renew a session; it keeps its current expiry.").pipe(
+            Effect.annotateLogs({ sessionId: row.sessionId, cause }),
+            Effect.as(Option.none<DateTime.DateTime>()),
+          ),
+        ),
+      );
+    if (Option.isNone(renewed)) return row.expiresAt;
+    const session = yield* loadActiveSession(row.sessionId).pipe(
+      Effect.orElseSucceed(() => Option.none<AuthClientSession>()),
+    );
+    if (Option.isSome(session)) yield* emitUpsert(session.value);
+    return renewed.value;
+  });
+
+  const renewConnected: SessionStore["Service"]["renewConnected"] = Effect.fn(
+    "SessionStore.renewConnected",
+  )(function* () {
+    const connected = yield* Ref.get(connectedSessionsRef);
+    for (const sessionId of verifiedTtlBySession.keys()) {
+      if (!connected.has(sessionId)) verifiedTtlBySession.delete(sessionId);
+    }
+    const now = yield* DateTime.now;
+    yield* Effect.forEach(
+      [...verifiedTtlBySession],
+      ([sessionId, ttlMillis]) =>
+        authSessions.getById({ sessionId }).pipe(
+          Effect.flatMap((row) =>
+            Option.isSome(row) &&
+            row.value.revokedAt === null &&
+            isRenewableMethod(row.value.method)
+              ? renewIfDue(row.value, ttlMillis, now)
+              : Effect.void,
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to renew a connected session.").pipe(
+              Effect.annotateLogs({ sessionId, cause }),
+            ),
+          ),
+        ),
+      { discard: true },
+    );
+  });
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
@@ -808,19 +883,11 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new InvalidSessionTokenPayloadError({ cause })),
       );
 
-      const observedAt = yield* DateTime.now;
-      const expiresAt = DateTime.make(claims.exp);
-      if (Option.isNone(expiresAt)) {
+      const expirationClaim = DateTime.make(claims.exp);
+      if (Option.isNone(expirationClaim)) {
         return yield* new InvalidSessionExpirationClaimError({
           sessionId: claims.sid,
           expirationClaim: claims.exp,
-        });
-      }
-      if (claims.exp <= observedAt.epochMilliseconds) {
-        return yield* new SessionTokenExpiredError({
-          sessionId: claims.sid,
-          expiresAt: expiresAt.value,
-          observedAt,
         });
       }
 
@@ -841,12 +908,28 @@ const make = Effect.gen(function* () {
         });
       }
 
+      // Renewable sessions slide: the record, not the signed claim, holds their deadline.
+      const renewable = isRenewableMethod(row.value.method);
+      const deadline = renewable ? row.value.expiresAt : expirationClaim.value;
+      const observedAt = yield* DateTime.now;
+      if (deadline.epochMilliseconds <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId: claims.sid,
+          expiresAt: deadline,
+          observedAt,
+        });
+      }
+      if (renewable) verifiedTtlBySession.set(claims.sid, claims.exp - claims.iat);
+      const expiresAt = renewable
+        ? yield* renewIfDue(row.value, claims.exp - claims.iat, observedAt)
+        : deadline;
+
       return {
         sessionId: claims.sid,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt,
         subject: claims.sub,
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -1093,6 +1176,9 @@ const make = Effect.gen(function* () {
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
           if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          // Re-read the deadline each pass: a renewal moves it later while the socket waits.
+          const latest = rows.at(-1);
+          if (latest !== undefined && Option.isSome(latest)) current = latest.value;
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
@@ -1178,6 +1264,7 @@ const make = Effect.gen(function* () {
     revokeAllExcept,
     markConnected,
     markDisconnected,
+    renewConnected,
   });
 });
 

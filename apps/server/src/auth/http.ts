@@ -252,6 +252,23 @@ const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateT
     ),
   );
 
+// Sessions slide while in use, so a cookie re-sent with the record's expiry outlives its first date.
+const refreshSessionCookie = Effect.fn("environment.auth.refreshSessionCookie")(function* (
+  sessions: SessionStore.SessionStore["Service"],
+  expiresAt: DateTime.DateTime | undefined,
+) {
+  if (expiresAt === undefined) return false;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const credential = EnvironmentAuth.selectRequestCredential(
+    request,
+    sessions.cookieName,
+    sessions.legacyCookieName,
+  );
+  if (credential?.source !== "cookie" && credential?.source !== "legacy-cookie") return false;
+  yield* appendSessionCookie(sessions.cookieName, credential.token, expiresAt);
+  return true;
+});
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -310,18 +327,11 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const result = yield* serverAuth.getSessionState(request);
-            const credential = EnvironmentAuth.selectRequestCredential(
-              request,
-              sessions.cookieName,
-              sessions.legacyCookieName,
-            );
             if (
-              credential?.source === "legacy-cookie" &&
               result.authenticated &&
               result.sessionMethod === "browser-session-cookie" &&
-              result.expiresAt
+              (yield* refreshSessionCookie(sessions, result.expiresAt))
             ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
             return result;
@@ -455,6 +465,9 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
             yield* appendCredentialResponseHeaders;
+            if (session.method === "browser-session-cookie") {
+              yield* refreshSessionCookie(sessions, session.expiresAt);
+            }
             return yield* serverAuth.issueWebSocketTicket(session);
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -469,6 +482,9 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
             yield* appendCredentialResponseHeaders;
+            if (session.method === "browser-session-cookie") {
+              yield* refreshSessionCookie(sessions, session.expiresAt);
+            }
             return yield* serverAuth.issueWebSocketTicket(session, { use: args.params.use });
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
