@@ -37,7 +37,7 @@ import {
   toggleAssistantProject,
 } from "@t3tools/client-runtime/assistantSections";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
-import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { BrainIcon, Undo2Icon } from "lucide-react";
@@ -71,7 +71,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAssistantHomeProject } from "@t3tools/client-runtime/state/projects";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
-import { getDisplayModelName } from "../chat/providerIconUtils";
+import { modelSelectionDisplayName } from "../chat/providerIconUtils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { getTraitsSectionVisibility, TraitsPicker } from "../chat/TraitsPicker";
 import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
@@ -153,14 +153,7 @@ function DefaultModelField(props: {
   const entry =
     shown === null ? undefined : props.entries.find((item) => item.instanceId === shown.instanceId);
   const inheritedName =
-    props.inherited === null
-      ? null
-      : (() => {
-          const found = props.providers
-            .find((provider) => provider.instanceId === props.inherited?.instanceId)
-            ?.models.find((model) => model.slug === props.inherited?.model);
-          return found ? getDisplayModelName(found) : formatModelSlugName(props.inherited.model);
-        })();
+    props.inherited === null ? null : modelSelectionDisplayName(props.providers, props.inherited);
   return (
     <div className="flex flex-col gap-1.5">
       <FieldLabel

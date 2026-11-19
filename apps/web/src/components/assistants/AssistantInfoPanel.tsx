@@ -5,6 +5,7 @@ import {
   ASSISTANT_GROUP_STATUS_LABEL,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
+  assistantAskBeforeActingLabel,
   assistantGroupInfoSummary,
   assistantGroupMembers,
   assistantInfoGroups,
@@ -18,13 +19,16 @@ import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime/autonomy";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   BrainIcon,
   BriefcaseIcon,
+  GaugeIcon,
+  KeyRoundIcon,
+  MessageCircleQuestionIcon,
+  WrenchIcon,
   CalendarClockIcon,
   HashIcon,
   LayersIcon,
@@ -48,6 +52,8 @@ import {
   useAssistantSpend,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
+import { modelSelectionDisplayName } from "../chat/providerIconUtils";
 import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -164,6 +170,7 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
   const { teams } = useAssistantEntries();
   const projectOf = useProjectLookup();
   const spend = useAssistantSpend(environmentId, assistant.budget === null ? null : assistant.id);
+  const providers = useEnvironmentProviders().get(environmentId);
   const archived = assistant.archivedAt !== null;
   const presence = status.of(environmentId, assistant, limitLabel);
   const workingNow = archived ? [] : assistantWorkingNow(work, environmentId, assistant.id);
@@ -337,17 +344,30 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
         </Section>
       )}
       <Section title="Access">
-        <InfoField label="Tool access" value={toolAccessLabel(assistant.toolAccess)} />
-        {assistant.askBeforeActing ? <InfoField label="Asks before acting" /> : null}
+        <InfoField
+          icon={KeyRoundIcon}
+          label="Tool access"
+          value={toolAccessLabel(assistant.toolAccess)}
+        />
+        <InfoField
+          icon={MessageCircleQuestionIcon}
+          label="Asks before acting"
+          value={assistantAskBeforeActingLabel(assistant.askBeforeActing)}
+        />
         {thread ? (
-          <InfoField label="Model" value={formatModelSlugName(thread.modelSelection.model)} />
+          <InfoField
+            icon={BrainIcon}
+            label="Model"
+            value={modelSelectionDisplayName(providers, thread.modelSelection)}
+          />
         ) : null}
         <InfoField
+          icon={WrenchIcon}
           label={PROBLEM_LEVEL_LEGEND}
           value={problemLevelLabel(assistant.autonomy.onProblem)}
         />
         {assistant.budget !== null && spend ? (
-          <InfoField label="Spending limit" value={spendLine(spend)} />
+          <InfoField icon={GaugeIcon} label="Spending limit" value={spendLine(spend)} />
         ) : null}
       </Section>
       {archived ? (
@@ -370,13 +390,17 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
   );
 }
 
-function InfoField(props: { readonly label: string; readonly value?: string }) {
+function InfoField(props: {
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly value: string;
+}) {
+  const Icon = props.icon;
   return (
-    <li className={cn(ROW, "list-none justify-between")}>
+    <li className={cn(ROW, "list-none")}>
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <span className="shrink-0 text-muted-foreground">{props.label}</span>
-      {props.value === undefined ? null : (
-        <span className="min-w-0 truncate text-end">{props.value}</span>
-      )}
+      <span className="min-w-0 flex-1 truncate text-end">{props.value}</span>
     </li>
   );
 }

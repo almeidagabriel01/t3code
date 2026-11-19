@@ -318,6 +318,7 @@ vi.mock("../../state/assistants", async () => {
         ownerOf: ownership().ownerOf,
         sites: (mocks.liveWork?.sites ?? []) as never,
         reachable: () => null,
+        teams: [],
       }),
   };
 });
