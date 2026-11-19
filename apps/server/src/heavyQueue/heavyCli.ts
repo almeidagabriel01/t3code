@@ -126,11 +126,12 @@ const commandRefusal = (
   args: ReadonlyArray<string>,
   remoto = false,
 ) => {
+  const line = program === undefined ? null : lineOf(program, args);
   const first =
     program === undefined
       ? ""
-      : isShellLine(program, args)
-        ? (args[1]!.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
+      : line !== null
+        ? (line.trim().split(/\s+/)[0] ?? "").replace(/^['"]+|['"]+$/g, "")
         : program;
   if (first !== "" && !first.startsWith("-")) return null;
   if (remoto) {
@@ -231,14 +232,13 @@ export const jobOf = (
     // `remoto` alone has no command: an empty one, which the queue refuses as `remoto`'s misuse.
     return { cwd, program: args[0] ?? "", args: args.slice(1), remoto: true };
   }
-  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
-    return { cwd, program, args, remoto: false };
-  }
-  const parts = lineParts(args[1]);
+  const at = lineAt(program, args);
+  if (at === null) return { cwd, program, args, remoto: false };
+  const parts = lineParts(args[at]!);
   return {
     cwd: startFolder(parts.dirs, cwd, home),
     program,
-    args: ["-c", parts.command, ...args.slice(2)],
+    args: args.with(at, parts.command),
     remoto: parts.remoto,
   };
 };
@@ -297,26 +297,39 @@ export const heavyLaunch = (
  * Any other program by its name, as Linux runs it (`remoteCommand`).
  */
 export const labelOf = (program: string, args: ReadonlyArray<string>) =>
-  (isShellLine(program, args) ? args[1]! : [NodePath.basename(program), ...args].join(" ")).slice(
-    0,
-    LABEL_CHARS,
-  );
+  (lineOf(program, args) ?? [NodePath.basename(program), ...args].join(" ")).slice(0, LABEL_CHARS);
 
-const isShellLine = (program: string, args: ReadonlyArray<string>) =>
-  SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined;
+/**
+ * Where a shell's `-c` line sits among its words: `sh -c`, `bash -lc`, `bash -ec`, `bash --login -c`.
+ * Null for any other program, or a shell option that takes a value (`-o pipefail`) before `-c`.
+ */
+const lineAt = (program: string, args: ReadonlyArray<string>) => {
+  if (!SHELLS.has(NodePath.basename(program))) return null;
+  for (let at = 0; at + 1 < args.length && args[at]!.startsWith("-") && args[at] !== "--"; at++) {
+    if (/^-[a-z]*c[a-z]*$/i.test(args[at]!)) return at + 1;
+  }
+  return null;
+};
+
+const lineOf = (program: string, args: ReadonlyArray<string>) => {
+  const at = lineAt(program, args);
+  return at === null ? null : args[at]!;
+};
 
 /** The line a job runs, as a shell reads it: a program run without a shell is its quoted words. */
 const jobLine = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args) ? args[1]! : [program, ...args].map(shellQuote).join(" ");
+  lineOf(program, args) ?? [program, ...args].map(shellQuote).join(" ");
 
 /**
  * The shell and line a Linux job runs here: each work part goes through `executor`, the rest
  * stays in this shell.
  */
-export const linuxLine = (program: string, args: ReadonlyArray<string>, executor: string) =>
-  isShellLine(program, args)
-    ? { shell: program, args: ["-c", rewriteLine(args[1]!, executor), ...args.slice(2)] }
+export const linuxLine = (program: string, args: ReadonlyArray<string>, executor: string) => {
+  const at = lineAt(program, args);
+  return at !== null
+    ? { shell: program, args: args.with(at, rewriteLine(args[at]!, executor)) }
     : { shell: "/bin/sh", args: ["-c", rewriteLine(jobLine(program, args), executor)] };
+};
 
 /**
  * Tools that size themselves by cores and the flag that caps them, placed right after the program
@@ -418,13 +431,15 @@ const cargoJobs = (text: string) => {
 };
 
 /** The program name and words after it of each command a job runs, its shell line's included. */
-const commandsOf = (program: string, args: ReadonlyArray<string>) =>
-  isShellLine(program, args)
-    ? readLine(args[1]!).parts.map((part) => ({
+const commandsOf = (program: string, args: ReadonlyArray<string>) => {
+  const line = lineOf(program, args);
+  return line !== null
+    ? readLine(line).parts.map((part) => ({
         name: NodePath.basename(part.values[part.programAt] ?? ""),
         rest: part.values.slice(part.programAt + 1),
       }))
     : [{ name: NodePath.basename(program), rest: args }];
+};
 
 /**
  * The cap is a ceiling: a tool keeps a lower count its own config sets, and CMake's level only
@@ -540,11 +555,13 @@ export const withWorkers = (
   const own = ownCounts(program, args, environment, project);
   const keep = new Set(own.gradle < workers ? ["gradle", "gradlew"] : []);
   const direct = flagIndex(program, args, workers, keep);
-  const capped = isShellLine(program, args)
-    ? [args[0]!, lineWithWorkers(args[1]!, workers, keep), ...args.slice(2)]
-    : direct === null
-      ? args
-      : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
+  const at = lineAt(program, args);
+  const capped =
+    at !== null
+      ? args.with(at, lineWithWorkers(args[at]!, workers, keep))
+      : direct === null
+        ? args
+        : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
   return {
     args: capped,
     env: {

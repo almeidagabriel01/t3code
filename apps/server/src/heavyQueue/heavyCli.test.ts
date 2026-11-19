@@ -1018,6 +1018,22 @@ describe("t3 heavy", () => {
         false,
       ],
       ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
+      [
+        "login shell remoto after cd",
+        [SH, "-lc", "cd apps/server && remoto vp test run"],
+        "/w/apps/server",
+        SH,
+        ["-lc", "vp test run"],
+        true,
+      ],
+      [
+        "--login shell remoto",
+        [SH, "--login", "-c", "remoto vp test"],
+        "/w",
+        SH,
+        ["--login", "-c", "vp test"],
+        true,
+      ],
     ] as const;
     const modes = [
       ["queue on, Runner on", true, true],
@@ -1068,6 +1084,9 @@ describe("t3 heavy", () => {
       ["bare remoto alone", ["remoto"], true, "remoto <command> [args...]"],
       ["wrapped option", [SH, "-c", "--help"], false, "`--help` is not a command"],
       ["quoted option", [SH, "-c", "'-x' a"], false, "`-x` is not a command"],
+      ["login shell option", [SH, "-lc", "--x"], false, "`--x` is not a command"],
+      ["clustered -c option", [SH, "-ec", "-x"], false, "`-x` is not a command"],
+      ["--login -c option", [SH, "--login", "-c", "-x"], false, "`-x` is not a command"],
     ] as const;
 
     it.each(
