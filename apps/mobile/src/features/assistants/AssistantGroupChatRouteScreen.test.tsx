@@ -9,6 +9,8 @@ type Item = { message: { id: string } };
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
+    /** What `useGroupDraftSkills` resolves for the draft. */
+    skills: [] as unknown[],
     modelPick: null as unknown,
     pickListeners: new Set<() => void>(),
     /** Group threads that wait on the user's approval. */
@@ -44,7 +46,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     drafts: new Map<string, string>(),
     draftListeners: new Set<() => void>(),
     flush: vi.fn(),
-    editor: null as null | { onSubmit?: (alternate: boolean) => void },
+    editor: null as null | { onSubmit?: (alternate: boolean) => void; skills?: unknown },
     prepare: vi.fn(),
     release: vi.fn(),
     converse: vi.fn(),
@@ -81,6 +83,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     showTab: vi.fn(() => () => {}),
     /** The tab a push's link put in the route. */
     routeTab: undefined as string | undefined,
+    routeRequest: undefined as string | undefined,
     writeSettings: vi.fn(),
     canWriteSettings: true,
     /** Members' own models in project p1, by assistant id. */
@@ -144,6 +147,8 @@ vi.mock("../../lib/composerImages", () => ({
   pickComposerFiles: (...args: unknown[]) => mocks.pick(...args),
   pickComposerMedia: (...args: unknown[]) => mocks.pickMedia(...args),
   convertPastedImagesToAttachments: async () => [],
+  isFileBackedComposerAttachment: (attachment: { fileUri?: string }) =>
+    attachment.fileUri !== undefined,
 }));
 vi.mock("react-native-reanimated", () => {
   const animation = {
@@ -260,7 +265,25 @@ vi.mock("../threads/ComposerAttachmentButton", () => ({
     </>
   ),
 }));
-vi.mock("../threads/ComposerCommandPopover", () => ({ ComposerPopoverSurface: Children }));
+vi.mock("../threads/ComposerCommandPopover", () => ({
+  ComposerPopoverSurface: Children,
+  ComposerCommandPopover: (props: {
+    items: ReadonlyArray<{ id: string; label: string }>;
+    triggerKind: string;
+    onSelect: (item: unknown) => void;
+  }) => (
+    <div data-testid="skill-menu" data-kind={props.triggerKind}>
+      {props.items.map((item) => (
+        <button
+          key={item.id}
+          aria-label={`Use ${item.label}`}
+          onClick={() => props.onSelect(item)}
+        />
+      ))}
+    </div>
+  ),
+}));
+vi.mock("./useGroupDraftSkills", () => ({ useGroupDraftSkills: () => mocks.skills }));
 vi.mock("../threads/ThreadComposer", () => ({ ComposerSurface: Children }));
 vi.mock("../threads/AssistantMarkdownContent", () => ({
   AssistantMarkdownContent: (props: {
@@ -316,7 +339,9 @@ vi.mock("../threads/useThreadMarkdownLinks", async () => {
 });
 vi.mock("../../components/ui/NativePresentation", () => ({ PresentationSource: Children }));
 vi.mock("../../components/ui/VideoPreviewModal", () => ({
-  VideoPreviewModal: () => <div data-testid="video-preview" />,
+  VideoPreviewModal: (props: { source: { sourceIdentifier: string } | null }) => (
+    <div data-testid="video-preview">{props.source?.sourceIdentifier}</div>
+  ),
 }));
 vi.mock("../layout/workspace/useAndroidWorkspaceNavigation", () => ({
   useWorkspaceBackNavigation: () => mocks.goBack,
@@ -328,10 +353,93 @@ vi.mock("../../lib/useUniwindTheme", () => ({
   useUniwindTheme: () => ({ "--color-icon-subtle": "#888888" }),
 }));
 vi.mock("../threads/thread-work-log", () => ({ ThreadDisclosureChevron: () => null }));
+vi.mock("../threads/floating-working-control", () => ({
+  FloatingScrollToEndButton: (props: { onPress: () => void }) => (
+    <button aria-label="Scroll to end" onClick={props.onPress} />
+  ),
+}));
 vi.mock("../threads/ThreadFeed", () => {
   const styles = { user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } };
-  return { useMarkdownStyles: () => styles };
+  type Sent = { id: string; name: string; type: string; mimeType: string };
+  // The thread's own pieces: each file opens as the preview of its kind.
+  const files =
+    (testID: string) =>
+    (props: {
+      attachments: ReadonlyArray<Sent>;
+      onPressPreview: (source: { kind: string; name: string }) => void;
+    }) => (
+      <div data-testid={testID}>
+        {props.attachments.map((attachment) => (
+          <button
+            key={attachment.id}
+            aria-label={`Open ${attachment.name}`}
+            onClick={() =>
+              props.onPressPreview({
+                kind:
+                  attachment.type === "image"
+                    ? "image"
+                    : attachment.mimeType === "application/pdf"
+                      ? "pdf"
+                      : "document",
+                name: attachment.name,
+              })
+            }
+          />
+        ))}
+      </div>
+    );
+  return {
+    useMarkdownStyles: () => styles,
+    isMediaAttachment: (attachment: Sent) =>
+      attachment.type === "image" || attachment.mimeType.startsWith("video/"),
+    UserMessageMedia: files("message-media"),
+    MessageAttachmentList: files("message-files"),
+  };
 });
+// The thread's strip, showing the upload state its owner hands it.
+vi.mock("../../components/ComposerAttachmentStrip", () => ({
+  ComposerAttachmentStrip: (props: {
+    attachments: ReadonlyArray<{ id: string; name: string; type: string; mimeType: string }>;
+    ownUploads: {
+      stateOf: (id: string) => { status: string; progress?: number; reason?: string } | undefined;
+      retry: (id: string) => void;
+    };
+    onRemove: (id: string) => void;
+    onPressPreview: (source: { kind: string; name: string }) => void;
+    onPressVideo: (attachment: unknown, sourceIdentifier: string) => void;
+    onPressDocument: (attachment: unknown) => void;
+  }) =>
+    props.attachments.map((attachment) => {
+      const upload = props.ownUploads.stateOf(attachment.id);
+      return (
+        <div key={attachment.id} data-testid="group-attachment-chip">
+          {upload?.status === "failed"
+            ? upload.reason
+            : upload?.status === "uploading"
+              ? `Uploading ${upload.progress}`
+              : "ready"}
+          <button
+            aria-label={`Open ${attachment.name}`}
+            onClick={() =>
+              attachment.type === "video"
+                ? props.onPressVideo(attachment, `draft:${attachment.id}`)
+                : attachment.mimeType === "text/plain"
+                  ? props.onPressDocument(attachment)
+                  : props.onPressPreview({ kind: attachment.type, name: attachment.name })
+            }
+          />
+          <button
+            aria-label={`Retry ${attachment.name}`}
+            onClick={() => props.ownUploads.retry(attachment.id)}
+          />
+          <button
+            aria-label={`Remove ${attachment.name}`}
+            onClick={() => props.onRemove(attachment.id)}
+          />
+        </div>
+      );
+    }),
+}));
 vi.mock("../settings/appearance/useScaledTextRole", () => ({
   useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));
@@ -433,8 +541,24 @@ vi.mock("../agent-awareness/notificationNavigation", () => ({
   showAgentNotificationGroupTab: mocks.showTab,
 }));
 vi.mock("../../components/ui/AppText", () => ({
-  AppText: (props: { children?: ReactNode; testID?: string }) => (
-    <span data-testid={props.testID}>{props.children}</span>
+  // Laid out one line per newline, like text that never wraps.
+  AppText: (props: {
+    children?: ReactNode;
+    testID?: string;
+    onTextLayout?: (event: { nativeEvent: { lines: object[] } }) => void;
+  }) => (
+    <span
+      data-testid={props.testID}
+      ref={
+        props.onTextLayout &&
+        ((node) => {
+          const lines = (node?.textContent ?? "").split("\n").map(() => ({}));
+          if (node) props.onTextLayout?.({ nativeEvent: { lines } });
+        })
+      }
+    >
+      {props.children}
+    </span>
   ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -689,6 +813,10 @@ vi.mock("../../state/assistants", async () => {
     }),
   };
 });
+vi.mock("./GroupContextMeter", () => ({ GroupContextMeter: () => null }));
+vi.mock("../threads/use-visible-second-clock", () => ({
+  useVisibleSecondClock: () => Date.parse("2026-11-07T10:01:00Z"),
+}));
 vi.mock("../../components/ui/useBarInset", () => ({ useBarInset: () => 100 }));
 vi.mock("../../components/ui/GlassSurface", async () => ({
   GlassSurface: (await import("react-native")).View,
@@ -855,6 +983,7 @@ const render = () =>
               environmentId: "hub",
               teamId: "g1",
               ...(mocks.routeTab === undefined ? {} : { tab: mocks.routeTab }),
+              ...(mocks.routeRequest === undefined ? {} : { request: mocks.routeRequest }),
             },
           } as never
         }
@@ -893,6 +1022,7 @@ beforeEach(() => {
     requestIds: [],
     decisions: [],
     voicePhase: "idle",
+    skills: [],
     shells: new Map(),
     worktrees: new Map(),
     threadProjects: new Map(),
@@ -936,6 +1066,7 @@ beforeEach(() => {
     fn.mockReset();
   mocks.showTab.mockReset().mockReturnValue(() => {});
   mocks.routeTab = undefined;
+  mocks.routeRequest = undefined;
   mocks.preferences = {};
   mocks.preferenceListeners.clear();
   mocks.savePreferences.mockImplementation(
@@ -1026,7 +1157,7 @@ describe("group chat feed", () => {
     );
   });
 
-  it("shows a task's expected result and resources, and why a queued one waits", () => {
+  it("shows a task's expected result and resources, and why a queued one waits", async () => {
     mocks.live = snapshot(
       [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
       [
@@ -1035,16 +1166,33 @@ describe("group chat feed", () => {
           expectedResult: "the build is green",
           resources: ["folder:/w/app", "browser"],
         }),
-        task("t22", "running", "bo"),
-        task("t333", "usage_limited", "beto", { resetAt: "2099-01-01T09:30Z" }),
+        task("t22", "running", "bo", { instruction: "step 1\nstep 2\nstep 3\nstep 4" }),
+        task("t333", "usage_limited", "beto", {
+          resetAt: "2099-01-01T09:30Z",
+          expectedResult: "a\nlong\nreport",
+        }),
         task("t4444", "usage_limited", "jarvis"),
       ],
     );
     render();
-    expect(container.querySelectorAll('[data-testid="group-task-expected"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="group-task-expected"]')?.textContent).toBe(
-      "Expected: the build is green",
+    // Only a request its clamp cuts, in the instruction or the expected result, gets the toggle.
+    const toggles = () =>
+      Array.from(container.querySelectorAll('[data-testid="group-task-card"]'), (card) =>
+        card.querySelector('button[aria-label^="Show"]')?.getAttribute("aria-label"),
+      );
+    expect(toggles()).toEqual([undefined, "Show more", "Show more", undefined]);
+    await act(async () =>
+      container.querySelectorAll<HTMLElement>('button[aria-label="Show more"]')[1]!.click(),
     );
+    expect(toggles()).toEqual([undefined, "Show more", "Show less", undefined]);
+    await click("Show less");
+    expect(toggles()).toEqual([undefined, "Show more", "Show more", undefined]);
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-testid="group-task-expected"]'),
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Expected: the build is green", "Expected: a\nlong\nreport"]);
     expect(container.querySelector('[data-testid="group-task-resources"]')?.textContent).toBe(
       "folder:/w/appbrowser",
     );
@@ -1067,6 +1215,31 @@ describe("group chat feed", () => {
     expect(needs).toHaveLength(1);
     expect(needs[0]?.textContent).toBe("Needs your approval · Open the conversation to answer");
     mocks.waiting = new Set();
+  });
+
+  it("links a waiting task's threads, then its subagents, by title", async () => {
+    mocks.shells = new Map([
+      ["w1", "Build the site"],
+      ["s1", "Lint pass"],
+    ]);
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
+      [task("t1", "waiting", "ada", { reason: "subagents:s1;threads:w1, w2" })],
+    );
+    render();
+    const waiting = container.querySelector('[data-testid="group-task-waiting-threads"]')!;
+    expect(waiting.textContent).toContain("Waiting on 2 threads and 1 subagent");
+    expect(
+      Array.from(
+        waiting.querySelectorAll('[data-testid="group-task-waiting-link"]'),
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Build the site", "Untitled thread", "Lint pass"]);
+    await click("Open Lint pass");
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "s1" },
+    });
   });
 
   it("says what to do in an empty chat, and nothing before the first snapshot", () => {
@@ -1138,6 +1311,25 @@ describe("group composer", () => {
     expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@ada do it" });
     expect(input().value).toBe("");
     expect(mocks.scrollToEnd).toHaveBeenCalledOnce();
+  });
+
+  it("offers the recipient's skills after $ or /, inserts one, and leaves @ to members", async () => {
+    const deploy = { name: "deploy", displayName: "Deploy", enabled: true, userInvocable: true };
+    render();
+    await type("$dep");
+    // No skills for the recipient: `$` opens nothing.
+    expect(container.querySelector('[data-testid="skill-menu"]')).toBeNull();
+    mocks.skills = [deploy];
+    await type("ship $dep");
+    expect(mocks.editor?.skills).toEqual([deploy]);
+    await click("Use Deploy");
+    expect(input().value).toBe("ship $deploy ");
+    await type("/dep");
+    await click("Use skill:deploy");
+    expect(input().value).toBe("$deploy ");
+    await type("@");
+    expect(container.querySelector('[data-testid="skill-menu"]')).toBeNull();
+    expect(byLabel("Mention Ada")).not.toBeNull();
   });
 
   it("previews everyone, the lead's routing and the missing mention", async () => {
@@ -1396,6 +1588,38 @@ describe("task cards", () => {
     expect(mocks.selectDetail).toHaveBeenCalledWith(THREAD);
     expect(mocks.dispatch).not.toHaveBeenCalled();
   });
+
+  it("shows who works on what, a request's owners and its task tree, a removed member too", async () => {
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@beto go", requestId: "m1" })],
+      [
+        task("t1", "running", "beto", { requestId: "m1" }),
+        task("t22", "completed", "gone", {
+          kind: "child",
+          parentId: "t1",
+          rootId: "t1",
+          requestId: "m1",
+        }),
+      ],
+    );
+    render();
+    const labels = (testId: string) =>
+      [...container.querySelectorAll(`[data-testid="${testId}"] [aria-label]`)].map((node) =>
+        node.getAttribute("aria-label"),
+      );
+    // Only open work is pinned; the running task has run from 10:00:02 to the clock's 10:01:00.
+    expect(labels("group-member-work")).toEqual(["Beto, Running, 58s. Open thread"]);
+    expect(labels("group-request-owners")).toEqual([
+      "Beto, Running. Open thread",
+      "Removed member, Completed. Open thread",
+    ]);
+    expect(labels("group-task-tree")).toEqual([
+      "Beto, Running, 58s. Open thread",
+      "Removed member, Completed, 6s. Open thread",
+    ]);
+    await click("Beto, Running, 58s. Open thread");
+    expect(mocks.selectDetail).toHaveBeenCalledWith(THREAD);
+  });
 });
 
 describe("group header and archive", () => {
@@ -1501,6 +1725,7 @@ describe("read position", () => {
     expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
       [null, "true"],
     );
+    expect(byLabel("Scroll to end")).toBeNull();
     remount();
     mocks.live = lateUserLines();
     render();
@@ -1508,6 +1733,19 @@ describe("read position", () => {
     expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
       ["1", "false"],
     );
+    // Opened above the end, the way down is one tap.
+    expect(byLabel("Scroll to end")).not.toBeNull();
+  });
+
+  it("offers Scroll to end only while the feed is above its end", async () => {
+    mocks.teams = [team({ chat: chat(2, 2) })];
+    render();
+    expect(byLabel("Scroll to end")).toBeNull();
+    await click("scroll up");
+    await click("Scroll to end");
+    expect(mocks.scrollToEnd).toHaveBeenCalledOnce();
+    await click("scroll down");
+    expect(byLabel("Scroll to end")).toBeNull();
   });
 
   it("marks the chat read once the newest message has been in view, not while scrolled up", async () => {
@@ -1609,12 +1847,15 @@ describe("group attachments", () => {
     await click("Add attachment:Choose Files");
     expect(chips()).toHaveLength(3);
     expect(text()).toContain("Upload rejected (413)");
+    // Like the thread composer, the composer says why it will not send.
+    expect(text()).toContain("Retry or remove the failed attachment");
 
     // The failed file holds the send until it is retried or removed; the others stay.
     await type("@ada see these");
     expect(byLabel("Send")!.disabled).toBe(true);
     await click("Remove broken.pdf");
     expect(chips()).toHaveLength(2);
+    expect(text()).not.toContain("Retry or remove the failed attachment");
     expect(mocks.release).not.toHaveBeenCalled();
     expect(byLabel("Send")!.disabled).toBe(false);
 
@@ -1678,6 +1919,37 @@ describe("group attachments", () => {
     expect(chips()).toHaveLength(1);
   });
 
+  it("shows a file uploading, and opens picked files in the preview like the thread composer", async () => {
+    const video = { ...draft("clip.mov"), type: "video", mimeType: "video/quicktime" };
+    const notes = { ...draft("notes.txt"), mimeType: "text/plain", fileUri: "file:///notes.txt" };
+    const pasted = { ...draft("pasted.txt"), mimeType: "text/plain" };
+    mocks.pick.mockResolvedValue({
+      files: [draft("shot.png", "image"), video, notes, pasted],
+      error: null,
+    });
+    // Uploads that never finish: the strip shows their progress.
+    mocks.prepare.mockImplementation(() => new Promise(() => {}));
+    render();
+    await click("Add attachment:Choose Files");
+    expect([...chips()].map((chip) => chip.textContent)).toEqual(
+      Array.from({ length: 4 }, () => "Uploading 0"),
+    );
+    expect(byLabel("Send")!.disabled).toBe(true);
+    const previews = () =>
+      [...container.querySelectorAll('[data-testid="preview"], [data-testid="video-preview"]')]
+        .map((preview) => preview.textContent)
+        .filter((shown) => shown !== "");
+    await click("Open shot.png");
+    expect(previews()).toEqual(["image:shot.png"]);
+    await click("Open clip.mov");
+    expect(previews()).toEqual(["draft:draft-clip.mov"]);
+    // Other documents open from the device in the system viewer; one without a file has none.
+    await click("Open notes.txt");
+    expect(previews()).toEqual(["document:notes.txt"]);
+    await click("Open pasted.txt");
+    expect(previews()).toEqual(["document:notes.txt"]);
+  });
+
   it("tells the user what the picker could not take, and when it fails outright", async () => {
     mocks.pick.mockResolvedValueOnce({
       files: [],
@@ -1714,10 +1986,15 @@ describe("group attachments", () => {
       }),
     ]);
     render();
-    expect(
-      container.querySelectorAll('[data-testid="group-message-attachments"] button'),
-    ).toHaveLength(3);
-    expect(text()).toContain("sheet.pdf");
+    // As the thread shows them: pictures and videos above the bubble, other files inside it.
+    const names = (testID: string) =>
+      [...container.querySelectorAll(`[data-testid="${testID}"] button`)].map((button) =>
+        button.getAttribute("aria-label"),
+      );
+    expect([names("message-media"), names("message-files")]).toEqual([
+      ["Open shot.png"],
+      ["Open sheet.pdf", "Open notes.txt"],
+    ]);
     await click("Open shot.png");
     expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe("image:shot.png");
     await click("Open sheet.pdf");
@@ -1775,6 +2052,115 @@ describe("requests", () => {
     mocks.teams = [team({ chat: read, ...extra })];
     render();
   };
+
+  const PAUSED = [
+    // A pause the user did not ask for: one they asked for waits on no one.
+    task("t1", "paused", "ada", { requestMessageId: "r1", requestId: "r1" }),
+    TASKS[1]!,
+  ];
+  const waitingRows = () =>
+    [...container.querySelectorAll('[data-testid="group-waiting-strip"] [aria-label]')].map(
+      (node) => node.getAttribute("aria-label"),
+    );
+  const requestTint = () =>
+    container.querySelector(
+      '[data-testid="group-request-line"] ~ [data-testid="group-jump-highlight"]',
+    ) ?? container.querySelector('[data-testid="group-jump-highlight"]');
+
+  it("pins what waits on the user, oldest first, and resumes a stopped task from there", async () => {
+    mocks.live = snapshot(REQUESTS, PAUSED);
+    mocks.teams = [team({ chat: read })];
+    render();
+    expect(container.querySelector('[data-testid="group-waiting-strip"]')?.textContent).toContain(
+      "Waiting on you (2)",
+    );
+    expect(waitingRows()).toEqual([
+      expect.stringMatching(/^Fix build\. Ada: .+\. Open request$/),
+      "Resume Fix build",
+      "ship it. Jarvis: Needs a project. Open request",
+    ]);
+    await click("Resume Fix build");
+    expect(mocks.taskAction).toHaveBeenCalledWith({ taskId: "t1", action: "resume" });
+    // Opening a loaded request opens its block in place and tints its title row.
+    await click(waitingRows()[0]!);
+    expect(requestTint()).not.toBeNull();
+    expect(mocks.olderThan).not.toHaveBeenCalled();
+  });
+
+  it("offers no Resume in an archived group, and drops the strip once nothing waits", () => {
+    mocks.live = snapshot(REQUESTS, PAUSED);
+    mocks.teams = [team({ chat: read, archivedAt: "2026-11-07T09:00:00Z" })];
+    render();
+    expect(byLabel("Resume Fix build")).toBeNull();
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.live = snapshot(REQUESTS.slice(0, 3), TASKS.slice(0, 1));
+    mocks.teams = [team({ chat: read })];
+    render();
+    expect(container.querySelector('[data-testid="group-waiting-strip"]')).toBeNull();
+  });
+
+  it("pages back to a waiting request the page does not hold, or says it is gone", async () => {
+    const older = REQUESTS.slice(0, 3);
+    const waitingRequest = {
+      requestId: "r1",
+      title: "Fix build",
+      reason: "paused",
+      assistantId: "ada",
+    };
+    mocks.live = snapshot(REQUESTS.slice(3), TASKS.slice(1), true);
+    mocks.teams = [
+      team({
+        chat: {
+          ...read,
+          scopes: [{ projectId: "p1", unreadCount: 0, waiting: true, readSeq: 6, waitingRequest }],
+        },
+      }),
+    ];
+    mocks.olderThan.mockResolvedValueOnce({
+      ok: true,
+      value: { messages: older, tasks: [], hasMore: false },
+    });
+    render();
+    // The server names it for a tab whose request is out of the page.
+    expect(waitingRows()[0]).toMatch(/^Fix build\. Ada: /);
+    await click(waitingRows()[0]!);
+    await act(async () => {});
+    expect(mocks.olderThan).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("fix the build");
+    expect(requestTint()).not.toBeNull();
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.olderThan.mockResolvedValueOnce({
+      ok: true,
+      value: { messages: [], tasks: [], hasMore: false },
+    });
+    render();
+    await click(waitingRows()[0]!);
+    await act(async () => {});
+    expect(mocks.alert).toHaveBeenCalledWith("Request not found", "It is no longer in this chat.");
+  });
+
+  it("opens a linked request once its chat shows, or says it is in another tab", async () => {
+    mocks.routeRequest = "r3";
+    mocks.live = snapshot(REQUESTS, TASKS);
+    mocks.teams = [team({ chat: read })];
+    render();
+    await act(async () => {});
+    expect(requestTint()).not.toBeNull();
+    expect(mocks.setParams).toHaveBeenCalledWith({ request: undefined });
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.routeRequest = "r1";
+    tabbed("project:p2");
+    await act(async () => {});
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Request is in another tab",
+      "Open its project's tab or All to see it.",
+    );
+  });
 
   it("quotes the request being answered and opens its folded block to show it", async () => {
     setup();
@@ -1899,7 +2285,7 @@ describe("requests", () => {
     tabbed();
     const list = container.querySelector('[data-testid="list"]')!;
     expect(list.getAttribute("data-inset-top")).toBe(android ? null : "44");
-    expect(container.querySelector('[data-testid="group-tabs-glass"]') === null).toBe(android);
+    expect(container.querySelector('[data-testid="group-pinned-rows"]') === null).toBe(android);
     // In flow on Android it sits above the list; pinned on iOS it draws over it, after it.
     const row = container.querySelector('[data-testid="group-tabs"]')!;
     expect(Boolean(row.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
@@ -2065,10 +2451,13 @@ describe("requests", () => {
       [...container.querySelectorAll('[data-testid="group-request-line"] button')].map((line) =>
         line.getAttribute("aria-label"),
       );
+    // Each line ends with its owners, each opening that member's thread.
     expect(lines()).toEqual([
       "Fix build, Finished, Alpha. Expand request",
+      "Ada, Completed. Open thread",
       "ship it, Needs project. Expand request",
       "Review, Working, Beta. Expand request",
+      "Beto, Running. Open thread",
       "Old, Routing, Removed project. Expand request",
     ]);
     await click("Review, Working, Beta. Expand request");
@@ -2466,7 +2855,7 @@ describe("requests", () => {
     expect(mocks.voiceStart).toHaveBeenCalledOnce();
     expect(byLabel("Mention a member")).not.toBeNull();
     const voice = mocks.voiceInput!;
-    expect(voice.ownerKey).toBe("assistant-group:hub:g1");
+    expect(voice.ownerKey).toBe("hub:assistant-group:g1");
     const changed = vi.fn();
     const unsubscribe = voice.subscribeToDraftChanges(changed);
     await type("typed");
@@ -2718,7 +3107,8 @@ describe("the thread's pieces in the feed", () => {
       threadId: null,
       workspaceRoot: "/repo/alpha",
     });
-    expect(container.querySelectorAll('[data-testid="preview"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="video-preview"]')).toHaveLength(1);
+    // One host for every row, beside the composer's own for its drafts.
+    expect(container.querySelectorAll('[data-testid="preview"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-testid="video-preview"]')).toHaveLength(2);
   });
 });

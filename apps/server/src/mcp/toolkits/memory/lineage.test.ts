@@ -5,6 +5,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Snapshot from "../../../memory/MemorySnapshot.ts";
 import * as Sync from "../../../memory/MemorySyncService.ts";
 import * as Projection from "../../../orchestration-v2/ProjectionStore.ts";
@@ -158,6 +159,34 @@ it.effect(
     }).pipe(Effect.provide(Fixture.layer)),
 );
 
+it.effect("a write refused by a forgotten read is logged with its code", () => {
+  const warnings: string[] = [];
+  const logger = Logger.make(({ message, logLevel }) => {
+    if (logLevel === "Warn") warnings.push(JSON.stringify(message));
+  });
+  return Effect.gen(function* () {
+    yield* setup;
+    const service = yield* Service.MemoryService;
+    const a = yield* seed(16100);
+    expect(yield* admitSnapshot).toBeDefined();
+    yield* service.forget(
+      {
+        memorySpaceId: Fixture.space,
+        memoryId: a.input.memoryId,
+        operationId: M.MemoryOperationId.make(Fixture.id(16101)),
+        expectedHeads: [a.revision],
+      },
+      Effect.void,
+    );
+    const refused = yield* Fixture.call("memory_upsert", Fixture.upsert(16102), caller());
+    expect(refused.body).toMatchObject({ code: "source_invalidated" });
+    expect(warnings.some((w) => w.includes("source_invalidated"))).toBe(true);
+  }).pipe(
+    Effect.provide(
+      Layer.merge(Fixture.layer, Logger.layer([logger], { mergeWithExisting: false })),
+    ),
+  );
+});
 it.effect.each(["fork", "import", "transfer", "overflow"] as const)(
   "r5 incomplete %s rejects caller user/project writes and exposes guidance",
   (kind) =>

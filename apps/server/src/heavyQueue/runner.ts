@@ -134,9 +134,12 @@ const patternRegex = (pattern: string) =>
   );
 
 /** A list entry naming a kind of work stands for its tools, so a saved list keeps up with them. */
+// ponytail: a formatter's check flag right after its script; `fmt -- --check` reads as unlisted.
 const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
   typecheck: TYPE_CHECKERS,
   tsc: TYPE_CHECKERS,
+  // A formatter that only checks writes nothing, so it is a check like any other.
+  check: ["fmt --check", "format --check"],
 };
 
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
@@ -165,8 +168,15 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly linkFailures?: number;
   /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
   readonly failure?: string;
+  /** Its worktree broke the install on Linux (a stale lockfile): the fix, for its end notice. */
+  readonly worktree?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
   readonly held?: Pick<HeavyQueueEntry, "ask" | "route">;
+  /** Its running Linux attempt must end: Linux ran short of memory, or restarted under it. */
+  readonly stop?: "memory" | "reboot";
+  /** Its Linux runs stopped for memory so far, and when the last one was. */
+  readonly evictions?: number;
+  readonly evictedAt?: number;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 
@@ -452,9 +462,15 @@ export const bodyVerdict = (
   root: string | null,
   context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
   where?: RunnerWhere,
+  scripts?: QueuedEntry["scripts"],
 ): Verdict => {
   const verdict = eligibilityOf(
-    { label: body, cwd, ...(where === undefined ? {} : { where }) },
+    {
+      label: body,
+      cwd,
+      ...(where === undefined ? {} : { where }),
+      ...(scripts === undefined ? {} : { scripts }),
+    },
     { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
   );
   if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") return verdict;
@@ -558,6 +574,8 @@ export const eligibilityOf = (
           at === null ? null : rootOf(at),
           context,
           entry.where,
+          // A script inside a `sh -c` text was read with the job: judged by its text, not its name.
+          part.script === null ? scripts : undefined,
         );
         if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;
@@ -615,6 +633,9 @@ export interface LinuxHealth extends Sustained {
   readonly checkedAt: number | null;
   /** The last successful check. */
   readonly okAt: number | null;
+  /** Busy share of its CPU, 0–100, like the Mac's; null without two readings to compare. */
+  readonly cpuPercent: number | null;
+  /** The one-minute load, a hint only: it counts waiting tasks, not CPU in use. */
   readonly load1: number | null;
   readonly cpuCount: number | null;
   readonly availableMemoryBytes: number | null;
@@ -624,6 +645,8 @@ export interface LinuxHealth extends Sustained {
   readonly failedAt?: number;
   /** When it last came back online after being offline. */
   readonly backOnlineAt?: number;
+  /** Seconds since Linux booted, as of `okAt`. */
+  readonly uptimeSeconds?: number;
 }
 
 export const UNKNOWN_HEALTH: LinuxHealth = {
@@ -631,6 +654,7 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
   failures: 0,
   checkedAt: null,
   okAt: null,
+  cpuPercent: null,
   load1: null,
   cpuCount: null,
   availableMemoryBytes: null,
@@ -641,13 +665,33 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
 };
 
 export interface LinuxReading {
+  readonly cpuPercent: number | null;
   readonly load1: number | null;
   readonly cpuCount: number | null;
   readonly availableMemoryBytes: number | null;
   readonly totalMemoryBytes: number | null;
+  readonly uptimeSeconds?: number;
 }
 
-/** `cat /proc/loadavg; nproc; free -b` output. */
+/**
+ * The busy share between two `/proc/stat` `cpu` lines, 0–100: busy is all but idle and iowait,
+ * over user..steal (guest time is already inside user and nice). Null when either line is
+ * missing or the counters did not move forward.
+ */
+const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
+  const times = (line: string | undefined) => {
+    const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
+    return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
+  };
+  const [a, b] = [times(before), times(after)];
+  if (a === null || b === null) return null;
+  const total = b.reduce((sum, n) => sum + n, 0) - a.reduce((sum, n) => sum + n, 0);
+  const idle = b[3]! + b[4]! - (a[3]! + a[4]!);
+  if (!(total > 0) || idle < 0 || idle > total) return null;
+  return ((total - idle) / total) * 100;
+};
+
+/** `HEARTBEAT_COMMAND` output. */
 export const parseHeartbeat = (text: string): LinuxReading => {
   const lines = text.split("\n");
   const load1 = Number(lines[0]?.trim().split(/\s+/)[0]);
@@ -659,11 +703,16 @@ export const parseHeartbeat = (text: string): LinuxReading => {
   const total = Number(mem?.[1]);
   const available = Number(mem?.[6]);
   const value = (n: number) => (Number.isFinite(n) ? n : null);
+  const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
+  // `/proc/uptime`: the only line of exactly two numbers.
+  const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line.trim()));
   return {
+    cpuPercent: cpuPercentBetween(before, after),
     load1: value(load1),
     cpuCount: Number.isInteger(cpuCount) && cpuCount > 0 ? cpuCount : null,
     totalMemoryBytes: value(total),
     availableMemoryBytes: value(available),
+    ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.trim().split(/\s+/)[0]) }),
   };
 };
 
@@ -675,16 +724,68 @@ const GIB = 1024 ** 3;
 
 /** Which of Linux's own limits a reading is past, for the waiting reason; null when none or unknown. */
 const linuxOverBy = (reading: LinuxReading, machine: RunnerMachineConfig): string | null => {
-  const { availableMemoryBytes: free, totalMemoryBytes: total, load1, cpuCount } = reading;
+  const { availableMemoryBytes: free, totalMemoryBytes: total, cpuPercent: cpu } = reading;
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
     return `${(Math.max(0, free) / GIB).toFixed(1)} GB free, keeping ${floor}%`;
   }
-  if (load1 === null || cpuCount === null) return null;
-  const cpu = (load1 / cpuCount) * 100;
+  if (cpu === null) return null;
   return cpu > machine.runnerLinuxCpuCeilingPercent
     ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
     : null;
+};
+
+/** Readings further apart than this are not one run of them: one missed beat at most. */
+const readingGapMs = (machine: RunnerMachineConfig) =>
+  2 * (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
+
+// A start shows its weight only once it warms up: the next waits for a reading this long after.
+export const LINUX_SETTLE_MS = 60_000;
+
+// Half the entry floor, so a stop never makes room that lets the same start back in at once.
+export const LINUX_EVICT_SHARE = 0.5;
+
+/** When Linux last booted, from the latest reading; null without one. */
+export const bootAtOf = (health: LinuxHealth) =>
+  health.okAt === null || health.uptimeSeconds === undefined
+    ? null
+    : health.okAt - health.uptimeSeconds * 1000;
+
+/** Started before Linux last booted, with a second's slack for the reading's own delay. */
+export const beforeBoot = (bootAt: number | null, startedAt: number) =>
+  bootAt !== null && startedAt < bootAt - 1000;
+
+/**
+ * Running Linux attempts to stop after a reading: every one from before Linux restarted, and,
+ * once memory falls below half the floor, the newest of two or more. Never the only one (alone,
+ * a job that fills memory is its own problem) and one at a time: the next waits for a reading
+ * taken after the last stop.
+ */
+export const linuxStops = (
+  health: LinuxHealth,
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  machine: RunnerMachineConfig,
+): Readonly<Record<string, "memory" | "reboot">> => {
+  const stops: Record<string, "memory" | "reboot"> = {};
+  const running = entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux");
+  const bootAt = bootAtOf(health);
+  for (const entry of running) {
+    if (beforeBoot(bootAt, Date.parse(entry.startedAt!))) stops[entry.id] = "reboot";
+  }
+  const { okAt, availableMemoryBytes: free, totalMemoryBytes: total } = health;
+  const floor = (machine.runnerLinuxMemoryFloorPercent / 100) * LINUX_EVICT_SHARE;
+  if (okAt === null || free === null || total === null || !(free < total * floor)) return stops;
+  const live = running.filter(
+    (entry) => (entry as QueuedEntry).stop === undefined && stops[entry.id] === undefined,
+  );
+  const stopping = running.some((entry) => (entry as QueuedEntry).stop === "memory");
+  const settling = entries.some((entry) => ((entry as QueuedEntry).evictedAt ?? -1) >= okAt);
+  if (live.length < 2 || stopping || settling) return stops;
+  const newest = live.reduce((a, b) =>
+    Date.parse(b.startedAt!) > Date.parse(a.startedAt!) ? b : a,
+  );
+  stops[newest.id] = "memory";
+  return stops;
 };
 
 /**
@@ -707,8 +808,7 @@ export const nextHealth = (
   if (sameEvent) return { ...previous, error: check.error };
   if (check.ok) {
     // One missed beat keeps the run of readings; a longer silence starts over from "has room".
-    const gapMs = 2 * (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
-    const continuous = previous.okAt !== null && now - previous.okAt <= gapMs;
+    const continuous = previous.okAt !== null && now - previous.okAt <= readingGapMs(machine);
     const over = linuxOverBy(check.reading, machine) !== null;
     const backOnlineAt = previous.online === false ? now : previous.backOnlineAt;
     return {
@@ -745,18 +845,18 @@ const linuxUpFor = (health: LinuxHealth, entry: HeavyQueueEntry) => {
   return (since ?? 0) > linuxFailedAt;
 };
 
-/** Linux counted offline after this job lost it: the PC went away, not a blip. */
-const wentAway = (health: LinuxHealth, entry: HeavyQueueEntry) =>
-  entry.linuxFailedAt !== undefined &&
-  (health.online === false || (health.backOnlineAt ?? 0) > entry.linuxFailedAt);
-
-/** A run the PC took with it: "If a Linux run fails" decides, and Linux's return undoes nothing. */
-const lostWithPc = (health: LinuxHealth, entry: HeavyQueueEntry) =>
-  entry.dropped === true && wentAway(health, entry);
-
 /** Runs that may lose the link before a job counts Linux unavailable: one past going offline. */
 export const linkAttempts = (machine: RunnerMachineConfig) =>
   Math.max(2, machine.runnerOfflineAfterFailures) + 1;
+
+/**
+ * A failed run "If a Linux run fails" decides: its environment failed there, or it lost Linux on
+ * its last attempt. Before that, a dropped run (the link, or the PC restarting) goes back by itself.
+ */
+const droppedFinal = (entry: HeavyQueueEntry, machine: RunnerMachineConfig) => {
+  const { failure, linkFailures = 1 } = entry as QueuedEntry;
+  return entry.dropped === true && (failure !== undefined || linkFailures >= linkAttempts(machine));
+};
 
 /**
  * A job whose run lost the link (not its environment) goes back to Linux by itself: at once when
@@ -771,7 +871,6 @@ const linkRetry = (
   const { linuxFailedAt } = entry;
   const { linkFailures = 1, failure } = entry as QueuedEntry;
   if (linuxFailedAt === undefined || failure !== undefined || health.online === false) return null;
-  if (lostWithPc(health, entry)) return null;
   if (linkFailures >= linkAttempts(machine)) return null;
   const backoffMs = machine.runnerSshTimeoutSeconds * 1000 * 2 ** (linkFailures - 1);
   return now >= linuxFailedAt + backoffMs ? "retry" : "wait";
@@ -850,16 +949,15 @@ const askExpired = (entry: HeavyQueueEntry, now: number) =>
 /**
  * A failed run keeps its policy until it resolves: "Run on this Mac" and an unanswered question
  * are not undone by the next good heartbeat. Waiting (chosen, or an expired question) ends the
- * hold. A blip that never took Linux offline is no failure: that run goes back by itself.
+ * hold. A drop with attempts left is no failure yet: that run goes back by itself.
  */
 const dropHolds = (
   entry: HeavyQueueEntry,
   config: RunnerProjectConfig,
-  health: LinuxHealth,
+  machine: RunnerMachineConfig,
   now: number,
 ) =>
-  entry.dropped === true &&
-  ((entry as QueuedEntry).failure !== undefined || lostWithPc(health, entry)) &&
+  droppedFinal(entry, machine) &&
   entry.route === undefined &&
   (config.runnerDropped === "mac" ||
     config.runnerDropped === "agent" ||
@@ -910,6 +1008,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
   const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
+  /** Jobs stopped twice for memory, waiting for Linux to empty: it admits nobody else meanwhile. */
+  const alone = new Set(
+    waiting
+      .filter((entry) => ((entry as QueuedEntry).evictions ?? 0) >= 2)
+      .map((entry) => entry.id),
+  );
   let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
   let lastLinuxStart = Math.max(
@@ -920,7 +1024,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
-  const reading = health.load1 !== null || health.availableMemoryBytes !== null;
+  const linuxOverNow = linuxOverBy(health, machine);
+  const okAt = health.okAt ?? -Infinity;
+  const stale = now - okAt > readingGapMs(machine);
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -935,6 +1041,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
   const shows = (reason: string) => input.runnerOn === true || reason === COMMIT_HOOK;
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
+    alone.delete(entry.id);
     if (shows(reason)) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
@@ -964,8 +1071,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           !fresh ||
           machineHold(sample, input) !== null ||
           jobVerdict(input, sample, entry).hold === null)));
-  /** Why Linux cannot take a job of `worktree` now, or null when it can. */
-  const linuxBusy = (worktree: string): LinuxBusy | null => {
+  /** Why Linux cannot take `entry` (of `worktree`) now, or null when it can. */
+  const linuxBusy = (entry: HeavyQueueEntry, worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0) {
       return { kind: "slots", why: `all ${machine.runnerLinuxSlots} Linux slots are busy` };
     }
@@ -979,15 +1086,25 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (busyWorktrees.has(worktree)) {
       return { kind: "worktree", why: "this worktree is already running on Linux" };
     }
+    // Linux drains for a job that runs there alone: admitting others would starve it.
+    if ([...alone].some((id) => id !== entry.id)) {
+      return { kind: "slots", why: "Linux is kept free for a job that runs there alone" };
+    }
+    if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
     if (health.overLimit) {
+      return { kind: "limits", why: linuxOverNow ?? "easing back under its limits" };
+    }
+    // Only the sustained limits move work elsewhere, but no new start goes past the instant ones.
+    if (linuxOverNow !== null) return { kind: "limits", why: linuxOverNow };
+    // Bounds stop and start on a job that only fits there alone.
+    if (((entry as QueuedEntry).evictions ?? 0) >= 2 && linuxFree < machine.runnerLinuxSlots) {
       return {
         kind: "limits",
-        why: linuxOverBy(health, machine) ?? "easing back under its limits",
+        why: "Linux ran short of memory beside other jobs: waiting to run there alone",
       };
     }
-    // A reading from before the last start does not show its load yet.
-    if (reading && (health.okAt ?? 0) <= lastLinuxStart) {
-      return { kind: "reading", why: "a fresh reading since the last job started there" };
+    if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
+      return { kind: "reading", why: "a reading a minute after the last job started there" };
     }
     return null;
   };
@@ -999,7 +1116,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * hasn't confirmed stopped reruns nowhere yet, but every other choice acts now.
    */
   const follow = (entry: HeavyQueueEntry, config: RunnerProjectConfig) => {
-    const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
+    const reason: HeavyRunnerAskReason = droppedFinal(entry, machine) ? "dropped" : "unavailable";
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
     const { failure } = entry as QueuedEntry;
     const what =
@@ -1036,6 +1153,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     cancel(`${what} and nobody answered in time: canceled`);
   };
   const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+    alone.delete(entry.id);
     routes[entry.id] = "linux";
     linuxCount += 1;
     linuxFree -= 1;
@@ -1059,9 +1177,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(entry, why);
         continue;
       }
-      // The PC went away with the run: its policy acts now. After a blip, or once the user chose,
-      // it just waits to confirm.
-      if (entry.route === undefined && wentAway(health, entry)) {
+      // Linux offline, or the run's last attempt: its policy acts now. Otherwise, or once the user
+      // chose, it just waits to confirm.
+      if (entry.route === undefined && (health.online === false || droppedFinal(entry, machine))) {
         follow(entry, config);
         continue;
       }
@@ -1075,7 +1193,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     const retry = linkRetry(health, entry, machine, now);
     const up =
-      (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, health, now);
+      (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, machine, now);
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
@@ -1083,7 +1201,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     // A run that failed on Linux follows "If a Linux run fails" in every mode, below.
-    if ((intent === "automatic" || intent === "macFirst") && (up || entry.dropped !== true)) {
+    if (
+      (intent === "automatic" || intent === "macFirst") &&
+      (up || !droppedFinal(entry, machine))
+    ) {
       const hybrid = intent === "automatic";
       const mode = hybrid ? "Hybrid" : "Mac first";
       if (hybrid && paused) {
@@ -1094,7 +1215,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(entry, `${mode}: Linux is unavailable`);
         continue;
       }
-      const busy = linuxBusy(worktree);
+      const busy = linuxBusy(entry, worktree);
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";
         linuxCount += 1;
@@ -1139,7 +1260,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     if (up) {
-      const busy = linuxBusy(worktree);
+      const busy = linuxBusy(entry, worktree);
       if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
       else toLinuxNow(entry, worktree);
       continue;
@@ -1315,7 +1436,10 @@ export const removeCopyScript = (id: string) => {
   ].join("\n");
 };
 
-export const HEARTBEAT_COMMAND = "cat /proc/loadavg; nproc; free -b";
+// Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.
+// `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone.
+export const HEARTBEAT_COMMAND =
+  "cat /proc/loadavg; nproc; free -b; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; cat /proc/uptime";
 
 /**
  * Stops what is left of run `id` there: its process group, then anything still naming its
@@ -1340,6 +1464,10 @@ export const remoteStopScript = (
   return [
     `p=${pgid ?? ""};${pgidOnly ? "" : ` [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`}`,
     `case "$p" in *[!0-9]*|0|1) p= ;; esac`,
+    // After a restart the number may name someone else's group: use it only while one of its
+    // processes still works inside the run's folder, where `remoto-rodar` started it.
+    `owned() { for q in $(pgrep -g "$p" 2>/dev/null); do case "$(readlink "/proc/$q/cwd" 2>/dev/null)" in "$HOME/runs/${id}"|"$HOME/runs/${id}/"*) return 0 ;; esac; done; return 1; }`,
+    `[ -z "$p" ] || owned || p=`,
     `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null${pgidOnly ? "" : ` || pgrep -f '${pattern}' >/dev/null`}; }`,
     `alive || { echo gone; exit 0; }`,
     `{ [ -n "$p" ] && kill -TERM -- "-$p";${byFolder(`pkill -TERM -f '${pattern}'`)} } 2>/dev/null`,

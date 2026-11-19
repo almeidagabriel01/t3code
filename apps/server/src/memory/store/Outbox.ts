@@ -1,6 +1,8 @@
 import * as M from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { CoreReads } from "./CoreReads.ts";
 import type { ImportLineage } from "./ImportLineage.ts";
 import type { ItemWrites } from "./ItemWrites.ts";
@@ -18,6 +20,7 @@ import type { WorkRow } from "./StoreCodecs.ts";
 import type { StoreKernel } from "./StoreKernel.ts";
 import {
   MemoryCapacityError,
+  MemoryStorageError,
   MemoryStoreConflict,
   PendingForgetIntent,
   hashText,
@@ -25,6 +28,10 @@ import {
 } from "./StoreModel.ts";
 import type { SyncWorkCandidate } from "./StoreModel.ts";
 import type { WorkQueue } from "./WorkQueue.ts";
+
+const isStorageError = Schema.is(MemoryStorageError);
+const isDecodeFailure = (error: unknown): boolean =>
+  Schema.isSchemaError(error) || (isStorageError(error) && isDecodeFailure(error.cause));
 
 export const makeOutbox = (
   kernel: Pick<StoreKernel, "emit" | "nextWatermark" | "sql" | "transact">,
@@ -40,6 +47,24 @@ export const makeOutbox = (
   const { enqueueWork, putItem } = itemWrites;
   const { persistImportLineageTx, settleImportOperationTx } = importLineage;
   const { finishWork } = workQueue;
+  // A row that can never be sent is discarded with its reason, not held: rearming it would only
+  // hold it again. Work that depends on it then reaches the hub's typed rejection.
+  const discardUnsendable = Effect.fnUntraced(function* (
+    id: string,
+    version: number,
+    code: "invalid_output" | "unsupported_protocol" | "not_found",
+  ) {
+    const discarded = yield* stored(
+      "sync-outbox-discard",
+      sql`UPDATE memory_outbox SET status='failed',terminal_at=${yield* Clock.currentTimeMillis},claimed_by=NULL,claimed_until=NULL,failure_code=${code},hold_class=NULL WHERE id=${id} AND sync_version=${version} AND status IN ('pending','retry','running') RETURNING id`,
+    );
+    if (discarded.length)
+      yield* Effect.logWarning("memory: unsendable sync work discarded", {
+        workId: id,
+        failureCode: code,
+      });
+    return discarded.length === 1;
+  });
   const readEligibleOutbox = Effect.fn("MemoryStore.readEligibleOutbox")(function* (
     space: M.MemorySpaceId,
     now: number,
@@ -48,9 +73,14 @@ export const makeOutbox = (
     // Filter before LIMIT: a page of derived work must not hide its unsent inputs. CROSS JOIN
     // keeps edge iteration ahead of PK probes instead of scanning all revisions in a space.
     // Only live local submissions wait; missing or terminal inputs reach the hub's typed rejection.
-    const rows = yield* stored(
-      "sync-outbox",
-      sql<WorkRow & { sync_version: number; operation_digest: string | null }>`
+    const pageLimit = Math.max(0, Math.min(limit, M.MEMORY_PAGE_MAX_ITEMS));
+    const candidates: SyncWorkCandidate[] = [];
+    // Discarded rows leave the eligible set, so each re-read reaches the work queued behind them.
+    for (let parked = 1; parked > 0 && candidates.length < pageLimit;) {
+      parked = 0;
+      const rows = yield* stored(
+        "sync-outbox",
+        sql<WorkRow & { sync_version: number; operation_digest: string | null }>`
       SELECT o.* FROM memory_outbox o LEFT JOIN memory_events e ON e.memory_space_id=o.space AND e.operation_id=json_extract(o.metadata_json,'$.operationId')
       WHERE o.space=${space} AND o.kind IN ('sync','revert_intent')
       AND (o.status IN ('pending','retry') OR (o.status='running' AND o.claimed_until<=${now})) AND o.next_attempt_at<=${now}
@@ -65,25 +95,41 @@ export const makeOutbox = (
         THEN CASE WHEN json_extract(e.receipt_json,'$.forgetRetryOf') IS NOT NULL OR
           EXISTS (SELECT 1 FROM memory_events b WHERE b.memory_space_id=o.space AND json_extract(b.receipt_json,'$.forgetExpansion.operationId')=json_extract(o.metadata_json,'$.operationId'))
           THEN 1 ELSE 0 END ELSE 2 END, o.next_attempt_at,o.attempt,o.id
-      LIMIT ${Math.max(0, Math.min(limit, M.MEMORY_PAGE_MAX_ITEMS))}`,
-    );
-    const works = yield* workRows(rows);
-    const candidates: SyncWorkCandidate[] = [];
-    for (let i = 0; i < rows.length; i++) {
-      const work = works[i]!;
-      if (!("protocolVersion" in work.metadata)) continue;
-      let operationDigest = rows[i]!.operation_digest;
-      if (!operationDigest) {
-        const op = yield* readWorkOperation(work.id);
-        if (!op) continue;
-        operationDigest = hashText(M.encodeMemoryOperation(op));
+      LIMIT ${pageLimit}`,
+      );
+      for (const row of rows) {
+        // A re-read returns the rows already collected first; take only new ones.
+        if (candidates.length >= pageLimit) break;
+        if (candidates.some((candidate) => candidate.work.id === row.id)) continue;
+        const version = row.sync_version;
+        const decoded = yield* Effect.result(workRows([row]));
+        if (decoded._tag === "Failure") {
+          // Only a row that fails to decode is unsendable; anything else is retried.
+          if (!isDecodeFailure(decoded.failure)) return yield* decoded.failure;
+          if (yield* discardUnsendable(row.id, version, "invalid_output")) parked++;
+          continue;
+        }
+        const work = decoded.success[0]!;
+        if (!("protocolVersion" in work.metadata)) {
+          if (yield* discardUnsendable(work.id, version, "unsupported_protocol")) parked++;
+          continue;
+        }
+        let operationDigest = row.operation_digest;
+        if (!operationDigest) {
+          const op = yield* readWorkOperation(work.id);
+          if (!op) {
+            if (yield* discardUnsendable(work.id, version, "not_found")) parked++;
+            continue;
+          }
+          operationDigest = hashText(M.encodeMemoryOperation(op));
+        }
+        candidates.push({
+          work,
+          operationId: work.metadata.operationId,
+          operationDigest,
+          version,
+        });
       }
-      candidates.push({
-        work,
-        operationId: work.metadata.operationId,
-        operationDigest,
-        version: rows[i]!.sync_version,
-      });
     }
     return candidates;
   });

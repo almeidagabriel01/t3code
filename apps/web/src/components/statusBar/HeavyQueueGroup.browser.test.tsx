@@ -133,6 +133,7 @@ const LINUX = {
   online: true,
   slots: 2,
   running: 1,
+  cpuPercent: 20,
   load1: 1.2,
   cpuCount: 6,
   availableMemoryBytes: 8 * 1024 ** 3,
@@ -619,7 +620,7 @@ describe("MachineBar", () => {
     await hoverHint(screen, "1 of 3 running on this Mac");
     await expect.element(screen.getByText("1 of 3 running on this Mac").last()).toBeVisible();
     await userEvent.hover(screen.getByText("20%"));
-    await expect.element(screen.getByText("Load 1.2 on 6 cores")).toBeVisible();
+    await expect.element(screen.getByText("20% CPU in use · load 1.2 on 6 cores")).toBeVisible();
     await userEvent.hover(screen.getByLabelText("Linux online"));
     await expect.element(screen.getByText("remoto · online")).toBeVisible();
   });

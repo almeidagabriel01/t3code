@@ -58,14 +58,18 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
 import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
-import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
+import {
+  decisionResultsText,
+  groupTaskPacket,
+} from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
+import { decisionDeliveryText } from "../../apps/server/src/decisions/DecisionService.ts";
 import { wakeText } from "../../apps/server/src/problems/problemRules.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
 import {
   taskWakeText,
   waitWakeText,
 } from "../../apps/server/src/assistants/AssistantTaskReactor.ts";
-import { defaultNoticeText } from "../../apps/server/src/autonomy/needsYou.ts";
+import { defaultNoticeText, settledWaitsNote } from "../../apps/server/src/autonomy/needsYou.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
@@ -429,6 +433,23 @@ export const McpToolUseCase = Schema.Struct({
         source: Schema.Literals(["request", "decision"]),
       }),
     ),
+    /**
+     * History before `prompt`: the default assistant's notice of a wait and its reply. With
+     * `settled`, the wait ended since, so T3's note of it rides with `prompt`.
+     */
+    settledWait: Schema.optional(
+      Schema.Struct({
+        notice: Schema.Struct({
+          title: Schema.String,
+          origin: Schema.String,
+          threadId: Schema.String,
+          threadTitle: Schema.String,
+          source: Schema.Literals(["request", "decision"]),
+        }),
+        reply: Schema.String,
+        settled: Schema.optional(Schema.Struct({ requestKind: Schema.String })),
+      }),
+    ),
     /** A task in an assistant group: `prompt` is its instruction, wrapped as T3 sends it. */
     groupTask: Schema.optional(
       Schema.Struct({
@@ -461,6 +482,19 @@ export const McpToolUseCase = Schema.Struct({
               status: Schema.String,
               owner: Schema.String,
               instruction: Schema.String,
+            }),
+          ),
+        ),
+        /** Decisions the member asked earlier and how the user settled them; the task runs again. */
+        decisions: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              title: Schema.String,
+              options: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+              status: Schema.Literals(["answered", "withdrawn", "expired"]),
+              optionId: Schema.optional(Schema.String),
+              text: Schema.optional(Schema.String),
             }),
           ),
         ),
@@ -1242,6 +1276,15 @@ export const buildMessages = (sample: Sample) => {
     push("user", text(wake(problemWake.evidence ?? "")));
     push("assistant", text(problemWake.answer));
   }
+  const settledWait = testCase.setup.settledWait;
+  if (settledWait !== undefined) {
+    const link = formatThreadLink(
+      { environmentId: null, threadId: ThreadId.make(settledWait.notice.threadId) },
+      settledWait.notice.threadTitle,
+    );
+    push("user", text(defaultNoticeText({ ...settledWait.notice, link })));
+    push("assistant", text(settledWait.reply));
+  }
   const taskWake = testCase.setup.taskWake;
   const waitNotice = testCase.setup.waitNotice;
   const waitWake = testCase.setup.waitWake;
@@ -1275,7 +1318,39 @@ export const buildMessages = (sample: Sample) => {
                   quoted: groupTask.quoted ?? [],
                   from: groupTask.from,
                   instruction: testCase.prompt,
-                  followup: null,
+                  followup:
+                    groupTask.decisions === undefined
+                      ? null
+                      : decisionResultsText(
+                          groupTask.decisions.map((decision) =>
+                            decisionDeliveryText({
+                              id: Contracts.DecisionId.make(decision.id),
+                              fromThreadId: ThreadId.make("assistant:a-self:g-1"),
+                              threadTitle: groupTask.request ?? testCase.id,
+                              title: decision.title,
+                              context: "",
+                              options: decision.options,
+                              status: decision.status,
+                              ...(decision.status === "answered"
+                                ? {
+                                    answeredAt: "2026-11-17T12:00:00.000Z",
+                                    answer: {
+                                      ...(decision.optionId === undefined
+                                        ? {}
+                                        : { optionId: decision.optionId }),
+                                      ...(decision.text === undefined
+                                        ? {}
+                                        : { text: decision.text }),
+                                    },
+                                  }
+                                : {}),
+                              ...(decision.status === "expired"
+                                ? { expiresAt: "2026-11-17T12:00:00.000Z" }
+                                : {}),
+                              createdAt: "2026-11-17T11:00:00.000Z",
+                            }),
+                          ),
+                        ),
                   ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
                 })
               : testCase.promptContext === undefined
@@ -1306,8 +1381,22 @@ export const buildMessages = (sample: Sample) => {
           assistant.projectTitles,
         );
   const notedText = note === "" ? userText : `${note}\n\n${userText}`;
-  const prompt =
-    sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);
+  const settled = settledWait?.settled;
+  const settledNote =
+    settled === undefined
+      ? ""
+      : settledWaitsNote([
+          {
+            key: "request:r1",
+            threadId: ThreadId.make(settledWait!.notice.threadId),
+            threadTitle: settledWait!.notice.threadTitle,
+            what: settled,
+          },
+        ]);
+  const turnContext = [sideChatContext ?? "", settledNote]
+    .filter((part) => part !== "")
+    .join("\n\n");
+  const prompt = turnContext === "" ? notedText : withInlineContext(turnContext, notedText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (
     testCase.prompt !== "" ||

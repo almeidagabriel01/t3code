@@ -35,6 +35,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { HeavyEventRecord } from "../heavyQueue/heavyNotices.ts";
 import * as Detector from "./ProblemDetector.ts";
+import { runnerReport } from "./problemSources.ts";
 import type { ProblemReport } from "./problemRules.ts";
 
 const MIN = 60_000;
@@ -792,6 +793,8 @@ describe("sources (PRO-30, PRO-32)", () => {
             url: "https://example.test/pr/7",
             snapshot: { checksState: state, updatedAt },
           });
+        // The card shows the command that ran; the job's name is only its label.
+        const named = { id: "j", name: "remoto tests parity", label: "bash /tmp/tests.sh" };
         for (const event of [
           pr("failing", "a"),
           pr("failing", "b"),
@@ -800,7 +803,7 @@ describe("sources (PRO-30, PRO-32)", () => {
         ])
           yield* detector.handleEvent(event);
         yield* detector.handleRecord(
-          record({ id: "rec-1", job: { id: "j", name: "x", threadId: null, runner: "mac" } }),
+          record({ id: "rec-1", job: { ...named, threadId: null, runner: "mac" } }),
         );
         // Linux environment failures arrive as t3-fault; the plain records only feed the toasts.
         yield* detector.handleRecord(record({ id: "rec-0" }));
@@ -844,10 +847,7 @@ describe("sources (PRO-30, PRO-32)", () => {
         );
         yield* detector.handleRecord(record({ id: "rec-5", kind: "deadline" }));
         yield* detector.handleRecord(
-          record({
-            id: "rec-6",
-            job: { id: "j", name: "x", threadId: "elsewhere", runner: "mac" },
-          }),
+          record({ id: "rec-6", job: { ...named, threadId: "elsewhere", runner: "mac" } }),
         );
         yield* detector.tick;
         const cards = yield* allCards;
@@ -868,6 +868,19 @@ describe("sources (PRO-30, PRO-32)", () => {
         assert.equal(sync.projectId, "p1");
         assert.include(sync.description, "Linux sync failed");
         assert.equal(byTitle["Environment: spawn codex ENOENT"]!.problem?.count, 1);
+        // Its worktree broke the install: the job ended telling the agent the fix, at any phase.
+        assert.isNull(runnerReport(record({ code: 1, phase: "running", worktree: "run vp i" })));
+        const missing = { runner: "mac", name: "web fmt", label: "/s/fmt.sh a", threadId: "t1" };
+        assert.deepInclude(
+          runnerReport(
+            record({ error: "script not found: /s/fmt.sh", job: { id: "m", ...missing } }),
+          ),
+          { command: "/s/fmt.sh a", error: "script not found: /s/fmt.sh" },
+        );
+
+        const exit = byTitle["Environment: Exit code 127"]!.description;
+        assert.include(exit, "`bash /tmp/tests.sh`");
+        assert.notInclude(exit, "remoto tests parity");
       }),
     );
   });

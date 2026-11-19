@@ -6,6 +6,10 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/components/ui/OverlayPortal.test.tsx",
   "src/components/ui/SegmentedControl.test.tsx",
+  "src/components/ComposerAttachmentStrip.test.tsx",
+  "src/features/threads/ComposerContextMeter.test.tsx",
+  "src/features/assistants/GroupContextMeter.test.tsx",
+  "src/features/assistants/useGroupDraftSkills.test.tsx",
   "src/features/settings/CloudVoiceSection.test.tsx",
   "src/state/keepAwake.test.tsx",
   "src/features/settings/components/KeepAwakeSection.test.tsx",

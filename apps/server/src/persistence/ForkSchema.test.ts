@@ -703,6 +703,12 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
       assert.isTrue(
         openWaits.some((row) => row.detail.includes("assistant_group_messages_open_wait_idx")),
       );
+      const boundary = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN SELECT b.seq FROM assistant_group_messages b
+        WHERE b.team_id = 'g1' AND b.kind = 'boundary' ORDER BY b.seq DESC LIMIT 1`;
+      assert.isTrue(
+        boundary.some((row) => row.detail.includes("assistant_group_messages_boundary_idx")),
+      );
     }).pipe(Effect.provide(database)),
 );
 
@@ -734,4 +740,22 @@ it.effect.each([
         plan.some((row) => row.detail.includes("assistant_group_tasks_request_message_idx")),
       );
     }).pipe(Effect.provide(database)),
+);
+
+it.effect("adds the team chat continuity columns once, however often the schema runs", () =>
+  Effect.gen(function* () {
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+    const added = [
+      ["assistant_teams", "conversation_mode"],
+      ["decisions", "kind"],
+      ["decisions", "steps_json"],
+      ["assistant_group_tasks", "pending_followup_json"],
+      ["assistant_group_tasks", "followup_attachments_json"],
+      ["assistant_group_tasks", "inherited_decisions_json"],
+    ] as const;
+    for (const [table, column] of added) {
+      assert.include(yield* columnsOf(table), column, `${table}.${column}`);
+    }
+  }).pipe(Effect.provide(database)),
 );

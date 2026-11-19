@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
   OrchestrationV2AppThreadLineage,
@@ -526,6 +527,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, OrchestratorV2Error>;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
@@ -614,6 +618,10 @@ export function threadHasUnfinishedWork(records: {
     ) || records.runtimeRequests.some((request) => request.status === "pending")
   );
 }
+
+// Visits only move forward, so a late or repeated write never rewinds read state.
+const advanceVisit = (lastVisitedAt: DateTime.Utc | null, visitedAt: DateTime.Utc) =>
+  lastVisitedAt === null ? visitedAt : DateTime.max(lastVisitedAt, visitedAt);
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
@@ -3455,9 +3463,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} visit time ${command.visitedAt} is not a valid timestamp.`,
       });
     }
-    const movesForward =
-      thread.lastVisitedAt === null ||
-      DateTime.toEpochMillis(visitedAt.value) > DateTime.toEpochMillis(thread.lastVisitedAt);
     const occurredAt = yield* DateTime.now;
     // Opens are timed by the server clock so devices with skewed clocks agree.
     const opens = command.opened
@@ -3479,7 +3484,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt,
       payload: {
         ...thread,
-        ...(movesForward ? { lastVisitedAt: visitedAt.value } : {}),
+        lastVisitedAt: advanceVisit(thread.lastVisitedAt, visitedAt.value),
         ...(opens ? { opens } : {}),
       },
     });
@@ -4122,16 +4127,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
+    const latestRunCompletedAt =
+      command.type === "thread.mark-unread" || command.type === "thread.settle"
+        ? ((yield* projectionStore
+            .getThreadShell(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            ))?.latestRunCompletedAt ?? null)
+        : null;
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
-      const shell = yield* projectionStore
-        .getThreadShell(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      const latestRunCompletedAt = shell?.latestRunCompletedAt ?? null;
       if (latestRunCompletedAt === null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4158,10 +4165,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
+          const unchanged =
+            alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null;
+          // Settling reads the thread wherever it comes from, so it never returns unread.
           return {
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            lastVisitedAt: unchanged
+              ? thread.lastVisitedAt
+              : advanceVisit(
+                  thread.lastVisitedAt,
+                  latestRunCompletedAt === null ? now : DateTime.max(now, latestRunCompletedAt),
+                ),
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
@@ -4169,10 +4185,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
-            updatedAt:
-              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
-                ? thread.updatedAt
-                : now,
+            updatedAt: unchanged ? thread.updatedAt : now,
           };
         }
         case "thread.unsettle": {
@@ -15198,6 +15211,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
       return projectionStore.getThreadTitles(threadIds).pipe(Effect.mapError(shellProjectionError));
+    }),
+    getThreadContextUsage: Effect.fn("OrchestratorV2.getThreadContextUsage")(function (threadId) {
+      return projectionStore
+        .getThreadContextUsage(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getThreadEventSequence: Effect.fn("OrchestratorV2.getThreadEventSequence")(function (threadId) {
       return eventSink

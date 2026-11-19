@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Statement from "effect/sql/Statement";
@@ -150,6 +151,9 @@ describe("MemoryWorker", () => {
       const worker = yield* Worker.MemoryWorker;
       yield* worker.sweepDue();
       assert.strictEqual((yield* store.readWork("work"))?.status, "cancelled");
+      assert.deepStrictEqual(yield* sql`SELECT failure_code FROM memory_outbox WHERE id='work'`, [
+        { failure_code: "source_unavailable" },
+      ]);
       assert.strictEqual(yield* store.readThreadHookWatermark(), 3);
       assert.isNotNull((yield* store.ftsState(environmentId)).measuredAt);
     }).pipe(Effect.provide(live(false, undefined, false, 0, true))),
@@ -345,9 +349,20 @@ describe("MemoryWorker", () => {
     }).pipe(Effect.provide(live())),
   );
   it.effect.each(["forgotten", "missing", "held"] as const)(
-    "does not generate from an invalid summary dependency: %s",
+    "an invalid summary dependency refuses the summary text but keeps the user's rule: %s",
     (invalid) => {
       const inputs: M.GenerateMemorySummaryInput[] = [];
+      const rule = (input: M.GenerateMemorySummaryInput) =>
+        input.rules
+          ? [
+              {
+                scope: "user" as const,
+                text: "Never X",
+                messageIds: [input.rules.userTypedMessageIds[0]!],
+                supersedes: null,
+              },
+            ]
+          : [];
       return Effect.gen(function* () {
         const { target, rA, d0 } = yield* seedDerivedSummary;
         const sql = yield* SqlClient.SqlClient;
@@ -357,13 +372,26 @@ describe("MemoryWorker", () => {
           yield* sql`UPDATE memory_items SET availability_json=json_set(availability_json,'$.exposure','held') WHERE memory_id=${memoryId}`;
         else yield* sql`UPDATE memory_items SET status='forgotten' WHERE memory_id=${memoryId}`;
         const aggregate = yield* incrementalSummary(target);
-        assert.strictEqual(inputs.length, 1);
         assert.deepStrictEqual(aggregate.heads, [d0]);
-        assert.strictEqual(
-          (yield* (yield* Store.MemoryStore).readWork("lineage-increment"))!.status,
-          "cancelled",
+        // The summary that read the invalid dependency never reaches the model again.
+        assert.isAbove(inputs.length, 1);
+        assert.isUndefined(inputs[1]!.previousSummary);
+        for (const input of inputs.slice(1))
+          assert.notInclude(JSON.stringify(input), "synthetic derived A");
+        const ruleId = M.MemoryId.make(Service.memoryStableUuid("rule:user:never x"));
+        const store = yield* Store.MemoryStore;
+        const created = yield* store.loadAggregate(space, ruleId);
+        assert.lengthOf(created.heads, 1);
+        assert.deepStrictEqual(created.revisions[0]?.payload?.derivedFromMemoryRevisions, []);
+        assert.deepStrictEqual(
+          yield* sql`SELECT status,failure_code FROM memory_outbox WHERE id='lineage-increment'`,
+          [{ status: "completed", failure_code: "forgotten" }],
         );
-      }).pipe(Effect.provide(live(false, (input) => inputs.push(input))));
+      }).pipe(
+        Effect.provide(
+          live(false, (input) => inputs.push(input), false, 0, false, undefined, undefined, rule),
+        ),
+      );
     },
   );
   it.effect.each([false, true])(
@@ -1093,6 +1121,10 @@ describe("MemoryWorker", () => {
         yield* worker.sweepDue();
         assert.strictEqual(yield* store.readThreadHookWatermark(), 3);
         assert.strictEqual((yield* store.readWork("rolled-work"))?.status, "cancelled");
+        assert.deepStrictEqual(
+          yield* sql`SELECT failure_code FROM memory_outbox WHERE id='rolled-work'`,
+          [{ failure_code: "source_invalidated" }],
+        );
         // Replanned on the completed summary, the run has nothing left to summarize.
         assert.deepStrictEqual(
           yield* sql`SELECT id FROM memory_outbox WHERE kind IN ('summary','consolidate') AND id NOT IN ('concurrent','rolled-work')`,
@@ -1133,7 +1165,64 @@ describe("MemoryWorker", () => {
       assert.isBelow((yield* store.measureAllocation()).memoryBytes!, M.MEMORY_STORE_TARGET_BYTES);
     }).pipe(Effect.provide(live())),
   );
-  it.effect("settles a run that later messages invalidated instead of rereading it", () => {
+  it.effect("an edit to a message the run already read invalidates it", () => {
+    const settled: string[] = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      const text = JSON.stringify(message);
+      if (logLevel === "Warn" && text.includes("settled without a run")) settled.push(text);
+    });
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* Worker.MemoryWorker;
+      const original = (yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_events WHERE sequence=1`)[0]!;
+      const message = yield* decodeMessage(original.payload_json);
+      // Same message id as the one at sequence 1: an edit after the run's mark, not a new turn.
+      yield* sql`INSERT INTO orchestration_events VALUES (3,${id(30)},${threadId},'message.updated',${encodeMessage({ ...message, text: "edited after the mark" })},${now},2,'thread')`;
+      yield* worker.sweepDue();
+      // The stale read writes no summary, and the reason is on record.
+      assert.deepStrictEqual(
+        yield* sql`SELECT status,failure_code FROM memory_outbox WHERE kind='summary'`,
+        [{ status: "cancelled", failure_code: "source_invalidated" }],
+      );
+      assert.strictEqual(settled.length, 1);
+      assert.include(settled[0], "source_invalidated");
+    }).pipe(
+      Effect.provide(Layer.merge(live(), Logger.layer([logger], { mergeWithExisting: false }))),
+    );
+  });
+  it.effect("QA: a reply still streaming at the mark does not invalidate when it finishes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* Worker.MemoryWorker;
+      const original = (yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_events WHERE sequence=1`)[0]!;
+      const message = yield* decodeMessage(original.payload_json);
+      const reply = {
+        ...message,
+        id: M.MessageId.make("reply"),
+        runId: M.RunId.make("run-live"),
+        role: "assistant" as const,
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+      };
+      // Streaming partial before the mark: never usable, so the run never read its text.
+      yield* sql`INSERT INTO orchestration_events VALUES (0,${id(29)},${threadId},'message.updated',${encodeMessage({ ...reply, text: "partial", streaming: true })},${now},2,'thread')`;
+      yield* sql`INSERT INTO orchestration_events VALUES (3,${id(30)},${threadId},'message.updated',${encodeMessage({ ...reply, text: "partial and done", streaming: false })},${now},2,'thread')`;
+      yield* worker.sweepDue();
+      assert.deepStrictEqual(
+        yield* sql`SELECT status,failure_code FROM memory_outbox WHERE kind='summary'`,
+        [{ status: "completed", failure_code: null }],
+      );
+    }).pipe(Effect.provide(live())),
+  );
+  it.effect("completes a run that later turns follow instead of cancelling it", () => {
     const spans = new Map<string, number>();
     const reads = () => spans.get("MemoryWorker.readSource") ?? 0;
     return Effect.gen(function* () {
@@ -1151,9 +1240,10 @@ describe("MemoryWorker", () => {
       yield* sweep;
       yield* TestClock.adjust(Worker.MEMORY_CONTINUATION_SCAN_INTERVAL_MS);
       yield* sweep;
+      // The run is frozen at its mark: the follow-up belongs to a later chunk.
       assert.deepStrictEqual(
-        yield* sql`SELECT kind,status FROM memory_outbox WHERE kind IN ('summary','consolidate')`,
-        [{ kind: "summary", status: "cancelled" }],
+        yield* sql`SELECT kind,status,failure_code FROM memory_outbox WHERE kind IN ('summary','consolidate')`,
+        [{ kind: "summary", status: "completed", failure_code: null }],
       );
       const settled = reads();
       for (let pass = 0; pass < 3; pass++) {
@@ -1162,8 +1252,9 @@ describe("MemoryWorker", () => {
         yield* sweep;
       }
       assert.strictEqual(reads(), settled);
-      // Eight sweeps over one hour sample storage at its start and at its end.
-      assert.strictEqual(spans.get("MemoryStore.measureAllocation"), 2);
+      // Eight sweeps over one hour sample storage at its start and at its end, and once after
+      // merging the index rows of the summary the run wrote.
+      assert.strictEqual(spans.get("MemoryStore.measureAllocation"), 3);
     }).pipe(Effect.provide(live()));
   });
 });
@@ -1444,7 +1535,7 @@ it.effect.each([false, true, "multi"] as const)(
         yield* sql`SELECT 1 FROM memory_payloads WHERE memory_id=${summaryMemoryId}`,
         0,
       );
-      // A source rebuild must fail before asking the generation transport again.
+      // A rebuild is refused without asking the model: only typed user messages may reach it.
       const retry = work();
       const candidate = {
         ...retry,
@@ -1468,7 +1559,10 @@ it.effect.each([false, true, "multi"] as const)(
       yield* store.enqueueWork(candidate);
       yield* worker.execute(candidate);
       assert.strictEqual(generated, 1);
-      assert.strictEqual((yield* store.readWork(candidate.id))?.status, "cancelled");
+      assert.deepStrictEqual(
+        yield* sql`SELECT status,failure_code FROM memory_outbox WHERE id=${candidate.id}`,
+        [{ status: "completed", failure_code: "forgotten" }],
+      );
       assert.include(
         (yield* store.readThreadLineage({ environmentId, threadId }, space)).revisions,
         rA,

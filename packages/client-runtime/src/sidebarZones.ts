@@ -1,11 +1,21 @@
-import { assistantIdFromThreadId, type AssistantTeamChat } from "@t3tools/contracts";
+import {
+  assistantIdFromThreadId,
+  type AssistantTeamChat,
+  type ProjectId,
+} from "@t3tools/contracts";
 import {
   decisionWaitsOnUser,
   guestWaitsOnUser,
   requestWaitsOnUser,
 } from "@t3tools/shared/needsUser";
 
-import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
+import {
+  assistantGroupChatWaiting,
+  assistantGroupProjectLabel,
+  assistantGroupTabKey,
+  assistantGroupWaitingWhy,
+  type AssistantGroupTabKey,
+} from "./assistantGroupChat.ts";
 import { sortByAttention, type AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
@@ -399,6 +409,62 @@ export function folderIndicator(input: {
   if ((input.chat?.pausedTasks ?? 0) > 0) return { kind: "paused", count: input.chat!.pausedTasks };
   if ((input.chat?.unreadCount ?? 0) > 0) return { kind: "unread", count: input.chat!.unreadCount };
   return null;
+}
+
+const FOLDER_DETAIL_LINES = 4;
+
+/**
+ * Where a group folder's indicator comes from, one line per tab and kind ("<kind> · <tab>[:
+ * <request>]"): what needs the user, then work running, then unread. At most four, then "+N".
+ * An older server sends no `waitingRequest`, so its lines name only the tab.
+ */
+export function folderIndicatorDetail(input: {
+  readonly chat: Pick<AssistantTeamChat, "scopes" | "removedProjectIds">;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  readonly groupProjectIds: ReadonlyArray<ProjectId>;
+}): ReadonlyArray<string> {
+  const scopes = input.chat.scopes ?? [];
+  const tab = (projectId: ProjectId | null) =>
+    projectId === null
+      ? "General"
+      : assistantGroupProjectLabel(
+          projectId,
+          input.projects,
+          scopes,
+          input.groupProjectIds,
+          input.chat.removedProjectIds,
+        );
+  const lines = [
+    ...scopes.flatMap((scope) => {
+      if (!scope.waiting) return [];
+      const request = scope.waitingRequest;
+      return [
+        `Needs you · ${tab(scope.projectId)}${
+          request === undefined ? "" : `: ${request.title} (${assistantGroupWaitingWhy(request)})`
+        }`,
+      ];
+    }),
+    ...scopes.flatMap((scope) =>
+      (scope.openTasks ?? 0) > 0 ? [`${scope.openTasks} running · ${tab(scope.projectId)}`] : [],
+    ),
+    ...scopes.flatMap((scope) =>
+      scope.unreadCount > 0 ? [`${scope.unreadCount} unread · ${tab(scope.projectId)}`] : [],
+    ),
+  ];
+  return lines.length <= FOLDER_DETAIL_LINES
+    ? lines
+    : [...lines.slice(0, FOLDER_DETAIL_LINES), `+${lines.length - FOLDER_DETAIL_LINES}`];
+}
+
+/** Where a click on a group's indicator leads: the tab and request of its first wait, if known. */
+export function folderIndicatorTarget(chat: Pick<AssistantTeamChat, "scopes"> | undefined): {
+  readonly tab: AssistantGroupTabKey;
+  readonly requestId: string;
+} | null {
+  const scope = chat?.scopes?.find((entry) => entry.waiting && entry.waitingRequest !== undefined);
+  return scope?.waitingRequest === undefined
+    ? null
+    : { tab: assistantGroupTabKey(scope.projectId), requestId: scope.waitingRequest.requestId };
 }
 
 /** The words every screen shows for an indicator; an assistant reads Working, a group N running. */

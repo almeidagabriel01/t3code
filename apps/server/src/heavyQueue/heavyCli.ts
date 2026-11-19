@@ -17,15 +17,25 @@ import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
 import {
   HEAVY_JOB_ENV,
   heavyRoute,
+  isQueued,
   lineParts,
   readLine,
   rewriteLine,
   scriptOf,
   shellQuote,
   UNREADABLE_SCRIPT,
+  type ReadScript,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
-import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
+import {
+  errorLineOf,
+  faultOf,
+  type FaultSeen,
+  missingProgramOf,
+  notFoundHere,
+  startFailureOf,
+  unreachableLine,
+} from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -272,6 +282,7 @@ export const heavyLaunch = (
   home: string,
   modeAt: (cwd: string) => { readonly enabled: boolean; readonly runner: boolean },
   inJob: boolean,
+  readAt?: (cwd: string) => ReadScript,
 ): HeavyLaunch => {
   // Inside a queue job the slot is already held; queuing again would wait on itself.
   if (inJob) return { kind: "direct" };
@@ -280,6 +291,10 @@ export const heavyLaunch = (
   if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
   const reason = commandRefusal(job.program, job.args, job.remoto);
   if (reason !== null) return { kind: "refused", reason };
+  // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
+  if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
+    return { kind: "direct" };
+  }
   const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
   if (commit === "direct") return { kind: "direct" };
   return {
@@ -652,7 +667,9 @@ const runHook = async (dir: string) => {
 const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) => {
   const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
   child.on("error", (error) => {
-    process.stderr.write(`[t3 heavy] cannot run ${program}: ${error.message}\n`);
+    process.stderr.write(
+      `[t3 heavy] cannot run ${program}: ${missingProgramOf(program, process.cwd()) ?? error.message}\n`,
+    );
     process.exit(127);
   });
   child.on("exit", (code, signal) => {
@@ -710,6 +727,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     NodeOS.homedir(),
     (cwd) => modeFor(readDoc(dir), cwd),
     process.env[HEAVY_JOB_ENV] === "1",
+    scriptReader,
   );
   if (launch.kind === "refused") return refuse(launch.reason);
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
@@ -754,7 +772,16 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
   }
   // The code a failure notice reports; every exit path ends here.
-  process.on("exit", (code) => finish(dir, id, code));
+  process.on("exit", (code) =>
+    finish(
+      dir,
+      id,
+      code,
+      Date.now(),
+      startFailureOf(launch.program, Object.keys(scripts), entry.cwd, code),
+      commandFailure,
+    ),
+  );
 
   /** What a signal does right now: exit while waiting, or stop the running attempt. */
   let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
@@ -878,16 +905,19 @@ const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
     });
 };
 
+const queuedOf = (dir: string, id: string): QueuedEntry | undefined =>
+  readDoc(dir).entries.find((entry) => entry.id === id);
+
 /** Its runs that lost the link so far, this one included. */
-const linkFailuresOf = (dir: string, id: string) =>
-  ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
-    ?.linkFailures ?? 0) + 1;
+const linkFailuresOf = (dir: string, id: string) => (queuedOf(dir, id)?.linkFailures ?? 0) + 1;
+
+/** Why this process's command could not start anywhere, once a check here found out. */
+let commandFailure: string | undefined;
 
 type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
 
-const requeueOf = (dir: string, id: string) =>
-  readDoc(dir).entries.find((entry) => entry.id === id)?.requeue;
+const requeueOf = (dir: string, id: string) => queuedOf(dir, id)?.requeue;
 
 const runMacAttempt = async (
   job: {
@@ -933,7 +963,9 @@ const runMacAttempt = async (
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
       child.on("error", (error) => {
-        process.stderr.write(`[t3 heavy] cannot run ${job.program}: ${error.message}\n`);
+        process.stderr.write(
+          `[t3 heavy] cannot run ${job.program}: ${missingProgramOf(job.program, process.cwd()) ?? error.message}\n`,
+        );
         resolve({ code: 127, signal: null });
       });
       child.on("exit", (code, signal) => resolve({ code, signal }));
@@ -960,7 +992,11 @@ type PartOutcome =
   | RemoteOutcome
   | { readonly kind: "mac"; readonly reason: string }
   /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
-  | { readonly kind: "environment"; readonly reason: string; readonly code?: number };
+  | { readonly kind: "environment"; readonly reason: string; readonly code?: number }
+  /** The worktree's own files broke the install there; `reason` is the fix. */
+  | { readonly kind: "worktree"; readonly reason: string }
+  /** Not even this Mac finds its program: the command is wrong, wherever it runs. */
+  | { readonly kind: "command"; readonly reason: string };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -1050,10 +1086,14 @@ const runLinuxAttempt = async (
     });
   });
   let moved: "mac" | "linux" | undefined;
+  // Linux ran short of memory or restarted: the queue ends this attempt.
+  let ended = false;
   const watch = setInterval(() => {
-    const requeue = requeueOf(dir, id);
-    if (requeue === undefined || moved !== undefined || stopping) return;
-    moved = requeue;
+    if (moved !== undefined || ended || stopping) return;
+    const entry = queuedOf(dir, id);
+    if (entry?.stop !== undefined) ended = true;
+    else if (entry?.requeue !== undefined) moved = entry.requeue;
+    else return;
     signalGroup("SIGTERM");
   }, POLL_MS);
   const exit = await exited;
@@ -1062,6 +1102,32 @@ const runLinuxAttempt = async (
   const outcome = takeOutcome(dir, id);
   const remote = remoteOf(dir, id);
 
+  if (ended) {
+    // Read again: a restart seen since a memory stop outranks it.
+    const entry = queuedOf(dir, id);
+    if (entry?.stop === "reboot") {
+      // The boot ended the run: a process group from before it may be someone else's now.
+      requeue(dir, id, {
+        dropped: true,
+        linuxFailedAt: Date.now(),
+        linkFailures: linkFailuresOf(dir, id),
+      });
+      process.stderr.write(
+        "[t3 heavy] Linux restarted under this run; it goes back to the queue.\n",
+      );
+      return { kind: "requeued" };
+    }
+    const clean = await confirmGone();
+    requeue(dir, id, {
+      evictedAt: Date.now(),
+      evictions: (entry?.evictions ?? 0) + 1,
+      ...(clean ? {} : { unconfirmed: true }),
+    });
+    process.stderr.write(
+      "[t3 heavy] Linux ran short of memory: stopped this newest run there; it waits to run again.\n",
+    );
+    return { kind: "requeued" };
+  }
   if (moved !== undefined) {
     const clean = await confirmGone();
     process.stderr.write(`[t3 heavy] moved by the user; waiting to run on ${runnerName(moved)}.\n`);
@@ -1075,6 +1141,16 @@ const runLinuxAttempt = async (
     process.stderr.write(`[t3 heavy] ${outcome.reason}; running the line on this Mac.\n`);
     requeue(dir, id, { route: "mac", routeReason: outcome.reason });
     return { kind: "requeued" };
+  }
+  if (outcome.kind === "command") {
+    commandFailure = outcome.reason;
+    process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
+    return { kind: "exit", code: 127 };
+  }
+  if (outcome.kind === "worktree") {
+    process.stderr.write(`[t3 heavy] ${outcome.reason}\n`);
+    setProgress(dir, id, { worktree: outcome.reason });
+    return { kind: "exit", code: 1 };
   }
   if (outcome.kind === "environment") {
     // It ended there with its exit code, so nothing is left to confirm.
@@ -1149,6 +1225,9 @@ const runLinuxPart = async (
   if (root === null || program === undefined) {
     return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
   }
+  // Only a path is judged here: a bare name may exist on Linux alone (`xvfb-run`).
+  const absent = program.includes("/") ? notFoundHere(program, cwd, root) : undefined;
+  if (absent !== undefined) return endLine(dir, id, { kind: "command", reason: absent });
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
   const local = programTie([program, ...args], cwd, root, syncedInCopy, scriptReader(cwd));
@@ -1183,16 +1262,22 @@ const runLinuxPart = async (
   }
   let recorded: string | null = null;
   let lastError: string | null = null;
+  /** The first line naming a failure: what a card quotes when no exit code explains it. */
+  let failure: string | null = null;
   let unreachable: string | null = null;
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
   const fault = (seen: FaultSeen) => {
-    const found = faultOf(seen, seen.kind === "exit" ? lastError : (unreachable ?? lastError), {
-      command: labelOf(program, args),
-      projectFolder: root,
-    });
+    const found = faultOf(
+      seen,
+      seen.kind === "exit" ? lastError : (unreachable ?? failure ?? lastError),
+      {
+        command: labelOf(program, args),
+        projectFolder: root,
+      },
+    );
     if (found !== null) recordFault(dir, id, found);
   };
   const start = () => {
@@ -1212,7 +1297,9 @@ const runLinuxPart = async (
       stdout: (chunk) => process.stdout.write(chunk),
       stderr: (text) => {
         process.stderr.write(text);
-        lastError = lastLineOf(text) ?? lastError;
+        const lines = errorLineOf(text);
+        lastError = lines.last ?? lastError;
+        failure ??= lines.failure;
         unreachable ??= unreachableLine(text);
       },
       onProgress: (progress) => {
@@ -1242,19 +1329,28 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, progress, platform, install } = await run.done;
+  let { outcome, progress, platform, install, worktree } = await run.done;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
     recorded = null;
+    failure = null;
     run = start();
-    ({ outcome, progress, platform, install } = await run.done);
+    ({ outcome, progress, platform, install, worktree } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
-      return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
+      return endLine(dir, id, {
+        kind: "environment",
+        reason: INSTALL_FAILED,
+        code: outcome.code ?? 1,
+      });
     }
   }
   if (stopped) process.exit(143);
+  // Rerunning anywhere fails the same way until the worktree is fixed.
+  if (outcome.kind !== "finished" && worktree !== null) {
+    return endLine(dir, id, { kind: "worktree", reason: worktree });
+  }
   if (outcome.kind === "finished") {
     if (bringsBack && progress.id !== null) {
       const back = await bringBack({
@@ -1283,6 +1379,9 @@ const runLinuxPart = async (
     process.exit(outcome.code);
   }
   if (outcome.kind === "missing") {
+    // Missing on both machines is the command's own fault, not Linux's.
+    const nowhere = notFoundHere(outcome.tool, cwd, root);
+    if (nowhere !== undefined) return endLine(dir, id, { kind: "command", reason: nowhere });
     fault({ kind: "missing", tool: outcome.tool });
     return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
   }
@@ -1298,13 +1397,6 @@ const runLinuxPart = async (
   }
   endLine(dir, id, outcome);
 };
-
-/** The last line of Linux's output worth showing: not T3's own notes, not blank. */
-const lastLineOf = (text: string) =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .findLast((line) => line !== "" && !line.startsWith("[t3 heavy]")) ?? null;
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {

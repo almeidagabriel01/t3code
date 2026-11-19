@@ -432,7 +432,7 @@ describe("MemoryCompactor", () => {
         );
       }).pipe(checkUsage, Effect.provide(live)),
   );
-  it.effect("a failed staging reservation keeps the old publication and floor intact", () =>
+  it.effect("exceeded staging capacity never blocks compaction or a member's pinned snapshot", () =>
     Effect.gen(function* () {
       yield* seed;
       const compactor = yield* Compactor.MemoryCompactor;
@@ -448,8 +448,7 @@ describe("MemoryCompactor", () => {
       );
       yield* push();
       const initial = yield* compactor.compact(principal());
-      // An unchanged replacement can retire equally sized unpinned pages without
-      // growing retained bytes. Add accepted input so the next snapshot must grow.
+      // Add accepted input so the next snapshot must grow past the forced limit.
       const next = operation(11);
       const changedMemoryId = M.MemoryId.make(id(3));
       const changed = yield* push({
@@ -460,47 +459,150 @@ describe("MemoryCompactor", () => {
       assert.strictEqual(changed.receipts[0]!.outcome, "accepted");
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE memory_hub_retention SET published_pinned_bytes=${M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES} WHERE space=${space}`;
-      const beforeRetention = yield* sql`SELECT * FROM memory_hub_retention WHERE space=${space}`;
-      const beforeSnapshots =
-        yield* sql`SELECT * FROM memory_inbox_pending WHERE space=${space} AND reason='hub_snapshot' ORDER BY pending_key`;
-      const beforeGuards =
-        yield* sql`SELECT * FROM memory_import_keys WHERE space=${space} AND key_kind='hub_checkpoint_token' ORDER BY key`;
-      const beforeMembers =
-        yield* sql`SELECT * FROM memory_hub_members WHERE space=${space} ORDER BY environment`;
-      const failure = yield* compactor.compact(principal()).pipe(Effect.flip);
-      assert.strictEqual(failure._tag, "MemoryCapacityError");
-      if (failure._tag === "MemoryCapacityError")
-        assert.strictEqual(failure.dimension, "checkpoint_staging");
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM memory_hub_retention WHERE space=${space}`,
-        beforeRetention,
+      const store = yield* Store.MemoryStore;
+      assert.isAbove(
+        (yield* store.transact(store.readHubUsageTx(space))).stagingBytes,
+        M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES,
       );
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM memory_inbox_pending WHERE space=${space} AND reason='hub_snapshot' ORDER BY pending_key`,
-        beforeSnapshots,
-      );
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM memory_import_keys WHERE space=${space} AND key_kind='hub_checkpoint_token' ORDER BY key`,
-        beforeGuards,
-      );
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM memory_hub_members WHERE space=${space} ORDER BY environment`,
-        beforeMembers,
-      );
+      yield* TestClock.adjust(1000);
+      const now = yield* Clock.currentTimeMillis;
+      const compacted = yield* compactor.compact(principal());
+      assert.notStrictEqual(compacted.checkpointId, initial.checkpointId);
+      assert.strictEqual(Date.parse(compacted.compaction.lastRunAtUtc!), now);
+      const [row] = yield* sql<{
+        compaction_json: string;
+      }>`SELECT compaction_json FROM memory_hub_retention WHERE space=${space}`;
+      assert.strictEqual(Date.parse(JSON.parse(row!.compaction_json).lastRunAtUtc as string), now);
       assert.deepStrictEqual(
         yield* hub.pull({ ...pull(0), snapshotToken: joined.snapshotToken }, principal()),
         beforePage,
       );
+    }).pipe(checkUsage, Effect.provide(live)),
+  );
+  it.effect("634 live identities with 1.5 MB of payload stay below the staging limit", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const text = "x".repeat(Math.ceil(1_500_000 / 634));
+      for (let n = 0; n < 634; n++) {
+        const base = operation(10);
+        const memory = M.MemoryId.make(id(100_000 + n));
+        const revisionId = M.MemoryRevisionId.make(id(200_000 + n));
+        const operationId = M.MemoryOperationId.make(id(300_000 + n));
+        const result = yield* push({
+          ...base,
+          memoryId: memory,
+          operationId,
+          revision: {
+            ...base.revision,
+            memoryId: memory,
+            operationId,
+            revisionId,
+            payloadRef: revisionId,
+          },
+          payload: { ...base.payload, text },
+        });
+        assert.strictEqual(result.receipts[0]!.outcome, "accepted");
+      }
       const store = yield* Store.MemoryStore;
-      const retained = yield* store.transact(store.readHubRetentionTx(space));
-      assert.strictEqual(retained.checkpointId, initial.checkpointId);
-      assert.strictEqual(retained.retentionFloor, initial.retentionFloor);
+      const usage = yield* store.transact(store.readHubUsageTx(space));
+      assert.isBelow(usage.stagingBytes, M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES);
+      // The tighter bound still covers the real snapshot (no checkpoint-bound-underflow).
+      yield* (yield* Compactor.MemoryCompactor).compact(principal());
+    }).pipe(checkUsage, Effect.provide(live)),
+  );
+  it.effect("a forget whose suppressions fill its whole reservation fits a full budget", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sourceThread = { environmentId: hubEnv, threadId: M.ThreadId.make("forget-source") };
+      const sourceWatermark = {
+        fromEventId: M.EventId.make(id(9001)),
+        toEventId: M.EventId.make(id(9002)),
+        throughSequence: 1,
+      };
+      const messageIds = Array.from({ length: 300 }, (_, n) =>
+        M.MessageId.make(`message-${String(n).padStart(3, "0")}-${"m".repeat(40)}`),
+      );
+      const base = operation();
+      const upserted = yield* push({
+        ...base,
+        revision: {
+          ...base.revision,
+          provenance: {
+            environmentId: hubEnv,
+            upsertRequestDigest: "d".repeat(64),
+            sourceThread,
+            sourceWatermark,
+          },
+        },
+        payload: {
+          ...base.payload,
+          evidence: [0, 100, 200].map((start) => ({
+            origin: "thread" as const,
+            sourceThread,
+            watermark: sourceWatermark,
+            messageIds: messageIds.slice(start, start + 100),
+          })),
+        },
+      });
+      assert.strictEqual(upserted.receipts[0]!.outcome, "accepted");
+      const store = yield* Store.MemoryStore;
+      const sql = yield* SqlClient.SqlClient;
+      const usage = yield* store.transact(store.readHubUsageTx(space));
+      yield* store.transact(
+        store.reserveHubCheckpointTx({
+          memorySpaceId: space,
+          checkpointDeltaBytes: 0,
+          publishedPinnedDeltaBytes: M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES - usage.stagingBytes,
+        }),
+      );
       assert.strictEqual(
-        (yield* sql<{
-          count: number;
-        }>`SELECT count(DISTINCT checkpoint_id) AS count FROM memory_inbox_pending WHERE reason='hub_snapshot'`)[0]!
-          .count,
-        2,
+        (yield* store.transact(store.readHubUsageTx(space))).stagingBytes,
+        M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES,
+      );
+      const forgetId = M.MemoryOperationId.make(id(12));
+      const forgotten = yield* (yield* Hub.MemoryHubService).push(
+        {
+          protocolVersion: 1,
+          memorySpaceId: space,
+          environmentId: hubEnv,
+          operations: [
+            {
+              protocolVersion: 1,
+              kind: "forget",
+              memorySpaceId: space,
+              memoryId,
+              operationId: forgetId,
+              originEnvironmentId: hubEnv,
+              expectedHeads: [],
+              tombstone: {
+                memorySpaceId: space,
+                memoryId,
+                deleteOperationId: forgetId,
+                deletingEnvironmentId: hubEnv,
+                deletedAtUtc: M.MemoryUtcTimestamp.make("2026-10-15T00:00:00.000Z"),
+                suppressedSourceKeys: [],
+                suppressedContent: [],
+                sourceExclusions: [0, 100, 200].map((start) => ({
+                  sourceThread,
+                  sourceWatermark,
+                  messageIds: messageIds.slice(start, start + 100),
+                })),
+              },
+            },
+          ],
+        },
+        principal(),
+      );
+      assert.strictEqual(forgotten.receipts[0]!.outcome, "deleted");
+      const [suppressions] = yield* sql<{
+        rows: number;
+        bytes: number;
+      }>`SELECT count(*) AS rows,sum(length(CAST(record_json AS BLOB))) AS bytes FROM memory_import_keys WHERE space=${space} AND memory_id=${memoryId} AND key_kind='sourceExclusion'`;
+      assert.strictEqual(suppressions!.rows, 300);
+      assert.isAbove(suppressions!.bytes, M.MEMORY_PAYLOAD_MAX_UTF8_BYTES);
+      assert.isAtMost(
+        (yield* store.transact(store.readHubUsageTx(space))).stagingBytes,
+        M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES,
       );
     }).pipe(checkUsage, Effect.provide(live)),
   );
@@ -540,7 +642,7 @@ describe("MemoryCompactor", () => {
       }).pipe(checkUsage, Effect.provide(live)),
   );
   it.effect(
-    "canonical pinned publication counts shared handles once and admits equality, rolls back plus one",
+    "canonical pinned publication counts shared handles once and still publishes past the staging limit",
     () =>
       Effect.gen(function* () {
         yield* seed;
@@ -607,27 +709,6 @@ describe("MemoryCompactor", () => {
         if (!("stagingBytes" in measured)) throw new Error("measurement failed");
         const privateBytes = M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES - measured.stagingBytes;
         yield* sql`INSERT INTO memory_quota_counters VALUES ('_hub_global','import_staging','',${privateBytes + 1}) ON CONFLICT(space,dimension,scope_key) DO UPDATE SET value=excluded.value`;
-        const snapshot = Effect.gen(function* () {
-          return {
-            retention: yield* sql`SELECT * FROM memory_hub_retention`,
-            pages: yield* sql`SELECT * FROM memory_inbox_pending ORDER BY pending_key`,
-            members: yield* sql`SELECT * FROM memory_hub_members ORDER BY environment`,
-            leases: yield* sql`SELECT * FROM memory_hub_leases ORDER BY memory_id`,
-            receipts: yield* sql`SELECT * FROM memory_compact_receipts ORDER BY operation_id`,
-            guards: yield* sql`SELECT * FROM memory_import_keys ORDER BY key_kind,key`,
-            counters:
-              yield* sql`SELECT * FROM memory_quota_counters ORDER BY space,dimension,scope_key`,
-          };
-        });
-        const before = yield* snapshot;
-        const failure = yield* store.transact(publish).pipe(Effect.flip);
-        assert.strictEqual(failure._tag, "MemoryCapacityError");
-        if (failure._tag === "MemoryCapacityError") {
-          assert.strictEqual(failure.dimension, "checkpoint_staging");
-          assert.strictEqual(failure.current, M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES + 1);
-        }
-        assert.deepStrictEqual(yield* snapshot, before);
-        yield* sql`UPDATE memory_quota_counters SET value=${privateBytes} WHERE space='_hub_global' AND dimension='import_staging' AND scope_key=''`;
         const accepted = yield* store.transact(publish);
         assert.strictEqual(
           accepted.stagingBytes + privateBytes,
@@ -799,6 +880,33 @@ describe("MemoryCompactor", () => {
         );
         assert.strictEqual(yield* Ref.get(completed), 3);
       }).pipe(Effect.scoped, checkUsage, Effect.provide(live)),
+  );
+  it.effect("a failed startup sweep is logged and the scheduled sweep still runs", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      yield* push();
+      const store = yield* Store.MemoryStore;
+      const calls = yield* Ref.make(0);
+      const retried = yield* Deferred.make<void>();
+      const compactor = yield* Compactor.make.pipe(
+        Effect.provideService(Hub.MemoryHubConfiguration, {
+          read: Effect.succeed({ memorySpaceId: space, hubEnvironmentId: hubEnv }),
+        }),
+        Effect.provideService(Compactor.MemoryHubCheckpointProducer, {
+          prepareTx: (input) =>
+            Effect.gen(function* () {
+              if ((yield* Ref.getAndUpdate(calls, (n) => n + 1)) === 0)
+                return yield* new Store.MemoryStorageError({ stage: "startup", cause: undefined });
+              const prepared = yield* store.prepareHubProducerCheckpointTx(input);
+              yield* Deferred.succeed(retried, undefined);
+              return prepared;
+            }),
+        }),
+      );
+      yield* compactor.start(principal());
+      yield* Deferred.await(retried);
+      assert.strictEqual(yield* Ref.get(calls), 2);
+    }).pipe(Effect.scoped, checkUsage, Effect.provide(live)),
   );
   it.effect("members cannot run hub compaction or floor publication", () =>
     Effect.gen(function* () {

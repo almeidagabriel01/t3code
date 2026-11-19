@@ -238,9 +238,9 @@ const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
 export interface MachineSummary {
   readonly running: number;
   readonly slots: number;
-  /** The Mac's busy share of its CPU; null on Linux or without a reading. */
+  /** Busy share of the machine's CPU, 0–100 on both; null without a reading. */
   readonly cpuPercent: number | null;
-  /** Linux's one-minute load; null on the Mac or without a reading. */
+  /** Linux's one-minute load, a hint beside its CPU; null on the Mac or without a reading. */
   readonly load: number | null;
   readonly cpuCount: number | null;
   readonly freeBytes: number | null;
@@ -303,7 +303,7 @@ export function machineSummaries(state: SummaryState): {
         : {
             running: linux.running,
             slots: linux.slots,
-            cpuPercent: null,
+            cpuPercent: linux.cpuPercent ?? null,
             load: linux.load1,
             cpuCount: linux.cpuCount,
             freeBytes: linux.availableMemoryBytes,
@@ -542,15 +542,13 @@ export function machineBar(
       statusHint: live ? `${linux.host} · online` : linuxLine(linux),
       cpu: !live
         ? null
-        : linux.load1 === null || cores === null
-          ? NO_GAUGE(
-              linux.load1 === null ? "No load reading yet" : `Load ${linux.load1.toFixed(1)}`,
-            )
+        : linux.cpuPercent === undefined || linux.cpuPercent === null
+          ? NO_GAUGE("No CPU reading yet")
           : {
-              share: linux.load1 / Math.max(1, cores),
-              value: `${Math.round((linux.load1 / Math.max(1, cores)) * 100)}%`,
+              share: linux.cpuPercent / 100,
+              value: `${Math.round(linux.cpuPercent)}%`,
               warn: false,
-              hint: `Load ${linux.load1.toFixed(1)} on ${cores} cores`,
+              hint: `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
             },
       memory: !live
         ? null

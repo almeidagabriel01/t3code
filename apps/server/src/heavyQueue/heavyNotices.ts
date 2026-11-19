@@ -4,7 +4,10 @@
  * requeue, an admission, a deadline cancel), because the state alone loses why it happened. This
  * module turns those records, plus Linux health and long waits, into grouped toasts.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import type {
   HeavyNotice,
   HeavyNoticesMode,
@@ -24,7 +27,11 @@ export type HeavyEvent =
   | {
       readonly kind: "ended";
       readonly code: number;
+      /** Why it could not start, when the CLI can tell (a missing script). */
+      readonly error?: string;
       readonly phase?: HeavyRunnerPhase;
+      /** What in its worktree kept Linux from installing it, and the fix. */
+      readonly worktree?: string;
     }
   /** Its Linux question went unanswered and the deadline action is Cancel. */
   | { readonly kind: "deadline"; readonly dropped: boolean }
@@ -103,6 +110,39 @@ export const unreachableLine = (text: string) =>
   /^(?:ssh: (?:connect to host|Could not resolve hostname) .*|\[remoto\] PC indisponível.*)$/m.exec(
     text.replace(/\r/g, ""),
   )?.[0] ?? null;
+const lockfile = (file: string, install: string) =>
+  `${file} is out of date in this worktree: run \`${install}\` on this Mac, then \`git add ${file}\``;
+/**
+ * Install failures the worktree's own files cause: Linux is fine and any machine fails the same,
+ * so the job ends with the fix instead of a problem card or a rerun.
+ */
+const WORKTREE_PROBLEMS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /ERR_PNPM_(?:OUTDATED_LOCKFILE|LOCKFILE_CONFIG_MISMATCH)|pnpm install --no-frozen-lockfile/,
+    "pnpm-lock.yaml is out of date in this worktree: run `vp i` (or `pnpm install`) on this Mac, then `git add pnpm-lock.yaml`",
+  ],
+  [
+    /`npm ci` can only install packages when your package\.json and package-lock\.json/,
+    lockfile("package-lock.json", "npm install"),
+  ],
+  [
+    /yarn was run with `--frozen-lockfile`|YN0028|lockfile would have been modified by this install/,
+    lockfile("yarn.lock", "yarn install"),
+  ],
+  [
+    /lockfile had changes, but lockfile is frozen/,
+    "The bun lockfile is out of date in this worktree: run `bun install` on this Mac, then `git add` it",
+  ],
+  [
+    /ERR_PNPM_JSON_PARSE|EJSONPARSE|while parsing .* in \S*package\.json/,
+    "A package.json in this worktree is not valid JSON (an unresolved merge conflict?): fix it on this Mac",
+  ],
+];
+
+/** The fix for an install output line that is the worktree's failure, or null. */
+export const worktreeProblemOf = (line: string) =>
+  WORKTREE_PROBLEMS.find(([pattern]) => pattern.test(line))?.[1] ?? null;
+
 /** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
 const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
 
@@ -149,7 +189,9 @@ export const faultOf = (
 
 /** The record of a fault, beside the job's own `ended` or `linux-lost` record. */
 export const faultRecord = (
-  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner">,
+  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner"> & {
+    readonly line?: string;
+  },
   fault: Fault,
   now: number,
 ): HeavyEventRecord => recordOf(entry, { kind: "t3-fault", ...fault }, now);
@@ -160,6 +202,8 @@ export type HeavyEventRecord = HeavyEvent & {
   readonly job: {
     readonly id: string;
     readonly name: string;
+    /** The full command line when `name` is not it; absent in records written before it was kept. */
+    readonly label?: string;
     readonly threadId: string | null;
     readonly runner: HeavyRunner;
   };
@@ -170,27 +214,142 @@ export const EVENT_LOG_SIZE = 50;
 /** Exit codes that mean someone stopped it: removed (125) or a signal. */
 const STOPPED_CODES = new Set([0, 125, 129, 130, 143]);
 
+/**
+ * Why a job exited 126/127 when a file it runs is the cause: those codes alone don't say a script
+ * was missing. `scripts` are the files its line runs (`sh -c './fmt.sh'`); a bare program name is
+ * a PATH lookup, and an existing script that exits 127 itself is left to its own output.
+ */
+export const startFailureOf = (
+  program: string,
+  scripts: ReadonlyArray<string>,
+  cwd: string,
+  code: number,
+  exists: (path: string) => boolean = NodeFS.existsSync,
+) => {
+  if (code !== 126 && code !== 127) return undefined;
+  const own = program.includes("/") ? NodePath.resolve(cwd, program) : null;
+  const files = [
+    ...(own === null ? [] : [own]),
+    ...scripts.map((each) => NodePath.resolve(cwd, each)),
+  ];
+  const missing = files.find((file) => !exists(file));
+  if (missing === undefined)
+    return code === 126 && own !== null ? `not executable: ${own}` : undefined;
+  const bin = /\/node_modules\/\.bin\/([^/]+)$/.exec(missing)?.[1];
+  return (bin === undefined ? null : binHint(bin, cwd, exists)) ?? `script not found: ${missing}`;
+};
+
+/**
+ * For a project bin this Mac lacks: where the checkout has it after all, or that its dependencies
+ * aren't installed (a `package.json` with no `node_modules` from `cwd` up). Null when neither.
+ */
+const binHint = (name: string, cwd: string, exists: (path: string) => boolean) => {
+  let modules = false;
+  let project = false;
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    const bin = NodePath.join(dir, "node_modules", ".bin", name);
+    if (exists(bin)) return `${name} not found from ${cwd}; it is at ${bin}`;
+    modules ||= exists(NodePath.join(dir, "node_modules"));
+    project ||= exists(NodePath.join(dir, "package.json"));
+    if (dir === NodePath.dirname(dir)) break;
+  }
+  return project && !modules
+    ? `${name} not found in ${cwd}: its dependencies aren't installed; run \`vp i\``
+    : null;
+};
+
+/**
+ * Why this Mac can't find `program` where Linux's pre-flight looks (the project's bins from `cwd`
+ * up to `root`, then PATH, builtins included), or undefined when it can. Missing here too, the
+ * command is wrong, not Linux.
+ */
+export const notFoundHere = (
+  program: string,
+  cwd: string,
+  root: string,
+  path = process.env.PATH ?? "",
+) => {
+  const bins: string[] = [];
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    bins.push(NodePath.join(dir, "node_modules", ".bin"));
+    if (dir === root || dir === NodePath.dirname(dir)) break;
+  }
+  const found = NodeChildProcess.spawnSync("bash", ["-c", 'command -v -- "$1"', "t3", program], {
+    cwd,
+    env: { ...process.env, PATH: [...bins, path].join(":") },
+    stdio: "ignore",
+  });
+  // Only bash's own "not found" counts: a shell that failed to start judges nothing.
+  if (found.status !== 1) return undefined;
+  return missingProgramOf(program, cwd) ?? `command not found on this Mac either: ${program}`;
+};
+
+/** What a program this Mac can't start lacks: its file, or the dependencies its project bin needs. */
+export const missingProgramOf = (program: string, cwd: string) =>
+  startFailureOf(program, [], cwd, 127) ?? binHint(program, cwd, NodeFS.existsSync) ?? undefined;
+
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+/** Decoration only: rules and counters such as vitest's `⎯⎯⎯[50/62]⎯`. */
+const RULE = /^[\s\-=_*~·.⎯─━═│|[\]\d/]*$/u;
+
+/** The lines of command output that say something: no colour codes, blanks, rules or counters. */
+export const meaningfulLines = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.replace(ANSI, "").trim())
+    .filter((line) => !RULE.test(line));
+
+const FAILURE = /\bFAIL\b|\bERR_[A-Z0-9_]+|\bERR!|[A-Za-z]*Error\b|\berror TS\d+/;
+
+/**
+ * The lines of a chunk of output worth quoting on a card: the first one that names a failure, and
+ * the last meaningful one, both without ANSI codes, rules, or T3's own notes.
+ */
+export const errorLineOf = (text: string) => {
+  const lines = meaningfulLines(text).filter((line) => !line.startsWith("[t3 heavy]"));
+  return {
+    failure: lines.find((line) => FAILURE.test(line)) ?? null,
+    last: lines.at(-1) ?? null,
+  };
+};
+
+const LINE_CHARS = 1000;
+
+/** The line a job ran, cut where a card or the queue file would carry only noise (a heredoc). */
+export const lineOf = (entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string }) => {
+  const line = entry.line ?? entry.label;
+  return line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS - 1)}…` : line;
+};
+
 const recordOf = (
-  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner">,
+  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner"> & {
+    readonly line?: string;
+  },
   event: HeavyEvent,
   now: number,
-): HeavyEventRecord => ({
-  ...event,
-  id: NodeCrypto.randomUUID(),
-  at: now,
-  job: {
-    id: entry.id,
-    name: entry.name ?? entry.label,
-    threadId: entry.threadId,
-    runner: entry.runner ?? "mac",
-  },
-});
+): HeavyEventRecord => {
+  // The full line, kept apart from `name`: `label` drops the script's folder and is cut short.
+  const line = entry.line === undefined && entry.name === undefined ? undefined : lineOf(entry);
+  return {
+    ...event,
+    id: NodeCrypto.randomUUID(),
+    at: now,
+    job: {
+      id: entry.id,
+      name: entry.name ?? entry.label,
+      ...(line === undefined ? {} : { label: line }),
+      threadId: entry.threadId,
+      runner: entry.runner ?? "mac",
+    },
+  };
+};
 
 /** A job's own process ending; null for success, a stop, or an entry already gone. */
 export const endedRecord = (
-  entry: HeavyQueueEntry | undefined,
+  entry: (HeavyQueueEntry & { readonly worktree?: string; readonly line?: string }) | undefined,
   code: number,
   now: number,
+  error?: string,
 ): HeavyEventRecord | null =>
   entry === undefined || STOPPED_CODES.has(code)
     ? null
@@ -199,7 +358,11 @@ export const endedRecord = (
         {
           kind: "ended",
           code,
+          ...(error === undefined ? {} : { error }),
           ...(entry.runner === "linux" && entry.phase !== undefined ? { phase: entry.phase } : {}),
+          ...(entry.runner === "linux" && entry.worktree !== undefined
+            ? { worktree: entry.worktree }
+            : {}),
         },
         now,
       );
@@ -404,6 +567,17 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
   });
   switch (record.kind) {
     case "ended": {
+      if (record.worktree !== undefined) {
+        return notice({
+          group: `worktree:${record.worktree}`,
+          category: "problem",
+          tone: "warning",
+          machine: "linux",
+          one: `${name} needs a fix in its worktree to run on Linux`,
+          many: (n) => `${jobs(n)} need a fix in their worktree to run on Linux`,
+          description: record.worktree,
+        });
+      }
       if (record.code === 126 || record.code === 127) {
         return notice({
           group: `start-failed:${job.runner}`,
@@ -412,7 +586,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
           machine: job.runner,
           one: `${name} could not start on ${on}`,
           many: (n) => `${jobs(n)} could not start on ${on}`,
-          description: `Command not found or not executable (exit ${record.code})`,
+          description: record.error ?? `Command not found or not executable (exit ${record.code})`,
         });
       }
       if (record.phase === "syncing" || record.phase === "installing") {

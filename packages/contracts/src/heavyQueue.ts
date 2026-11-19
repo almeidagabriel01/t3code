@@ -155,6 +155,9 @@ export const HeavyRunnerLinux = Schema.Struct({
   online: Schema.NullOr(Schema.Boolean),
   slots: Schema.Int,
   running: Schema.Int,
+  /** Busy share of its CPU, 0–100, as the Mac's; absent from servers before it was measured. */
+  cpuPercent: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  /** The one-minute load: a hint only, since it counts waiting tasks, not CPU in use. */
   load1: Schema.NullOr(Schema.Number),
   cpuCount: Schema.NullOr(Schema.Int),
   availableMemoryBytes: Schema.NullOr(Schema.Number),

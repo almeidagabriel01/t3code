@@ -252,13 +252,17 @@ export function heavyModeLine(mode: HeavyModeInput): string {
 
 const GB = 1024 ** 3;
 
-/** "Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.1 GB free", or why it is not. */
+/** "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free", or why it is not. */
 export function linuxLine(linux: HeavyRunnerLinux): string {
   const jobs = `${linux.running} of ${linux.slots} running`;
   if (linux.online === null) return `Checking Linux (${linux.host})…`;
   if (!linux.online) {
     return `Linux offline${linux.error === undefined ? "" : `: ${linux.error}`}`;
   }
+  const cpu =
+    linux.cpuPercent === undefined || linux.cpuPercent === null
+      ? ""
+      : ` · CPU ${Math.round(linux.cpuPercent)}%`;
   const load =
     linux.load1 === null
       ? ""
@@ -267,7 +271,7 @@ export function linuxLine(linux: HeavyRunnerLinux): string {
     linux.availableMemoryBytes === null
       ? ""
       : ` · ${(linux.availableMemoryBytes / GB).toFixed(1)} GB free`;
-  return `Linux online · ${jobs}${load}${memory}`;
+  return `Linux online · ${jobs}${cpu}${load}${memory}`;
 }
 
 /** "4:05" until the deadline, never negative. */

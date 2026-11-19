@@ -263,7 +263,10 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { AssistantSidebarSection } from "./assistants/AssistantSidebarSection";
+import {
+  AssistantSidebarSection,
+  type GroupChatTarget,
+} from "./assistants/AssistantSidebarSection";
 import { useAssistantSidebarModel } from "./assistants/useAssistantSidebarModel";
 import { setTaskDismissed } from "./assistants/useAssistantFlows";
 import { readAssistantTask } from "../state/assistants";
@@ -1214,13 +1217,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
-  const navigateToGroup = (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
+  const navigateToGroup = (
+    environmentId: EnvironmentId,
+    teamId: AssistantTeamId,
+    target?: GroupChatTarget | null,
+  ) => {
     if (isMobile) {
       setOpenMobile(false);
     }
     return router.navigate({
       to: "/group/$environmentId/$teamId",
       params: { environmentId, teamId },
+      search: target == null ? {} : { tab: target.tab, request: target.requestId },
     });
   };
   // The zones' rows memoize on their props; a handler rebuilt each render would redraw them all.
@@ -1228,8 +1236,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     void navigateToThread(threadRef);
   });
   const openZoneGroup = useStableCallback(
-    (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
-      void navigateToGroup(environmentId, teamId);
+    (environmentId: EnvironmentId, teamId: AssistantTeamId, target?: GroupChatTarget | null) => {
+      void navigateToGroup(environmentId, teamId, target);
     },
   );
   const projectOfZone = useStableCallback((environmentId: EnvironmentId, projectId: ProjectId) =>

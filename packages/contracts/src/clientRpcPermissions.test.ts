@@ -5,6 +5,7 @@ import {
   RPC_REQUIRED_SCOPES,
   rpcRequiredScopes,
 } from "./clientRpcPermissions.ts";
+import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -67,8 +68,12 @@ describe("memory client guards", () => {
 });
 
 describe("decision client guards", () => {
-  it("guards answering and dismissing, and leaves reads open to readers", () => {
-    for (const method of [WS_METHODS.decisionsAnswer, WS_METHODS.decisionsDismiss])
+  it("guards answering, dismissing and reopening, and leaves reads open to readers", () => {
+    for (const method of [
+      WS_METHODS.decisionsAnswer,
+      WS_METHODS.decisionsDismiss,
+      WS_METHODS.decisionsReopen,
+    ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
     for (const method of [WS_METHODS.decisionsList, WS_METHODS.decisionsSubscribe])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
@@ -149,6 +154,19 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantSandboxSubscribe,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
+  });
+});
+
+describe("thread context usage", () => {
+  it("is a plain thread read", () => {
+    expect(
+      rpcRequiredScopes(ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage, {
+        threadId: "thread:1",
+      }),
+    ).toEqual(["orchestration:read"]);
+    expect(
+      Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage),
+    ).toBe(false);
   });
 });
 

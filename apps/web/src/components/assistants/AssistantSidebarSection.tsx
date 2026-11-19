@@ -1,10 +1,21 @@
 import { useAtomValue } from "@effect/atom-react";
+import { assistantGroupDraftThreadId } from "@t3tools/client-runtime/assistantGroupChat";
 import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProjectAccess";
 import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
-import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  folderIndicatorDetail,
+  folderIndicatorTarget,
+  zoneIndicatorLabel,
+  type ZoneIndicator,
+} from "@t3tools/client-runtime/sidebarZones";
+import type {
+  AssistantTeam,
+  AssistantTeamId,
+  EnvironmentId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   ArchiveIcon,
   BriefcaseIcon,
@@ -27,17 +38,21 @@ import {
   RefreshCwIcon,
   SettingsIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { useThreadHasUnsentDraft } from "~/composerDraftStore";
+import { discardComposerDraft } from "~/lib/discardComposerDraft";
 import { cn } from "~/lib/utils";
 import { updateClientSettings } from "../../hooks/useSettings";
 import type { AssistantEntry, AssistantTeamEntry } from "../../state/assistants";
-import { useThreadShell } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { draftSurfaceClassName, SidebarDraftIndicator } from "../sidebar/SidebarDraftIndicator";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { SubagentRows } from "../sidebar/SidebarSubagentRows";
 import { JumpHintBadge } from "../sidebar/JumpHintBadge";
@@ -212,6 +227,7 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
   const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
   const thread = useThreadShell(threadRef);
+  const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isActive;
   const localLastVisitedAt = useUiStateStore((state) =>
     threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
   );
@@ -280,7 +296,7 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
               className={cn(
                 "group/sidebar-row flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
                 FOCUS_RING,
-                props.isActive && "bg-sidebar-row-active",
+                props.isActive ? "bg-sidebar-row-active" : hasUnsentDraft && draftSurfaceClassName,
               )}
               onClick={open}
               onKeyDown={onKeyDown}
@@ -308,6 +324,9 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
               </span>
             )}
           </span>
+          {hasUnsentDraft ? (
+            <SidebarDraftIndicator testId={`sidebar-draft-indicator-${assistant.threadId}`} />
+          ) : null}
           {props.indicatorKind === null ? null : (
             <ZoneIndicatorMark kind={props.indicatorKind} count={props.indicatorCount} />
           )}
@@ -355,6 +374,12 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
                 <InfoIcon />
                 Assistant info
               </MenuItem>
+              {hasUnsentDraft && threadRef !== null ? (
+                <MenuItem onClick={() => discardComposerDraft(threadRef)}>
+                  <XIcon />
+                  Discard draft
+                </MenuItem>
+              ) : null}
               <MenuItem
                 disabled={!flows.canAct || working}
                 onClick={() => void flows.reset(assistant, { openAfter: true })}
@@ -459,21 +484,62 @@ function GroupMark(props: {
   );
 }
 
-/** A group's one status: icon and words, or the icon alone with its words in a tooltip when narrow. */
-function FolderIndicator(props: { readonly kind: IndicatorKind; readonly count: number }) {
+/** Where a group's chat is opened at: the tab and request a click on its indicator leads to. */
+export interface GroupChatTarget {
+  readonly tab: string;
+  readonly requestId: string;
+}
+
+/** The tooltip's lines, read only while it is open: which tab needs the user, works or is unread. */
+function FolderIndicatorDetail(props: {
+  readonly environmentId: EnvironmentId;
+  readonly team: AssistantTeam;
+  readonly label: string;
+}) {
+  const projects = useProjects().filter((project) => project.environmentId === props.environmentId);
+  const chat = props.team.chat;
+  const lines =
+    chat === undefined
+      ? []
+      : folderIndicatorDetail({ chat, projects, groupProjectIds: props.team.projectIds });
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="folder-indicator-detail">
+      {lines.length === 0 ? <span>{props.label}</span> : null}
+      {lines.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A group's one status: icon and words, or the icon alone when narrow. The tooltip says where it
+ * comes from, and a click opens the chat at the request that waits.
+ */
+function FolderIndicator(props: {
+  readonly kind: IndicatorKind;
+  readonly count: number;
+  readonly environmentId: EnvironmentId;
+  readonly team: AssistantTeam;
+  readonly onOpen: (target: GroupChatTarget | null) => void;
+}) {
   const label = indicatorLabel(props.kind, props.count, "group");
   const Icon = INDICATOR_ICON[props.kind];
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <span
-            role="img"
+          <button
+            type="button"
             aria-label={label}
             data-testid="zone-indicator"
             data-kind={props.kind}
+            onClick={() =>
+              props.onOpen(props.kind === "needs" ? folderIndicatorTarget(props.team.chat) : null)
+            }
             className={cn(
-              "flex min-w-0 shrink-0 items-center gap-1 text-xs font-normal tabular-nums",
+              "flex h-6 min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 text-xs font-normal tabular-nums hover:bg-foreground/8",
+              FOCUS_RING,
               INDICATOR_TONE[props.kind],
             )}
           />
@@ -484,7 +550,13 @@ function FolderIndicator(props: { readonly kind: IndicatorKind; readonly count: 
           {label}
         </span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
+      <TooltipPopup side="top">
+        <FolderIndicatorDetail
+          environmentId={props.environmentId}
+          team={props.team}
+          label={label}
+        />
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -511,7 +583,11 @@ const FolderRow = memo(function FolderRow(props: {
   readonly indicatorCount: number;
   readonly active: boolean;
   readonly onToggle: (foldKey: string) => void;
-  readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
+  readonly onOpenGroup: (
+    environmentId: EnvironmentId,
+    teamId: AssistantTeamId,
+    target?: GroupChatTarget | null,
+  ) => void;
 }) {
   const { environmentId, team } = props.entry;
   const teamId: AssistantTeamId = team.id;
@@ -519,6 +595,8 @@ const FolderRow = memo(function FolderRow(props: {
   const foldKey = `group:${environmentId}:${teamId}`;
   const unread = team.chat?.unreadCount ?? 0;
   const open = () => props.onOpenGroup(environmentId, teamId);
+  const draftRef = scopeThreadRef(environmentId, assistantGroupDraftThreadId(teamId));
+  const hasUnsentDraft = useThreadHasUnsentDraft(draftRef) && !props.active;
   const empty = props.members.length === 0;
   return (
     <li className="list-none py-px">
@@ -526,7 +604,7 @@ const FolderRow = memo(function FolderRow(props: {
         data-testid="sidebar-assistant-fold"
         className={cn(
           "@container/folder flex h-8 w-full items-center gap-1 rounded-md ps-1 pe-(--sidebar-row-content-inset) text-sm font-medium text-sidebar-foreground hover:bg-sidebar-row-hover",
-          props.active && "bg-sidebar-row-active",
+          props.active ? "bg-sidebar-row-active" : hasUnsentDraft && draftSurfaceClassName,
         )}
       >
         {empty ? (
@@ -570,8 +648,17 @@ const FolderRow = memo(function FolderRow(props: {
           </TooltipTrigger>
           <TooltipPopup side="top">{team.name}</TooltipPopup>
         </Tooltip>
+        {hasUnsentDraft ? (
+          <SidebarDraftIndicator testId={`sidebar-draft-indicator-${draftRef.threadId}`} />
+        ) : null}
         {props.indicatorKind === null ? null : (
-          <FolderIndicator kind={props.indicatorKind} count={props.indicatorCount} />
+          <FolderIndicator
+            kind={props.indicatorKind}
+            count={props.indicatorCount}
+            environmentId={environmentId}
+            team={team}
+            onOpen={(target) => props.onOpenGroup(environmentId, teamId, target)}
+          />
         )}
         <Menu>
           <MenuTrigger
@@ -590,6 +677,12 @@ const FolderRow = memo(function FolderRow(props: {
               <InfoIcon />
               Group info
             </MenuItem>
+            {hasUnsentDraft ? (
+              <MenuItem onClick={() => discardComposerDraft(draftRef)}>
+                <XIcon />
+                Discard draft
+              </MenuItem>
+            ) : null}
             {unread > 0 ? (
               <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
                 <MailOpenIcon />
@@ -650,7 +743,11 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   /** Scrolls the row that stands for the open thread into view once. */
   readonly revealRow?: RevealRow | undefined;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
-  readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
+  readonly onOpenGroup: (
+    environmentId: EnvironmentId,
+    teamId: AssistantTeamId,
+    target?: GroupChatTarget | null,
+  ) => void;
   /** ⌘1–9 labels by thread key while the hints show. */
   readonly jumpLabelByKey?: ReadonlyMap<string, string> | null | undefined;
   readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;

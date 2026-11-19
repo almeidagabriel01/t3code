@@ -41,8 +41,9 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
+import { groupThreadId, requestThreadId } from "@t3tools/shared/assistantGroupThreads";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { pausedTaskNeedsUserSql } from "../assistants/groupChatSql.ts";
 import { assistantRunReply } from "../assistants/assistantRunReply.ts";
 import type { TurnOrigin } from "../mcp/turnOrigin.ts";
 import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
@@ -1329,7 +1330,10 @@ const make = Effect.gen(function* () {
       yield* markTold(subject, decision.id, nowMs);
   });
 
-  /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
+  /**
+   * A notice whose cause settled leaves Activity. A request's answerable mirror too: its reactor
+   * withdraws it on the resolution, but a mirror made just after that would otherwise stay.
+   */
   const withdrawSettledNotices = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     const told = yield* sql<{
@@ -1340,7 +1344,8 @@ const make = Effect.gen(function* () {
       SELECT n.subject_key, n.decision_id, d.from_thread_id FROM autonomy_needs_you n
       JOIN decisions d ON d.decision_id = n.decision_id
       WHERE d.status = 'open'
-        AND d.client_request_id LIKE ${`${DecisionService.NOTICE_REQUEST_PREFIX}%`}`;
+        AND (d.client_request_id LIKE ${`${DecisionService.NOTICE_REQUEST_PREFIX}%`}
+          OR n.subject_key LIKE 'request:%')`;
     for (const row of told) {
       const still = row.subject_key.startsWith("request:")
         ? yield* sql`
@@ -1398,7 +1403,6 @@ const make = Effect.gen(function* () {
           }
         }
 
-        // Stopping a task or archiving its group is the user's own doing; the rest wait on them.
         // A pause stops a whole branch, so only its top task is told: resuming it resumes the rest.
         const tasks = yield* sql<PausedTask>`
           SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at, t.request_id,
@@ -1411,11 +1415,7 @@ const make = Effect.gen(function* () {
             ON rt.request_id = t.request_id AND rt.assistant_id = t.owner_id
           LEFT JOIN assistant_group_threads gt
             ON gt.team_id = t.team_id AND gt.assistant_id = t.owner_id
-          WHERE t.status = 'paused' AND t.kind <> 'reply'
-            AND COALESCE(t.reason, '') NOT IN ('stopped', 'group_archived')
-            AND NOT EXISTS (
-              SELECT 1 FROM assistant_group_tasks parent
-              WHERE parent.task_id = t.parent_id AND parent.status = 'paused')`;
+          WHERE t.status = 'paused' AND ${sql.literal(pausedTaskNeedsUserSql("t"))}`;
         for (const task of tasks) {
           if (!due(task.updated_at)) continue;
           yield* notifyGroupTask(task, config, nowMs).pipe(

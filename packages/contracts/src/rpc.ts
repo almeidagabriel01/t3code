@@ -479,6 +479,7 @@ import {
   DecisionError,
   DecisionsAnswerInput,
   DecisionsDismissInput,
+  DecisionsReopenInput,
   DecisionsEvent,
   DecisionsListInput,
   DecisionsListResult,
@@ -844,6 +845,7 @@ export const WS_METHODS = {
   decisionsSubscribe: "decisions.subscribe",
   decisionsAnswer: "decisions.answer",
   decisionsDismiss: "decisions.dismiss",
+  decisionsReopen: "decisions.reopen",
   computerUsePermissions: "computerUse.permissions",
   computerUseOpenSettings: "computerUse.openSettings",
   assistantsSubscribe: "assistants.subscribe",
@@ -2280,6 +2282,15 @@ const WsOrchestrationV2GetThreadTitlesRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2GetThreadContextUsageRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadContextUsage.input,
+    success: OrchestrationV2RpcSchemas.getThreadContextUsage.output,
+    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetThreadLinkMetadataRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
   {
@@ -2491,6 +2502,11 @@ const WsDecisionsAnswerRpc = Rpc.make(WS_METHODS.decisionsAnswer, {
 });
 const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
   payload: DecisionsDismissInput,
+  success: Decision,
+  error: DecisionRpcErrors,
+});
+const WsDecisionsReopenRpc = Rpc.make(WS_METHODS.decisionsReopen, {
+  payload: DecisionsReopenInput,
   success: Decision,
   error: DecisionRpcErrors,
 });
@@ -3212,6 +3228,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDecisionsSubscribeRpc,
   WsDecisionsAnswerRpc,
   WsDecisionsDismissRpc,
+  WsDecisionsReopenRpc,
   WsComputerUsePermissionsRpc,
   WsComputerUseOpenSettingsRpc,
   WsAssistantsSubscribeRpc,
@@ -3427,6 +3444,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetThreadFamilyRpc,
   WsOrchestrationV2GetThreadTitlesRpc,
   WsOrchestrationV2GetThreadLinkMetadataRpc,
+  WsOrchestrationV2GetThreadContextUsageRpc,
   WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,

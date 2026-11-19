@@ -18,8 +18,10 @@ import * as Queue from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
+  LINUX_SETTLE_MS,
   parseHeartbeat,
   runnerCopyId,
+  type QueuedEntry,
   type RunnerBlock,
 } from "./runner.ts";
 import {
@@ -89,6 +91,46 @@ describe("heavy queue file", () => {
       expect(ids(dir)).toEqual(code > 0 ? [] : ["req-1"]);
     },
   );
+
+  it.each([
+    [
+      "named, with its line",
+      { name: "web fmt", line: "/s/fmt.sh a" },
+      { line: "/s/fmt.sh a", name: "web fmt" },
+    ],
+    ["named, label is the line", { name: "web fmt" }, { line: "r1", name: "web fmt" }],
+    ["unnamed", {}, { line: "r1" }],
+  ])("a result keeps the line it ran, %s, and why it could not start", (_case, fields, kept) => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), ...fields }, at);
+    Queue.finish(dir, "r1", 127, at, "script not found: /s/fmt.sh");
+    const error = "script not found: /s/fmt.sh";
+    expect(Queue.readDoc(dir).results).toEqual([{ id: "r1", code: 127, at, ...kept, error }]);
+    expect(Queue.readDoc(dir).events[0]).toMatchObject({ kind: "ended", code: 127, error });
+  });
+
+  it("a Linux run's 127 keeps its line but not a reason checked on this Mac", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.enqueue(dir, { ...entry("r1"), runner: "linux", phase: "running" }, at);
+    Queue.finish(dir, "r1", 127, at, "script not found: /s/fmt.sh");
+    expect(Queue.readDoc(dir).results).toEqual([{ id: "r1", code: 127, at, line: "r1" }]);
+    // Stopped by this Mac's own check before reaching Linux: the reason is this Mac's.
+    Queue.enqueue(dir, { ...entry("r2"), runner: "linux" }, at);
+    Queue.finish(dir, "r2", 127, at, "script not found: /s/fmt.sh");
+    expect(Queue.readDoc(dir).results[1]).toMatchObject({
+      id: "r2",
+      error: "script not found: /s/fmt.sh",
+    });
+    // Linux's pre-flight lacked it and so does this Mac: the reason covers both.
+    Queue.enqueue(dir, { ...entry("r3"), runner: "linux", phase: "running" }, at);
+    Queue.finish(dir, "r3", 127, at, undefined, "command not found on this Mac either: x");
+    expect(Queue.readDoc(dir).results[2]).toMatchObject({
+      id: "r3",
+      error: "command not found on this Mac either: x",
+    });
+  });
 
   it("keeps the last 200 results", () => {
     const dir = tempDir();
@@ -979,7 +1021,7 @@ describe("Runner in the queue file", () => {
     );
   });
 
-  // With the PC gone, the agent hears at once, even before Linux can confirm the run stopped.
+  // On its last attempt, the agent hears at once, even before Linux can confirm the run stopped.
   it.each([
     [false, "Linux couldn't run this: Linux dropped it mid-run"],
     [
@@ -990,14 +1032,14 @@ describe("Runner in the queue file", () => {
     "Tell the agent ends a job Linux dropped (unconfirmed %s), without a nobody-answered notice",
     (unconfirmed, reason) => {
       const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })), false);
-      Queue.enqueue(
-        dir,
-        test("a", {
+      Queue.enqueue(dir, {
+        ...test("a", {
           dropped: true,
           linuxFailedAt: NOW - 1000,
           ...(unconfirmed ? { unconfirmed } : {}),
         }),
-      );
+        linkFailures: 3,
+      });
       expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason });
       expect(Queue.read(dir)).toEqual([]);
       expect(Queue.readDoc(dir).events).toEqual([]);
@@ -1027,7 +1069,12 @@ describe("Runner in the queue file", () => {
     Queue.enqueue(dir, test("a", { cwd }));
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
     Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
-    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW + 1 });
+    Queue.requeue(dir, "a", {
+      dropped: true,
+      unconfirmed: true,
+      linuxFailedAt: NOW + 1,
+      linkFailures: 3,
+    });
     const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
     for (let i = 1; i <= DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i += 1) {
       Queue.recordHealth(dir, { ok: false, error: "down" }, NOW + i * beat);
@@ -1133,7 +1180,13 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
     expect(Queue.route(dir, "a", "mac")).toBe("unconfirmed");
     expect(Queue.readDoc(dir).lostRuns).toEqual([
-      { key: expect.any(String), entryId: "a", cwd: again.cwd, remote: { id: "w-1", pgid: 7 } },
+      {
+        key: expect.any(String),
+        entryId: "a",
+        cwd: again.cwd,
+        remote: { id: "w-1", pgid: 7 },
+        startedAt: NOW,
+      },
     ]);
     Queue.settleLostRun(dir, Queue.readDoc(dir).lostRuns[0]!, true);
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
@@ -1471,6 +1524,12 @@ describe("Runner in the queue file", () => {
       over: { runnerWhere: "linux" as const, runnerUnavailable: "mac" as const },
       expected: { runsOn: "mac", reason: "Linux is unavailable: running here" },
     },
+    {
+      name: "its heavy work already goes to remoto inside: runs as written",
+      line: "sh -c 'remoto vp test run'",
+      over: { runnerWhere: "linux" as const },
+      expected: { runsOn: "direct", reason: Queue.HANDED_OFF_RUNS_DIRECT, startsNow: true },
+    },
   ])("probe: $name, queuing nothing", ({ line, from, online, over, expected }) => {
     const dir = queueWith(block(config(over)), online ?? true);
     const root = checkout("probe");
@@ -1479,12 +1538,13 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir)).toEqual([]);
   });
 
-  /** Starts each on Linux, one heartbeat apart, so the next one does not wait for a reading. */
+  /** Starts each on Linux, a minute apart, so the next one does not wait for a reading. */
   const startOnLinux = (dir: string, ids: ReadonlyArray<string>) =>
     ids.forEach((id, at) => {
-      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW + at + 1);
+      const now = NOW + at * LINUX_SETTLE_MS + 1;
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, now);
       Queue.enqueue(dir, test(id));
-      expect(Queue.tryStart(dir, id, NOW + at + 1)).toMatchObject({ runner: "linux" });
+      expect(Queue.tryStart(dir, id, now)).toMatchObject({ runner: "linux" });
     });
 
   it("counts a waiter's place and running job on the machine it waits for", () => {
@@ -1544,6 +1604,47 @@ describe("Runner in the queue file", () => {
     expect(Queue.usualMs(doc, test("x"), "linux")).toBe(60_000);
     expect(Queue.usualMs(doc, test("x"), "mac")).toBe(30_000);
     expect(Queue.usualMs(doc, { label: "vp run lint" }, "linux")).toBeNull();
+  });
+
+  const stops = (dir: string) =>
+    Object.fromEntries(Queue.read(dir).map((e: QueuedEntry) => [e.id, e.stop ?? null]));
+  /** A heartbeat with `available` of 100 bytes free, and `/proc/uptime` when given. */
+  const reading = (available: number, uptime?: number) => ({
+    ok: true as const,
+    reading: parseHeartbeat(
+      `0.5 0.4 0.3 1/2 3\n6\nMem: 100 10 20 0 0 ${available}${uptime === undefined ? "" : `\n${uptime} 1000`}`,
+    ),
+  });
+
+  it("a reading low on memory marks only the newest running Linux job to stop", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    startOnLinux(dir, ["a", "b"]);
+    Queue.recordHealth(dir, reading(80), NOW + 2 * LINUX_SETTLE_MS);
+    expect(stops(dir)).toEqual({ a: null, b: null });
+    Queue.recordHealth(dir, reading(5), NOW + 2 * LINUX_SETTLE_MS);
+    expect(stops(dir)).toEqual({ a: null, b: "memory" });
+  });
+
+  // The boot ended them: nothing is left to stop, by a process group that may be someone else's now.
+  it("a reading after Linux restarted marks the runs from before it, and settles their lost runs", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    startOnLinux(dir, ["a", "lost"]);
+    Queue.setProgress(dir, "lost", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    Queue.requeue(dir, "lost", {
+      dropped: true,
+      unconfirmed: true,
+      linuxFailedAt: NOW + LINUX_SETTLE_MS + 2,
+    });
+    const at = NOW + 10 * LINUX_SETTLE_MS;
+    // Up 15 minutes, since before both started: nothing changes.
+    Queue.recordHealth(dir, reading(80, 900), at);
+    expect(stops(dir)).toEqual({ a: null, lost: null });
+    expect(Queue.readDoc(dir).lostRuns).toHaveLength(1);
+    // Up 5 minutes: both started before the boot.
+    Queue.recordHealth(dir, reading(80, 300), at);
+    expect(stops(dir)).toEqual({ a: "reboot", lost: null });
+    expect(Queue.readDoc(dir).lostRuns).toEqual([]);
+    expect(Queue.read(dir).find((e) => e.id === "lost")).not.toHaveProperty("unconfirmed");
   });
 
   it("probe: Linux with every slot busy is full and the command would wait", () => {

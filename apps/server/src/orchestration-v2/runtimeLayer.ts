@@ -411,8 +411,9 @@ export const layer = Layer.mergeAll(
 );
 
 // One instance: ComputerUse waits on the same decision stream the user's answer is published to.
+// The group gate hands an outcome a group task waits on to that task instead of its thread.
 const layerDecisionsProvided = DecisionService.layer.pipe(
-  Layer.provide(layerThreadManagementProvided),
+  Layer.provide(Layer.merge(layerThreadManagementProvided, AssistantGroupGate.gateLayer)),
 );
 
 const layerAssistantConnectorsProvided = AssistantConnectors.layer.pipe(
@@ -446,6 +447,7 @@ const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
       layerProjectModelSelectionProvided,
       ProjectionStore.layer,
       AssistantDirectory.layer,
+      AssistantTasks.layer,
     ),
   ),
 );

@@ -76,6 +76,8 @@ export function canUploadComposerAttachment(
   );
 }
 
+export const FAILED_ATTACHMENT_BLOCK_REASON = "Retry or remove the failed attachment";
+
 export function composerAttachmentUploadBlockReason(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -87,7 +89,7 @@ export function composerAttachmentUploadBlockReason(input: {
   for (const attachment of input.attachments) {
     if (!canUploadComposerAttachment(attachment, input.serverConfig)) continue;
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
-    if (state?.status === "failed") return "Retry or remove the failed attachment";
+    if (state?.status === "failed") return FAILED_ATTACHMENT_BLOCK_REASON;
   }
   return null;
 }

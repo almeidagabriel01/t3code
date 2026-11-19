@@ -26,6 +26,8 @@ import { useEffect, useState } from "react";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { draftHasUserContent } from "@t3tools/client-runtime/composerDraft";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
@@ -35,6 +37,7 @@ import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
+import { migratePersistedAssistantGroupDraftKey } from "./assistant-group-draft-key";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -55,6 +58,8 @@ import {
 import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
+import * as Dialog from "../components/ui/Dialog";
+import { showThreadUndoNotice } from "../features/home/thread-undo-notice";
 import {
   abortComposerDraftOperations,
   abortComposerDraftOperationsWhere,
@@ -645,6 +650,18 @@ export function getComposerDraftSnapshot(draftKey: string): ComposerDraft {
   return normalizeDraft(appAtomRegistry.get(composerDraftsAtom)[draftKey]);
 }
 
+/**
+ * What the user wrote, attached or referenced; settings alone (model, mode, workspace) are no
+ * draft. Only list marks read this: `isComposerDraftEmpty` still decides what is saved.
+ */
+export function composerDraftHasUserContent(draft: ComposerDraft): boolean {
+  return draftHasUserContent({
+    prompt: draft.text,
+    attachmentCount: draft.attachments.length,
+    contextCount: draft.context?.records.length ?? 0,
+  });
+}
+
 export function isComposerDraftEmpty(draft: ComposerDraft): boolean {
   return isEmptyDraft(draft);
 }
@@ -703,6 +720,25 @@ export function migrateLegacyNewTaskDraft(
   ];
 }
 
+/** A draft already under its current key wins; one moved from an old key fills only an empty one. */
+function withCurrentGroupDraftKeys(
+  drafts: Readonly<Record<string, ComposerDraft>>,
+): Array<[string, ComposerDraft]> {
+  const result = new Map<string, ComposerDraft>();
+  const moved: Array<[string, ComposerDraft]> = [];
+  for (const [key, draft] of Object.entries(drafts)) {
+    const current = migratePersistedAssistantGroupDraftKey(key);
+    if (current === null) continue;
+    if (current === key) result.set(key, draft);
+    else moved.push([current, draft]);
+  }
+  for (const [key, draft] of moved) {
+    const existing = result.get(key);
+    if (existing === undefined || !composerDraftHasUserContent(existing)) result.set(key, draft);
+  }
+  return [...result];
+}
+
 export function decodePersistedComposerState(value: unknown): {
   readonly drafts: Record<string, ComposerDraft>;
   readonly stickyModelSelection: ModelSelection | null;
@@ -713,7 +749,7 @@ export function decodePersistedComposerState(value: unknown): {
   const now = new Date().toISOString();
   return {
     drafts: Object.fromEntries(
-      Object.entries(parsed.drafts)
+      withCurrentGroupDraftKeys(parsed.drafts)
         .map(([key, draft]) =>
           migrateLegacyNewTaskDraft(
             key,
@@ -743,7 +779,7 @@ export function decodePersistedComposerState(value: unknown): {
           id,
           {
             drafts: Object.fromEntries(
-              Object.entries(saved.drafts).map(([key, draft]) =>
+              withCurrentGroupDraftKeys(saved.drafts).map(([key, draft]) =>
                 migrateLegacyNewTaskDraft(key, draft, now),
               ),
             ),
@@ -1932,6 +1968,39 @@ export function clearComposerDraft(
   }
 }
 
+/**
+ * Discards a draft behind the Undo notice. Undo puts back the whole draft (text, caret,
+ * attachments, context, settings) unless the user has written a new one since.
+ */
+export function discardComposerDraft(
+  draftKey: string,
+  options?: { readonly clearModelSelection?: boolean; readonly clearWorkspaceSelection?: boolean },
+): void {
+  const snapshot = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+  if (snapshot === undefined) return;
+  const selection = appAtomRegistry.get(composerDraftSelectionAtom(draftKey));
+  const claim = ThreadUndo.begin("discard", draftKey);
+  clearComposerDraftContent(draftKey, { ...options, deferAttachmentCleanup: true });
+  const release = () => scheduleUnusedComposerAttachmentCleanup(snapshot.attachments);
+  showThreadUndoNotice({
+    action: "Discarded",
+    claim,
+    commit: release,
+    undo: async () => {
+      if (composerDraftHasUserContent(getComposerDraftSnapshot(draftKey))) {
+        release();
+        Dialog.alert("Failed to restore draft", "The draft has new content.");
+        return;
+      }
+      markComposerDraftReset(draftKey);
+      updateComposerDrafts((current) =>
+        restoreComposerDraftSnapshotState(current, draftKey, snapshot),
+      );
+      appAtomRegistry.set(composerDraftSelectionAtom(draftKey), selection);
+    },
+  });
+}
+
 export function removeComposerDraftsForEnvironment(
   drafts: Record<string, ComposerDraft>,
   environmentId: EnvironmentId,
@@ -2050,6 +2119,11 @@ const composerDraftAtom = Atom.family((draftKey: string) =>
   Atom.make((get) => get(composerDraftsAtom)[draftKey] ?? EMPTY_DRAFT),
 );
 const EMPTY_DRAFT_ATOM = Atom.make(EMPTY_DRAFT);
+// A boolean per key, so a list row redraws when its draft appears or goes, not on every keystroke.
+const composerDraftHasContentAtom = Atom.family((draftKey: string) =>
+  Atom.make((get) => composerDraftHasUserContent(get(composerDraftAtom(draftKey)))),
+);
+const NO_DRAFT_CONTENT_ATOM = Atom.make(false);
 
 type ComposerDraftsByKey = Readonly<Record<string, ComposerDraft>>;
 const EMPTY_DRAFTS: ComposerDraftsByKey = {};
@@ -2130,6 +2204,18 @@ export function useComposerDraftSettings(draftKey: string | null): ComposerDraft
     ensureComposerDraftsLoaded();
   }, []);
   return settings;
+}
+
+/** Whether a thread, assistant or group conversation holds an unsent draft. */
+export function useHasUnsentDraft(draftKey: string | null): boolean {
+  const hasContent = useAtomValue(
+    draftKey ? composerDraftHasContentAtom(draftKey) : NO_DRAFT_CONTENT_ATOM,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts loading persisted composer drafts from native storage on first use
+  useEffect(() => {
+    ensureComposerDraftsLoaded();
+  }, []);
+  return hasContent;
 }
 
 export function useComposerDraft(draftKey: string | null): ComposerDraft {

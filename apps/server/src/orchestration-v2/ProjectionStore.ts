@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import type {
+  OrchestrationV2ThreadContextUsage,
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -598,6 +599,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
+  /** The active provider thread's context usage; null for an unknown thread or none started. */
+  readonly getThreadContextUsage: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadContextUsage | null, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -2049,6 +2054,15 @@ function shellFromState(input: {
     deletedAt: input.state.thread.deletedAt,
   };
 }
+
+/**
+ * A provider-native subagent still at work, as a condition on the `orchestration_v2_projection_subagents`
+ * row named `alias`. Its child thread has no runs of its own, so this row is the child's activity.
+ */
+export const liveNativeSubagent = (sql: SqlClient.SqlClient, alias: string) => {
+  const row = sql.literal(alias);
+  return sql`(${row}.origin = 'provider_native' AND ${row}.status IN ('pending', 'running', 'waiting'))`;
+};
 
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
@@ -6453,8 +6467,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT CASE native.status WHEN 'pending' THEN 'starting' ELSE native.status END
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6478,8 +6491,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT native.started_at
                   FROM orchestration_v2_projection_subagents native
                   WHERE native.child_thread_id = t.thread_id
-                    AND native.origin = 'provider_native'
-                    AND native.status IN ('pending', 'running', 'waiting')
+                    AND ${liveNativeSubagent(sql, "native")}
                   ORDER BY native.updated_at DESC, native.subagent_id DESC
                   LIMIT 1
                 )
@@ -6892,6 +6904,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
                   AND active.status IN ('preparing', 'starting', 'running', 'waiting')
+              )
+              -- Native children have no runs of their own: the parent's record is their activity.
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_subagents native
+                WHERE native.child_thread_id = t.thread_id
+                  AND ${liveNativeSubagent(sql, "native")}
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
@@ -7624,6 +7642,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getThreadContextUsage = Effect.fn("ProjectionStore.getThreadContextUsage")(
+      function* (threadId: ThreadId) {
+        const [row] = yield* sql<{ readonly active_provider_thread_id: ProviderThreadId | null }>`
+          SELECT active_provider_thread_id FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId} AND deleted_at IS NULL
+        `;
+        const active = row?.active_provider_thread_id ?? null;
+        if (active === null) return null;
+        const records = yield* readCanonicalProjection(
+          threadId,
+          undefined,
+          ["providerThreads", "providerTurns"],
+          {
+            providerThreadIds: [active],
+            providerTurnThreadIds: [active],
+            latestProviderTurnUsageOnly: true,
+          },
+        );
+        const providerThread = records.providerThreads.find((thread) => thread.id === active);
+        return {
+          latestTurnUsage: records.providerTurns[0]?.tokenUsage ?? null,
+          providerThread:
+            providerThread === undefined
+              ? null
+              : {
+                  contextUsage: providerThread.contextUsage ?? null,
+                  updatedAt: providerThread.updatedAt,
+                },
+        };
+      },
+      (effect, threadId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -7804,6 +7856,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
+      getThreadContextUsage: readOnReader(getThreadContextUsage),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),

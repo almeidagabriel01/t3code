@@ -1574,6 +1574,7 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       unreadCount: 0,
       working: false,
       runningCount: 0,
+      runningMemberIds: [],
       preview: null,
       pausedTasks: 0,
       failedTasks: 0,

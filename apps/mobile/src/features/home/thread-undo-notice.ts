@@ -2,9 +2,11 @@ import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { useSyncExternalStore } from "react";
 
 type UndoNotice = {
-  readonly action: "Settled" | "Snoozed" | "Unpinned";
+  readonly action: "Settled" | "Snoozed" | "Unpinned" | "Discarded";
   readonly claim: ReturnType<typeof ThreadUndo.begin>;
   readonly undo: () => Promise<void>;
+  /** Runs when the notice closes without an undo: expired, swiped, replaced or invalidated. */
+  readonly commit?: () => void;
 };
 
 let notice: UndoNotice | null = null;
@@ -24,6 +26,7 @@ export function dismissThreadUndoNotice() {
   notice = null;
   clearTimeout(expiry);
   previous?.claim.finish();
+  previous?.commit?.();
   notify();
 }
 
@@ -38,6 +41,8 @@ export function showThreadUndoNotice(options: UndoNotice) {
     ...options,
     undo: async () => {
       if (notice?.claim !== options.claim || !options.claim.isCurrent()) return;
+      const { commit: _undone, ...undone } = notice;
+      notice = undone;
       dismissThreadUndoNotice();
       await options.undo();
     },

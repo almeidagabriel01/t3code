@@ -206,9 +206,10 @@ work queue, and each section says what the two do together.
 
 - **Linux limits.** Linux takes a job while a slot is free, no other job from
   the same worktree runs there, and it stays under its own **Keep memory free**
-  (default 20%) and **CPU limit** (default 70%). The next job starts only after
-  a heartbeat that shows the last one's load. A busy Linux is not offline: jobs
-  wait for it and say why ("waiting for Linux: 1.8 GB free, keeping 20%").
+  (default 20%) and **CPU limit** (default 70%). It starts at most one new job
+  per heartbeat, and waits about a minute after each start so that job's load
+  shows first. A busy Linux is not offline: jobs wait for it and say why
+  ("waiting for Linux: 1.8 GB free, keeping 20%").
 - **Over the limit for.** Either machine counts as over its limits, or back
   under them, only once its readings stay there this long (default 20
   seconds), so a short spike never moves work.
@@ -234,13 +235,18 @@ work queue, and each section says what the two do together.
   shows on the job in the Resource Manager with a countdown; unanswered, it
   follows the deadline setting. An agent's foreground command gives up after 10
   minutes, so longer waits only help background commands.
-- **If a Linux run fails.** When Linux couldn't run a job (the PC went away, or
-  a tool or folder is missing there), **Tell the agent** (the default) ends the
-  job with Linux's error and "Linux couldn't run this: <reason>", and nothing
-  reruns it. **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job
-  to this Mac, back to Linux, or to you instead. A command that fails on Linux
-  for its own reasons, such as a failing test, returns its exit code and output
-  unchanged and never reruns.
+- **If a Linux run fails.** A run the PC drops (the connection, or the PC
+  restarting) goes back to Linux by itself, up to 3 attempts by default; while
+  Linux is offline it follows **When Linux is offline**. Jobs going back start
+  there one at a time, as **Linux limits** describes. After the last attempt,
+  or when Linux couldn't run a job at all (a tool or folder is missing there),
+  this setting decides. **Tell the agent** (the default) ends the job with
+  Linux's error and "Linux couldn't run this: <reason>", and nothing reruns it.
+  **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job to this
+  Mac, back to Linux, or to you instead. When Linux runs very short of memory
+  with several jobs, it stops the newest one and queues it again; that is not a
+  failure. A command that fails on Linux for its own reasons, such as a failing
+  test, returns its exit code and output unchanged and never reruns.
 - **Bring results back.** Off by default. When on, the files a Linux job
   created or changed are copied back to this Mac when it ends, except
   `node_modules` and `.git`. A file you changed here during the job is left

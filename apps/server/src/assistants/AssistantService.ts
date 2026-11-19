@@ -21,20 +21,14 @@ import {
   CommandId,
   DEFAULT_ASSISTANT_ID,
   type ModelSelection,
-  type OrchestrationV2ThreadShell,
   type ProjectId,
   resolveProjectProviderInstanceEnabled,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
-import {
-  assistantTaskStatusOf,
-  type AssistantTaskStatus,
-} from "@t3tools/shared/assistantTaskStatus";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import type { AssistantTaskStatus } from "@t3tools/shared/assistantTaskStatus";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { assistantHomeModel } from "@t3tools/shared/modelSelectionPrecedence";
-import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -63,7 +57,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
-import { AssistantTasks } from "./AssistantTasks.ts";
+import { AssistantTasks, taskStatusOf } from "./AssistantTasks.ts";
 import { forgetDeletedProjects, pruneLeftTabCursors } from "./AssistantTeamProjects.ts";
 import { RESUBSCRIBE } from "./resubscribe.ts";
 import {
@@ -127,17 +121,6 @@ export const deliveredRunOf = <Run extends { readonly status: string; readonly o
       (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
       undefined,
     );
-
-/** The task chip the clients show, read from the task thread's shell. */
-export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
-  const parked =
-    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
-  const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
-  return assistantTaskStatusOf({
-    needsUser: shell.pendingRuntimeRequest !== null || guestWaitsOnUser(shell),
-    runtimeStatus: status === "idle" && !parked ? null : status,
-  });
-};
 
 export class AssistantService extends Context.Service<
   AssistantService,

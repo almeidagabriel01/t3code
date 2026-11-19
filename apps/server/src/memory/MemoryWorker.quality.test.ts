@@ -14,6 +14,10 @@ import {
   now,
   live,
   seed,
+  encodeMessage,
+  decodeMessage,
+  encodeRun,
+  decodeRun,
   seedDerivedSummary,
   incrementalSummary,
   seedRolledBackRegeneration,
@@ -501,4 +505,71 @@ describe("MemoryWorker summary quality", () => {
       assert.strictEqual(yield* headText(neverXId), "Rule: Never X");
     }).pipe(Effect.provide(live(false, undefined, false, 0, false, undefined, undefined, neverX))),
   );
+  // Both members of a group receive the user's request as server-written packets. The rule comes
+  // from the user's own words once, and nothing else in the packet reaches the rule source.
+  it.effect("a group request yields its user's rule once across member threads", () => {
+    const seen: M.GenerateMemorySummaryInput[] = [];
+    const typed = "never say I am right";
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE assistant_group_tasks (task_id TEXT PRIMARY KEY,kind TEXT,request_message_id TEXT,request_id TEXT,owner_id TEXT)`;
+      yield* sql`CREATE TABLE assistant_group_messages (message_id TEXT PRIMARY KEY,author TEXT,kind TEXT,text TEXT)`;
+      yield* sql`CREATE TABLE assistant_group_request_threads (request_id TEXT,assistant_id TEXT,thread_id TEXT)`;
+      yield* sql`INSERT INTO assistant_group_messages VALUES ('gm-1','user','message',${typed})`;
+      const message = yield* decodeMessage(
+        (yield* sql<{
+          payload_json: string;
+        }>`SELECT payload_json FROM orchestration_events WHERE sequence=1`)[0]!.payload_json,
+      );
+      const run = yield* decodeRun(
+        (yield* sql<{
+          payload_json: string;
+        }>`SELECT payload_json FROM orchestration_events WHERE sequence=2`)[0]!.payload_json,
+      );
+      let sequence = 2;
+      for (const member of ["ada", "beto"]) {
+        const memberThread = M.ThreadId.make(`assistant:${member}:g-request`);
+        const messageId = M.MessageId.make(`group-task:task-${member}:1`);
+        const runId = M.RunId.make(`run-${member}`);
+        yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES (${memberThread},NULL)`;
+        yield* sql`INSERT INTO assistant_group_tasks VALUES (${`task-${member}`},'root','gm-1','gm-1',${member})`;
+        yield* sql`INSERT INTO assistant_group_request_threads VALUES ('gm-1',${member},${memberThread})`;
+        sequence += 1;
+        yield* sql`INSERT INTO orchestration_events VALUES (${sequence},${id(9900 + sequence)},${memberThread},'message.updated',${encodeMessage({ ...message, id: messageId, threadId: memberThread, runId, createdBy: "system", creationSource: "server", text: `Group memories:\n- teammate secret plan\nYour task, from the user: ${typed}` })},${now},2,'thread')`;
+        sequence += 1;
+        yield* sql`INSERT INTO orchestration_events VALUES (${sequence},${id(9900 + sequence)},${memberThread},'run.updated',${encodeRun({ ...run, id: runId, threadId: memberThread, userMessageId: messageId })},${now},2,'thread')`;
+      }
+      yield* (yield* Worker.MemoryWorker).sweepDue();
+      const rule = M.MemoryId.make(Service.memoryStableUuid(`rule:user:${typed.toLowerCase()}`));
+      const aggregate = yield* (yield* Store.MemoryStore).loadAggregate(space, rule);
+      assert.lengthOf(aggregate.revisions, 1);
+      assert.strictEqual(yield* headText(rule), `Rule: ${typed}`);
+      assert.notInclude(JSON.stringify(seen), "teammate secret plan");
+    }).pipe(
+      Effect.provide(
+        live(
+          false,
+          (input) => seen.push(input),
+          false,
+          0,
+          false,
+          undefined,
+          undefined,
+          (input) =>
+            input.messages
+              .filter(
+                (m) => m.text === typed && input.rules?.userTypedMessageIds.includes(m.messageId),
+              )
+              .map((m) => ({
+                scope: "user" as const,
+                text: typed,
+                messageIds: [m.messageId],
+                supersedes: null,
+              })),
+        ),
+      ),
+    );
+  });
 });

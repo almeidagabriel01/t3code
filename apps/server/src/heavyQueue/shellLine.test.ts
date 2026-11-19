@@ -36,6 +36,19 @@ describe("parseLine", () => {
     expect(read(source)).toEqual({ commands, unsafe });
   });
 
+  it("keeps each for loop's items by its variable, none for a name two loops use", () => {
+    const items = (source: string) =>
+      [...parseLine(source).loops].map(([name, words]) => [
+        name,
+        words === null ? null : words.map((word) => word.value),
+      ]);
+    expect(items("for f in a.ts 'b c.ts'; do vp fmt $f; done")).toEqual([
+      ["f", ["a.ts", "b c.ts"]],
+    ]);
+    expect(items("for f in a; do :; done; for f in b; do :; done")).toEqual([["f", null]]);
+    expect(items("for f; do :; done")).toEqual([["f", null]]);
+  });
+
   it('names the variables a word expands, with "" for substitutions', () => {
     const [command] = parseLine('vp test $A "${B}" $(c) $((1))').commands.slice(-1);
     expect(command?.words.map((word) => word.vars)).toEqual([[], [], ["A"], ["B"], [""], [""]]);

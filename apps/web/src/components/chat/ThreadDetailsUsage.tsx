@@ -16,12 +16,15 @@ import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
+import {
+  contextWindowReading,
+  type ContextWindowSnapshot,
+} from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { formatContextWindowCompactionMessage } from "./compaction.logic";
+import { ContextWindowTooltipContent } from "./ComposerContextMeter";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const PACE_LABEL: Record<LimitPace, string> = {
@@ -84,16 +87,7 @@ export function ThreadDetailsUsage({
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
-  const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
-  const used =
-    maxTokens !== null && usage.usedPercentage !== null
-      ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
-      : null;
-  const threshold = usage.autoCompactThreshold ?? null;
-  const tick =
-    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
-      ? (threshold / maxTokens) * 100
-      : null;
+  const { usedPercent, maxTokens, compactAtPercent, tone } = contextWindowReading(usage);
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
   return (
     <ThreadDetailsSection
@@ -104,34 +98,17 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         <UsageRow
           label="Context"
-          fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
+          fill={usedPercent}
+          tone={tone}
+          tick={compactAtPercent}
           muted
           value={
             maxTokens !== null
               ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
               : usedTokens
           }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
-          tooltip={
-            <>
-              <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
-              </span>
-              {maxTokens !== null ? (
-                <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
-                </span>
-              ) : null}
-              {threshold !== null && threshold > 0 ? (
-                <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold)}
-                </span>
-              ) : null}
-            </>
-          }
+          ariaValue={usedPercent !== null ? `${usedPercent}% used` : `${usedTokens} tokens used`}
+          tooltip={<ContextWindowTooltipContent usage={usage} />}
         />
       </div>
     </ThreadDetailsSection>

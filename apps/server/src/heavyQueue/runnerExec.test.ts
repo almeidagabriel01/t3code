@@ -142,7 +142,25 @@ describe("running on Linux through remoto", () => {
       `vp test '--root='"$T3_COPY"'/apps/web' > "$T3_COPY"'/out.txt'`,
     ],
     ["echo $(cat /Users/me/wt/list)", `echo $(cat "$T3_COPY"'/list')`],
+    [
+      "[[ $x =~ ^a ]] && cat <~/wt/a >~/wt/b",
+      `[[ $x =~ ^a ]] && cat <"$T3_COPY"'/a' >"$T3_COPY"'/b'`,
+    ],
+    // Bash expands `~` after an identifier's `=`, in an assignment or an argument alike.
+    [
+      "FOO=~/wt/x BAR=/Users/me/wt/y env BAZ=$HOME/wt vp test",
+      `FOO="$T3_COPY"'/x' BAR="$T3_COPY"'/y' env BAZ="$T3_COPY" vp test`,
+    ],
+    // And after each `:` of that value: a PATH-like list.
+    [
+      "PATH=/x:~/wt/bin:$PATH env P=/Users/me/wt/a:$HOME/wt/b:~other:~/wt vp test",
+      `PATH=/x:"$T3_COPY"'/bin':$PATH env P="$T3_COPY"'/a':"$T3_COPY"'/b':~other:"$T3_COPY" vp test`,
+    ],
     // Not the checkout, a quoted `~`, another home or variable: left as written.
+    [
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+      "echo 'X=~/wt' X=\\~/wt --root=~/wt a:~/wt a~/wt",
+    ],
     ["cd /Users/me/other && vp test", "cd /Users/me/other && vp test"],
     ["cd /Users/me/wt-2 && vp test", "cd /Users/me/wt-2 && vp test"],
     ["echo '~/wt' $WT/x ~other/wt", "echo '~/wt' $WT/x ~other/wt"],
@@ -172,12 +190,22 @@ describe("running on Linux through remoto", () => {
     ["the repo root", "", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test`],
     ["a subfolder", "", "/apps/web", "'/apps'", `cd "$T3_COPY"'/apps' && vp test`],
     ["a folder outside git", "plain", "", "/a.ts", `vp test "$T3_COPY"'/a.ts' /etc/x`],
-  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, sent) => {
+    // A git worktree's `.git` is a file; its main checkout is another folder, left as written.
+    ["a git worktree", "worktree", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test MAIN/a`],
+  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, given) => {
     const repo = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(dir, "t3-repo-")));
+    const main = `${repo}.main`;
+    const sent = given.replace("MAIN", main);
     if (kind === "") NodeFS.mkdirSync(NodePath.join(repo, ".git"));
+    if (kind === "worktree") {
+      NodeFS.writeFileSync(NodePath.join(repo, ".git"), `gitdir: ${main}/.git/worktrees/w\n`);
+    }
     NodeFS.mkdirSync(NodePath.join(repo, "apps", "web"), { recursive: true });
     const quoted = path.startsWith("'") ? `'${repo}${path.slice(1)}` : `${repo}${path}`;
-    const line = kind === "" ? `cd ${quoted} && vp test` : `vp test ${quoted} /etc/x`;
+    const line =
+      kind === "plain"
+        ? `vp test ${quoted} /etc/x`
+        : `cd ${quoted} && vp test${kind === "worktree" ? ` ${main}/a` : ""}`;
     const stdout: Buffer[] = [];
     const run = startLinuxRun({
       // Past the PATH wrapper, to the command it runs.
@@ -205,6 +233,39 @@ describe("running on Linux through remoto", () => {
     const { run, out } = runWith(fake('exec "$@"'), `cd ${dir}/apps/server && pwd -P`, web);
     await run.done;
     expect(out()).toBe(`${NodeFS.realpathSync(NodePath.join(dir, "apps", "server"))}\n`);
+  });
+
+  // The job is on Linux already: a script that calls `remoto` itself runs that part there too.
+  it("a remoto the command calls inside runs in place there", async () => {
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      remoto: fake('exec "$@"'),
+      program: "/bin/zsh",
+      args: ["-c", "remoto echo nested && sh -c 'remoto echo deep' && remoto"],
+      cwd: dir,
+      root: dir,
+      environment: { ...process.env, PATH: "/usr/bin:/bin" },
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    await run.done;
+    expect(Buffer.concat(stdout).toString("utf8")).toBe("nested\ndeep\n");
+  });
+
+  // Only the install before the command is the worktree's: the command may print the same text.
+  it.each([
+    ["installing", "pnpm-lock.yaml is out of date in this worktree"],
+    ["running", null],
+  ])("an outdated lockfile while %s tells the worktree's fix: %j", async (phase, fix) => {
+    const lockfile = 'help: Update your lockfile using "pnpm install --no-frozen-lockfile"';
+    const { run } = runWith(
+      fake(`printf '${M} phase=${phase}\\n' >&2; echo '${lockfile}' >&2; exit 1`),
+    );
+    const { worktree } = await run.done;
+    expect(worktree === null ? null : worktree.slice(0, fix?.length)).toBe(fix);
   });
 
   // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.
@@ -297,12 +358,42 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     },
   );
 
-  it("notes an install failure the command's own output reports", async () => {
+  // A failing vitest run once quoted an install error in a test name and was filed as an install.
+  it.each([
+    [
+      "a vitest failure quoting one",
+      "running",
+      [
+        "printf '\\033[41m\\033[1m FAIL \\033[22m\\033[49m src/a.test.ts > EEXIST row\\n' >&2",
+        "echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2",
+        "printf '\\033[31m\\033[2m⎯⎯⎯⎯[50/62]⎯\\033[22m\\033[39m\\n' >&2",
+      ],
+      null,
+    ],
+    [
+      "Electron's error printed by the command",
+      "running",
+      ["echo 'Error: Electron failed to install correctly.' >&2"],
+      null,
+    ],
+    [
+      "output that is only ANSI",
+      "running",
+      ["printf '\\033[31m\\033[2m⎯⎯⎯\\033[22m\\033[39m\\n' >&2"],
+      null,
+    ],
+    [
+      "an install that really fails",
+      "installing",
+      ["echo \"Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'\" >&2"],
+      "sharp",
+    ],
+  ] as const)("%s while %s is an install failure of %j", async (_case, phase, lines, install) => {
     const { run } = runWith(
       fake(
         [
-          `printf '${M} phase=running pgid=4\\n' >&2`,
-          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} phase=${phase} pgid=4\\n' >&2`,
+          ...lines,
           `printf '${M} exit=1\\n' >&2`,
           "exit 1",
         ].join("\n"),
@@ -310,7 +401,7 @@ require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
     );
     const result = await run.done;
     expect(result.outcome).toEqual({ kind: "finished", code: 1 });
-    expect(result.install).toBe("electron");
+    expect(result.install).toBe(install);
   });
 
   it("runs with the env it is handed, ahead of the command", () => {
@@ -413,7 +504,13 @@ describe("ssh calls around a Linux run", () => {
     const ok = fake("printf '0.50 0.4 0.3 1/2 3\\n4\\nMem: 100 10 20 0 0 80\\n'");
     expect(await checkLinux(DEFAULT_MACHINE_CONFIG, env(ok))).toEqual({
       ok: true,
-      reading: { load1: 0.5, cpuCount: 4, totalMemoryBytes: 100, availableMemoryBytes: 80 },
+      reading: {
+        cpuPercent: null,
+        load1: 0.5,
+        cpuCount: 4,
+        totalMemoryBytes: 100,
+        availableMemoryBytes: 80,
+      },
     });
     const refused = fake(
       "echo 'ssh: connect to host pc port 22: Connection refused' >&2; exit 255",

@@ -77,6 +77,32 @@ export const memoryRuleCases: ReadonlyArray<MemoryRuleCase> = [
     expect: { kind: "rule", scope: "project", text: /pnpm/i, supersedes: "m-npm" },
   },
   {
+    id: "company-detail-stays-in-project",
+    source,
+    messages: [
+      {
+        id: "u1",
+        role: "user",
+        text: "Sempre que fizer mockups da Acme, use dados realistas, nunca lorem ipsum.",
+      },
+      ...work,
+    ],
+    expect: { kind: "rule", scope: "project", text: /Acme/i },
+  },
+  {
+    id: "agent-handoff-is-global",
+    source,
+    messages: [
+      {
+        id: "u1",
+        role: "user",
+        text: "Nunca diga ao agente do app que eu estou certo: ele tem que olhar o código e validar.",
+      },
+      ...work,
+    ],
+    expect: { kind: "rule", scope: "user" },
+  },
+  {
     id: "task-instruction-control",
     source,
     messages: [

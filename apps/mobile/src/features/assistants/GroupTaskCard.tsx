@@ -1,8 +1,11 @@
 import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { foldToggleLabel } from "@t3tools/client-runtime/messageFold";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupTaskReasonLabel,
+  assistantGroupWaitingOn,
+  assistantGroupWaitingOnLabel,
   assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
@@ -11,14 +14,16 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { View } from "react-native";
+import { useState } from "react";
+import { Pressable, View, type TextLayoutEvent } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 export type GroupStatusTone = "quiet" | "active" | "attention" | "done" | "failed";
@@ -66,6 +71,23 @@ const ACTION_LABEL: Record<Exclude<AssistantGroupTaskAction, "reassign">, string
   cancel: "Cancel",
 };
 
+const INSTRUCTION_LINES = 3;
+const EXPECTED_LINES = 2;
+
+/** Lines a text takes unclamped, read from an invisible twin laid out at the same width. */
+function useUnclampedLines(text: string | null) {
+  const [measured, setMeasured] = useState<{ readonly text: string; readonly count: number }>();
+  const onTextLayout = (event: TextLayoutEvent) => {
+    const count = event.nativeEvent.lines.length;
+    setMeasured((current) =>
+      text === null || (current?.text === text && current.count === count)
+        ? current
+        : { text, count },
+    );
+  };
+  return [measured?.text === text ? measured.count : 0, onTextLayout] as const;
+}
+
 /** One task of a request: its state, what was asked, and what the user can do with it. */
 export function GroupTaskCard(props: {
   readonly task: AssistantGroupTask;
@@ -77,6 +99,7 @@ export function GroupTaskCard(props: {
   readonly canAct: boolean;
   readonly onAction: (action: AssistantGroupTaskAction, ownerId?: Assistant["id"]) => void;
   readonly onOpenConversation: () => void;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { task } = props;
   // A running member that waits on an approval or a question is answered in its own thread.
@@ -89,6 +112,12 @@ export function GroupTaskCard(props: {
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
+  const expected = task.expectedResult === undefined ? null : `Expected: ${task.expectedResult}`;
+  const [expanded, setExpanded] = useState(false);
+  const [instructionLines, measureInstruction] = useUnclampedLines(task.instruction);
+  const [expectedLines, measureExpected] = useUnclampedLines(expected);
+  const clipped = instructionLines > INSTRUCTION_LINES || expectedLines > EXPECTED_LINES;
+  const waitingOn = assistantGroupWaitingOn(task);
   return (
     <View
       testID="group-task-card"
@@ -109,18 +138,54 @@ export function GroupTaskCard(props: {
           </Text>
         )}
       </View>
-      <Text className="text-sm text-foreground" numberOfLines={3}>
-        {task.instruction}
-      </Text>
-      {task.expectedResult === undefined ? null : (
+      <View className="gap-2">
         <Text
-          testID="group-task-expected"
-          className="text-xs text-foreground-muted"
-          numberOfLines={2}
+          aria-hidden
+          onTextLayout={measureInstruction}
+          className="absolute inset-x-0 -z-[1] text-sm opacity-0"
         >
-          Expected: {task.expectedResult}
+          {task.instruction}
         </Text>
-      )}
+        {expected === null ? null : (
+          <Text
+            aria-hidden
+            onTextLayout={measureExpected}
+            className="absolute inset-x-0 -z-[1] text-xs opacity-0"
+          >
+            {expected}
+          </Text>
+        )}
+        <Text
+          testID="group-task-instruction"
+          className="text-sm text-foreground"
+          numberOfLines={expanded ? undefined : INSTRUCTION_LINES}
+        >
+          {task.instruction}
+        </Text>
+        {expected === null ? null : (
+          <Text
+            testID="group-task-expected"
+            className="text-xs text-foreground-muted"
+            numberOfLines={expanded ? undefined : EXPECTED_LINES}
+          >
+            {expected}
+          </Text>
+        )}
+      </View>
+      {clipped ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={foldToggleLabel(expanded)}
+          accessibilityState={{ expanded }}
+          hitSlop={8}
+          onPress={() => setExpanded((value) => !value)}
+          className="self-start active:opacity-70"
+        >
+          <Text className="font-t3-medium text-xs text-foreground-secondary">
+            {foldToggleLabel(expanded)}
+          </Text>
+        </Pressable>
+      ) : null}
       {task.resources === undefined ? null : (
         <View testID="group-task-resources" className="flex-row flex-wrap gap-1">
           {task.resources.map((resource) => (
@@ -134,6 +199,25 @@ export function GroupTaskCard(props: {
         <Text testID="group-task-waiting" className="text-xs text-adaptive-amber-700-300">
           {waiting}
         </Text>
+      )}
+      {waitingOn === null ? null : (
+        <View testID="group-task-waiting-threads" className="gap-1">
+          <Text className="text-xs text-adaptive-amber-700-300">
+            {assistantGroupWaitingOnLabel(waitingOn)}
+          </Text>
+          <View className="flex-row flex-wrap gap-1.5">
+            {(["threads", "subagents"] as const).flatMap((kind) =>
+              waitingOn[kind].map((threadId) => (
+                <WaitingThreadLink
+                  key={`${kind}:${threadId}`}
+                  environmentId={props.environmentId}
+                  threadId={threadId}
+                  onOpen={() => props.onOpenThread(threadId)}
+                />
+              )),
+            )}
+          </View>
+        </View>
       )}
       {needs === null ? null : (
         <Text
@@ -186,5 +270,32 @@ export function GroupTaskCard(props: {
         />
       </View>
     </View>
+  );
+}
+
+function WaitingThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly onOpen: () => void;
+}) {
+  const title =
+    useQuietThreadShell(scopeThreadRef(props.environmentId, props.threadId))?.title.trim() ||
+    "Untitled thread";
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${title}`}
+      onPress={props.onOpen}
+      hitSlop={4}
+      className="max-w-full rounded-full bg-foreground/6 px-2.5 py-1 active:bg-foreground/12"
+    >
+      <Text
+        testID="group-task-waiting-link"
+        className="text-xs font-t3-medium text-foreground"
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </Pressable>
   );
 }
