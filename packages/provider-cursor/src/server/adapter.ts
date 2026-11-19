@@ -2173,6 +2173,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           yield* completeReasoning(input.context);
           yield* completeAssistant(input.context);
+          // The server starts the next turn on the terminal event, so free the slot first.
+          if (input.status === "interrupted" && input.context.prompt !== undefined) {
+            yield* Ref.set(interruptedPrompt, {
+              agent: input.context.run.agentId,
+              text: input.context.prompt,
+            });
+          }
+          yield* Ref.update(activeTurn, (current) =>
+            current?.providerTurnId === input.context.providerTurnId ? null : current,
+          );
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2223,15 +2233,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 },
-          );
-          if (input.status === "interrupted" && input.context.prompt !== undefined) {
-            yield* Ref.set(interruptedPrompt, {
-              agent: input.context.run.agentId,
-              text: input.context.prompt,
-            });
-          }
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           yield* Deferred.succeed(input.context.completed, undefined);
         });

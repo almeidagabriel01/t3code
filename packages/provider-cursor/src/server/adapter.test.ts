@@ -16,10 +16,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import type * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -950,6 +953,151 @@ describe("CursorAdapterV2", () => {
       );
       yield* runtime.startTurn(turnInput(3, "Now a cow."));
       assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-next-" });
+      const runEnds: Array<Deferred.Deferred<"finished">> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-next-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-next",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: () =>
+                Effect.gen(function* () {
+                  const runId = `native-cursor-run-${runEnds.length + 1}`;
+                  const ended = yield* Deferred.make<"finished">();
+                  runEnds.push(ended);
+                  return {
+                    agentId: "native-cursor-next",
+                    runId,
+                    wait: Deferred.await(ended).pipe(
+                      Effect.map((status) => ({
+                        id: runId,
+                        requestId: `native-request-${runEnds.length}`,
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      })),
+                    ),
+                    cancel: Effect.void,
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-next-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-next-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor next",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const turnInput = (runOrdinal: number) => ({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make(`cursor-next-run-${runOrdinal}`),
+        runOrdinal,
+        providerTurnOrdinal: runOrdinal,
+        attemptId: RunAttemptId.make(`cursor-next-attempt-${runOrdinal}`),
+        rootNodeId: NodeId.make(`cursor-next-root-${runOrdinal}`),
+        appThread,
+        message: {
+          messageId: MessageId.make(`cursor-next-message-${runOrdinal}`),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          text: `turn ${runOrdinal}`,
+          attachments: [],
+        },
+      });
+      const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      const consumerReady = yield* Deferred.make<void>();
+      // Every fiber yields every 3 ops except the event consumer, which runs to its
+      // first suspension: the interleaving where it wins the race with the finalizer.
+      const consumers = new Set<Fiber.Fiber<unknown, unknown>>();
+      const base = new Scheduler.MixedScheduler();
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        makeDispatcher: () => base.makeDispatcher(),
+        shouldYield: (fiber) => !consumers.has(fiber) && fiber.currentOpCount >= 3,
+      };
+      const exit = yield* Effect.gen(function* () {
+        yield* runtime.events.pipe(
+          Stream.tap(() => Deferred.succeed(consumerReady, undefined)),
+          Stream.filter(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.withFiber((fiber) => {
+              consumers.add(fiber);
+              return Effect.exit(runtime.startTurn(turnInput(2))).pipe(
+                Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
+              );
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(1));
+        yield* Deferred.await(consumerReady);
+        yield* Deferred.succeed(runEnds[0]!, "finished");
+        return yield* Deferred.await(nextStart);
+      }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
     }).pipe(
       Effect.scoped,
       Effect.provide(
