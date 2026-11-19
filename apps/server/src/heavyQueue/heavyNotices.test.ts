@@ -1111,6 +1111,45 @@ describe("grouping", () => {
     ]);
   });
 
+  const dropped = { ...waiter, dropped: true };
+  const stuckWith = (usualMs: number | null) =>
+    stuckJobs({
+      entries: [waiter],
+      routes: {},
+      macHold: "cpu",
+      macHoldText: "CPU busy",
+      linuxOver: {},
+      usualMs: () => usualMs,
+      now: NOW + 40 * MIN,
+    });
+  it.each([
+    { records: [record(deadlineRecord(dropped, NOW))] },
+    { records: [record(deadlineRecord(waiter, NOW))] },
+    { records: [record(startRecord(dropped, "linux", "mac", NOW))] },
+    { records: [record(startRecord(waiter, "linux", "mac", NOW))] },
+    {
+      records: [
+        record(
+          requeueRecord(
+            linux,
+            { dropped: true },
+            { runnerDropped: "mac", runnerUnavailable: "mac" },
+            NOW,
+          ),
+        ),
+        record(requeueRecord(linux, { linuxFailedAt: NOW }, policies, NOW)),
+      ],
+    },
+    { stuck: stuckWith(5 * MIN) },
+    { stuck: stuckWith(null) },
+  ] as const)('never calls several jobs "it": %#', (patch) => {
+    const notices = rawNotices(tick(patch));
+    expect(notices.length).toBeGreaterThan(0);
+    for (const notice of notices) {
+      expect(notice.manyDescription ?? notice.description).not.toMatch(/\bit\b/i);
+    }
+  });
+
   it("titles several stuck jobs", () => {
     const stuck = stuckJobs({
       entries: [waiter],
