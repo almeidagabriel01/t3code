@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -859,5 +860,51 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         }),
       );
     });
+  });
+});
+
+describe("dev-runner shutdown", () => {
+  it("a signal to the runner alone ends the whole tree below vp", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dev-runner-tree-"));
+    const fakeVp = NodePath.join(dir, "vp");
+    NodeFS.writeFileSync(
+      fakeVp,
+      `#!/usr/bin/env node
+const { spawn } = require("node:child_process");
+const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "inherit" });
+console.log("grandchild " + grandchild.pid);
+setInterval(() => {}, 1e6);
+`,
+      { mode: 0o755 },
+    );
+    const runner = NodeChildProcess.spawn(
+      process.execPath,
+      [NodePath.join(import.meta.dirname, "dev-runner.ts"), "dev", "--home-dir", dir, "--no-seed"],
+      {
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, T3CODE_DEV_SEED: "0" },
+        stdio: ["ignore", "pipe", "inherit"],
+      },
+    );
+    const exited = new Promise<void>((resolve) => runner.once("exit", () => resolve()));
+    const grandchildPid = await new Promise<number>((resolve) => {
+      let out = "";
+      runner.stdout.on("data", (chunk: Buffer) => {
+        out += chunk.toString();
+        const match = /grandchild (\d+)/.exec(out);
+        if (match) resolve(Number(match[1]));
+      });
+    });
+    try {
+      runner.kill("SIGINT");
+      await exited;
+      assert.throws(() => process.kill(grandchildPid, 0), /ESRCH/);
+    } finally {
+      try {
+        process.kill(grandchildPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

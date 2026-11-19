@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
+import { terminateDescendants } from "./lib/process-tree.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -893,6 +894,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     ),
   );
 
+  let exited = false;
+  // A signal sent to this runner alone ends what `vp run dev` started too: vp does not pass it on.
+  yield* Effect.addFinalizer(() => (exited ? Effect.void : terminateDescendants(child.pid)));
+
   const exitCode = yield* child.exitCode.pipe(
     Effect.mapError(
       (cause) =>
@@ -903,6 +908,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         }),
     ),
   );
+  exited = true;
   if (exitCode !== 0) {
     return yield* new DevRunnerProcessExitError({
       ...processContext,
