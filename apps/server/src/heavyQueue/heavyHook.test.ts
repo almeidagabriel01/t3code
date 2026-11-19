@@ -427,16 +427,29 @@ describe("an agent's own ssh to the Runner's host", () => {
     [`ssh -i remoto other 'npm test'`, null],
     // ssh -G failing for a name falls back to comparing it as written.
     [`ssh broken 'npm test'`, null],
+    // A host that reads as an ssh option never reaches ssh -G, and matches nothing.
+    [`ssh -- -oProxyCommand=x 'npm test'`, null],
     [`echo "ssh remoto 'npm test'"`, null],
   ])("%j: %j", (line, heavy) => {
     const resolved: Record<string, string | null> = {
       remoto: "192.168.10.109",
       "remoto.lan": "192.168.10.109",
+      "192.168.10.109": "192.168.10.109",
       pc: "192.168.10.109",
       broken: null,
     };
-    const resolve = (host: string) => (host in resolved ? resolved[host]! : host);
+    // Any other host goes through ssh -G, to a fake ssh that logs its arguments and fails.
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ssh-g-"));
+    const log = NodePath.join(bin, "calls");
+    NodeFS.writeFileSync(log, "");
+    NodeFS.writeFileSync(NodePath.join(bin, "ssh"), `#!/bin/sh\necho "$*" >> ${log}\nexit 255\n`);
+    NodeFS.chmodSync(NodePath.join(bin, "ssh"), 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin` };
+    const resolve = (host: string) => (host in resolved ? resolved[host]! : sshHostname(host, env));
     expect(sshWork(line, "remoto", resolve)).toBe(heavy);
+    for (const call of NodeFS.readFileSync(log, "utf8").split("\n").filter(Boolean)) {
+      expect(call).toMatch(/^-G [^-]/);
+    }
   });
 
   it("resolves a host with ssh -G, and a failing ssh resolves nothing", () => {
