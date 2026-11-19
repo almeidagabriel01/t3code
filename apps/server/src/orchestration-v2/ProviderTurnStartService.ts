@@ -110,6 +110,7 @@ const refusedBeforePrompt = (error: unknown): boolean =>
 
 const STOPPED_TURN_WAIT_MS = 10_000;
 const STOPPED_TURN_RETRY_MS = 250;
+const STOPPED_TURN_FORGET_MS = 60_000;
 const STOPPED_ATTEMPT_STATUSES: ReadonlySet<OrchestrationV2RunAttempt["status"]> = new Set([
   "interrupted",
   "failed",
@@ -123,7 +124,7 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly runId: RunId;
     readonly willRetry?: boolean;
     /** When the start was queued; it bounds the wait for a stopped turn that holds the slot. */
-    readonly queuedAt?: DateTime.Utc;
+    readonly mayWaitForStoppedTurns?: boolean;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -267,19 +268,20 @@ export const layer: Layer.Layer<
 
     // Interrupts already on their way, so a waiting start does not repeat them on every claim.
     const interruptsInFlight = new Set<ProviderTurnId>();
+    // When each waiting start first found the slot held. The window starts there, not at enqueue,
+    // so time spent behind earlier effects on the thread does not use it up.
+    const firstWaitAt = new Map<RunId, number>();
     // A stopped run's native turn can outlive its Stop and hold the provider's turn slot. The start
     // waits outside the worker slot, in place in its thread's queue; past the window it runs anyway.
     const awaitStoppedTurns = Effect.fn("ProviderTurnStartService.awaitStoppedTurns")(
       function* (input: {
         readonly threadId: ThreadId;
         readonly runId: RunId;
-        readonly queuedAt: DateTime.Utc | undefined;
         readonly providerThread: OrchestrationV2ProviderThread;
         readonly providerSessionId: ProviderSessionId;
         readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
         readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt>;
       }) {
-        if (input.queuedAt === undefined) return;
         const stopped = input.providerTurns.filter(
           (turn) =>
             turn.status === "running" &&
@@ -289,15 +291,28 @@ export const layer: Layer.Layer<
                 attempt.id === turn.runAttemptId && STOPPED_ATTEMPT_STATUSES.has(attempt.status),
             ),
         );
-        if (stopped.length === 0) return;
-        const waitedMs =
-          DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(input.queuedAt);
-        if (waitedMs >= STOPPED_TURN_WAIT_MS) return;
         // Without a live runtime nothing holds the slot; the stale row ends with the session.
-        const session = yield* providerSessions
-          .get(input.providerSessionId)
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isNone(session)) return;
+        const session =
+          stopped.length === 0
+            ? Option.none()
+            : yield* providerSessions
+                .get(input.providerSessionId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(session)) {
+          firstWaitAt.delete(input.runId);
+          return "free" as const;
+        }
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const since = firstWaitAt.get(input.runId) ?? now;
+        if (now - since >= STOPPED_TURN_WAIT_MS) {
+          firstWaitAt.delete(input.runId);
+          return "stuck" as const;
+        }
+        // A start cancelled while waiting never returns; drop anchors no live wait could still use.
+        for (const [runId, at] of firstWaitAt) {
+          if (now - at >= STOPPED_TURN_FORGET_MS) firstWaitAt.delete(runId);
+        }
+        firstWaitAt.set(input.runId, since);
         for (const turn of stopped) {
           if (interruptsInFlight.has(turn.id)) continue;
           interruptsInFlight.add(turn.id);
@@ -356,7 +371,7 @@ export const layer: Layer.Layer<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
-      readonly queuedAt?: DateTime.Utc;
+      readonly mayWaitForStoppedTurns?: boolean;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -439,15 +454,6 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
-      yield* awaitStoppedTurns({
-        threadId: input.threadId,
-        runId,
-        queuedAt: input.queuedAt,
-        providerThread,
-        providerSessionId: providerThread.providerSessionId,
-        providerTurns: projection.providerTurns,
-        attempts: projection.attempts,
-      });
       const settleRunBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.settleBeforeStart")(
         function* (input: {
           readonly signal: string;
@@ -575,6 +581,16 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if (input.mayWaitForStoppedTurns === true) {
+        yield* awaitStoppedTurns({
+          threadId: input.threadId,
+          runId,
+          providerThread,
+          providerSessionId: providerThread.providerSessionId,
+          providerTurns: projection.providerTurns,
+          attempts: projection.attempts,
+        });
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;

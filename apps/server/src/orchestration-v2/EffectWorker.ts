@@ -249,7 +249,7 @@ export const layerExecutor: Layer.Layer<
                 threadId: effect.threadId,
                 runId: effect.request.runId,
                 willRetry,
-                queuedAt: DateTime.makeUnsafe(effect.createdAt),
+                mayWaitForStoppedTurns: true,
               })
               .pipe(
                 Effect.mapError(

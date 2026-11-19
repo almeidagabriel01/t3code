@@ -319,6 +319,8 @@ const stopDuringStart = (
             creationSource: "web",
           });
         }
+        // The start is first claimed long after it was queued, as behind a slow effect on its thread.
+        yield* TestClock.adjust("15 seconds");
         // The waiting start gives its worker slot back instead of sleeping in it.
         yield* worker.drain();
         yield* Deferred.await(startInterrupt);
