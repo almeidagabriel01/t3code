@@ -561,15 +561,15 @@ it.effect("keeps a link alive while its peer answers, and says when the peer ref
         expect(response.headers["cache-control"]).toBe("no-store");
       }
 
-      yield* TestClock.adjust(Duration.days(20));
+      // Both sides aged to 10 days left, past half the link's life, without walking the
+      // clock: each environment's 2s revocation watcher would wake ~400k times a week.
+      // SessionStore.test covers a session outliving the expiry signed into its token.
+      const tenDaysLeft = new Date(10 * day).toISOString();
+      yield* b.sql`UPDATE auth_sessions SET expires_at = ${tenDaysLeft}`;
+      yield* a.sql`UPDATE peer_environment_links SET expires_at = ${tenDaysLeft}`;
       const [first] = yield* a.links.renewAll;
       expect(first?.outcome).toBe("renewed");
-      expect((yield* stored()).expiresAt.epochMilliseconds).toBe(50 * day);
-
-      // Past the expiry signed into its token, the peer still takes the link and slides it.
-      yield* TestClock.adjust(Duration.days(25));
-      expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["renewed"]);
-      expect((yield* stored()).expiresAt.epochMilliseconds).toBe(75 * day);
+      expect((yield* stored()).expiresAt.epochMilliseconds).toBe(30 * day);
       yield* probe(a);
 
       const [session] = yield* linkedSessions(b);
@@ -577,7 +577,7 @@ it.effect("keeps a link alive while its peer answers, and says when the peer ref
       expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["rejected"]);
       const refused = yield* stored();
       expect(refused.lastError).toContain("no longer accepts this link");
-      expect(refused.expiresAt.epochMilliseconds).toBe(75 * day);
+      expect(refused.expiresAt.epochMilliseconds).toBe(30 * day);
 
       // A link from before fencing waits for a new pairing code; renewing never sends its token.
       yield* a.sql`UPDATE peer_environment_links SET fenced = 0`;
