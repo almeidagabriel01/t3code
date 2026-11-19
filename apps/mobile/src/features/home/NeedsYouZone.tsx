@@ -33,6 +33,7 @@ import { relativeTime } from "../../lib/time";
 import { useAssistantEntries } from "../../state/assistants";
 import { useDecisionActions } from "../../state/decisions";
 import { useProject, useQuietThreadShell } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -81,6 +82,10 @@ function ItemFrame(
   );
   const nowMs = useNowMinuteMs();
   const open = useOpenThread(props.environmentId, props.threadId);
+  const machineLabel = useEnvironments().environments.find(
+    (environment) => environment.environmentId === environmentId,
+  )?.label;
+  const where = [project?.title, machineLabel].filter(Boolean).join(" · ");
   const strong = props.sidebar ? "text-drawer-foreground" : "text-foreground";
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   const iconTint = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
@@ -117,9 +122,9 @@ function ItemFrame(
         <Text className={cn("shrink font-t3-medium text-sm", strong)} numberOfLines={1}>
           {origin}
         </Text>
-        {project !== null ? (
+        {where !== "" ? (
           <Text className={cn("min-w-0 flex-1 text-xs", muted)} numberOfLines={1}>
-            · {project.title}
+            · {where}
           </Text>
         ) : (
           <View className="flex-1" />

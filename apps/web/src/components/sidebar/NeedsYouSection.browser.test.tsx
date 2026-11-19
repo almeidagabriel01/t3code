@@ -51,6 +51,7 @@ function setup() {
     canAct: true,
     answer: state.answerDecision,
     dismiss: vi.fn(),
+    reopen: vi.fn(),
   });
   vi.mocked(useQuietThreadShell).mockImplementation(
     (ref) => ({ title: `Thread ${ref?.threadId}`, projectId: "p1" }) as never,

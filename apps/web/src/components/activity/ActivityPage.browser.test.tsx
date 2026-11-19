@@ -15,9 +15,25 @@ const needsYou = makeThreadFixture({
   title: "Needs approval",
   hasPendingApprovals: true,
 });
+const finished = makeThreadFixture({
+  id: ThreadId.make("thread-c"),
+  environmentId: env,
+  title: "Finished run",
+  runtime: null,
+  lastVisitedAt: "2026-03-09T10:04:00.000Z",
+  latestRun: {
+    runId: "run-c" as never,
+    status: "completed",
+    assistantMessageId: null,
+    requestedAt: "2026-03-09T10:00:00.000Z",
+    startedAt: "2026-03-09T10:00:00.000Z",
+    completedAt: "2026-03-09T10:05:00.000Z",
+  },
+});
+const clearOne = vi.fn();
 
 vi.mock("../../state/entities", () => ({
-  useThreadShells: () => [needsYou],
+  useThreadShells: () => [needsYou, finished],
   useProjects: () => [],
   useDelegatedUnderParent: () => new Set(),
   useQuietThreadShell: () => null,
@@ -25,6 +41,10 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/decisions", () => ({
   useDecisionEntries: () => ({ open: [] }),
   useOpenDecisionThreadKeys: () => new Set(),
+  useOpenDecisionAtByThreadKey: () => new Map(),
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [{ environmentId: env, label: "Studio Mac" }] }),
 }));
 vi.mock("./useActivityRead", () => ({
   useActivityRead: () => ({
@@ -32,6 +52,8 @@ vi.mock("./useActivityRead", () => ({
     canClearRead: false,
     markAllRead: vi.fn(),
     clearRead: vi.fn(),
+    isOperable: () => true,
+    clearOne,
   }),
 }));
 vi.mock("../decisions/DecisionsSection", () => ({ DecisionsSection: () => null }));
@@ -44,6 +66,18 @@ vi.mock("../WorkspacePageHeader", () => ({
 }));
 
 describe("ActivityPage", () => {
+  it("names each row's machine and clears a finished row on its own", async () => {
+    clearOne.mockClear();
+    await using screen = await render(<ActivityPage />, { router: "/activity" });
+    await expect.element(screen.getByText("Studio Mac").first()).toBeVisible();
+    // A request has no Clear: it leaves when answered.
+    await expect
+      .element(screen.getByRole("button", { name: "Clear Needs approval" }))
+      .not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear Finished run" }));
+    expect(clearOne).toHaveBeenCalledWith("environment-one:thread-c");
+  });
+
   it("remembers a thread opened from Activity as the place Close returns to", async () => {
     await using screen = await render(<ActivityPage />, { router: "/activity" });
     const router = screen.router!;

@@ -1,4 +1,5 @@
 import {
+  canReopenDecision,
   describeSettledDecision,
   formatDecisionExpiry,
 } from "@t3tools/client-runtime/state/decisions";
@@ -297,13 +298,40 @@ function NoticeCard(props: DecisionCardProps) {
 
 function SettledCard(props: DecisionCardProps) {
   const { outcome, detail } = describeSettledDecision(props.decision);
+  const actions = useDecisionActions(props.environmentId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reopen = async () => {
+    setBusy(true);
+    setError(null);
+    const reply = await actions.reopen(props.decision.id);
+    setBusy(false);
+    if (!reply.ok) setError(reply.message);
+  };
   return (
     <View className="gap-1.5">
       <Heading decision={props.decision} onOpenThread={props.onOpenThread} />
-      <Text className="font-sans text-xs text-foreground-muted">
-        <Text className="font-t3-medium text-foreground-secondary">{outcome}</Text>
-        {detail ? ` · ${detail}` : null}
-      </Text>
+      <View className="flex-row items-center gap-2">
+        <Text className="min-w-0 flex-1 font-sans text-xs text-foreground-muted">
+          <Text className="font-t3-medium text-foreground-secondary">{outcome}</Text>
+          {detail ? ` · ${detail}` : null}
+        </Text>
+        {canReopenDecision(props.decision) ? (
+          <Button
+            label="Reopen"
+            tone="text"
+            size="compact"
+            disabled={!actions.canAct || busy}
+            loading={busy}
+            onPress={() => void reopen()}
+          />
+        ) : null}
+      </View>
+      {error ? (
+        <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }

@@ -8,6 +8,7 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { useDecisionActions } from "../../state/decisions";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { toastManager } from "../ui/toast";
 import { DecisionCard } from "./DecisionCard";
 
 /** A decision wired to its environment: answers and dismissals go to the server that asked. */
@@ -25,7 +26,26 @@ export function ConnectedDecisionCard(props: {
       decision={decision}
       canAct={actions.canAct}
       onAnswer={(input) => actions.answer(decision.id, input)}
-      onDismiss={() => actions.dismiss(decision.id)}
+      onDismiss={async () => {
+        const reply = await actions.dismiss(decision.id);
+        if (reply.ok && decision.notice !== true && decision.approvalRequestId === undefined) {
+          const toastId = toastManager.add({
+            type: "info",
+            title: "Decision dismissed",
+            description: decision.title,
+            data: { hideCopyButton: true },
+            actionProps: {
+              children: "Undo",
+              onClick: () => {
+                toastManager.close(toastId);
+                void actions.reopen(decision.id);
+              },
+            },
+          });
+        }
+        return reply;
+      }}
+      onReopen={() => actions.reopen(decision.id)}
       onUploadFile={(file) => uploadStandaloneAttachment(environmentId, file)}
       onDiscardFile={(attachmentId) => discardStandaloneAttachment(environmentId, attachmentId)}
       embedded={props.embedded ?? false}

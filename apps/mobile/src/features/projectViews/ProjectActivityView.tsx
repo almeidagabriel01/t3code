@@ -6,13 +6,16 @@ import {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
+import { IconButton } from "../../components/ui/IconButton";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
-import { useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useOpenDecisionAtByThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useThreadShells } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { buildHomeActivityEntries } from "../home/homeActivityEntries";
+import { useActivityRead } from "../home/useActivityRead";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { ProjectViewMessage } from "./ProjectViewMessage";
 
@@ -32,10 +35,16 @@ export function ProjectActivityView(props: {
   const threads = useThreadShells();
   const now = useThreadListNow(threads);
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const openDecisionAtByKey = useOpenDecisionAtByThreadKey();
+  const { environments } = useEnvironments();
+  const machineLabel = environments.find(
+    (environment) => environment.environmentId === props.environmentId,
+  )?.label;
   const entries = selectProjectActivity(
-    buildHomeActivityEntries({ threads, now, openDecisionThreadKeys }),
+    buildHomeActivityEntries({ threads, now, openDecisionThreadKeys, openDecisionAtByKey }),
     props,
   );
+  const read = useActivityRead(entries, now);
   if (entries.length === 0) {
     return (
       <ProjectViewMessage
@@ -59,11 +68,21 @@ export function ProjectActivityView(props: {
           >
             <ListRowLayout
               label={entry.thread.title}
+              accessory={
+                entry.outcome !== "needs-you" && read.isOperable(entry.thread) ? (
+                  <IconButton
+                    accessibilityLabel={`Clear ${entry.thread.title}`}
+                    icon="xmark"
+                    onPress={() => void read.clearOne(entry.key)}
+                  />
+                ) : undefined
+              }
               meta={
                 <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                   <Text className={cn("text-xs font-t3-medium", outcome.className)}>
                     {outcome.label}
                   </Text>
+                  {machineLabel ? ` · ${machineLabel}` : null}
                   {entry.at === null ? null : (
                     <>
                       {" · "}
