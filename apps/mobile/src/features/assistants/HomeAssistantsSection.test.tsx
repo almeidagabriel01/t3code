@@ -65,6 +65,8 @@ const { mocks } = vi.hoisted(() => ({
       dismissedAt?: string | null;
     }>,
     dismissTask: vi.fn(),
+    drafts: new Set<string>(),
+    discardDraft: vi.fn(),
     pin: vi.fn(),
     unpin: vi.fn(),
     liveWork: {
@@ -320,6 +322,10 @@ vi.mock("../../state/assistants", async () => {
   };
 });
 vi.mock("../../state/decisions", () => ({ useDecisionEntries: () => ({ open: [] }) }));
+vi.mock("../../state/use-composer-drafts", () => ({
+  useHasUnsentDraft: (key: string | null) => key !== null && mocks.drafts.has(key),
+  discardComposerDraft: mocks.discardDraft,
+}));
 vi.mock("../../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
   return { threadListEnvironmentsAtom: Atom.make({ pinningEnvironmentIds: new Set(["hub"]) }) };
@@ -501,7 +507,7 @@ const hostRow = (item: HostItem) => (
 const render = (
   sidebar = true,
   labels = new Map<string, string>(),
-  extra: { renderThread?: unknown; drawn?: boolean } = {},
+  extra: { renderThread?: unknown; drawn?: boolean; openConversationKey?: string } = {},
 ) =>
   act(() =>
     root.render(
@@ -514,6 +520,7 @@ const render = (
             new Map([...labels].map(([id, label]) => [id, { label, address: id }] as const))
           }
           {...(extra.renderThread ? { renderThread: extra.renderThread as never } : {})}
+          {...(extra.openConversationKey ? { openConversationKey: extra.openConversationKey } : {})}
         />
         {extra.drawn === undefined ? null : <JumpProbe drawn={extra.drawn} />}
       </RegistryProvider>,
@@ -547,6 +554,7 @@ beforeEach(() => {
     workRenders: 0,
     teamRenders: 0,
     running: new Set(),
+    drafts: new Set(),
     liveWork: { sites: [], subagents: new Map() },
     folded: new Set(),
     settled: new Set(),
@@ -570,6 +578,7 @@ beforeEach(() => {
     mocks.toggleGroup,
     mocks.pin,
     mocks.unpin,
+    mocks.discardDraft,
     mocks.info.assistant,
     mocks.info.group,
   ]) {
@@ -801,6 +810,46 @@ describe("HomeAssistantsSection", () => {
       container.querySelector<HTMLButtonElement>(`[aria-label="Needs you. ${detail}"]`)!.click(),
     );
     expect(mocks.chat).toHaveBeenCalledWith("hub", "g1", { tab: "project:p1", requestId: "m7" });
+  });
+
+  it("marks an assistant's and a group's row while it holds a draft, and discards it from the menu", async () => {
+    mocks.active = [bot(0), bot(1), bot(2)];
+    mocks.teams = [team("g1", "Finance", ["a2"])];
+    // The assistant's conversation and the group's chat, a reply to a request included, share
+    // the draft keys their composers write.
+    mocks.drafts = new Set(["hub:t0", "hub:assistant-group:g1"]);
+    render(false);
+    expect(assistantRows()).toEqual(["Bot0, Draft", "Bot1"]);
+    expect(byLabel("Finance, Draft")).not.toBeNull();
+    const marks = () =>
+      [...container.querySelectorAll('[data-testid="draft-mark"]')].map((mark) => mark.textContent);
+    expect(marks()).toEqual(["symbol:square.and.pencilDraft", "symbol:square.and.pencilDraft"]);
+    const discards = [...container.querySelectorAll('[aria-label="menu:Discard draft"]')];
+    // The row's long-press menu and its ⋯ button for Bot0, the ⋯ button for the group.
+    expect(discards).toHaveLength(3);
+    await act(async () => discards.forEach((button) => (button as HTMLButtonElement).click()));
+    expect(mocks.discardDraft.mock.calls).toEqual([
+      ["hub:t0"],
+      ["hub:t0"],
+      ["hub:assistant-group:g1"],
+    ]);
+    // The conversation on screen beside the list never marks its own draft.
+    for (const openConversationKey of ["hub:t0", "hub:assistant-group:g1"]) {
+      act(() => root.unmount());
+      root = createRoot(container);
+      render(true, new Map(), { openConversationKey });
+      expect(marks()).toHaveLength(1);
+      expect(
+        byLabel(openConversationKey === "hub:t0" ? "Bot0" : "Finance"),
+        openConversationKey,
+      ).not.toBeNull();
+    }
+    // Narrow rows keep the pen and drop the word.
+    Object.assign(mocks, { rowWidth: 200, metaWidth: 200 });
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(false);
+    expect(marks()).toEqual(["symbol:square.and.pencil", "symbol:square.and.pencil"]);
   });
 
   it("an assistant row shows its full name, the role muted, and one static indicator", () => {

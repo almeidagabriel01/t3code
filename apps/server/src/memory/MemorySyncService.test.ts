@@ -38,6 +38,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Context from "effect/Context";
 import * as FileSystem from "effect/FileSystem";
 import * as Statement from "effect/sql/Statement";
@@ -284,6 +285,102 @@ it.effect("blocked generation leaves unrelated push and cursor movement free", (
         yield* sync.shutdown;
         assert.strictEqual(yield* sync.activeResolutions, 0);
       }).pipe(Effect.provide(fixture(client, model))),
+    );
+  }),
+);
+
+it.effect("unsendable work at the queue head is discarded with its reason and the rest ships", () =>
+  Effect.gen(function* () {
+    const pushed: M.MemoryOperationId[] = [];
+    const held: string[] = [];
+    const skipped: string[] = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      const text = JSON.stringify(message);
+      if (logLevel === "Warn" && text.includes("unsendable sync work discarded")) held.push(text);
+      if (text.includes("sync work skipped")) skipped.push(text);
+    });
+    const client = peer({
+      push: (_c, i) =>
+        Effect.sync(() => {
+          pushed.push(...i.operations.map((op) => op.operationId));
+          return {
+            receipts: i.operations.map((op) =>
+              // The hub refuses one of this member's pushes.
+              op.operationId === operation(1102).operationId
+                ? {
+                    operationId: op.operationId,
+                    memoryId: op.memoryId,
+                    operationDigest: memoryOperationDigest(op),
+                    hubSequence: 1,
+                    outcome: "rejected" as const,
+                    failureCode: "conflict_changed" as const,
+                  }
+                : {
+                    operationId: op.operationId,
+                    memoryId: op.memoryId,
+                    operationDigest: memoryOperationDigest(op),
+                    hubSequence: 1,
+                    outcome: "accepted" as const,
+                  },
+            ),
+          };
+        }),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* ready;
+        for (let n = 0; n < 104; n++) yield* enqueue(1000 + n, M.MemoryId.make(id(5000 + n)));
+        const head = sql`SELECT id FROM memory_outbox WHERE kind='sync' ORDER BY id`;
+        // One sendable row ahead of the unsendable ones must not be collected twice on re-read.
+        const ids = (yield* head).map((row) => String(row.id)).slice(1);
+        yield* sql`UPDATE memory_outbox SET metadata_json=json_remove(metadata_json,'$.protocolVersion') WHERE id IN ${sql.in(ids.slice(0, 50))}`;
+        yield* sql`DELETE FROM memory_payloads WHERE payload_ref IN (SELECT json_extract(metadata_json,'$.revision.payloadRef') FROM memory_outbox WHERE id IN ${sql.in(ids.slice(50, 100))})`;
+        const sync = yield* Sync.MemorySyncService;
+        yield* sync.syncOnce;
+        assert.deepStrictEqual(
+          pushed,
+          [1000, 1101, 1102, 1103].map((n) => operation(n).operationId),
+        );
+        assert.strictEqual(held.length, 100);
+        assert.deepStrictEqual(skipped, []);
+        assert.deepStrictEqual(
+          yield* sql`SELECT status, failure_code, hold_class, count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids.slice(0, 100))} GROUP BY failure_code ORDER BY failure_code`,
+          [
+            { status: "failed", failure_code: "invalid_output", hold_class: null, n: 50 },
+            { status: "failed", failure_code: "not_found", hold_class: null, n: 50 },
+          ],
+        );
+        // The status counts this member's refused push and each discard, across cycles, and a
+        // failure that is neither stays out of that count.
+        const failures = sync
+          .syncStatus({}, Effect.void)
+          .pipe(Effect.map((status) => status.processing.hubAdmissionFailures));
+        assert.strictEqual(yield* failures, 101);
+        yield* sql`UPDATE memory_outbox SET status='failed',failure_code='source_invalidated',completed_receipt_json=NULL WHERE id=${ids[100]!} AND json_extract(completed_receipt_json,'$.outcome')='accepted'`;
+        yield* sync.syncOnce;
+        assert.strictEqual(yield* failures, 101);
+        // Nothing is left for Settings to rearm, so they are never held again.
+        const store = yield* Store.MemoryStore;
+        assert.deepStrictEqual(
+          yield* store.readPersistedHoldClasses({ memorySpaceId: space, hubEnvironmentId: remote }),
+          [],
+        );
+        // This member never compacts a hub, yet its retention pass expires them after the log
+        // window and the warning clears.
+        const expired = (yield* Clock.currentTimeMillis) + M.MEMORY_LOG_RETENTION_MS;
+        for (let after: number | null = 0; after !== null;)
+          after = (yield* store.pruneSettledWork(local, after, 64, expired)).nextRowId;
+        assert.deepStrictEqual(
+          yield* sql`SELECT count(*) AS n FROM memory_outbox WHERE id IN ${sql.in(ids)} AND status='failed'`,
+          [{ n: 0 }],
+        );
+        assert.strictEqual(yield* failures, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(fixture(client), Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      ),
     );
   }),
 );
@@ -701,6 +798,196 @@ it.effect("member checkpoint completes before pushing and supplies local replica
       }).pipe(Effect.provide(fixture(client))),
     );
   }),
+);
+
+it.effect("a ready cursor below the hub floor re-snapshots and pushes its local work", () =>
+  Effect.gen(function* () {
+    const floor = 489;
+    const pushed: M.MemoryOperationId[] = [];
+    const client = checkpointPeer({
+      join: () =>
+        Effect.succeed({
+          protocolVersion: 1,
+          memorySpaceId: space,
+          hubEnvironmentId: remote,
+          checkpointSequence: floor,
+          retentionFloor: floor,
+          snapshotToken: "floor-token",
+          causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+        }),
+      pull: (_c, input) =>
+        input.snapshotToken
+          ? Effect.succeed({
+              highWatermark: floor,
+              throughSequence: floor,
+              hasMore: false,
+              entries: [],
+              checkpoint: {
+                memorySpaceId: space,
+                checkpointSequence: floor,
+                retentionFloor: floor,
+                causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+                pageOrdinal: 0,
+                items: [],
+                revisions: [],
+                tombstones: [],
+                conflicts: [],
+                resolutions: [],
+                compactReceipts: [],
+                identities: [],
+                fences: [],
+                suppressions: [],
+                importLineage: [],
+                nextCursor: null,
+                bootstrapComplete: true,
+              },
+            })
+          : input.afterSequence < floor
+            ? Effect.fail(new M.MemoryHubError({ code: "cursor_expired" }))
+            : Effect.succeed({
+                highWatermark: floor,
+                throughSequence: floor,
+                hasMore: false,
+                entries: [],
+              }),
+      push: (_c, i) =>
+        Effect.sync(() => {
+          pushed.push(...i.operations.map((op) => op.operationId));
+          return {
+            receipts: i.operations.map((op) => ({
+              operationId: op.operationId,
+              memoryId: op.memoryId,
+              operationDigest: memoryOperationDigest(op),
+              hubSequence: floor + 1,
+              outcome: "accepted" as const,
+            })),
+          };
+        }),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* Store.MemoryStore;
+        const sync = yield* Sync.MemorySyncService;
+        yield* ready;
+        yield* sql`UPDATE memory_sync_cursors SET after_sequence=${floor - 1}`;
+        yield* enqueue(20);
+        yield* sync.syncOnce;
+        const progress = yield* store.readBootstrap({
+          memorySpaceId: space,
+          hubEnvironmentId: remote,
+        });
+        assert.strictEqual(progress.state, "ready");
+        assert.isAtLeast(yield* store.readCursor(space, remote), floor);
+        assert.deepStrictEqual(pushed, [operation(20).operationId]);
+        assert.strictEqual((yield* sync.syncStatus({}, Effect.void)).state, "online");
+      }).pipe(Effect.provide(fixture(client))),
+    );
+  }),
+);
+
+it.effect(
+  "a ready cursor below the hub floor stays ready through a failed join, then re-snapshots",
+  () =>
+    Effect.gen(function* () {
+      const floor = 489;
+      const pushed: M.MemoryOperationId[] = [];
+      let joins = 0;
+      const client = checkpointPeer({
+        join: () =>
+          joins++ === 0
+            ? Effect.fail(new M.MemoryHubError({ code: "unavailable" }))
+            : Effect.succeed({
+                protocolVersion: 1,
+                memorySpaceId: space,
+                hubEnvironmentId: remote,
+                checkpointSequence: floor,
+                retentionFloor: floor,
+                snapshotToken: "floor-token",
+                causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+              }),
+        pull: (_c, input) =>
+          input.snapshotToken
+            ? Effect.succeed({
+                highWatermark: floor,
+                throughSequence: floor,
+                hasMore: false,
+                entries: [],
+                checkpoint: {
+                  memorySpaceId: space,
+                  checkpointSequence: floor,
+                  retentionFloor: floor,
+                  causalBoundary: { checkpointSequence: floor, boundaryId: "floor-boundary" },
+                  pageOrdinal: 0,
+                  items: [],
+                  revisions: [],
+                  tombstones: [],
+                  conflicts: [],
+                  resolutions: [],
+                  compactReceipts: [],
+                  identities: [],
+                  fences: [],
+                  suppressions: [],
+                  importLineage: [],
+                  nextCursor: null,
+                  bootstrapComplete: true,
+                },
+              })
+            : input.afterSequence < floor
+              ? Effect.fail(new M.MemoryHubError({ code: "cursor_expired" }))
+              : Effect.succeed({
+                  highWatermark: floor,
+                  throughSequence: floor,
+                  hasMore: false,
+                  entries: [],
+                }),
+        push: (_c, i) =>
+          Effect.sync(() => {
+            pushed.push(...i.operations.map((op) => op.operationId));
+            return {
+              receipts: i.operations.map((op) => ({
+                operationId: op.operationId,
+                memoryId: op.memoryId,
+                operationDigest: memoryOperationDigest(op),
+                hubSequence: floor + 1,
+                outcome: "accepted" as const,
+              })),
+            };
+          }),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const store = yield* Store.MemoryStore;
+          const sync = yield* Sync.MemorySyncService;
+          yield* ready;
+          yield* sql`UPDATE memory_sync_cursors SET after_sequence=${floor - 1}`;
+          yield* enqueue(20);
+          yield* sync.syncOnce.pipe(Effect.ignore);
+          const held = yield* store.readBootstrap({
+            memorySpaceId: space,
+            hubEnvironmentId: remote,
+          });
+          assert.strictEqual(held.state, "ready");
+          assert.strictEqual(yield* store.readCursor(space, remote), floor - 1);
+          assert.deepStrictEqual(pushed, []);
+          assert.lengthOf(
+            yield* sql`SELECT id FROM memory_outbox WHERE kind='sync' AND status='pending'`,
+            1,
+          );
+          yield* TestClock.adjust(1000);
+          yield* sync.syncOnce;
+          const progress = yield* store.readBootstrap({
+            memorySpaceId: space,
+            hubEnvironmentId: remote,
+          });
+          assert.strictEqual(progress.state, "ready");
+          assert.isAtLeast(yield* store.readCursor(space, remote), floor);
+          assert.deepStrictEqual(pushed, [operation(20).operationId]);
+          assert.strictEqual((yield* sync.syncStatus({}, Effect.void)).state, "online");
+        }).pipe(Effect.provide(fixture(client))),
+      );
+    }),
 );
 
 it.effect("partial member checkpoint preserves token and keeps push blocked across restart", () =>
@@ -1859,6 +2146,19 @@ it.effect("status selects disabled and bootstrapping without requiring a bound r
           yield* sync.syncOnce;
           assert.strictEqual((yield* status()).state, "online");
           assert.strictEqual((yield* status()).lastSuccessfulSyncAtUtc, timestamp);
+          const rebooted = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const fresh = yield* Sync.MemorySyncService;
+              return yield* fresh.syncStatus({}, Effect.void);
+            }).pipe(
+              Effect.provide(
+                Layer.fresh(Sync.layer).pipe(
+                  Layer.provide(Layer.succeed(Sync.MemorySyncRuntime, adapter)),
+                ),
+              ),
+            ),
+          );
+          assert.strictEqual(rebooted.lastSuccessfulSyncAtUtc, timestamp);
           const latestSpace = M.MemorySpaceId.make(id(999));
           const sql = yield* SqlClient.SqlClient;
           yield* sql`INSERT INTO memory_sync_cursors(space,hub_environment_id,after_sequence,bootstrap_state) VALUES (${latestSpace},${remote},0,'ready')`;
@@ -6235,6 +6535,73 @@ it.effect.each(["protocol", "availability"] as const)(
     }).pipe(
       Effect.provide(fixture(peer({ preflight: () => Effect.succeed(recoveredDescriptor) }))),
     ),
+);
+it.effect("Settings reconcile rearms held work on the device that hosts the hub", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO memory_hub_members(space,environment,credential_digest,credential_version,status) VALUES (${space},${local},${"a".repeat(64)},1,'active')`;
+      yield* sql`INSERT INTO memory_sync_cursors(space,hub_environment_id,after_sequence,bootstrap_state) VALUES (${space},${local},0,'ready')`;
+      yield* changeHub(1, { mode: "hub", memorySpaceId: space });
+      yield* enqueue(1);
+      yield* sql`UPDATE memory_outbox SET status='retry',next_attempt_at=${Number.MAX_SAFE_INTEGER},failure_code='unsupported_protocol',hold_class='protocol' WHERE kind='sync'`;
+      const sync = yield* Sync.MemorySyncService;
+      const result = yield* sync.reconcileHub(
+        { ...reconcileInput, expectedVersion: 2 },
+        Effect.void,
+      );
+      assert.deepStrictEqual(result.rearmedClasses, ["protocol"]);
+      assert.deepStrictEqual(yield* sql`SELECT hold_class FROM memory_outbox WHERE kind='sync'`, [
+        { hold_class: null },
+      ]);
+      // The hub host's own change goes through its outbox, so the hub refusing it counts here.
+      const actual = yield* Hub.MemoryHubService;
+      const refusing = Hub.MemoryHubService.of({
+        ...actual,
+        pull: (i) =>
+          Effect.succeed({
+            highWatermark: i.afterSequence,
+            throughSequence: i.afterSequence,
+            hasMore: false,
+            entries: [],
+          }),
+        push: (input) =>
+          Effect.succeed({
+            receipts: input.operations.map((op) => ({
+              operationId: op.operationId,
+              memoryId: op.memoryId,
+              operationDigest: memoryOperationDigest(op),
+              hubSequence: 1,
+              outcome: "rejected" as const,
+              failureCode: "conflict_changed" as const,
+            })),
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* Sync.MemorySyncService;
+        yield* host.syncOnce;
+        assert.strictEqual(
+          (yield* host.syncStatus({}, Effect.void)).processing.hubAdmissionFailures,
+          1,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(Sync.layer).pipe(
+            Layer.provide(Layer.succeed(Hub.MemoryHubService, refusing)),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        fixture(
+          peer({ preflight: () => Effect.die("the local hub needs no probe") }),
+          undefined,
+          false,
+          true,
+        ),
+      ),
+    ),
+  ),
 );
 it.effect.each(["identity", "authorization"] as const)(
   "Settings reconcile refuses permanent %s hold without probing or releasing it",

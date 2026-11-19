@@ -324,6 +324,7 @@ export const makeDeferredWork = (
   });
   const completeSummaryWork = Effect.fn("MemoryStore.completeSummaryWork")(function* (
     work: MemoryWork,
+    refused?: M.MemoryFailureCode,
   ) {
     return yield* transact(
       Effect.gen(function* () {
@@ -342,7 +343,7 @@ export const makeDeferredWork = (
           current.claimedUntil <= (yield* Clock.currentTimeMillis)
         )
           return false;
-        yield* finishWork(work.id, "completed");
+        yield* finishWork(work.id, "completed", undefined, refused);
         const meta = work.metadata;
         yield* stored(
           "summary-completion-clock",

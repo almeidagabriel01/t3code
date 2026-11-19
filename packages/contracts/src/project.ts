@@ -256,6 +256,8 @@ export type ProjectEntry = typeof ProjectEntry.Type;
 export const ProjectSearchEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
+  // Hidden entries are still being scanned; ask again for the full answer.
+  incomplete: Schema.optional(Schema.Boolean),
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 
@@ -300,6 +302,8 @@ export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 export const ProjectListEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
+  // Hidden entries are still being scanned; ask again for the full answer.
+  incomplete: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 

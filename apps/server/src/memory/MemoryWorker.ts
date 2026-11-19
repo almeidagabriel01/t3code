@@ -30,7 +30,11 @@ import { selectContinuationCandidates } from "./memoryContinuationScan.ts";
 import * as SourceScan from "./memorySourceScan.ts";
 import { catchUpWakes, terminalRunStatuses as terminal } from "./memoryCatchUpWakes.ts";
 import { MemoryWorkerError } from "./MemoryWorkerError.ts";
-import { generateSummaryChunks, type SummaryPromotions } from "./memorySummaryChunks.ts";
+import {
+  generateSummaryChunks,
+  type SummaryPromotions,
+  type SummarySource,
+} from "./memorySummaryChunks.ts";
 import { resolveThreadProject } from "./MemorySummaryCommit.ts";
 
 export { MemoryWorkerError };
@@ -64,6 +68,18 @@ const continuationPageSize = 100;
 /** Outbox rows one retention statement examines; the pass yields to the event loop between pages. */
 const MEMORY_RETENTION_PAGE_ROWS = 64;
 const isFailureCode = Schema.is(M.MemoryFailureCode);
+/** Source outcomes that never change by retrying: the thread went away or was rolled back. */
+const SETTLED_SOURCE_CODES: ReadonlySet<M.MemoryFailureCode> = new Set([
+  "source_invalidated",
+  "source_unavailable",
+]);
+/** Outcomes that cancel a summary run; every other code fails or retries it. */
+const CANCELLING_CODES: ReadonlySet<M.MemoryFailureCode> = new Set([
+  ...SETTLED_SOURCE_CODES,
+  "forgotten",
+  "revision_changed",
+  "thread_lineage_incomplete",
+]);
 const safeCode = (error: unknown): M.MemoryFailureCode => {
   if (typeof error === "object" && error !== null) {
     if ("code" in error && isFailureCode(error.code)) return error.code;
@@ -126,11 +142,16 @@ const make = Effect.gen(function* () {
       const thread = yield* query(
         sql`SELECT 1 FROM orchestration_v2_projection_threads WHERE thread_id=${meta.sourceThread.threadId} AND deleted_at IS NULL`,
       );
-      if (!thread.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
+      if (!thread.length) return yield* new MemoryWorkerError({ code: "source_unavailable" });
       if (yield* query(SourceScan.isDelegatedChildThread(sql, meta.sourceThread.threadId)))
-        return yield* new MemoryWorkerError({ code: "source_invalidated" });
+        return yield* new MemoryWorkerError({ code: "source_unavailable" });
+      // The scan is frozen at the observed mark, so new turns belong to the next chunk and an
+      // always-busy thread still progresses. What changes the text already read is a deletion, a
+      // rollback, or an update to a message the scan read by the watermark (an edit); a version
+      // still streaming then was never read, so its final text is not an edit.
+      const sourceThreadId = meta.sourceThread.threadId;
       const newer = yield* query(
-        sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${meta.sourceThread.threadId} AND sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (event_type='thread.deleted' OR event_type='message.updated' OR (event_type='run.updated' AND json_extract(payload_json,'$.status') IN ('completed','failed','interrupted','cancelled','rolled_back'))) LIMIT 1`,
+        sql`SELECT 1 FROM orchestration_events e WHERE e.application_event_version=2 AND e.aggregate_kind='thread' AND e.stream_id=${sourceThreadId} AND e.sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (e.event_type='thread.deleted' OR (e.event_type='run.updated' AND json_extract(e.payload_json,'$.status')='rolled_back') OR (e.event_type='message.updated' AND EXISTS (SELECT 1 FROM orchestration_events p WHERE p.application_event_version=2 AND p.aggregate_kind='thread' AND p.stream_id=${sourceThreadId} AND p.event_type='message.updated' AND p.sequence<=${meta.sourceWatermark.throughSequence} AND json_extract(p.payload_json,'$.id')=json_extract(e.payload_json,'$.id') AND ${sql.unsafe(SourceScan.usableMessageSql("p.payload_json"))}))) LIMIT 1`,
       );
       if (newer.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
       const excluded = yield* store.readSuppressions(
@@ -304,9 +325,8 @@ const make = Effect.gen(function* () {
                 }),
               )
             : [];
-          const continuationSequences = new Set(continuations.map((row) => row.sequence));
           const actions: Array<{ kind: "delete" | "cancel"; thread: M.ScopedThreadRef }> = [];
-          const work: Store.MemoryWork[] = [];
+          const work: Array<Store.MemoryWork & { readonly failureCode?: M.MemoryFailureCode }> = [];
           // What the write phase must find unchanged before applying this plan.
           const progress = new Map<string, Progress>();
           // Deletes apply only in the write phase, so later rows of a deleted thread skip here.
@@ -391,8 +411,8 @@ const make = Effect.gen(function* () {
             const chunk = yield* readSourceIn(candidate).pipe(
               Effect.catchTags({
                 MemoryWorkerError: (error) =>
-                  error.code === "source_invalidated"
-                    ? Effect.succeed(null)
+                  SETTLED_SOURCE_CODES.has(error.code)
+                    ? Effect.succeed(error.code)
                     : Effect.succeed({
                         messages: [],
                         // Persist a work item so execute owns failure reporting and retry policy.
@@ -405,15 +425,15 @@ const make = Effect.gen(function* () {
               }),
             );
             if (candidate.metadata.kind !== "summary") continue;
-            if (!chunk) {
+            if (typeof chunk === "string") {
               // Events only append, so a run invalidated by later events stays invalidated.
-              // Record that as settled, or every scan would read this source again.
-              if (continuationSequences.has(row.sequence))
-                work.push({
-                  ...candidate,
-                  id: `${workId}:chunk:${row.sequence}`,
-                  status: "cancelled",
-                });
+              // Record it as settled with its reason, so it is neither re-read nor silent.
+              work.push({
+                ...candidate,
+                id: `${workId}:chunk:${row.sequence}`,
+                status: "cancelled",
+                failureCode: chunk,
+              });
               continue;
             }
             const chunkId = `${workId}:chunk:${chunk.watermark.throughSequence}`;
@@ -464,11 +484,11 @@ const make = Effect.gen(function* () {
           }
           for (const { kind, thread } of plan.actions) {
             if (kind === "cancel") {
-              yield* store.cancelThreadWork(thread);
+              yield* store.cancelThreadWork(thread, "source_invalidated");
               continue;
             }
             yield* store.deleteThreadLineage(thread);
-            yield* store.cancelThreadWork(thread);
+            yield* store.cancelThreadWork(thread, "source_unavailable");
             yield* store
               .forgetLocalIntent(environmentId, `${environmentId}:${thread.threadId}:summary`)
               .pipe(
@@ -483,6 +503,13 @@ const make = Effect.gen(function* () {
             throughWatermark: plan.throughWatermark,
             work: plan.work,
           });
+          for (const settled of plan.work)
+            if (settled.failureCode !== undefined && settled.metadata.kind === "summary")
+              yield* Effect.logWarning("memory: summary source settled without a run", {
+                workId: settled.id,
+                threadId: settled.metadata.sourceThread.threadId,
+                failureCode: settled.failureCode,
+              });
           return true;
         }),
       )
@@ -546,7 +573,12 @@ const make = Effect.gen(function* () {
               work.memoryId!,
             );
             if (current.tombstone || current.generation !== metadata.generation) {
-              yield* store.finishWork(work.id, "cancelled");
+              const code = current.tombstone ? "forgotten" : "revision_changed";
+              yield* store.finishWork(work.id, "cancelled", undefined, code);
+              yield* Effect.logWarning("memory: rebuild work cancelled", {
+                workId: work.id,
+                failureCode: code,
+              });
               return;
             }
             const repaired = yield* maintenance.repair({
@@ -607,10 +639,19 @@ const make = Effect.gen(function* () {
       const dependencySpace = M.MemorySpaceId.make(
         work.space.startsWith("_local:") ? Service.memoryStableUuid(work.space) : work.space,
       );
-      if (previousSummary)
-        yield* Service.validateSummaryDependencies(dependencySpace, previousSummary).pipe(
+      // A dependency the user forgot or that is held: the summary text may carry it, so none is
+      // written, but the user's own standing rules still are (they cite only typed messages).
+      const admits = (payload: M.MemoryPayload) =>
+        Service.validateSummaryDependencies(dependencySpace, payload).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.as(true),
+          Effect.catchTags({
+            MemoryStoreConflict: (error) =>
+              error.code === "source_invalidated" ? Effect.succeed(false) : Effect.fail(error),
+          }),
         );
+      let refused = previousSummary !== undefined && !(yield* admits(previousSummary));
+      if (refused) previousSummary = undefined;
       if (previousSummary && scanMemoryValue(previousSummary).kind !== "allowed")
         return yield* new MemoryWorkerError({ code: "secret_detected" });
       let sourceWork = work;
@@ -622,7 +663,7 @@ const make = Effect.gen(function* () {
       const readDependencies = Effect.gen(function* () {
         const lineage = yield* store.readThreadLineage(meta.sourceThread, dependencySpace);
         if (lineage.state !== "tracked")
-          return yield* new MemoryWorkerError({ code: "source_invalidated" });
+          return yield* new MemoryWorkerError({ code: "thread_lineage_incomplete" });
         const deps = [
           ...new Set([
             ...lineage.revisions,
@@ -640,12 +681,11 @@ const make = Effect.gen(function* () {
             strict,
           ),
         );
-        yield* Service.validateSummaryDependencies(dependencySpace, payload).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql),
-        );
-        return deps;
+        return { deps, admitted: yield* admits(payload) };
       });
-      const dependencies = yield* readDependencies;
+      const admission = yield* readDependencies;
+      const dependencies = admission.deps;
+      refused ||= !admission.admitted;
       // Standing rules need a hub space, like promotions. Rules are best effort: a project that
       // cannot be resolved, or rules that cannot be read, only narrow what the model is asked for.
       const rulesProject = work.space.startsWith("_local:")
@@ -665,30 +705,38 @@ const make = Effect.gen(function* () {
       const recheckSource = Effect.gen(function* () {
         yield* readSource(work);
         const latest = yield* readDependencies;
+        // A refused run writes no summary text, so only a summary needs its inputs unchanged.
+        if (refused) return;
+        if (!latest.admitted) return yield* new MemoryWorkerError({ code: "forgotten" });
         if (
-          latest.length !== dependencies.length ||
-          latest.some((id) => !dependencies.includes(id))
+          latest.deps.length !== dependencies.length ||
+          latest.deps.some((id) => !dependencies.includes(id))
         )
           return yield* new MemoryWorkerError({ code: "source_invalidated" });
-        if (previousSummary)
-          yield* Service.validateSummaryDependencies(dependencySpace, previousSummary).pipe(
-            Effect.provideService(SqlClient.SqlClient, sql),
-          );
+        if (previousSummary && !(yield* admits(previousSummary)))
+          return yield* new MemoryWorkerError({ code: "forgotten" });
         if (previousSummary && !(yield* summaryEvidenceValid(work, previousSummary)))
           return yield* new MemoryWorkerError({ code: "source_invalidated" });
       });
+      // Only the user's own messages reach the model on a refused run: rules may cite nothing else,
+      // and the rest of the transcript may echo what was forgotten.
+      const rulesOnly = (chunk: SummarySource): SummarySource => {
+        const typed = new Set<string>(existingRules ? chunk.userTypedMessageIds : []);
+        return { ...chunk, messages: chunk.messages.filter((m) => typed.has(m.messageId)) };
+      };
+      const sourced = (chunk: SummarySource) => (refused ? rulesOnly(chunk) : chunk);
       const generated = yield* Effect.scoped(
         Effect.gen(function* () {
           const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "memory-generation-" });
           const generate = generation.generateMemorySummary;
           const holdKey = yield* hold.keyFor(meta.modelSelection);
           return yield* generateSummaryChunks({
-            first: source,
+            first: sourced(source),
             throughSequence: meta.sourceWatermark.throughSequence,
             previousSummary,
             dependencies,
             // Consolidation is the daily durability pass, so only it proposes promotions.
-            promote: work.kind === "consolidate" && !work.space.startsWith("_local:"),
+            promote: !refused && work.kind === "consolidate" && !work.space.startsWith("_local:"),
             buildInput: (chunk, previous, promote) =>
               query(
                 decodeInput(
@@ -713,7 +761,9 @@ const make = Effect.gen(function* () {
                 ),
               ),
             readFrom: (fromSequence) =>
-              readSource({ ...work, metadata: { ...meta, fromSequence } }),
+              readSource({ ...work, metadata: { ...meta, fromSequence } }).pipe(
+                Effect.map(sourced),
+              ),
             renewClaim,
             generate: (input) =>
               generate
@@ -735,7 +785,15 @@ const make = Effect.gen(function* () {
           });
         }),
       );
-      const summary = generated.summary;
+      const summary = refused ? undefined : generated.summary;
+      const refusal = refused ? ("forgotten" as const) : undefined;
+      if (refusal)
+        yield* Effect.logWarning("memory: summary refused, rules kept", {
+          workId: work.id,
+          threadId: meta.sourceThread.threadId,
+          failureCode: refusal,
+          rules: generated.rules.reduce((count, batch) => count + batch.rules.length, 0),
+        });
       // A run with nothing new to summarize can still promote from the standing hub summary.
       const commitInput = summary
         ? summary.input
@@ -747,7 +805,7 @@ const make = Effect.gen(function* () {
         yield* store.transact(
           Effect.gen(function* () {
             yield* recheckSource;
-            if (!(yield* store.completeSummaryWork(owned)))
+            if (!(yield* store.completeSummaryWork(owned, refusal)))
               return yield* new MemoryWorkerError({ code: "attempt_expired" });
           }),
         );
@@ -806,8 +864,9 @@ const make = Effect.gen(function* () {
           input: commitInput,
           generated: summary?.output ?? null,
           expectedHeads: current!.heads,
+          ...(refusal ? { refused: refusal } : {}),
           promotions: yield* promotionsFor(
-            generated.promotions,
+            refused ? undefined : generated.promotions,
             meta.sourceThread,
             M.MemorySpaceId.make(work.space),
           ),
@@ -824,11 +883,9 @@ const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.gen(function* () {
           const code = safeCode(error);
-          if (
-            code === "source_invalidated" ||
-            code === "forgotten" ||
-            code === "revision_changed"
-          ) {
+          const threadId =
+            work.metadata.kind === "summary" ? work.metadata.sourceThread.threadId : undefined;
+          if (CANCELLING_CODES.has(code)) {
             yield* store.transact(
               Effect.gen(function* () {
                 const current = yield* store.readWork(work.id);
@@ -837,9 +894,14 @@ const make = Effect.gen(function* () {
                   current.claimedBy === work.claimedBy &&
                   current.attempt === work.attempt
                 )
-                  yield* store.finishWork(work.id, "cancelled");
+                  yield* store.finishWork(work.id, "cancelled", undefined, code);
               }),
             );
+            yield* Effect.logWarning("memory: summary work cancelled", {
+              workId: work.id,
+              threadId,
+              failureCode: code,
+            });
             return;
           }
           const now = yield* Clock.currentTimeMillis;
@@ -848,6 +910,12 @@ const make = Effect.gen(function* () {
             yield* store.retryWork(owned, now);
             return;
           }
+          yield* Effect.logWarning("memory: summary work failed", {
+            workId: work.id,
+            threadId,
+            failureCode: code,
+            attempt: work.attempt,
+          });
           if (work.metadata.kind === "summary") {
             const recorded = yield* store.failGenerationAttempt({
               work: owned,
@@ -1034,7 +1102,7 @@ const make = Effect.gen(function* () {
         while (after !== null) {
           const page: { readonly nextRowId: number | null } = yield* sweepStage(
             "maintenance",
-            store.pruneSettledSummaryWork(environmentId, after, MEMORY_RETENTION_PAGE_ROWS),
+            store.pruneSettledWork(environmentId, after, MEMORY_RETENTION_PAGE_ROWS, now),
           );
           after = page.nextRowId;
           yield* Effect.yieldNow;

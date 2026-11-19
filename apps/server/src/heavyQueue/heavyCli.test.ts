@@ -245,12 +245,48 @@ describe("t3 heavy", () => {
     expect(await holder.exited).toBe(0);
   });
 
-  it("reports a missing program and a program that cannot start", async () => {
+  it.each([
+    // [case, options, command, exit code, text, stream]
+    ["no command", ["--"], [], 2, "Usage: t3 heavy", "err"],
+    ["no command and no separator", [], [], 2, "Usage: t3 heavy", "err"],
+    ["--help", [], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["-h", [], ["-h"], 0, "Usage: t3 heavy", "out"],
+    ["--help among options", ["--now", "--help"], [], 0, "Usage: t3 heavy", "out"],
+    [
+      "--help with a command",
+      ["--now", "--help", "--"],
+      ["vp", "test"],
+      2,
+      "put it after `--`",
+      "err",
+    ],
+    ["--help after the separator", ["--"], ["--help"], 0, "Usage: t3 heavy", "out"],
+    ["an unknown option", [], ["-x"], 2, "use `--` before the command", "err"],
+    ["an unknown option after the separator", ["--"], ["-x"], 2, "use `--` before", "err"],
+    ["an option missing its value", [], ["--name"], 2, "use `--` before", "err"],
+  ] as const)(
+    "%s never queues and answers with its usage",
+    async (_, options, command, code, text, stream) => {
+      const dir = tempDir();
+      const run = heavy(dir, command, {}, options);
+      expect(await run.exited).toBe(code);
+      expect(stream === "out" ? run.stdout() : run.stderr()).toContain(text);
+      expect(Queue.readDoc(dir)).toMatchObject({ entries: [], events: [] });
+    },
+  );
+
+  it.each([
+    ["a command's own --help", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "--help"], "--help\n"],
+    ["a command's own -x", ["/bin/sh", "-c", 'printf "%s\\n" "$0"', "-x"], "-x\n"],
+  ])("runs %s after the separator", async (_, command, out) => {
     const dir = tempDir();
-    const none = heavy(dir, []);
-    expect(await none.exited).toBe(2);
-    expect(none.stderr()).toContain("Usage: t3 heavy");
-    expect(none.stderr()).toContain("t3 heavy routes [--forget <key|all>]");
+    const run = heavy(dir, command);
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe(out);
+  });
+
+  it("reports a program that cannot start", async () => {
+    const dir = tempDir();
     const missing = heavy(dir, ["/nonexistent/t3-heavy-program"]);
     expect(await missing.exited).toBe(127);
     expect(Queue.read(dir)).toEqual([]);
@@ -867,6 +903,12 @@ describe("t3 heavy", () => {
         { cwd: dir, encoding: "utf8" },
       );
       expect(listed).toContain(key);
+      const help = NodeChildProcess.execFileSync(
+        process.execPath,
+        [BIN, "heavy", "routes", "--queue-dir", dir, "--help"],
+        { cwd: dir, encoding: "utf8" },
+      );
+      expect(help).toBe("Usage: t3 heavy routes [--forget <key|all>]\n");
       NodeChildProcess.execFileSync(
         process.execPath,
         [BIN, "heavy", "routes", "--queue-dir", dir, "--forget", key],
@@ -1087,7 +1129,6 @@ describe("t3 heavy", () => {
         true,
         "command not found on this Mac either: t3-no-such-tool",
       ],
-      ["an option-shaped word", "--help", false, false, "--help: not a command"],
     ])(
       "a program neither machine can run (%s) ends 127 saying why, with no Linux fault",
       async (_, program, project, reaches, reason) => {
@@ -1941,7 +1982,22 @@ describe("t3 heavy", () => {
         false,
       ],
       ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
-      ["bare remoto, no command", ["remoto"], "/w", "remoto", [], false],
+      [
+        "login shell remoto after cd",
+        [SH, "-lc", "cd apps/server && remoto vp test run"],
+        "/w/apps/server",
+        SH,
+        ["-lc", "vp test run"],
+        true,
+      ],
+      [
+        "--login shell remoto",
+        [SH, "--login", "-c", "remoto vp test"],
+        "/w",
+        SH,
+        ["--login", "-c", "vp test"],
+        true,
+      ],
     ] as const;
     const modes = [
       ["queue on, Runner on", true, true],
@@ -1968,6 +2024,62 @@ describe("t3 heavy", () => {
           : { kind: "queue", cwd, program, args, where: remoto ? "linux" : undefined },
       );
     });
+
+    // [case, command, an agent's `remoto` T3 takes out, what the refusal says]
+    const notCommands = [
+      [
+        "bare remoto --help",
+        ["remoto", "--help"],
+        true,
+        "remoto runs a command; `--help` is not one",
+      ],
+      [
+        "wrapped remoto -h",
+        [SH, "-c", "remoto -h"],
+        true,
+        "remoto runs a command; `-h` is not one",
+      ],
+      [
+        "remoto -x after cd",
+        [SH, "-c", "cd apps/server && remoto -x"],
+        true,
+        "remoto runs a command; `-x` is not one",
+      ],
+      ["bare remoto alone", ["remoto"], true, "remoto <command> [args...]"],
+      ["wrapped option", [SH, "-c", "--help"], false, "`--help` is not a command"],
+      ["quoted option", [SH, "-c", "'-x' a"], false, "`-x` is not a command"],
+      ["login shell option", [SH, "-lc", "--x"], false, "`--x` is not a command"],
+      ["clustered -c option", [SH, "-ec", "-x"], false, "`-x` is not a command"],
+      ["--login -c option", [SH, "--login", "-c", "-x"], false, "`-x` is not a command"],
+    ] as const;
+
+    it.each(
+      notCommands.flatMap((shape) =>
+        modes.map((mode) => [shape[0], mode[0], shape, mode] as const),
+      ),
+    )(
+      "refuses to queue %s, %s",
+      (_shape, _mode, [, command, remoto, text], [, enabled, runner]) => {
+        const launch = heavyLaunch(
+          { program: command[0], args: command.slice(1), where: undefined },
+          "/w",
+          "/home/me",
+          () => ({ enabled, runner }),
+          false,
+        );
+        // Run as written when T3 would not queue it: what the caller sees is the same as without T3.
+        if ((!enabled && !runner) || (remoto && !runner))
+          expect(launch).toEqual({ kind: "direct" });
+        else {
+          expect(launch).toMatchObject({ kind: "refused" });
+          if (launch.kind === "refused") {
+            expect(launch.reason).toContain(text);
+            // An agent that typed `remoto` never called `t3 heavy`: the answer speaks of `remoto`.
+            if (remoto) expect(launch.reason).not.toContain("t3 heavy");
+          }
+        }
+      },
+    );
 
     it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
       const seen: string[] = [];
@@ -2524,6 +2636,7 @@ describe("t3 heavy", () => {
       name: undefined,
       priority: undefined,
       now: false,
+      help: undefined,
       program: "vp",
       args: ["test"],
     });

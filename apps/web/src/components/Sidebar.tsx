@@ -402,8 +402,6 @@ function useSidebarThreads(input: {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly projectGroups: readonly SidebarProjectSnapshot[];
-  /** Threads an assistant owns; Teams draws them, so the project lists leave them out. */
-  readonly ownedThreadKeys: ReadonlySet<string>;
 }) {
   const {
     projectScopeKey,
@@ -415,7 +413,6 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups,
-    ownedThreadKeys,
   } = input;
   const threadOrder = useClientSettings((s) => s.sidebarThreadOrder);
   const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
@@ -459,17 +456,13 @@ function useSidebarThreads(input: {
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
-  // Search still lists owned threads; only the project lists, and what numbers them, drop them.
-  const inProjects = (thread: EnvironmentThreadShell) =>
-    !ownedThreadKeys.has(threadShellKey(thread));
-  const projectSettledThreads = settledThreads.filter(inProjects);
   const settledCount =
-    projectSettledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
   const projectLayout = useSidebarProjectLayout({
     projectGroups,
-    pinnedThreads: pinnedThreads.filter(inProjects),
-    unsettledThreads: [...activeThreads, ...snoozedThreads].filter(inProjects),
-    settledThreads: projectSettledThreads.filter(
+    pinnedThreads,
+    unsettledThreads: [...activeThreads, ...snoozedThreads],
+    settledThreads: settledThreads.filter(
       (thread) =>
         olderSettledShelf.isListed(thread) || threadShellKey(thread) === routeRowThreadKey,
     ),
@@ -941,6 +934,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const zones = useSidebarZones();
+  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
@@ -952,11 +946,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    // An owned thread is drawn under its assistant, so it never widens the project scope.
-    findThread: (key) =>
-      zones.ownedThreadKeys.has(key)
-        ? undefined
-        : threads.find((candidate) => threadShellKey(candidate) === key),
+    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    listedInTeams: (thread) => teamsShown && zones.ownerOf(thread).kind === "assistant",
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1101,7 +1092,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups: scopedProjectGroups.length === 0 ? projectGroups : scopedProjectGroups,
-    ownedThreadKeys: zones.ownedThreadKeys,
   });
   const subagentChildrenByParent = activeSubagentChildrenByParent(threads);
 

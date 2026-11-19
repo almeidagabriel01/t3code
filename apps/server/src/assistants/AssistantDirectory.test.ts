@@ -1,12 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { assistantNote } from "./assistantNote.ts";
+import { waitWakeId } from "../autonomy/needsYou.ts";
+import { assistantNote, SETTLED_WAIT_RUN_WINDOW, settledWaitsForTurn } from "./assistantNote.ts";
 import * as Directory from "./AssistantDirectory.ts";
 import { effectiveProjectIdsOf, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
 
@@ -40,6 +42,81 @@ it.effect("the turn's note carries the groups, except in front of a slash comman
     );
     assert.strictEqual(yield* assistantNote(Option.none(), thread("ceo"), "hi"), "");
   }).pipe(Effect.provide(directoryLayer)),
+);
+
+it.effect(
+  "a wait settled after its notice was read rides once with the next turn, and no other wait does",
+  () =>
+    Effect.gen(function* () {
+      const directory = Option.some(yield* Directory.AssistantDirectory);
+      const sql = yield* SqlClient.SqlClient;
+      const jarvis = ThreadId.make("assistant:jarvis:1");
+      const at = (minute: number) => `2026-01-02T00:${String(minute).padStart(2, "0")}:00.000Z`;
+      const request = (id: string, status: string, resolvedAt: string | null, kind = "command") =>
+        sql`
+          INSERT INTO orchestration_v2_projection_runtime_requests
+            (runtime_request_id, thread_id, node_id, kind, status, created_at, resolved_at, payload_json)
+          VALUES (${id}, 'thread-task', 'n1', ${kind}, ${status}, ${at(0)}, ${resolvedAt}, '{}')`;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, payload_json)
+        VALUES ('thread-task', 'p1', 'Queue limits', 'claudeAgent', 'full-access', 'default',
+          ${at(0)}, ${at(0)}, '{}')`;
+      // Read at 01 and settled at 06, after the turn that began at 05.
+      yield* request("r-after", "resolved", at(6));
+      // Settled at 03: the turn that began at 04 carried it, so the one at 05 does not.
+      yield* request("r-earlier", "resolved", at(3), "user_input");
+      yield* request("r-open", "pending", null);
+      // Its notice was still queued when it settled, so it was taken back unread.
+      yield* request("r-queued", "cancelled", at(4));
+      yield* sql`
+        INSERT INTO decisions
+          (decision_id, from_thread_id, project_id, client_request_id, thread_title, title, context,
+            options_json, status, answered_at, created_at)
+        VALUES ('d-done', 'thread-task', 'p1', 'ask:1', 'Queue limits', 'Ship the toggle?', '',
+          '[]', 'answered', ${at(7)}, ${at(0)})`;
+      const wake = (ordinal: number, key: string, startedAt: string | null) => ({
+        ordinal,
+        userMessageId: waitWakeId(jarvis, key),
+        startedAt: startedAt === null ? null : DateTime.makeUnsafe(startedAt),
+      });
+      const runs = [
+        wake(1, "request:r-after", at(1)),
+        wake(2, "request:r-earlier", at(2)),
+        wake(3, "request:r-open", at(2)),
+        wake(4, "request:r-queued", null),
+        wake(5, "decision:d-done", at(4)),
+        { ordinal: 6, userMessageId: "m-user", startedAt: DateTime.makeUnsafe(at(5)) },
+      ] as never;
+      const note = yield* settledWaitsForTurn(directory, runs, { ordinal: 7 }, "status?");
+      assert.include(note, "<t3_settled_waits>");
+      assert.include(note, "- the command approval in [Queue limits](");
+      assert.include(note, '- the decision "Ship the toggle?" in [Queue limits](');
+      assert.lengthOf(note.match(/^- /gm) ?? [], 2);
+      assert.notInclude(note, "question");
+      const earlier = yield* settledWaitsForTurn(directory, runs, { ordinal: 5 }, "hi");
+      assert.include(earlier, "- the question in [Queue limits](");
+      assert.strictEqual(
+        yield* settledWaitsForTurn(directory, runs, { ordinal: 7 }, "/compact"),
+        "",
+      );
+      // r-after settled after these turns began, but its wake is older than the window.
+      const later = Array.from({ length: SETTLED_WAIT_RUN_WINDOW }, (_, index) => ({
+        ordinal: index + 2,
+        userMessageId: `m-${index}`,
+        startedAt: DateTime.makeUnsafe(at(5)),
+      }));
+      assert.strictEqual(
+        yield* settledWaitsForTurn(
+          directory,
+          [runs[0], ...later] as never,
+          { ordinal: SETTLED_WAIT_RUN_WINDOW + 2 },
+          "status?",
+        ),
+        "",
+      );
+    }).pipe(Effect.provide(directoryLayer)),
 );
 
 it.effect("the note titles the projects that exist and keeps a gone one as its id", () =>

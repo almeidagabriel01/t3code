@@ -203,7 +203,7 @@ const make = Effect.gen(function* () {
     measureAllocation,
     mergeFts,
     measuredMemoryBytes,
-    pruneSettledSummaryWork,
+    pruneSettledWork,
     recordSample,
     samples,
   } = storageMaintenance;
@@ -294,6 +294,7 @@ const make = Effect.gen(function* () {
     readLocalProcessingStatus,
     readBootstrap,
     discardBootstrapTx,
+    recordSyncSuccess,
     retireFrozenClaimTx,
     advanceBootstrapTx,
   } = hubAdmin;
@@ -328,9 +329,10 @@ const make = Effect.gen(function* () {
     historyPage,
     recordRevertResultTx,
     prepareHubCheckpointTx: (input) => withHubBudget(prepareHubCheckpointTx(input)),
-    prepareHubProducerCheckpointTx: (input) => withHubBudget(prepareHubProducerCheckpointTx(input)),
+    prepareHubProducerCheckpointTx: (input) =>
+      withHubBudget(prepareHubProducerCheckpointTx(input), true),
     readHubCheckpointPageTx,
-    publishCheckpointAndFloorTx: (input) => withHubBudget(publishCheckpointAndFloorTx(input)),
+    publishCheckpointAndFloorTx: (input) => withHubBudget(publishCheckpointAndFloorTx(input), true),
     compactEligibleHistoryTx,
     purgeHubTransientTx,
     requestHubSourceReadTx: (authority, input) =>
@@ -362,6 +364,7 @@ const make = Effect.gen(function* () {
     readLocalProcessingStatus,
     readBootstrap,
     discardBootstrapTx,
+    recordSyncSuccess,
     retireFrozenClaimTx,
     advanceBootstrapTx,
     readHubMembers,
@@ -499,7 +502,7 @@ const make = Effect.gen(function* () {
     index,
     measureAllocation,
     measuredMemoryBytes,
-    pruneSettledSummaryWork,
+    pruneSettledWork,
     mergeFts,
     cleanupDerived,
     recordSample,

@@ -112,6 +112,11 @@ import { AssistantGroupGate, type GroupDecisionOutcome } from "./AssistantGroupG
 import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import {
+  groupThreadId,
+  nextGroupThreadId,
+  requestThreadId,
+} from "@t3tools/shared/assistantGroupThreads";
+import {
   decisionsHoldingThread,
   threadsWaitingOnUser,
   type ThreadWait,
@@ -144,6 +149,7 @@ import {
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
+import { parseTaskMessageId } from "./groupRelaySource.ts";
 
 /** Who writes a group message: the user, an agent in another conversation, or a schedule. */
 export type GroupAuthor =
@@ -283,20 +289,6 @@ const ACTIVE_RUN_STATUSES = ["preparing", "starting", "running", "waiting"] as c
 
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 
-/** The member's hidden thread for a group. Look the group up in the table: team ids may hold ':'. */
-export const groupThreadId = (assistantId: string, teamId: string) =>
-  ThreadId.make(`assistant:${assistantId}:g-${sha256(teamId).slice(0, 16)}`);
-
-/** A deleted thread keeps its id reserved, so its replacement derives a new one from it. */
-const nextGroupThreadId = (assistantId: string, teamId: string, dead: string) =>
-  ThreadId.make(`assistant:${assistantId}:g-${sha256(`${teamId}\n${dead}`).slice(0, 16)}`);
-
-/** The member's hidden thread for one request; the same shape, so it reads as a group thread. */
-export const requestThreadId = (assistantId: string, teamId: string, requestId: string) =>
-  ThreadId.make(
-    `assistant:${assistantId}:g-${sha256(`${teamId}\nrequest:${requestId}`).slice(0, 16)}`,
-  );
-
 export const taskMessageId = (taskId: string, revision: number) =>
   `group-task:${taskId}:${revision}`;
 
@@ -306,14 +298,6 @@ const isLimitContinuation = (
 ) =>
   run.usageLimitContinuationOfRunId !== undefined ||
   run.userMessageId.startsWith("limit-continuation:");
-
-const parseTaskMessageId = (messageId: string) => {
-  if (!messageId.startsWith("group-task:")) return null;
-  const rest = messageId.slice("group-task:".length);
-  const cut = rest.lastIndexOf(":");
-  const revision = Number(rest.slice(cut + 1));
-  return cut <= 0 || !Number.isInteger(revision) ? null : { taskId: rest.slice(0, cut), revision };
-};
 
 interface MessageRow {
   readonly message_id: string;

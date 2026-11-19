@@ -98,8 +98,9 @@ export const makeStoreKernel = Effect.gen(function* () {
     );
     return rows[0]!;
   });
+  // Compaction is what frees staging, so it must never depend on staging capacity.
   // oxlint-disable-next-line t3code/prefer-effect-fn -- Ported as-is; Effect.fn would add a span.
-  const withHubBudget = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  const withHubBudget = <A, E, R>(effect: Effect.Effect<A, E, R>, compaction = false) =>
     Effect.gen(function* () {
       const before = new Map((yield* globalHubCounters()).map((row) => [row.dimension, row.value]));
       const beforeCheckpoint = yield* globalCheckpointReservation();
@@ -139,6 +140,7 @@ export const makeStoreKernel = Effect.gen(function* () {
         ["hub_checkpoint", "checkpoint_staging", M.MEMORY_CHECKPOINT_STAGING_MAX_BYTES],
       ] as const) {
         const current = after.get(counter);
+        if (compaction && counter === "hub_checkpoint") continue;
         if (
           counter.startsWith("import_") &&
           current === undefined &&

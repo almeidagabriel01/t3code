@@ -49,6 +49,7 @@ const omitInitializeModelState = process.env.T3_ACP_OMIT_INITIALIZE_MODEL_STATE 
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const endTurnWithOpenPermission = process.env.T3_ACP_END_TURN_WITH_OPEN_PERMISSION === "1";
 const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const idleError = process.env.T3_ACP_IDLE_ERROR;
@@ -1618,7 +1619,7 @@ const program = Effect.gen(function* () {
 
         let cancelled = cancelledSessions.delete(requestedSessionId);
         const command = "cat server/package.json";
-        const permission = yield* agent.client.requestPermission({
+        const permissionRequest = agent.client.requestPermission({
           sessionId: requestedSessionId,
           title: `\`${command}\``,
           subject: {
@@ -1646,6 +1647,13 @@ const program = Effect.gen(function* () {
           },
           options: permissionOptions,
         });
+        if (endTurnWithOpenPermission) {
+          yield* Effect.forkDetach(permissionRequest);
+          // The request goes out before the prompt response.
+          yield* Effect.yieldNow;
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        const permission = yield* permissionRequest;
         cancelled =
           cancelled ||
           cancelledSessions.delete(requestedSessionId) ||

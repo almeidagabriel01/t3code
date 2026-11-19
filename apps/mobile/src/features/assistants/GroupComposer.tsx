@@ -81,6 +81,10 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import {
+  assistantGroupDraftKey,
+  assistantGroupOutgoingDraftKey,
+} from "../../state/assistant-group-draft-key";
 import { clearGroupAttachments, useGroupAttachments } from "./GroupAttachments";
 import { GroupContextMeter } from "./GroupContextMeter";
 import { AssistantAvatar } from "./assistantPresentation";
@@ -429,9 +433,10 @@ export function GroupComposer(props: {
     requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
-  const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  const groupKey = assistantGroupDraftKey(props.environmentId, props.teamId);
   // Sent text leaves the draft for its tab's key, so another tab never shows it beside its project.
-  const outgoingKey = (tab: AssistantGroupTabKey | null) => `${groupKey}:outgoing:${tab ?? ""}`;
+  const outgoingKey = (tab: AssistantGroupTabKey | null) =>
+    assistantGroupOutgoingDraftKey(groupKey, tab);
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(groupKey));
   const setOutgoing = (
     tab: AssistantGroupTabKey | null,

@@ -42,6 +42,19 @@ describe("thread menu", () => {
     expect(openNotes).toHaveBeenCalledTimes(1);
   });
 
+  it("offers Discard draft first only while the row holds a draft, assistant rows too", () => {
+    expect(ids()).not.toContain("discard-draft");
+    expect(ids({ discardDraft: true })[0]).toBe("discard-draft");
+    expect(ids({ discardDraft: true, assistant: { name: "Jarvis" } })[0]).toBe("discard-draft");
+    const discardDraft = vi.fn();
+    runThreadMenuEvent("discard-draft", { discardDraft } as unknown as ThreadMenuHandlers, {
+      displayedPresets: [],
+      presets: undefined,
+      now: new Date(0),
+    });
+    expect(discardDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("offers the Project sheet only when asked and routes it", () => {
     expect(ids()).not.toContain("project");
     expect(ids({ projectViews: true })).toContain("project");

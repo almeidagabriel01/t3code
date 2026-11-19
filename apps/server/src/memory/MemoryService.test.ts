@@ -1614,18 +1614,21 @@ it.effect(
         )
         .pipe(Effect.flip);
       assert.strictEqual(pinDenied._tag, "MemoryCapacityError");
-      const publishDenied = yield* store
+      // Compaction publication is never capacity-gated; roll it back to keep the fixture.
+      const published = yield* store
         .transact(
-          store.publishCheckpointAndFloorTx({
-            memorySpaceId: space,
-            checkpointId: "current-large",
-            expectedFloor: 0,
-            nextFloor: 0,
-            now: 0,
-          }),
+          store
+            .publishCheckpointAndFloorTx({
+              memorySpaceId: space,
+              checkpointId: "current-large",
+              expectedFloor: 0,
+              nextFloor: 0,
+              now: 0,
+            })
+            .pipe(Effect.andThen(Effect.fail("rollback" as const))),
         )
         .pipe(Effect.flip);
-      assert.strictEqual(publishDenied._tag, "MemoryCapacityError");
+      assert.strictEqual(published, "rollback");
       assert.deepStrictEqual(yield* store.transact(store.readHubUsageTx(space)), equality);
       assert.isNull((yield* store.transact(store.readHubRetentionTx(space))).checkpointId);
       const forget: M.MemoryOperation = {

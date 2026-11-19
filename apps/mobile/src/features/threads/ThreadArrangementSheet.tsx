@@ -17,7 +17,6 @@ import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { environmentThreadShells } from "../../state/threads";
-import { useThreadOwnership } from "../../state/assistants";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import {
@@ -173,7 +172,6 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
-  const { ownedThreadKeys } = useThreadOwnership();
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
   const { threadOrder } = useThreadListV2ShelfPreferences();
@@ -197,16 +195,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       pendingOrder,
       settlementEnvironmentIds: new Set(configs.keys()),
       snoozeEnvironmentIds: new Set(configs.keys()),
-      hiddenThreadKeys: ownedThreadKeys,
     };
     const pinned = getThreadListV2OrderedSection({ ...shared, section: "pinned" });
     const active = getThreadListV2OrderedSection({ ...shared, section: "active" });
     const visible = new Set([...pinned, ...active].map(keyOf));
     const parked = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        !visible.has(keyOf(thread)) &&
-        !ownedThreadKeys.has(`${thread.environmentId}:${thread.id}`),
+      (thread) => thread.archivedAt === null && !visible.has(keyOf(thread)),
     );
     return {
       pinned,
@@ -214,7 +208,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, threadOrder, configs, now, queuedThreadKeys, pendingOrder, ownedThreadKeys]);
+  }, [threads, threadOrder, configs, now, queuedThreadKeys, pendingOrder]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);

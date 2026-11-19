@@ -291,8 +291,6 @@ export function getThreadListV2OrderedSection(input: {
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
-  /** `env:threadId` of threads drawn elsewhere (an assistant's work), left out of project lists. */
-  readonly hiddenThreadKeys?: ReadonlySet<string>;
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
@@ -300,8 +298,7 @@ export function getThreadListV2OrderedSection(input: {
       thread.archivedAt !== null ||
       !isListedThreadLineage(thread.lineage) ||
       isSideChatThread(thread) ||
-      isAssistantThreadId(thread.id) ||
-      input.hiddenThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true
+      isAssistantThreadId(thread.id)
     )
       return false;
     if (
@@ -685,8 +682,6 @@ export function buildThreadListV2Items(input: {
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
-  /** `env:threadId` of threads drawn elsewhere (an assistant's work); a search still finds them. */
-  readonly hiddenThreadKeys?: ReadonlySet<string>;
 }): ThreadListV2Layout {
   const now = input.now;
   const threadOrder = input.threadOrder ?? "activity";
@@ -720,8 +715,6 @@ export function buildThreadListV2Items(input: {
       isListedThreadLineage(thread.lineage) &&
       !isSideChatThread(thread) &&
       !isAssistantThreadId(thread.id) &&
-      (query.length > 0 ||
-        input.hiddenThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
       (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
