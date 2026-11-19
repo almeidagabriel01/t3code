@@ -20,6 +20,7 @@ import {
   sshWork,
   workParts,
 } from "./heavyHook.ts";
+import { sshHostname } from "./sshHost.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
 const bash = (toolInput: Record<string, unknown>) => ({
@@ -403,9 +404,18 @@ describe("an agent's own ssh to the Runner's host", () => {
       `ssh -o BatchMode=yes -p 22 dev@remoto docker compose up --build`,
       "docker compose up --build",
     ],
-    [`ssh -oConnectTimeout=5 -tt remoto -- ./scripts/ci.sh`, "./scripts/ci.sh"],
-    [`ssh remoto 'bash ci-local.sh 16'`, "bash ci-local.sh 16"],
+    [`ssh -oConnectTimeout=5 -tt remoto -- vp test run`, "vp test run"],
     [`ssh remoto -t -p 22 -- vp test run`, "vp test run"],
+    [`ssh remoto 'bash -c "npm test"'`, `bash -c "npm test"`],
+    // Its host as ssh resolves it (`ssh -G`): a name, an alias or the address all match.
+    [`ssh remoto.lan 'npm test'`, "npm test"],
+    [`ssh 192.168.10.109 'npm test'`, "npm test"],
+    [`ssh dev@pc 'npm test'`, "npm test"],
+    // A script there can't be read from here: like an unread one here, it stays direct.
+    [`ssh remoto 'bash ~/check.sh'`, null],
+    [`ssh remoto ./status.sh`, null],
+    [`ssh -oConnectTimeout=5 -tt remoto -- ./scripts/ci.sh`, null],
+    [`ssh remoto 'bash ci-local.sh 16'`, null],
     [`cd /w && ssh remoto 'make test' 2>&1 | tail -5`, "make test"],
     // Light work, a login, a log and other hosts stay direct.
     [`ssh remoto 'docker ps'`, null],
@@ -415,9 +425,32 @@ describe("an agent's own ssh to the Runner's host", () => {
     [`ssh -t remoto`, null],
     [`ssh other 'npm test'`, null],
     [`ssh -i remoto other 'npm test'`, null],
+    // ssh -G failing for a name falls back to comparing it as written.
+    [`ssh broken 'npm test'`, null],
     [`echo "ssh remoto 'npm test'"`, null],
   ])("%j: %j", (line, heavy) => {
-    expect(sshWork(line, "remoto")).toBe(heavy);
+    const resolved: Record<string, string | null> = {
+      remoto: "192.168.10.109",
+      "remoto.lan": "192.168.10.109",
+      pc: "192.168.10.109",
+      broken: null,
+    };
+    const resolve = (host: string) => (host in resolved ? resolved[host]! : host);
+    expect(sshWork(line, "remoto", resolve)).toBe(heavy);
+  });
+
+  it("resolves a host with ssh -G, and a failing ssh resolves nothing", () => {
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ssh-g-"));
+    const ssh = NodePath.join(bin, "ssh");
+    NodeFS.writeFileSync(
+      ssh,
+      '#!/bin/sh\n[ "$2" = pc ] && { echo "user dev"; echo "hostname 10.0.0.5"; exit 0; }\nexit 255\n',
+    );
+    NodeFS.chmodSync(ssh, 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin` };
+    expect(sshHostname("pc", env)).toBe("10.0.0.5");
+    expect(sshHostname("nowhere", env)).toBeNull();
+    expect(sshHostname("pc", { PATH: "/nonexistent" })).toBeNull();
   });
 
   it("queues heavy ssh for Linux itself, named by its remote work, and leaves light ssh alone", () => {

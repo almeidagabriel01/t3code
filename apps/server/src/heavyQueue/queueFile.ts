@@ -49,6 +49,7 @@ import {
   SCRIPT_MAX_BYTES,
   type ReadScript,
 } from "./heavyHook.ts";
+import { cachedSshHostname } from "./sshHost.ts";
 import {
   deadlineRecord,
   endedRecord,
@@ -1691,6 +1692,7 @@ export const answerBashCall = (
     modeFor(doc, at),
     environment,
     scriptReader(at),
+    cachedSshHostname,
   );
   return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
     ? null

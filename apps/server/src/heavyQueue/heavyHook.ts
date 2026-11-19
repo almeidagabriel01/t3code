@@ -572,20 +572,34 @@ const sshCall = (values: ReadonlyArray<string>, at: number) => {
   return target === undefined || rest.length === 0 ? null : { target, line: rest.join(" ") };
 };
 
-const hostOf = (target: string) => target.slice(target.lastIndexOf("@") + 1);
+const hostOf = (target: string) => target.slice(target.lastIndexOf("@") + 1).toLowerCase();
+
+/** Resolves a host as ssh would (`sshHostname`); null when it can't, so names compare as written. */
+export type ResolveHost = (host: string) => string | null;
 
 /**
  * The heavy part of work a line sends to `host` over its own ssh, or null when none: ssh skips
- * the queue and the Linux copy, so the Runner takes it as a Linux job. Remote scripts can't be
- * read from here, so one run by a shell or named `.sh` counts as heavy.
+ * the queue and the Linux copy, so the Runner takes it as a Linux job. A remote script can't be
+ * read from here, so like an unread one here only a known heavy command queues.
  */
-export const sshWork = (line: string, host: string): string | null => {
-  if (host.trim() === "") return null;
+export const sshWork = (
+  line: string,
+  host: string,
+  resolve: ResolveHost = () => null,
+): string | null => {
+  const runner = hostOf(host);
+  if (runner.trim() === "") return null;
+  const same = (target: string) => {
+    const name = hostOf(target);
+    if (name === runner) return true;
+    const resolved = resolve(name);
+    return resolved !== null && resolved === resolve(runner);
+  };
   for (const part of readLine(line).parts) {
     const call = sshCall(part.values, part.programAt);
-    if (call === null || hostOf(call.target) !== hostOf(host)) continue;
-    const heavy = heavySegment(call.line, () => null);
-    if (heavy !== null) return heavy;
+    // Heavy first: only heavy work to another name pays for resolving it.
+    const heavy = call === null ? null : heavySegment(call.line);
+    if (heavy !== null && same(call!.target)) return heavy;
   }
   return null;
 };
@@ -692,6 +706,7 @@ export const queueBashCall = (
     readonly readScript?: ReadScript;
     /** The Runner's Linux: heavy work sent there by `ssh` is queued for it. */
     readonly runnerHost?: string;
+    readonly resolveHost?: ResolveHost;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
@@ -702,7 +717,7 @@ export const queueBashCall = (
   const parts = lineParts(command);
   const ssh =
     options.runner === true && options.runnerHost !== undefined
-      ? sshWork(command, options.runnerHost)
+      ? sshWork(command, options.runnerHost, options.resolveHost)
       : null;
   const remoto = options.runner === true && parts.remoto;
   if (ssh === null && !remoto && isQueued(command, options.readScript)) return null;
@@ -753,6 +768,7 @@ export const interceptBashCall = (
   mode: { readonly enabled: boolean; readonly runner?: boolean; readonly runnerHost?: string },
   environment: Readonly<Record<string, string | undefined>> = {},
   readScript?: ReadScript,
+  resolveHost?: ResolveHost,
 ) =>
   heavyRoute(mode) === "direct"
     ? null
@@ -760,6 +776,7 @@ export const interceptBashCall = (
         runner: mode.runner === true,
         ...(mode.runnerHost === undefined ? {} : { runnerHost: mode.runnerHost }),
         ...(readScript === undefined ? {} : { readScript }),
+        ...(resolveHost === undefined ? {} : { resolveHost }),
       });
 
 export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

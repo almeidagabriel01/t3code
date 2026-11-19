@@ -100,6 +100,7 @@ import {
   routeKey,
 } from "./routeMemory.ts";
 import { ensureShims, realProgram, withoutShims } from "./shims.ts";
+import { cachedSshHostname } from "./sshHost.ts";
 
 /**
  * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
@@ -276,7 +277,11 @@ export const heavyLaunch = (
     return { kind: "direct" };
   }
   const line = jobLine(job.program, job.args);
-  if (mode.runner && mode.runnerHost !== undefined && sshWork(line, mode.runnerHost) !== null) {
+  if (
+    mode.runner &&
+    mode.runnerHost !== undefined &&
+    sshWork(line, mode.runnerHost, cachedSshHostname) !== null
+  ) {
     return {
       kind: "queue",
       cwd: job.cwd,
