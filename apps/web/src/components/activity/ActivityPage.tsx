@@ -15,6 +15,8 @@ import { type SidebarPriorityHolds } from "../Sidebar.logic";
 import { BackgroundThreadContext } from "../chat/backgroundThread";
 import { RelativeTime } from "../RelativeTime";
 import { useNavigateToMainApp, useRememberThreadAsMainApp } from "../sidebar/mainAppLocation";
+import { useWorkingRows } from "../sidebar/useSidebarZones";
+import { openWorkingRow, WorkingRowButton } from "../sidebar/WorkingSection";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SidebarInset } from "../ui/sidebar";
@@ -124,12 +126,21 @@ export function ActivityPage() {
       }),
   });
 
+  // Assistants, group members and subagents stay off the thread rows; they work in this section.
+  const listedKeys = new Set(entries.map((entry) => entry.key));
+  const working = useWorkingRows().filter((row) => !listedKeys.has(row.item.key));
+  const workingEntries = working.flatMap((row): ActivityEntry[] =>
+    row.item.shell === null ? [] : [{ key: row.item.key, thread: row.item.shell, rank: 1 }],
+  );
+
   const projectTitle = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
-  const selected = entries.find((entry) => entry.key === selectedKey) ?? null;
+  const selected =
+    [...entries, ...workingEntries].find((entry) => entry.key === selectedKey) ?? null;
   const summary = RANKS.map(({ rank, summary: label }) => {
-    const count = entries.filter((entry) => entry.rank === rank).length;
+    const count =
+      entries.filter((entry) => entry.rank === rank).length + (rank === 1 ? working.length : 0);
     return count > 0 ? `${count} ${label}` : null;
   })
     .filter((part) => part !== null)
@@ -188,17 +199,18 @@ export function ActivityPage() {
           className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-2 [overflow-anchor:none]"
         >
           <DecisionsSection />
-          {entries.length === 0 && !hasOpenDecisions ? (
+          {entries.length === 0 && working.length === 0 && !hasOpenDecisions ? (
             <p className="px-2 py-6 text-center text-sm text-muted-foreground" role="status">
               Nothing needs you right now.
             </p>
           ) : (
             RANKS.map(({ rank, heading, dot }) => {
               const group = entries.filter((entry) => entry.rank === rank);
-              return group.length === 0 ? null : (
+              const consumers = rank === 1 ? working : [];
+              return group.length + consumers.length === 0 ? null : (
                 <section key={rank} aria-label={heading} className="flex flex-col gap-1">
                   <h2 className="px-2 text-xs font-medium text-muted-foreground">
-                    {heading} ({group.length})
+                    {heading} ({group.length + consumers.length})
                   </h2>
                   <ul className="flex flex-col">
                     {group.map((entry) => (
@@ -219,6 +231,27 @@ export function ActivityPage() {
                           setSelectedKey(entry.key);
                         }}
                       />
+                    ))}
+                    {consumers.map((row) => (
+                      <li key={row.item.key}>
+                        <WorkingRowButton
+                          row={row}
+                          selected={row.item.key === selected?.key}
+                          onOpen={() =>
+                            openWorkingRow(row, {
+                              thread: (threadRef) => {
+                                rememberThread(threadRef);
+                                setSelectedKey(row.item.key);
+                              },
+                              group: (environmentId, teamId) =>
+                                void navigate({
+                                  to: "/group/$environmentId/$teamId",
+                                  params: { environmentId, teamId },
+                                }),
+                            })
+                          }
+                        />
+                      </li>
                     ))}
                   </ul>
                 </section>

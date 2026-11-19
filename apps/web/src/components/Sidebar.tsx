@@ -272,6 +272,7 @@ import { setTaskDismissed } from "./assistants/useAssistantFlows";
 import { readAssistantTask } from "../state/assistants";
 import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
 import { NeedsYouSection } from "./sidebar/NeedsYouSection";
+import { WorkingSection } from "./sidebar/WorkingSection";
 import { useSidebarZones } from "./sidebar/useSidebarZones";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import { SubagentRows } from "./sidebar/SidebarSubagentRows";
@@ -3307,6 +3308,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           teamNameByKey={teamNameByKey}
                           projectOf={projectOfZone}
                           onOpenThread={openZoneThread}
+                        />,
+                      );
+                      items.push(
+                        <WorkingSection
+                          key="working"
+                          rows={zones.working}
+                          onOpenThread={openZoneThread}
+                          onOpenGroup={openZoneGroup}
                         />,
                       );
                       items.push(
