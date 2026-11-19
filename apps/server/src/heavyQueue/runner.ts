@@ -29,10 +29,13 @@ import {
 } from "./admission.ts";
 import {
   entryOf,
+  EXECUTORS,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
+  pmBinAt,
   readLine,
+  RUNNERS as PACKAGE_MANAGERS,
   shellQuote,
   TYPE_CHECKERS,
   workParts,
@@ -285,7 +288,6 @@ const LINUX_FULL_MAC = "Linux is full: running on this Mac";
 export const LINUX_FULL_SHORTER = "Linux is full: shorter queue on this Mac";
 export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|push|pull|fetch)$/;
@@ -312,11 +314,6 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   "react-native": /^start$/,
   metro: /^(serve|start)?$/,
 };
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
-const EXEC = /^(exec|dlx|x)$/;
-/** pnpm, yarn and bun run a bin by name (`pnpm tsc`); these words are their own commands instead. */
-const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
-const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
@@ -406,14 +403,10 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   let { program } = part;
   let after = part.values.slice(part.programAt + 1);
   let words = subcommandWords(program, after);
-  const execAt = EXECUTORS.has(program)
-    ? -1
-    : PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? "")
-      ? 0
-      : null;
-  const head = words[0] ?? "";
+  const binAt = pmBinAt(program, words);
+  const execAt = EXECUTORS.has(program) ? -1 : binAt === 1 ? 0 : null;
   // `pnpm tsc --watch` is `pnpm exec tsc --watch` when no script is named tsc: judge the bin first.
-  if (execAt === null && BIN_RUNNERS.has(program) && head !== "" && !OWN_COMMANDS.test(head)) {
+  if (binAt === 0) {
     const at = part.programAt + 1;
     const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
     const bin = programReason({ ...part, values }, macTools);

@@ -1127,6 +1127,32 @@
       "expect": "serves-port:pnpm dev"
     },
     {
+      "line": "pnpm vitest run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "pnpm runs the vitest bin: a test run Linux takes"
+    },
+    {
+      "line": "yarn vitest run src/a.test.ts",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "bun vitest run",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux"
+    },
+    {
+      "line": "pnpm test",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "test is pnpm's own command for the test script"
+    },
+    {
       "line": "npx next dev",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "synthetic",

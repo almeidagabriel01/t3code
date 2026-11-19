@@ -76,8 +76,22 @@ const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop
 export const entryOf = <T>(table: Readonly<Record<string, T>>, name: string): T | undefined =>
   Object.hasOwn(table, name) ? table[name] : undefined;
 
-const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+export const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
+export const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+/** pnpm, yarn and bun run a bin by name (`pnpm vitest`) when the word is none of their own commands. */
+const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
+const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
+
+/**
+ * Where a package manager call names the bin it runs among its words: 1 for `pnpm exec vitest`,
+ * 0 for `pnpm vitest`, which runs it the same when no script has that name; null for neither.
+ */
+export const pmBinAt = (program: string, words: ReadonlyArray<string>) => {
+  const [first] = words;
+  if (!RUNNERS.has(program) || first === undefined) return null;
+  if (/^(exec|dlx|x)$/.test(first)) return 1;
+  return BIN_RUNNERS.has(program) && !OWN_COMMANDS.test(first) ? 0 : null;
+};
 const SCRIPT_RUNNERS = ["vpr", "make", "just"];
 
 /** Every program `heavyWords` can call heavy but `node` and `git`: a queue job's PATH shims. */
@@ -207,12 +221,20 @@ export const FOLDER_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   make: ["-C", "--directory"],
 };
 
+/** Options whose value picks the packages a call runs in (`pnpm -F web vitest`), never a word. */
+const PICK_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  pnpm: ["-F", "--filter", "--filter-prod"],
+};
+
 /** Program and subcommand words with assignments, prefixes, flags and folder values removed. */
 const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
-  const folderFlags = entryOf(FOLDER_FLAGS, program) ?? [];
+  const folderFlags = [
+    ...(entryOf(FOLDER_FLAGS, program) ?? []),
+    ...(entryOf(PICK_FLAGS, program) ?? []),
+  ];
   return {
     at,
     program,
@@ -299,12 +321,14 @@ const heavyWords = (
     return heavyScript(words, 0, flags, lists);
   }
   if (!RUNNERS.has(program) || first === undefined) return false;
-  if (first === "exec" || first === "dlx" || first === "x") {
+  const binAt = pmBinAt(program, words);
+  if (binAt === 1) {
     return second !== undefined && heavyWords(base(second), words.slice(2), flags, lists);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
   if (first === "t" || heavyScript(words, 0, flags, lists)) return true;
-  // `pnpm --filter web run build`: a flag's value can sit before `run`.
+  if (binAt === 0 && heavyWords(base(first), words.slice(1), flags, lists)) return true;
+  // `npm --prefix x run build`: a flag's value can sit before `run`.
   const runAt = words.findIndex((word) => word === "run" || word === "run-script");
   return runAt >= 0 && heavyScript(words, runAt + 1, flags, lists);
 };

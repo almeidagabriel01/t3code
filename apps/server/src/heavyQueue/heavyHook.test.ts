@@ -41,6 +41,11 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["yarn build", "yarn build"],
   ["vpr test:unit", "vpr test:unit"],
   ["npx vitest run", "npx vitest run"],
+  // pnpm, yarn and bun run a bin by name when the word is not one of their own commands.
+  ["pnpm vitest run", "pnpm vitest run"],
+  ["yarn vitest run src/a.test.ts", "yarn vitest run src/a.test.ts"],
+  ["bun vitest run", "bun vitest run"],
+  ["pnpm -F web vitest run", "pnpm -F web vitest run"],
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
@@ -163,6 +168,9 @@ const LIGHT = [
   // A program named like an object's own key is just a program.
   "constructor test",
   "toString build x",
+  // A bin that is no heavy tool, or a package manager's own light command, stays light.
+  "pnpm dev",
+  "yarn why vitest",
   // An in-place edit with nothing heavy beside it runs here, outside the queue.
   `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
   "perl -pi -e 's/vp test/x/' src/a.ts",
