@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
-  mocks: { threads: [] as unknown[] },
+  mocks: { threads: [] as unknown[], visit: vi.fn() },
 }));
 
 vi.mock("react-native", () => ({ View: Children }));
@@ -14,11 +14,24 @@ vi.mock("../../components/RelativeTime", () => ({
 }));
 vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
-  ListRowLayout: (props: { label: string; meta?: ReactNode }) => (
+  ListRowLayout: (props: { label: string; meta?: ReactNode; accessory?: ReactNode }) => (
     <>
       {props.label}|{props.meta}
+      {props.accessory}
     </>
   ),
+}));
+vi.mock("../../components/ui/IconButton", () => ({
+  IconButton: (props: { accessibilityLabel: string; onPress: () => void }) => (
+    <i role="button" aria-label={props.accessibilityLabel} onClick={props.onPress} />
+  ),
+}));
+vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../state/session", () => ({ useEnvironmentsWithScope: () => new Set(["env"]) }));
+vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.visit }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [{ environmentId: "env", label: "Studio Mac" }] }),
 }));
 vi.mock("../../components/ui/RowPressable", () => ({
   RowPressable: (props: {
@@ -31,7 +44,10 @@ vi.mock("../../components/ui/RowPressable", () => ({
     </button>
   ),
 }));
-vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set() }));
+vi.mock("../../state/decisions", () => ({
+  useOpenDecisionThreadKeys: () => new Set(),
+  useOpenDecisionAtByThreadKey: () => new Map(),
+}));
 vi.mock("../../state/entities", () => ({ useThreadShells: () => mocks.threads }));
 vi.mock("../threads/use-thread-list-now", () => ({
   useThreadListNow: () => "2026-03-09T10:00:00.000Z",
@@ -99,7 +115,19 @@ describe("ProjectActivityView", () => {
       "Thread stopped, Interrupted",
       "Thread done, Finished",
     ]);
-    expect(rows[0]!.textContent).toBe("Thread failed|Failed · at 2026-03-09T09:40:00.000Z");
+    expect(rows[0]!.textContent).toBe(
+      "Thread failed|Failed · Studio Mac · at 2026-03-09T09:40:00.000Z",
+    );
+    // A request has no Clear: it leaves when answered.
+    expect(view.host.querySelector('[aria-label="Clear Thread asks"]')).toBeNull();
+    mocks.visit.mockResolvedValue({ _tag: "Success" });
+    await act(async () =>
+      (view.host.querySelector('[aria-label="Clear Thread done"]') as HTMLElement).click(),
+    );
+    expect(mocks.visit).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { threadId: "done", visitedAt: "2026-03-09T09:10:00.000Z" },
+    });
     act(() => rows[1]!.click());
     expect(onOpenThread).toHaveBeenCalledWith("asks");
     await view.unmount();

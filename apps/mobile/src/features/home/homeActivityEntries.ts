@@ -9,6 +9,7 @@ export function buildHomeActivityEntries(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly now: string;
   readonly openDecisionThreadKeys: ReadonlySet<string>;
+  readonly openDecisionAtByKey?: ReadonlyMap<string, string>;
 }) {
   return buildActivityEntries({
     // Older servers keep no visit time, so a finished run would never clear.
@@ -21,5 +22,6 @@ export function buildHomeActivityEntries(input: {
     releases: NO_DELEGATED,
     now: input.now,
     openDecisionThreadKeys: input.openDecisionThreadKeys,
+    openDecisionAtByKey: input.openDecisionAtByKey,
   });
 }

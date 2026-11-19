@@ -35,6 +35,7 @@ import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import type { AssistantEntry } from "../../state/assistants";
 import { useDecisionActions } from "../../state/decisions";
 import { useQuietThreadShell } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -394,6 +395,9 @@ const NeedsYouCard = memo(function NeedsYouCard(props: {
     shell === null ? undefined : props.projectOf(threadRef.environmentId, shell.projectId);
   const title =
     shell?.title ?? ((item.kind === "decision" && item.decision.threadTitle) || "Thread");
+  const machineLabel = useEnvironments().environments.find(
+    (environment) => environment.environmentId === threadRef.environmentId,
+  )?.label;
   const origin =
     props.teamName !== null ? (
       <span className="flex min-w-0 shrink items-center gap-1 font-medium">
@@ -416,7 +420,7 @@ const NeedsYouCard = memo(function NeedsYouCard(props: {
   const card: CardProps = {
     item,
     origin,
-    projectName: project?.title ?? null,
+    projectName: [project?.title, machineLabel].filter(Boolean).join(" · ") || null,
     onOpen: () => props.onOpenThread(threadRef),
   };
   switch (item.kind) {

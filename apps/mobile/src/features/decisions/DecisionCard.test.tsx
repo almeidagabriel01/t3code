@@ -10,6 +10,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     navigateToPullRequest: vi.fn(),
     answer: vi.fn(() => Promise.resolve({ ok: true })),
     dismiss: vi.fn(() => Promise.resolve({ ok: true })),
+    reopen: vi.fn(() => Promise.resolve({ ok: false, message: "Too late" })),
     clear: vi.fn(),
     files: {
       canAttach: true,
@@ -52,7 +53,12 @@ vi.mock("../../native/useOpenPullRequest", () => ({
   useNavigateToPullRequest: () => mocks.navigateToPullRequest,
 }));
 vi.mock("../../state/decisions", () => ({
-  useDecisionActions: () => ({ canAct: true, answer: mocks.answer, dismiss: mocks.dismiss }),
+  useDecisionActions: () => ({
+    canAct: true,
+    answer: mocks.answer,
+    dismiss: mocks.dismiss,
+    reopen: mocks.reopen,
+  }),
 }));
 vi.mock("../../state/entities", () => ({
   useLiveThreadLinkLabels: (markdown: string) => markdown,
@@ -131,6 +137,24 @@ describe("DecisionCard attachments", () => {
     render(null);
     expect(container.querySelector("[data-attach-controls]")).toBeNull();
     expect(answerButton().disabled).toBe(true);
+  });
+});
+
+describe("DecisionCard settled", () => {
+  it("offers to reopen only the user's own dismissal, and shows a refusal", async () => {
+    const dismissed = {
+      ...decision,
+      status: "withdrawn",
+      answeredAt: "2026-11-17T00:00:00.000Z",
+    } as Decision;
+    render(null, { ...dismissed, answeredAt: undefined } as unknown as Decision);
+    expect(container.querySelector('button[data-label="Reopen"]')).toBeNull();
+    render(null, dismissed);
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[data-label="Reopen"]')!.click(),
+    );
+    expect(mocks.reopen).toHaveBeenCalledWith("d1");
+    expect(container.textContent).toContain("Too late");
   });
 });
 

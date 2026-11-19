@@ -1443,7 +1443,6 @@ export {
   isSidebarThreadWoke,
   resolveSidebarPriorityRank,
   resolveThreadLastVisitedAt,
-  selectSidebarMarkReadTargets,
   sortPriorityThreadsForSidebar,
   type SidebarPriorityHolds,
 } from "@t3tools/client-runtime/state/thread-activity";

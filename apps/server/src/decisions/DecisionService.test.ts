@@ -219,8 +219,47 @@ it.effect("dismissing tells the agent nothing was approved, and cannot be repeat
     assert.include(sends[0]!.text, "do not assume approval");
     assert.notInclude(sends[0]!.text, "Chosen");
     assert.equal((yield* refusal(decisions.dismiss(decision.id))).reason, "not_open");
+
+    // The user can undo it; the answer then reaches the agent as usual.
+    const reopened = yield* decisions.reopen(decision.id);
+    assert.equal(reopened.status, "open");
+    assert.notProperty(reopened, "answeredAt");
+    assert.notProperty(reopened, "deliveredAt");
+    yield* decisions.answer({ decisionId: decision.id, optionId: "online" });
+    yield* decisions.deliverPending;
+    assert.equal(sends.length, 2);
+    assert.include(sends[1]!.text, "answered");
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "an agent's withdrawal, a dismissed approval and an expired dismissal stay closed",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const decisions = yield* Decisions.DecisionService;
+      const sql = yield* SqlClient.SqlClient;
+      const reason = (decisionId: string) =>
+        refusal(decisions.reopen(decisionId as DecisionId)).pipe(
+          Effect.map((error) => error.reason),
+        );
+      const withdrawn = yield* ask(decisions, { clientRequestId: "ask-withdrawn" });
+      yield* sql`UPDATE decisions SET status = 'withdrawn' WHERE decision_id = ${withdrawn.id}`;
+      assert.equal(yield* reason(withdrawn.id), "invalid");
+
+      const approval = yield* ask(decisions, { clientRequestId: "ask-approval" });
+      yield* sql`UPDATE decisions SET status = 'withdrawn', answered_at = '2026-11-17T00:00:00.000Z',
+      approval_request_id = 'request-1' WHERE decision_id = ${approval.id}`;
+      assert.equal(yield* reason(approval.id), "invalid");
+
+      const lapsed = yield* ask(decisions, { clientRequestId: "ask-lapsed" });
+      yield* decisions.dismiss(lapsed.id);
+      yield* sql`UPDATE decisions SET expires_at = '1969-12-31T00:00:00.000Z'
+      WHERE decision_id = ${lapsed.id}`;
+      assert.equal(yield* reason(lapsed.id), "not_open");
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("an unanswered decision expires and the agent is told not to assume approval", () => {
   const { layer, sends } = harness();

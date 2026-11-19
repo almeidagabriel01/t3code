@@ -559,8 +559,18 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const row = yield* findRow(decisionId);
-          if (row.kind !== "manual" || row.status !== "answered") {
-            return yield* invalid("Only a to-do marked done can be reopened.");
+          // A user's dismissal sets answered_at; an agent's withdrawal does not.
+          const dismissedByUser =
+            row.status === "withdrawn" &&
+            row.answered_at !== null &&
+            row.approval_request_id === null;
+          if (!dismissedByUser && (row.kind !== "manual" || row.status !== "answered")) {
+            return yield* invalid(
+              "Only a decision you dismissed or a to-do marked done can be reopened.",
+            );
+          }
+          if (row.expires_at !== null && row.expires_at <= (yield* nowIso)) {
+            return yield* decisionError("not_open", "This decision has expired.");
           }
           yield* sql`
             UPDATE decisions SET status = 'open', answer_json = NULL, answered_at = NULL,

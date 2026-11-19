@@ -64,6 +64,22 @@ it("dismisses without choosing, and shows a refusal inline", async () => {
   await expect.element(page.getByRole("alert")).toHaveTextContent("Already expired.");
 });
 
+it("reopens the user's own dismissal, and shows a refusal inline", async () => {
+  const onReopen = vi.fn(() => Promise.resolve({ ok: false as const, message: "It expired." }));
+  const dismissed: Decision = {
+    ...open,
+    status: "withdrawn",
+    answeredAt: "2026-10-02T00:00:00.000Z",
+  };
+  await using _screen = await render(
+    <DecisionCard decision={dismissed} canAct onAnswer={ok} onDismiss={ok} onReopen={onReopen} />,
+    { router: false }, // no navigation in the card
+  );
+  await userEvent.click(page.getByRole("button", { name: "Reopen" }));
+  expect(onReopen).toHaveBeenCalledTimes(1);
+  await expect.element(page.getByRole("alert")).toHaveTextContent("It expired.");
+});
+
 it("an assistant's notice only offers to acknowledge it", async () => {
   const onDismiss = vi.fn(ok);
   await using _screen = await render(

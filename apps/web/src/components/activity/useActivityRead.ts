@@ -1,10 +1,10 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   markActivityRead,
-  selectActivityClear,
+  planActivityClear,
+  planActivityMarkAllRead,
+  type ActivityEntry,
   type ActivityReadPlan,
 } from "@t3tools/client-runtime/state/thread-activity";
-import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
@@ -17,58 +17,41 @@ import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/sess
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useUiStateStore } from "../../uiStateStore";
-import { selectSidebarMarkReadTargets } from "../Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-
-const threadKey = (thread: EnvironmentThreadShell) =>
-  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 const canOperate = (thread: EnvironmentThreadShell) =>
   readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
 
-/** The page's bulk read actions: Mark all as read, and Clear read threads. */
+/** The page's read actions: Mark all as read, Clear read, and clearing one row. */
 export function useActivityRead(input: {
-  readonly threads: readonly EnvironmentThreadShell[];
-  readonly snoozeNow: string;
+  readonly entries: readonly ActivityEntry[];
+  readonly now: string;
   readonly releaseThreads: (keys: readonly string[]) => void;
   readonly restoreThread: (key: string) => void;
 }) {
-  const { threads } = input;
-  const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const { entries, now } = input;
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
-  const operableEnvironments = useEnvironmentsWithScope(threads, AuthOrchestrationOperateScope);
-  const visitThread = useOrchestrationCommand(threadEnvironment.visit, { reportFailure: false });
-  const rawWokeAtByKey = new Map(
-    threads.map((thread) => [threadKey(thread), threadWokeAt(thread, { now: input.snoozeNow })]),
+  const operableEnvironments = useEnvironmentsWithScope(
+    entries.map((entry) => entry.thread),
+    AuthOrchestrationOperateScope,
   );
-  const markReadTargets = (operable: (thread: EnvironmentThreadShell) => boolean) =>
-    selectSidebarMarkReadTargets({
-      threads,
-      localLastVisitedAtByKey,
-      wokeAtByKey: rawWokeAtByKey,
-      canOperate: operable,
-    });
-  const clearPlan = (operable: (thread: EnvironmentThreadShell) => boolean) =>
-    selectActivityClear({
-      threads,
-      localLastVisitedAtByKey,
-      wokeAtByKey: rawWokeAtByKey,
-      canOperate: operable,
-    });
+  const visitThread = useOrchestrationCommand(threadEnvironment.visit, { reportFailure: false });
   const isOperable = (thread: EnvironmentThreadShell) =>
     operableEnvironments.has(thread.environmentId);
 
-  const run = (plan: ActivityReadPlan<EnvironmentThreadShell>) => {
-    // oxlint-disable-next-line react/purity -- runs from event handlers only
-    const visitedAt = new Date().toISOString();
+  const run = (plan: ActivityReadPlan) =>
     void markActivityRead({
       plan,
       release: input.releaseThreads,
       restore: input.restoreThread,
-      visit: async (thread) => {
+      visit: async (thread, visitedAt) => {
         if (!canOperate(thread)) return "skipped";
         if (!readEnvironmentServerConfigLoaded(thread.environmentId)) {
-          markThreadVisited(threadKey(thread), visitedAt);
+          markThreadVisited(
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            visitedAt,
+          );
           return "visited";
         }
         const result = await visitThread({
@@ -87,15 +70,14 @@ export function useActivityRead(input: {
         return "failed";
       },
     });
-  };
 
+  const clearPlan = planActivityClear(entries, isOperable, now);
   return {
-    canMarkAllRead: markReadTargets(isOperable).length > 0,
-    markAllRead: () => {
-      const targets = markReadTargets(canOperate);
-      run({ markRead: targets, releaseKeys: targets.map(threadKey) });
-    },
-    canClearRead: clearPlan(isOperable).releaseKeys.length > 0,
-    clearRead: () => run(clearPlan(canOperate)),
+    isOperable,
+    canMarkAllRead: planActivityMarkAllRead(entries, isOperable, now).visits.length > 0,
+    markAllRead: () => run(planActivityMarkAllRead(entries, canOperate, now)),
+    canClearRead: clearPlan.releaseKeys.length > 0,
+    clearRead: () => run(planActivityClear(entries, canOperate, now)),
+    clearOne: (key: string) => run(planActivityClear(entries, canOperate, now, key)),
   };
 }

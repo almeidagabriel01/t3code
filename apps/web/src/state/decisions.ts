@@ -4,6 +4,7 @@ import {
   collectDecisionEntries,
   createDecisionsEnvironmentAtoms,
   decisionErrorMessage,
+  openDecisionAtByThreadKey,
   openDecisionThreadKeys,
   type DecisionEntry,
   type DecisionsState,
@@ -74,6 +75,19 @@ const openDecisionThreadKeysAtom = Atom.family((key: string) =>
   ),
 );
 
+const openDecisionAtByThreadKeyAtom = Atom.family((key: string) =>
+  Atom.make((get) => openDecisionAtByThreadKey(get(decisionStatesAtom(key)))).pipe(
+    Atom.withLabel(`web-open-decision-at-by-thread-key:${key}`),
+  ),
+);
+
+/** When each thread's newest open decision arrived, for the Activity badge. */
+export function useOpenDecisionAtByThreadKey(): ReadonlyMap<string, string> {
+  return useAtomValue(
+    openDecisionAtByThreadKeyAtom(environmentIdsKey(useDecisionsEnvironmentIds())),
+  );
+}
+
 /** Open decisions by urgency and recent settled ones, across the environments that have them. */
 export function useDecisionEntries() {
   return useAtomValue(decisionEntriesAtom(environmentIdsKey(useDecisionsEnvironmentIds())));
@@ -107,6 +121,7 @@ export function useDecisionActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(decisionsEnvironment.answer.permissionAtom(environmentId));
   const answer = useAtomCommand(decisionsEnvironment.answer, { reportFailure: true });
   const dismiss = useAtomCommand(decisionsEnvironment.dismiss, { reportFailure: true });
+  const reopen = useAtomCommand(decisionsEnvironment.reopen, { reportFailure: true });
   const reply = (result: Awaited<ReturnType<typeof answer>>): DecisionReply =>
     result._tag === "Success"
       ? { ok: true }
@@ -117,5 +132,7 @@ export function useDecisionActions(environmentId: EnvironmentId) {
       reply(await answer({ environmentId, input: { decisionId, ...input } })),
     dismiss: async (decisionId: DecisionId) =>
       reply(await dismiss({ environmentId, input: { decisionId } })),
+    reopen: async (decisionId: DecisionId) =>
+      reply(await reopen({ environmentId, input: { decisionId } })),
   };
 }

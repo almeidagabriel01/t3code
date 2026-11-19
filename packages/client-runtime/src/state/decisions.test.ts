@@ -13,6 +13,8 @@ import {
   describeSettledDecision,
   formatDecisionExpiry,
   openDecisionCountByThread,
+  canReopenDecision,
+  openDecisionAtByThreadKey,
   openDecisionThreadKeys,
   selectOpenDecisions,
   selectSettledDecisions,
@@ -65,6 +67,10 @@ describe("decisions state", () => {
     assert.deepStrictEqual(
       [...openDecisionThreadKeys([[env, state]])],
       [scopedThreadKey(scopeThreadRef(env, "t1" as ThreadId))],
+    );
+    assert.deepStrictEqual(
+      [...openDecisionAtByThreadKey([[env, state]])],
+      [[scopedThreadKey(scopeThreadRef(env, "t1" as ThreadId)), decision("dd", "t1").createdAt]],
     );
   });
 
@@ -182,6 +188,25 @@ describe("decisions state", () => {
       outcome: "Answered",
       detail: null,
     });
+  });
+
+  it.each([
+    [
+      "a dismissal by the user",
+      { status: "withdrawn", answeredAt: "2026-10-02T00:00:00.000Z" },
+      true,
+    ],
+    ["a withdrawal by the agent", { status: "withdrawn" }, false],
+    ["a to-do marked done", { status: "answered", kind: "manual" }, true],
+    ["an answered choice", { status: "answered" }, false],
+    ["an expiry", { status: "expired" }, false],
+    [
+      "a dismissed approval mirror",
+      { status: "withdrawn", answeredAt: "2026-10-02T00:00:00.000Z", approvalRequestId: "r" },
+      false,
+    ],
+  ] as const)("reopens %s: %s", (_name, overrides, expected) => {
+    assert.strictEqual(canReopenDecision(decision("d", "t", overrides as never)), expected);
   });
 
   it("shows a refusal's own message and a generic one for anything else", () => {

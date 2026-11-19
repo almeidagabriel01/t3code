@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ArrowLeftIcon, ActivityIcon, EllipsisIcon, ExternalLinkIcon } from "lucide-react";
+import { ArrowLeftIcon, ActivityIcon, EllipsisIcon, ExternalLinkIcon, XIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -8,7 +8,12 @@ import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useDelegatedUnderParent, useProjects, useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { useDecisionEntries, useOpenDecisionThreadKeys } from "../../state/decisions";
+import {
+  useDecisionEntries,
+  useOpenDecisionAtByThreadKey,
+  useOpenDecisionThreadKeys,
+} from "../../state/decisions";
+import { useEnvironments } from "../../state/environments";
 import { useUiStateStore } from "../../uiStateStore";
 import { DecisionsSection } from "../decisions/DecisionsSection";
 import { type SidebarPriorityHolds } from "../Sidebar.logic";
@@ -45,20 +50,25 @@ function sameHolds(left: SidebarPriorityHolds, right: SidebarPriorityHolds): boo
 function ActivityRow(props: {
   readonly entry: ActivityEntry;
   readonly projectTitle: string;
+  readonly machineLabel: string | null;
   readonly selected: boolean;
   readonly dot: string;
   readonly onSelect: () => void;
+  /** Takes a finished row off the page; omitted where this connection cannot clear it. */
+  readonly onClear?: (() => void) | undefined;
 }) {
   const { entry } = props;
   return (
-    <li>
+    <li
+      className={cn(
+        "flex items-center gap-1 rounded-md pr-1 hover:bg-foreground/8",
+        props.selected && "bg-foreground/8",
+      )}
+    >
       <button
         type="button"
         aria-current={props.selected ? "true" : undefined}
-        className={cn(
-          "flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.selected && "bg-accent",
-        )}
+        className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={props.onSelect}
       >
         <span className="flex items-center gap-2 text-sm">
@@ -67,12 +77,35 @@ function ActivityRow(props: {
         </span>
         <span className="flex items-center gap-1 pl-4 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">{props.projectTitle}</span>
+          {props.machineLabel ? (
+            <>
+              <span aria-hidden>·</span>
+              <span className="min-w-0 shrink truncate">{props.machineLabel}</span>
+            </>
+          ) : null}
           <span aria-hidden>·</span>
           <span className="shrink-0">
             <RelativeTime timestamp={entry.thread.updatedAt} />
           </span>
         </span>
       </button>
+      {props.onClear ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost-muted"
+                size="icon-xs"
+                aria-label={`Clear ${entry.thread.title}`}
+                onClick={props.onClear}
+              />
+            }
+          >
+            <XIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Clear</TooltipPopup>
+        </Tooltip>
+      ) : null}
     </li>
   );
 }
@@ -91,10 +124,13 @@ export function ActivityPage() {
   const [releases, setReleases] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const openDecisionAtByKey = useOpenDecisionAtByThreadKey();
+  const { environments } = useEnvironments();
   const hasOpenDecisions = useDecisionEntries().open.length > 0;
 
   const entries = buildActivityEntries({
     openDecisionThreadKeys,
+    openDecisionAtByKey,
     threads,
     delegatedUnderParent,
     localLastVisitedAtByKey,
@@ -115,8 +151,8 @@ export function ActivityPage() {
   }
 
   const read = useActivityRead({
-    threads: entries.map((entry) => entry.thread),
-    snoozeNow: now,
+    entries,
+    now,
     releaseThreads: (keys) => setReleases((current) => new Set([...current, ...keys])),
     restoreThread: (key) =>
       setReleases((current) => {
@@ -136,6 +172,9 @@ export function ActivityPage() {
     row.item.shell === null ? [] : [{ key: row.item.key, thread: row.item.shell, rank: 1 }],
   );
 
+  const machineLabel = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label] as const),
+  );
   const projectTitle = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
@@ -231,8 +270,14 @@ export function ActivityPage() {
                             `${entry.thread.environmentId}:${entry.thread.projectId}`,
                           ) ?? "Unknown project"
                         }
+                        machineLabel={machineLabel.get(entry.thread.environmentId) ?? null}
                         selected={entry.key === selected?.key}
                         dot={dot}
+                        onClear={
+                          rank === 2 && (!entry.unread || read.isOperable(entry.thread))
+                            ? () => read.clearOne(entry.key)
+                            : undefined
+                        }
                         onSelect={() => {
                           rememberThread(
                             scopeThreadRef(entry.thread.environmentId, entry.thread.id),

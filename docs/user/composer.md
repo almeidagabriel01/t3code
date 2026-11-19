@@ -358,7 +358,9 @@ decision: a question with options and the one it recommends. Open decisions show
 thread's composer. Pick an option (or write your own answer) and the agent gets it as a
 message in its thread and continues. Use **Attach files** to add files or images to your
 answer (not available on provider approvals). **Dismiss** tells the agent nothing was approved; a
-decision that expires does the same, so silence never approves.
+decision that expires does the same, so silence never approves. Changed your mind? Choose **Undo** on the notice,
+or **Reopen** on the dismissed decision under **Recent decisions**; your answer then reaches the
+agent as usual.
 
 ## Goals
 

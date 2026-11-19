@@ -118,8 +118,10 @@ it.effect("redeems a guest link once and sends each guest message once, with its
     const waiting = yield* projections.getThreadShell(threadId);
     assert.equal(waiting?.pendingGuestMessageCount, 1);
     assert.equal(waiting?.oldestPendingGuestMessageAt, submittedAt);
+    assert.equal(waiting?.latestPendingGuestMessageAt, submittedAt);
     const [streamed] = (yield* projections.getShellSnapshot({ threadIds: [threadId] })).threads;
     assert.equal(streamed?.oldestPendingGuestMessageAt, submittedAt);
+    assert.equal(streamed?.latestPendingGuestMessageAt, submittedAt);
 
     yield* sendGuestMessage(orchestrator, "send-1");
     const projection = yield* projections.getThreadProjection(threadId);
@@ -142,6 +144,7 @@ it.effect("redeems a guest link once and sends each guest message once, with its
     const resolved = yield* projections.getThreadShell(threadId);
     assert.equal(resolved?.pendingGuestMessageCount, 0);
     assert.isNull(resolved?.oldestPendingGuestMessageAt);
+    assert.isNull(resolved?.latestPendingGuestMessageAt);
 
     // A second owner device clicking Send must not start another turn.
     assert.isTrue(Exit.isFailure(yield* Effect.exit(sendGuestMessage(orchestrator, "send-2"))));

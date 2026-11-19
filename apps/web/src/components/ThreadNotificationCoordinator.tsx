@@ -249,7 +249,7 @@ export function startThreadNotifications(
         continue;
       }
       const prior = previous.get(rawThread.id);
-      const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
+      const subagentRequest = subagentRequests.get(rawThread.id)?.request ?? null;
       if (
         !entry.reconnecting &&
         prior?.raw === rawThread &&

@@ -2174,6 +2174,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
   /** When the oldest of those messages arrived; null when none waits. Absent from older servers. */
   oldestPendingGuestMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** When the newest of those messages arrived; null when none waits. Absent from older servers. */
+  latestPendingGuestMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   /** Messages waiting behind the active run. Absent from older servers. */
   queuedMessageCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),

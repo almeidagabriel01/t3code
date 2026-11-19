@@ -136,6 +136,9 @@ vi.mock("../../state/use-atom-command", () => ({
     command === "approval" ? mocks.respondToApproval : mocks.respondToUserInput,
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [{ environmentId: "hub", label: "Studio Mac" }] }),
+}));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
@@ -268,7 +271,7 @@ describe("NeedsYouZone", () => {
     expect(ask!.textContent).toContain("av:Ada");
     expect(ask!.textContent).toContain("Asked a question");
     expect(approve!.textContent).toContain("Fix login");
-    expect(approve!.textContent).toContain("· Website");
+    expect(approve!.textContent).toContain("· Website · Studio Mac");
     expect(approve!.textContent).toContain("rm -rf build");
     expect(pick!.textContent).toContain("Pick d1");
     expect(pick!.textContent).toContain("Plan");

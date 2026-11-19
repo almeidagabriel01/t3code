@@ -154,7 +154,8 @@ while nothing waits.
 ### Follow what needs you in Activity
 
 On web and desktop, choose the bell at the top of the sidebar or in the rail, or press
-`mod+alt+u`, to open **Activity**. The bell's badge counts the threads there. Open decisions come
+`mod+alt+u`, to open **Activity**. The bell's badge counts the threads there that need you or
+finished since you last looked. Each row names its project and machine. Open decisions come
 first, then threads grouped as **Needs you** (pending approvals or answers, including a delegated
 task's parent, which shows **Approval** or **Input**), **Working**, and **Unread** (unread
 completions and unacknowledged returns from snooze). Select a row to read the thread beside the
@@ -163,13 +164,15 @@ list, or open it as a full thread. Press the bell again to go back to where you 
 A thread you read stays in the list while Activity is open, so rows do not move while you work
 through them.
 
-Choose **Mark all as read** from the **⋯** menu to acknowledge unread completions and
-unacknowledged wakes on connections you can change. **Clear read** also removes the threads you
-already read from the list. Work in progress and pending requests stay. Nothing is archived or
+Choose **Mark all as read** from the **⋯** menu to clear the badge: it acknowledges unread
+completions, wakes and pending requests on connections you can change. Requests stay under
+**Needs you** until you answer or dismiss them, and count again when a new one arrives. **Clear
+read** removes finished threads from the list; the **×** on a row clears just that one. Rows from a
+connection that cannot change them show without counting in the badge. Nothing is archived or
 deleted.
 
 On mobile, **Mark all as read** and **Clear read** are in the **⋯** menu beside **Projects** on Home
-and in the tablet sidebar.
+and in the tablet sidebar, and a project's **Activity** clears one finished run with its **×**.
 
 On macOS, the desktop app also puts the same view in the menu bar: threads that need you, running
 threads and pinned threads, from every connected environment, with **New thread**, **Open T3 Code**

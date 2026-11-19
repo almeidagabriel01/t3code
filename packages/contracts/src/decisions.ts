@@ -119,7 +119,7 @@ export type DecisionsAnswerInput = typeof DecisionsAnswerInput.Type;
 export const DecisionsDismissInput = Schema.Struct({ decisionId: DecisionId });
 export type DecisionsDismissInput = typeof DecisionsDismissInput.Type;
 
-/** Only an answered `manual` decision reopens; nothing is sent to the agent. */
+/** Undoes the user's dismissal or a to-do marked done; the reopen itself sends the agent nothing. */
 export const DecisionsReopenInput = Schema.Struct({ decisionId: DecisionId });
 export type DecisionsReopenInput = typeof DecisionsReopenInput.Type;
 

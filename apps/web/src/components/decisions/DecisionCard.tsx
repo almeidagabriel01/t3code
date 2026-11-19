@@ -1,4 +1,5 @@
 import {
+  canReopenDecision,
   describeSettledDecision,
   formatDecisionExpiry,
 } from "@t3tools/client-runtime/state/decisions";
@@ -41,6 +42,8 @@ export interface DecisionCardProps {
   /** Deletes an uploaded file the user removed before answering. */
   readonly onDiscardFile?: ((attachmentId: string) => void) | undefined;
   readonly onDismiss: () => Promise<DecisionReply>;
+  /** Undoes the user's dismissal; omitted where the card cannot reopen. */
+  readonly onReopen?: (() => Promise<DecisionReply>) | undefined;
   /** Opens the requesting thread; omitted where the card already sits in it. */
   readonly onOpenThread?: (() => void) | undefined;
   /** Drops the card's own chrome, for a host that supplies the surface. */
@@ -105,13 +108,40 @@ function Context(props: { text: string }) {
 
 function SettledCard(props: DecisionCardProps) {
   const { outcome, detail } = describeSettledDecision(props.decision);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const onReopen = canReopenDecision(props.decision) ? props.onReopen : undefined;
+  const reopen = async () => {
+    if (!onReopen) return;
+    setBusy(true);
+    const reply = await onReopen();
+    setBusy(false);
+    if (!reply.ok) setError(reply.message);
+  };
   return (
     <div className="flex flex-col gap-1">
       <Heading decision={props.decision} onOpenThread={props.onOpenThread} />
-      <p className="text-xs text-muted-foreground">
-        <span className="font-medium text-foreground/80">{outcome}</span>
-        {detail ? ` · ${detail}` : null}
-      </p>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/80">{outcome}</span>
+          {detail ? ` · ${detail}` : null}
+        </p>
+        {onReopen ? (
+          <Button
+            variant="ghost-muted"
+            size="compact"
+            disabled={!props.canAct || busy}
+            onClick={() => void reopen()}
+          >
+            Reopen
+          </Button>
+        ) : null}
+      </div>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive-foreground">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -318,7 +348,7 @@ function OpenCard(props: DecisionCardProps) {
           />
           <Button
             variant="ghost-muted"
-            size="xs"
+            size="compact"
             className="w-fit"
             disabled={off || files.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS}
             onClick={() => fileInput.current?.click()}
