@@ -4144,23 +4144,34 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({ environment: () => ({}) });
       const nextStart = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      let threadSettledFirst = false;
+      const ends = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.status !== "running";
       yield* harness.runtime.events.pipe(
-        Stream.filter(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
-        ),
-        Stream.take(1),
-        Stream.runForEach(() =>
-          harness.startTurn(2).pipe(
+        Stream.takeUntil(ends),
+        Stream.runForEach((event) => {
+          if (!ends(event)) {
+            seen.push(event);
+            return Effect.void;
+          }
+          // The ended turn's thread state lands before its end, never on top of the next turn's.
+          threadSettledFirst = seen.some(
+            (earlier) =>
+              earlier.type === "provider_thread.updated" &&
+              earlier.providerThread.lastRunOrdinal === 1,
+          );
+          return harness.startTurn(2).pipe(
             Effect.exit,
             Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
-          ),
-        ),
+          );
+        }),
         Effect.forkScoped,
       );
       yield* harness.startTurn(1);
       const exit = yield* Deferred.await(nextStart);
       assert.isTrue(Exit.isSuccess(exit), String(exit));
+      assert.isTrue(threadSettledFirst);
     }).pipe(
       Effect.provideService(References.MaxOpsBeforeYield, 3),
       Effect.provide(layerTest),
