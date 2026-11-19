@@ -213,3 +213,28 @@ it.effect("scans hidden entries in the background and coalesces refreshes", () =
     }),
   ),
 );
+
+it.effect("lists indexed entries first and fills the rest with hidden ones", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      yield* Deferred.succeed(gate, undefined);
+      const hidden = Array.from({ length: 25_000 }, (_, index) => `a-${index}.log`);
+      const git = gatedGit(gate, hidden);
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({
+        ok: true,
+        value: pathFinder(["z.ts"]),
+      });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(git.layer),
+      );
+      yield* searchIndex.awaitHiddenScan();
+      const result = yield* searchIndex.list();
+
+      expect(result.entries).toHaveLength(25_000);
+      expect(result.entries.map((entry) => entry.path)).toContain("z.ts");
+      expect(result.truncated).toBe(true);
+    }),
+  ),
+);

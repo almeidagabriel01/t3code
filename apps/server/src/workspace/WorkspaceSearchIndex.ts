@@ -692,14 +692,22 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-      const sortedEntries = withDirectoryAncestors([...mapped.entries, ...hiddenEntries]).toSorted(
-        (left, right) => left.path.localeCompare(right.path),
+      const indexedEntries = withDirectoryAncestors(mapped.entries);
+      const indexedPaths = new Set(indexedEntries.map((entry) => entry.path));
+      // Indexed entries come first; hidden ones only fill the room left under the cap.
+      const hidden = hiddenEntries.filter((entry) => !indexedPaths.has(entry.path));
+      const room = Math.max(0, WORKSPACE_INDEX_MAX_ENTRIES - indexedEntries.length);
+      const sortedEntries = [...indexedEntries, ...hidden.slice(0, room)].toSorted((left, right) =>
+        left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
         entries,
         truncated:
-          incompleteBeforeQuery || mapped.truncated || entries.length < sortedEntries.length,
+          incompleteBeforeQuery ||
+          mapped.truncated ||
+          hidden.length > room ||
+          entries.length < sortedEntries.length,
       };
     },
   );
