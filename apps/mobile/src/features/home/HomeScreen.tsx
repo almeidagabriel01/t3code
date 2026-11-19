@@ -68,6 +68,7 @@ import {
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { NeedsYouZone } from "./NeedsYouZone";
+import { WorkingZone } from "./WorkingZone";
 import { ProjectsZoneHeader } from "./ProjectsZoneHeader";
 import { useSidebarZones } from "./useSidebarZones";
 import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
@@ -789,6 +790,7 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       ) : null}
       {hasSearchQuery ? null : <NeedsYouZone gutter={primaryColumn ? 8 : 16} />}
+      {hasSearchQuery ? null : <WorkingZone gutter={primaryColumn ? 8 : 16} />}
       {hasSearchQuery ? null : (
         <HomeAssistantsSection
           gutter={primaryColumn ? 8 : 16}

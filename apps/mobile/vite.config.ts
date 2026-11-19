@@ -135,6 +135,7 @@ const reactTests = [
   "src/features/settings/settings-environment-filter.test.tsx",
   "src/features/assistants/HomeAssistantsSection.test.tsx",
   "src/features/home/NeedsYouZone.test.tsx",
+  "src/features/home/WorkingZone.test.tsx",
   "src/features/threads/TaskEventActivityRow.test.tsx",
   "src/features/threads/ThreadTaskEventRow.test.tsx",
   "src/features/threads/AssistantMarkdownContent.test.tsx",

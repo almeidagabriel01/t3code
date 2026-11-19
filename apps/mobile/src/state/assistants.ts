@@ -22,6 +22,7 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
 import { environmentReachable } from "@t3tools/client-runtime/connection";
 import { assistantStatusOf } from "@t3tools/client-runtime/sidebarZones";
+import { workingItems, workingRows } from "@t3tools/client-runtime/workingConsumers";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -161,6 +162,39 @@ const assistantStatusAtom = Atom.make((get) => {
  */
 export function useAssistantStatus() {
   return useAtomValue(assistantStatusAtom);
+}
+
+const workingRowsAtom = Atom.make((get) => {
+  const shells = get(environmentThreadShells.quietThreadShellsAtom);
+  const { active, activeTeams } = get(assistantEntriesAtom);
+  const items = workingItems({
+    shells,
+    ownerOf: get(threadOwnershipAtom).ownerOf,
+    teams: activeTeams,
+  });
+  if (items.length === 0) return [];
+  const presentations = get(environmentPresentations.presentationsAtom);
+  const assistants = new Map(
+    active.map((entry) => [`${entry.environmentId}:${entry.assistant.id}`, entry.assistant.name]),
+  );
+  const teams = new Map(
+    activeTeams.map((entry) => [`${entry.environmentId}:${entry.team.id}`, entry.team.name]),
+  );
+  const titles = new Map(
+    shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell.title]),
+  );
+  return workingRows(items, {
+    assistant: (environmentId, id) => assistants.get(`${environmentId}:${id}`),
+    group: (environmentId, id) => teams.get(`${environmentId}:${id}`),
+    thread: (environmentId, id) => titles.get(`${environmentId}:${id}`),
+    environment: (environmentId) =>
+      presentations.get(environmentId as EnvironmentId)?.entry.target.label,
+  });
+}).pipe(Atom.withLabel("mobile-working-rows"));
+
+/** Assistants, group members and subagents working now, with who and on which machine. */
+export function useWorkingRows() {
+  return useAtomValue(workingRowsAtom);
 }
 
 /** What an assistant spent across its conversations; idle (null) when it has no budget to show. */

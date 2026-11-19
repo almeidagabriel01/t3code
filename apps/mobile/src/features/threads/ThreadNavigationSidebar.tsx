@@ -6,6 +6,7 @@ import {
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { NeedsYouZone } from "../home/NeedsYouZone";
+import { WorkingZone } from "../home/WorkingZone";
 import { ProjectsZoneHeader } from "../home/ProjectsZoneHeader";
 import { useSidebarZones } from "../home/useSidebarZones";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
@@ -556,6 +557,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     props.searchQuery.trim().length > 0 ? null : (
       <>
         <NeedsYouZone gutter={4} sidebar />
+        <WorkingZone gutter={4} sidebar />
         <HomeAssistantsSection
           sidebar
           gutter={4}
