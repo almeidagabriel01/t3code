@@ -162,6 +162,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("reads linked environments' machines with the scope this machine's reading needs", () => {
+    for (const method of [
+      WS_METHODS.serverGetHostResources,
+      WS_METHODS.serverGetLinkedEnvironmentResources,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
