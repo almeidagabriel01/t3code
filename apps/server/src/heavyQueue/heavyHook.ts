@@ -179,7 +179,7 @@ const GIT_VALUE_OPTIONS = new Set([
  * Where git's subcommand sits past git's own options (`git -c k=v -C dir commit`), and the folders
  * its `-C` options move to, in order. `at` is the word of the program itself.
  */
-export const gitCommand = (values: ReadonlyArray<string>, at: number) => {
+const gitCommand = (values: ReadonlyArray<string>, at: number) => {
   let sub = at + 1;
   const dirs: string[] = [];
   while (sub < values.length && values[sub]!.startsWith("-")) {
@@ -291,9 +291,6 @@ const heavyWords = (
     return first !== undefined && heavyWords(base(first), words.slice(1), flags, lists);
   }
   if (program === "node") return flags.some((flag) => /^--test(=|$)/.test(flag));
-  if (program === "git") {
-    return first === "commit" && !flags.some((flag) => flag === "--no-verify" || flag === "-n");
-  }
   if (SCRIPT_RUNNERS.includes(program)) {
     return heavyScript(words, 0, flags, lists);
   }
@@ -336,7 +333,6 @@ const PROGRAMS = [
  */
 const HEAVY_PREFILTER = STARTS.flatMap((start) => [
   ...PROGRAMS.map((program) => `*${start}${program}${END}*`),
-  `*${start}git${END}*commit*`,
   `*${start}node${END}*--test*`,
   `*${start}./*`,
 ])
@@ -553,17 +549,21 @@ export const workParts = (parts: ReadonlyArray<Part>) => {
     : own.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
 };
 
-/** The `git commit` parts of a line whose only work is committing, or null for any other line. */
-export const commitOnly = (line: string) => {
-  const work = readLine(line).parts.filter((part) => part.heavy);
-  const commits = work.every(
-    (part) =>
-      part.nested === null &&
-      part.remoto === null &&
-      part.program === "git" &&
-      part.words[0] === "commit",
+const REMOTE_GIT = new Set(["push", "pull", "fetch", "clone", "ls-remote", "remote", "submodule"]);
+
+/** Whether a line's only work is local git (commit, merge, rebase, stash…): never a push or fetch. */
+export const localGitOnly = (line: string) => {
+  const work = workParts(readLine(line).parts);
+  return (
+    work.length > 0 &&
+    work.every(
+      (part) =>
+        part.nested === null &&
+        part.remoto === null &&
+        part.program === "git" &&
+        !REMOTE_GIT.has(part.words[0] ?? ""),
+    )
   );
-  return work.length > 0 && commits ? work : null;
 };
 
 /** Every part of a shell command line that is heavy work, in order. */

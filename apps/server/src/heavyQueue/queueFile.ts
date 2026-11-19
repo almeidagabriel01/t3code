@@ -950,7 +950,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   const doc = readDoc(dir);
   const parts = lineParts(line);
   const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
-  const commit = commitRoute(parts.command, at);
+  const commit = commitRoute(parts.command);
   const handedOff = !parts.remoto && isQueued(parts.command, scriptReader(at));
   if (commit === "direct" || handedOff) {
     return {
@@ -970,8 +970,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     cwd: at,
     createdAt: new Date(now).toISOString(),
     startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
-    priority: commit === "first" ? "high" : "low",
+    // As `t3 heavy` queues an agent's job, behind the user's own.
+    priority: "low",
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(withProbe, now);
@@ -1655,16 +1655,7 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  const answer = interceptBashCall(
-    hookInput,
-    prefix,
-    modeFor(doc, at),
-    environment,
-    scriptReader(at),
-  );
-  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
-    ? null
-    : answer;
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at));
 };
 
 /** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */

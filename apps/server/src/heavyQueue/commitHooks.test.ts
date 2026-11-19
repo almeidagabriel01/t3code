@@ -32,7 +32,7 @@ const repo = (arrange: (root: string) => string | void) => {
 };
 
 describe("commitRoute", () => {
-  it.each<[string, (root: string) => string | void, string, "direct" | "first" | null]>([
+  it.each<[string, (root: string) => string | void, string, "direct" | null]>([
     [
       "no hooks folder",
       (root) => NodeFS.rmSync(`${root}/.git/hooks`, { recursive: true }),
@@ -50,13 +50,13 @@ describe("commitRoute", () => {
       "an executable pre-commit",
       (root) => write(`${root}/.git/hooks/pre-commit`, "exit 0"),
       "git commit -m x",
-      "first",
+      "direct",
     ],
     [
       "an executable commit-msg",
       (root) => write(`${root}/.git/hooks/commit-msg`, "exit 0"),
       "git commit -am x",
-      "first",
+      "direct",
     ],
     [
       "husky-style hooksPath whose pre-commit exists",
@@ -67,7 +67,7 @@ describe("commitRoute", () => {
         write(`${root}/.husky/pre-commit`, "vp staged", 0o644);
       },
       "git commit -m x",
-      "first",
+      "direct",
     ],
     [
       "husky-style hooksPath with only the shims",
@@ -89,7 +89,7 @@ describe("commitRoute", () => {
         return "src";
       },
       "git commit -m x",
-      "first",
+      "direct",
     ],
     [
       "a worktree, whose hooks live in the common git dir",
@@ -112,7 +112,7 @@ describe("commitRoute", () => {
         return "wt";
       },
       "git commit -m x",
-      "first",
+      "direct",
     ],
     [
       "outside any repository",
@@ -125,7 +125,7 @@ describe("commitRoute", () => {
       "git's own -c before commit",
       (root) => write(`${root}/.git/hooks/pre-commit`, "exit 0"),
       "git -c user.name=t -c core.quotePath=off commit -m x",
-      "first",
+      "direct",
     ],
     [
       "-C names a repository with a hook",
@@ -134,7 +134,7 @@ describe("commitRoute", () => {
         write(`${root}/inner/.git/hooks/pre-commit`, "exit 0");
       },
       "git -C inner commit -m x",
-      "first",
+      "direct",
     ],
     [
       "-C names a hookless repository inside a hooked one",
@@ -145,18 +145,29 @@ describe("commitRoute", () => {
       "git -C inner -c k=v commit -m x",
       "direct",
     ],
-    ["-n after git's own options", () => {}, "git -C . commit -n -m x", null],
-    // Not a commit-only line: the queue decides as before.
+    ["-n after git's own options", () => {}, "git -C . commit -n -m x", "direct"],
     [
       "--no-verify skips the hooks",
       (root) => write(`${root}/.git/hooks/pre-commit`, "exit 0"),
       "git commit -n -m x",
-      null,
+      "direct",
     ],
+    ["an amend", () => {}, "git commit --amend --no-edit", "direct"],
+    ["a merge", () => {}, "git merge foo", "direct"],
+    ["a rebase", () => {}, "git rebase main", "direct"],
+    [
+      "a cherry-pick, a stash and a switch",
+      () => {},
+      "git stash && git switch b && git cherry-pick a1",
+      "direct",
+    ],
+    // Not only local git writes: the queue decides as before.
+    ["a push", () => {}, "git push", null],
     ["other work beside the commit", () => {}, "vp test run && git commit -m x", null],
     ["a commit in a nested shell", () => {}, "sh -c 'git commit -m x'", null],
     ["an agent's own remoto", () => {}, "remoto git commit -m x", null],
   ])("%s", (_name, arrange, line, expected) => {
-    expect(commitRoute(line, repo(arrange))).toBe(expected);
+    repo(arrange);
+    expect(commitRoute(line)).toBe(expected);
   });
 });

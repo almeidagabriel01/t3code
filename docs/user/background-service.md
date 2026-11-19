@@ -69,10 +69,10 @@ When several agents run tests, builds or simulators at once, they queue on the
 Mac that hosts T3 Code (with the [Runner](#runner-heavy-work-on-a-linux-pc) on,
 heavy commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
-commands (tests, builds, type checks, `git commit` with its hooks, simulators)
-go through the queue on their own, even when the agent forgets. A `git commit`
-waits only when the repository has a commit hook, and then goes ahead of other
-waiting jobs; without one it runs at once. Open the **Resource Manager** in the status bar:
+commands (tests, builds, type checks, simulators) go through the queue on their
+own, even when the agent forgets. Local git writes (`git commit`, `merge`,
+`rebase`) never queue, even with commit hooks: they run at once on this Mac.
+Open the **Resource Manager** in the status bar:
 its top bar shows each machine's CPU, free memory and slots, and a gauge turns
 amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
 the reading). **Heavy work** lists each job once, by machine, running first and
@@ -227,8 +227,8 @@ work queue, and each section says what the two do together.
   - **Uses a file only this Mac has**: an argument, or a variable set for the
     command (`T3CODE_HOME=~/.t3/dev vp test run`, `env`, `export`), names a
     path outside the project, such as `~/.t3`, `~/Library` or another checkout.
-  - **Changes this Mac's checkout**: git commands that write (commits run here,
-    since the pre-commit hook edits this Mac's repository) and installs.
+  - **Changes this Mac's checkout**: installs, and git commands that write
+    when Linux would run them (with `remoto`, for example).
   - **Pinned to this Mac**: it matches **Always on this Mac**, or it was started
     with `t3 heavy --runner mac`.
   - **Serves a port used here**: dev servers such as `vite`, `next dev`,

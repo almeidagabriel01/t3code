@@ -1644,8 +1644,7 @@ describe("runtime toggles", () => {
 
   it("once a Runner is on, every Mac row says why it stays, beside what it waits for here", () => {
     const entries = [
-      job("run", "git commit -m x", { startedAt: ago(1000) }),
-      job("commit", "git commit -m 'fix: t3 heavy'"),
+      job("run", "xcodebuild -scheme App build", { startedAt: ago(1000) }),
       job("install", "pnpm install"),
       job("moved", "vp test run", { route: "mac" }),
       job("back", "vp test run", {
@@ -1657,11 +1656,9 @@ describe("runtime toggles", () => {
     const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
       planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
         .reasons;
-    const commits = "Changes this Mac's checkout: git commit";
     expect(at({ runnerOn: true })).toEqual({
-      run: commits,
-      commit: `${commits} · the one slot is busy`,
-      install: "Changes this Mac's checkout: pnpm install · waiting its turn",
+      run: "Mac-only tool: xcodebuild",
+      install: "Changes this Mac's checkout: pnpm install · the one slot is busy",
       moved: "Moved to this Mac · waiting its turn",
       back: "Uses a file only this Mac has: /x · waiting its turn",
     });
@@ -1671,16 +1668,12 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
       install: "Runner off for this project",
     });
-    // With every Runner off, rows read as they always did, but a commit still says why it waits.
-    const hook = "Commit hook runs checks";
+    // With every Runner off, rows say only what they wait for.
     expect(at({}, { runnerEnabled: false })).toEqual({
-      run: hook,
-      commit: `${hook} · next in line`,
-      install: "waiting its turn",
+      install: "next in line",
       moved: "waiting its turn",
       back: "waiting its turn",
     });
-    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
 });
 

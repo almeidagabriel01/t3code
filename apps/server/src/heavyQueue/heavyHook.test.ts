@@ -44,9 +44,6 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
-  ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
-  // git's own options take a value before the subcommand.
-  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -112,6 +109,12 @@ const LIGHT = [
   "ls -la",
   "git status && git log --format=%H -3",
   "git checkout -b fix-build",
+  // A local git write is quick, even with hooks: it runs here, outside the queue.
+  "git add a && git commit -m 'fix: x'",
+  "git -C apps/web -c user.name=t commit -m x",
+  "git commit --amend --no-edit",
+  "git merge foo",
+  "git rebase main",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
   "git -C web commit -n -m wip",

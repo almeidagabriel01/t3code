@@ -244,8 +244,6 @@ export type HeavyLaunch =
       readonly program: string;
       readonly args: ReadonlyArray<string>;
       readonly where: RunnerWhere | undefined;
-      /** A commit whose hook runs goes ahead of other waiters: it is short and blocks its agent. */
-      readonly priority?: "high";
     };
 
 /**
@@ -284,15 +282,13 @@ export const heavyLaunch = (
     const { cwd, program, args } = job;
     return job.remoto ? { kind: "direct", run: { cwd, program, args } } : { kind: "direct" };
   }
-  const commit = job.remoto ? null : commitRoute(line, job.cwd);
-  if (commit === "direct") return { kind: "direct" };
+  if (!job.remoto && commitRoute(line) === "direct") return { kind: "direct" };
   return {
     kind: "queue",
     cwd: job.cwd,
     program: job.program,
     args: job.args,
     where: job.remoto ? (command.where ?? "linux") : command.where,
-    ...(commit === "first" ? { priority: "high" as const } : {}),
   };
 };
 
@@ -736,7 +732,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     createdAt: new Date().toISOString(),
     startedAt: null,
     // Agents' jobs wait behind the user's own.
-    priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
+    priority: priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
     ...(process.env[CALL_ENV] === "1"

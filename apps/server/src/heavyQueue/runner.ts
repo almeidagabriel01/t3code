@@ -28,7 +28,6 @@ import {
   type Sustained,
 } from "./admission.ts";
 import {
-  commitOnly,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
@@ -284,9 +283,6 @@ const BOTH_AT_LIMITS = "Both machines are at their limits";
 const LINUX_FULL_MAC = "Linux is full: running on this Mac";
 export const LINUX_FULL_SHORTER = "Linux is full: shorter queue on this Mac";
 export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
-
-/** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
-const COMMIT_HOOK = "Commit hook runs checks";
 
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
@@ -1215,8 +1211,7 @@ export const intentOf = (
 ): { readonly intent: RunnerWhere; readonly reason: string; readonly cancel?: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
-    // Only a commit whose hook runs is queued, so the queue can say why it waits.
-    const why = commitOnly(lineOf(entry)) === null ? "Runner off for this project" : COMMIT_HOOK;
+    const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
   const verdict = eligibilityOf(entry, context);
@@ -1287,11 +1282,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Why each job runs on this Mac, shown with what it waits for there. */
   const macWhy: Record<string, string> = {};
 
-  /** Mac rows say why only once a Runner is on, except a commit, which says why it waits at all. */
-  const shows = (reason: string) => input.runnerOn === true || reason === COMMIT_HOOK;
+  /** Mac rows say why only once a Runner is on. */
+  const shows = input.runnerOn === true;
   const toMac = (entry: HeavyQueueEntry, reason: string) => {
     alone.delete(entry.id);
-    if (shows(reason)) macWhy[entry.id] = reason;
+    if (shows) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
     if (!queueOn) admits[entry.id] = { runner: "mac", ungated: true };
@@ -1304,7 +1299,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   // A running job keeps saying why it runs on this Mac, as its row did while it waited.
   for (const entry of macRunning) {
     const why = (entry as QueuedEntry).routeReason;
-    if (why !== undefined && shows(why)) reasons[entry.id] = why;
+    if (why !== undefined && shows) reasons[entry.id] = why;
   }
   const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
@@ -1481,7 +1476,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
 
   for (const entry of macRunning) {
     const { intent, reason } = intentOf(entry, input.contextOf(entry.cwd));
-    if (intent === "mac" && shows(reason)) macWhy[entry.id] = reason;
+    if (intent === "mac" && shows) macWhy[entry.id] = reason;
   }
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);
