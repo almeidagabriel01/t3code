@@ -10,6 +10,7 @@ import {
   toggleFoldKey,
   visibleAssistants,
 } from "./assistantList.ts";
+import type { AssistantPresence } from "./assistantRobot.ts";
 
 const entry = (name: string, threadId: string | null = `assistant:${name}:1`) => ({
   environmentId: "env",
@@ -39,7 +40,14 @@ const names = (list: ReadonlyArray<{ entry: { assistant: { name: string } } }>) 
   list.map(({ entry }) => entry.assistant.name);
 
 describe("rankAssistants", () => {
-  it.each([
+  it.each<{
+    name: string;
+    entries: Array<ReturnType<typeof entry>>;
+    shells: Array<ReturnType<typeof shell>>;
+    /** What the shared status reads for an assistant, over its own chat. */
+    status?: Record<string, AssistantPresence["mood"]>;
+    expected: string[];
+  }>([
     {
       name: "needs you, then working, then recent activity, then name",
       entries: [entry("ada"), entry("bob"), entry("cid"), entry("dee"), entry("eve")],
@@ -67,8 +75,23 @@ describe("rankAssistants", () => {
       ],
       expected: ["bob", "ada"],
     },
-  ])("orders $name", ({ entries, shells, expected }) => {
-    expect(names(rankAssistants(entries, shells))).toEqual(expected);
+    {
+      name: "the shared status over its own idle chat: a task that needs you, then one at work",
+      entries: [entry("ada"), entry("bob"), entry("cid")],
+      shells: [
+        shell("assistant:ada:1", { updatedAt: "2026-02-01T00:00:00.000Z" }),
+        shell("assistant:bob:1"),
+        shell("assistant:cid:1"),
+      ],
+      status: { cid: "needs", bob: "working" },
+      expected: ["cid", "bob", "ada"],
+    },
+  ])("orders $name", ({ entries, shells, expected, status = {} }) => {
+    const ranked = rankAssistants(entries, shells, (row, presence) => {
+      const mood = status[row.assistant.id];
+      return mood === undefined ? presence : { ...presence, mood };
+    });
+    expect(names(ranked)).toEqual(expected);
   });
 });
 

@@ -1,6 +1,7 @@
 import { assistantIdFromThreadId, type Assistant } from "@t3tools/contracts";
 
 import { assistantFace, type AssistantFace, type AssistantPresence } from "./assistantRobot.ts";
+import { ENVIRONMENT_DISCONNECTED_LABEL } from "./sidebarZones.ts";
 import { resolveTeammateMessage } from "./teammateMessage.ts";
 
 /** Distinct hues that read on dark, light and glass surfaces. */
@@ -126,27 +127,43 @@ export const ASSISTANT_PRESENCE_SECTIONS = [
   ["idle", "Idle"],
 ] as const satisfies ReadonlyArray<readonly [AssistantPresenceSection, string]>;
 
-/** A sender's face and section, both from its one `assistantStatus`. */
+const sectionTitle = (section: AssistantPresenceSection) =>
+  ASSISTANT_PRESENCE_SECTIONS.find(([id]) => id === section)![1];
+
+/**
+ * A sender's face, section and status word, all from its one `assistantStatus`. Failed, limited and
+ * offline sit under Idle but say what they are, as the info hero and Work do.
+ */
 export function assistantSenderLook(
   sender: Pick<AssistantSender, "assistant">,
   status: AssistantPresence | undefined,
-): { readonly face: AssistantFace; readonly section: AssistantPresenceSection } {
+): {
+  readonly face: AssistantFace;
+  readonly section: AssistantPresenceSection;
+  readonly label: string;
+} {
   const mood = status?.mood;
+  const section = mood === "needs" ? "needs" : mood === "working" ? "working" : "idle";
+  const says =
+    status !== undefined &&
+    (mood === "failed" ||
+      mood === "limited" ||
+      (mood === "idle" && status.detail === ENVIRONMENT_DISCONNECTED_LABEL));
   return {
     face: sender.assistant && status ? assistantFace(status) : "sleeping",
-    section: mood === "needs" ? "needs" : mood === "working" ? "working" : "idle",
+    section,
+    label: says ? status.detail : sectionTitle(section),
   };
 }
 
 /** A presence row's one status line: "Idle · 6 messages here · Asks before acting". */
 export function assistantPresenceStatus(
-  section: AssistantPresenceSection,
+  label: string,
   sender: Pick<AssistantSender, "count">,
   asksBeforeActing: boolean,
 ): string {
-  const title = ASSISTANT_PRESENCE_SECTIONS.find(([id]) => id === section)![1];
   return [
-    title,
+    label,
     ...(sender.count === 0 ? [] : [`${sender.count} message${sender.count === 1 ? "" : "s"} here`]),
     ...(asksBeforeActing ? ["Asks before acting"] : []),
   ].join(" · ");
