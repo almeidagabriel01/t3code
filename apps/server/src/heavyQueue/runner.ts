@@ -28,6 +28,7 @@ import {
   type Sustained,
 } from "./admission.ts";
 import {
+  entryOf,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
@@ -150,7 +151,7 @@ const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
 
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
   patterns
-    .flatMap((pattern) => [pattern, ...(KIND_TOOLS[pattern.trim().toLowerCase()] ?? [])])
+    .flatMap((pattern) => [pattern, ...(entryOf(KIND_TOOLS, pattern.trim().toLowerCase()) ?? [])])
     .some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
 
 export type Eligibility = "linux" | "exclusive" | "mac-only";
@@ -354,7 +355,7 @@ const nativeBuild = (program: string, words: ReadonlyArray<string>) => {
   if (NATIVE_TOOLS.has(program)) return program;
   // `cargo +nightly build`: a toolchain pick comes before the subcommand.
   const sub = words.find((word) => !word.startsWith("+")) ?? "";
-  return NATIVE_SUBCOMMANDS[program]?.test(sub) === true ? `${program} ${sub}` : null;
+  return entryOf(NATIVE_SUBCOMMANDS, program)?.test(sub) === true ? `${program} ${sub}` : null;
 };
 
 /**
@@ -433,7 +434,9 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     return { code: "mac-tool", subject: named };
   }
   if (program === "git" && GIT_WRITES.test(first)) return { code: "mac-state", subject: named };
-  if (DEV_PROGRAMS[program]?.test(first) === true) return { code: "serves-port", subject: named };
+  if (entryOf(DEV_PROGRAMS, program)?.test(first) === true) {
+    return { code: "serves-port", subject: named };
+  }
   if (after.includes("--ui")) return { code: "serves-port", subject: `${program} --ui` };
   if (TASK_RUNNERS.has(program)) {
     for (const task of words) {
@@ -622,7 +625,7 @@ export const movedPart = (
     }
   } else {
     // ponytail: read before the subcommand only, as these tools take them.
-    const flags = FOLDER_FLAGS[programName(values[0])] ?? [];
+    const flags = entryOf(FOLDER_FLAGS, programName(values[0])) ?? [];
     for (let at = 1; at < values.length; at++) {
       const value = values[at]!;
       const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
@@ -677,8 +680,8 @@ const editReason = (
   const { program } = part;
   const args = part.values.slice(part.programAt + 1);
   // An editor's files are relative to its folder: outside any checkout it edits nothing of one.
-  const flag =
-    root !== null && IN_PLACE[program] && args.find((word) => IN_PLACE[program]!.test(word));
+  const inPlace = root === null ? undefined : entryOf(IN_PLACE, program);
+  const flag = inPlace && args.find((word) => inPlace.test(word));
   if (flag) return { code: "edits-in-place", subject: `${program} ${flag}` };
   if (program === "tee") {
     const file = part.command.words

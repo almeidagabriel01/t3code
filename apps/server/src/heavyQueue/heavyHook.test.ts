@@ -160,6 +160,9 @@ const LIGHT = [
   "pnpm exec vp lint src/x.ts",
   "oxlint src/a.ts",
   "npx eslint --fix src/a.ts",
+  // A program named like an object's own key is just a program.
+  "constructor test",
+  "toString build x",
   // An in-place edit with nothing heavy beside it runs here, outside the queue.
   `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
   "perl -pi -e 's/vp test/x/' src/a.ts",

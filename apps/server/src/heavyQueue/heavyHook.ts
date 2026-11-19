@@ -72,6 +72,10 @@ const SCRIPT_NAMES = [
 const FORMAT_NAMES = ["fmt", "format", "lint"];
 const LINTERS = new Set(["oxlint", "eslint"]);
 const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
+/** A table's own entry for a program name: `constructor` must not find Object's. */
+export const entryOf = <T>(table: Readonly<Record<string, T>>, name: string): T | undefined =>
+  Object.hasOwn(table, name) ? table[name] : undefined;
+
 const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const SCRIPT_RUNNERS = ["vpr", "make", "just"];
@@ -208,7 +212,7 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
-  const folderFlags = FOLDER_FLAGS[program] ?? [];
+  const folderFlags = entryOf(FOLDER_FLAGS, program) ?? [];
   return {
     at,
     program,
@@ -285,7 +289,7 @@ const heavyWords = (
 ): boolean => {
   const [first, second] = words;
   if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
-  const sub = SUBCOMMANDS[program];
+  const sub = entryOf(SUBCOMMANDS, program);
   if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {
     return first !== undefined && heavyWords(base(first), words.slice(1), flags, lists);

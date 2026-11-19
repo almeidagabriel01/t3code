@@ -1891,6 +1891,34 @@
       "observed": "synthetic",
       "expect": "mac-state:pnpm add",
       "why": "pnpm's -w is the workspace root and takes no value"
+    },
+    {
+      "line": "constructor -i x",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "valueOf dev",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "hasOwnProperty build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
+    },
+    {
+      "line": "toString x",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-19",
+      "expect": "linux",
+      "why": "a program named like an object's own key is just a program"
     }
   ]
 }

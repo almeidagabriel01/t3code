@@ -1693,6 +1693,9 @@ describe("patterns and eligibility", () => {
     ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
     ["vue-tsc --noEmit", "tsc", true],
     ["tsgo --noEmit", "test", false],
+    // A pattern named like an object's own key matches as written.
+    ["vp test run", "constructor", false],
+    ["toString x", "toString", true],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
