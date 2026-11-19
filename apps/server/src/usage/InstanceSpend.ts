@@ -1,5 +1,9 @@
 import {
+  consumerRefFromThread,
+  type ConsumerRef,
+  OrchestrationV2AppThreadLineage,
   PROVIDER_DISPLAY_NAMES,
+  ThreadId,
   type ProviderDriverKind,
   ProviderInstanceId,
   type InstanceSpendResult,
@@ -15,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { priceTurnUsd, type PricingTables, type TurnTokenUsage } from "./turnPricing.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   budgetBlockedMessage,
@@ -26,12 +31,6 @@ import * as UsageService from "./UsageService.ts";
 
 const PERIOD_DAYS = 30;
 const DAY_MS = 86_400_000;
-
-// ponytail: local mirror of the contract's ConsumerRef until t3/fork2-consumer-contract lands.
-type ConsumerRef = { readonly kind: "thread" | "assistant" | "groupMember" | "subagent" } & Record<
-  string,
-  unknown
->;
 
 /** Per-instance rows kept on the wire; the rest only count in the per-kind totals. */
 export const TOP_CONSUMERS = 8;
@@ -151,8 +150,8 @@ export function aggregateInstanceSpend(input: {
 /** Every generation of an assistant, and every request thread of a group member, is one consumer. */
 function consumerKey(consumer: ConsumerRef): string {
   return consumer.kind === "assistant" || consumer.kind === "groupMember"
-    ? `${consumer.kind}:${String(consumer.assistantId)}`
-    : String(consumer.threadId);
+    ? `${consumer.kind}:${consumer.assistantId}`
+    : consumer.threadId;
 }
 
 const TurnUsage = Schema.fromJsonString(
@@ -166,6 +165,9 @@ const TurnUsage = Schema.fromJsonString(
   }),
 );
 const decodeTurnUsage = Schema.decodeUnknownOption(TurnUsage);
+const decodeLineage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2AppThreadLineage),
+);
 
 export class InstanceSpend extends Context.Service<
   InstanceSpend,
@@ -182,6 +184,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const usage = yield* UsageService.UsageService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
     const loadTurns = Effect.fn("InstanceSpend.loadTurns")(function* (input: {
       readonly sinceMs: number;
       readonly instanceId?: string;
@@ -190,11 +193,14 @@ export const layer = Layer.effect(
       const instanceId = input.instanceId ?? null;
       const rows = yield* sql<{
         readonly instance_id: string | null;
+        readonly thread_id: string;
+        readonly lineage: string | null;
         readonly at: string;
         readonly model: string | null;
         readonly usage: string | null;
       }>`
-        SELECT attempt.provider_instance_id AS instance_id,
+        SELECT attempt.provider_instance_id AS instance_id, turn.thread_id,
+          json_extract(thread.payload_json, '$.lineage') AS lineage,
           COALESCE(turn.completed_at, turn.started_at) AS at,
           json_extract(run.payload_json, '$.modelSelection.model') AS model,
           json_extract(turn.payload_json, '$.turnTokenUsage') AS usage
@@ -202,16 +208,29 @@ export const layer = Layer.effect(
         JOIN orchestration_v2_projection_run_attempts AS attempt
           ON attempt.attempt_id = turn.run_attempt_id
         LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
+        LEFT JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = turn.thread_id
         WHERE turn.status != 'pending' AND COALESCE(turn.completed_at, turn.started_at) >= ${since}
-          AND (${instanceId} IS NULL OR attempt.provider_instance_id = ${instanceId})`.pipe(
-        Effect.orDie,
-      );
+          AND (${instanceId} IS NULL OR attempt.provider_instance_id = ${instanceId})
+        ORDER BY at`.pipe(Effect.orDie);
       return rows.flatMap((row) =>
         row.instance_id === null
           ? []
           : [
               {
                 providerInstanceId: row.instance_id,
+                // ponytail: group members carry no group id; resolving it means hashing every team.
+                consumer: consumerRefFromThread(
+                  {
+                    id: ThreadId.make(row.thread_id),
+                    providerInstanceId: ProviderInstanceId.make(row.instance_id),
+                    lineage: Option.getOrElse(decodeLineage(row.lineage ?? ""), () => ({
+                      parentThreadId: null,
+                      relationshipToParent: null,
+                      rootThreadId: ThreadId.make(row.thread_id),
+                    })),
+                  },
+                  environmentId,
+                ),
                 model: row.model,
                 at: row.at,
                 usage: row.usage === null ? null : Option.getOrNull(decodeTurnUsage(row.usage)),

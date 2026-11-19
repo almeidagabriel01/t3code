@@ -977,7 +977,8 @@ const sandboxDistDir = NodeFS.existsSync(NodePath.join(import.meta.dirname, "bin
   : NodePath.resolve(NodePath.join(import.meta.dirname, "..", "dist"));
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
-  Layer.provideMerge(InstanceSpend.layer),
+  // Layers memoize by reference, so this is the environment the rest of the server reads.
+  Layer.provideMerge(InstanceSpend.layer.pipe(Layer.provide(layerServerEnvironment))),
   Layer.provideMerge(
     IntegrationAuth.layer.pipe(
       Layer.provide(IntegrationFetch.layer),
