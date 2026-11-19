@@ -934,6 +934,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const zones = useSidebarZones();
+  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
@@ -945,7 +946,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    // Teams already draws an assistant's task, so opening one never clears the project scope.
+    findThread: (key) => {
+      const thread = threads.find((candidate) => threadShellKey(candidate) === key);
+      return thread !== undefined && teamsShown && zones.ownerOf(thread).kind === "assistant"
+        ? undefined
+        : thread;
+    },
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
