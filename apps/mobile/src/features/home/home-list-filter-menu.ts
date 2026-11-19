@@ -5,6 +5,7 @@ import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly displayUrl?: string | null;
 }
 
 export interface HomeListFilterMenuProject {
@@ -14,6 +15,31 @@ export interface HomeListFilterMenuProject {
   readonly needsAttention?: boolean;
   /** Named under a shared label, so same-named projects on different machines read apart. */
   readonly environmentIds?: ReadonlyArray<EnvironmentId>;
+}
+
+/** Each machine's name, or its address when another environment in the list shares that name. */
+export function environmentMachineNames(
+  environments: ReadonlyArray<HomeListFilterMenuEnvironment>,
+): ReadonlyMap<EnvironmentId, string> {
+  const counts = new Map<string, number>();
+  for (const { label } of environments) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return new Map(
+    environments.map((environment) => [
+      environment.environmentId,
+      ((counts.get(environment.label) ?? 0) > 1 && environment.displayUrl) || environment.label,
+    ]),
+  );
+}
+
+/** The address under an environment row whose name another environment shares. */
+export function sameNameEnvironmentSubtitle(
+  environments: ReadonlyArray<HomeListFilterMenuEnvironment>,
+) {
+  const names = environmentMachineNames(environments);
+  return (environment: HomeListFilterMenuEnvironment): string | undefined => {
+    const name = names.get(environment.environmentId);
+    return name === environment.label ? undefined : name;
+  };
 }
 
 /** Names the machines of projects whose label another project in the list shares. */
@@ -27,15 +53,14 @@ export function sameNameMachineLabels(
     if (seen.has(label)) shared.add(label);
     seen.add(label);
   }
+  const machineNames = environmentMachineNames(environments);
   return (project: {
     readonly label: string;
     readonly environmentIds?: ReadonlyArray<EnvironmentId>;
   }): string | undefined => {
     if (!shared.has(project.label)) return undefined;
     const names = new Set(
-      (project.environmentIds ?? []).flatMap(
-        (id) => environments.find((environment) => environment.environmentId === id)?.label ?? [],
-      ),
+      (project.environmentIds ?? []).flatMap((id) => machineNames.get(id) ?? []),
     );
     return [...names].join(", ") || undefined;
   };
@@ -52,6 +77,7 @@ export function buildHomeListFilterMenuItems(props: {
   readonly onArchiveProject?: (() => void) | undefined;
   readonly onOpenProjectSettings?: (() => void) | undefined;
 }): AppBarMenuItem[] {
+  const environmentSubtitle = sameNameEnvironmentSubtitle(props.environments);
   const items: AppBarMenuItem[] = [
     {
       id: "environment",
@@ -68,6 +94,7 @@ export function buildHomeListFilterMenuItems(props: {
         ...props.environments.map((environment) => ({
           id: `environment:${environment.environmentId}`,
           title: environment.label,
+          subtitle: environmentSubtitle(environment),
           selected: props.selectedEnvironmentId === environment.environmentId,
           onPress: () => props.onEnvironmentChange(environment.environmentId),
         })),

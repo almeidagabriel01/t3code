@@ -775,6 +775,7 @@ export function HomeScreen(props: HomeScreenProps) {
           projects={pickableProjectGroups(projectScopes).map((scope) => ({
             key: scope.key,
             label: scope.title,
+            environmentIds: scope.projectRefs.map((ref) => ref.environmentId),
             needsAttention: scope.projectRefs.some((ref) =>
               attentionProjectKeys.has(scopedProjectKey(ref.environmentId, ref.projectId)),
             ),

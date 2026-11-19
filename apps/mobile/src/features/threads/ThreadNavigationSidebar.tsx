@@ -165,6 +165,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     .map((connection) => ({
       environmentId: connection.environmentId,
       label: connection.environmentLabel,
+      displayUrl: connection.displayUrl,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
   const availableEnvironmentIds = new Set(
