@@ -946,13 +946,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    // Teams already draws an assistant's task, so opening one never clears the project scope.
-    findThread: (key) => {
-      const thread = threads.find((candidate) => threadShellKey(candidate) === key);
-      return thread !== undefined && teamsShown && zones.ownerOf(thread).kind === "assistant"
-        ? undefined
-        : thread;
-    },
+    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    listedInTeams: (thread) => teamsShown && zones.ownerOf(thread).kind === "assistant",
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");

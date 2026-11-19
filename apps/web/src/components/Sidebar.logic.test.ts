@@ -1671,6 +1671,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
@@ -1685,6 +1686,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: null, widensScope: false });
   });
@@ -1701,10 +1703,31 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       });
     resolve("environment-test:unlisted");
     expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
+
+  it.each([
+    { teamsShown: true, widensScope: false },
+    { teamsShown: false, widensScope: true },
+  ])(
+    "an assistant's task the scope hides widens it only when Teams is hidden: teams=$teamsShown",
+    ({ teamsShown, widensScope }) => {
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: "environment-test:other", pendingKey: null },
+          routeKey: hiddenKey,
+          isSearching: false,
+          scopedProjectKeys,
+          delegatedUnderParent: new Set(),
+          findThread,
+          listedInTeams: () => teamsShown,
+        }),
+      ).toEqual({ pendingKey: hiddenKey, widensScope });
+    },
+  );
 
   it("holds a pending reveal without widening while searching", () => {
     expect(
@@ -1715,6 +1738,7 @@ describe("resolveSidebarRouteReveal", () => {
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
         findThread,
+        listedInTeams: () => false,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: false });
   });
