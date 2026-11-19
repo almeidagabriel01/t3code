@@ -536,8 +536,12 @@ const openRuntime = Effect.fnUntraced(function* (
     runtimePolicy,
   });
   const emitted = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
   yield* runtime.events.pipe(
-    Stream.runForEach((event) => Queue.offer(emitted, event)),
+    Stream.runForEach((event) => {
+      seen.push(event);
+      return Queue.offer(emitted, event);
+    }),
     Effect.forkScoped,
   );
   const takeEvent = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
@@ -547,7 +551,7 @@ const openRuntime = Effect.fnUntraced(function* (
         if (predicate(event)) return event;
       }
     });
-  return { runtime, takeEvent };
+  return { runtime, takeEvent, seen };
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -3276,7 +3280,7 @@ describe("PiAdapterV2", () => {
   it.effect.each([false, true])("follows an extension rewind with summarize=%s", (summarize) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const { runtime, takeEvent, seen } = yield* openRuntime(fake);
       const root = { type: "model_change", id: "root", parentId: null };
       const user = (id: string, parentId: string) => ({
         type: "message",
@@ -3302,6 +3306,7 @@ describe("PiAdapterV2", () => {
         ...listings: ReadonlyArray<unknown>
       ) {
         yield* startTurn(runtime, providerThread, "default", [], text, undefined, runOrdinal);
+        const start = seen.length;
         yield* fake.takeRequest("prompt");
         for (const listing of listings) fake.queueEntries(listing);
         yield* fake.emit({ type: "response", command: "prompt", success: true });
@@ -3309,15 +3314,21 @@ describe("PiAdapterV2", () => {
           yield* fake.emit({ type: "agent_start" });
           yield* fake.emit({ type: "agent_settled" });
         }
-        const turn = yield* takeEvent(
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        const settled = seen.slice(start);
+        const turnAt = settled.findIndex(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
         );
-        const thread = yield* takeEvent(
+        const threadAt = settled.findIndex(
           (event) =>
             event.type === "provider_thread.updated" && event.providerThread.status === "idle",
         );
-        yield* takeEvent((event) => event.type === "turn.terminal");
+        // The server starts the next turn on the turn's end, so the thread state lands first.
+        assert.isAtLeast(threadAt, 0);
+        assert.isBelow(threadAt, turnAt);
+        const turn = settled[turnAt]!;
+        const thread = settled[threadAt]!;
         return {
           turnRef:
             turn.type === "provider_turn.updated" ? turn.providerTurn.nativeTurnRef : undefined,
@@ -3412,10 +3423,6 @@ describe("PiAdapterV2", () => {
         yield* fake.emit({ type: "response", command: "prompt", success: true });
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({ type: "agent_settled" });
-        yield* takeEvent(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-        );
         const thread = yield* takeEvent(
           (event) =>
             event.type === "provider_thread.updated" && event.providerThread.status === "idle",
@@ -3461,10 +3468,6 @@ describe("PiAdapterV2", () => {
         yield* fake.emit({ type: "response", command: "prompt", success: true });
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({ type: "agent_settled" });
-        yield* takeEvent(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-        );
         const thread = yield* takeEvent(
           (event) =>
             event.type === "provider_thread.updated" && event.providerThread.status === "idle",
