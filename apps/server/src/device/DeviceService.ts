@@ -173,11 +173,13 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
 /** Whether `dumpsys lock_settings` names a PIN, pattern or password for `userId`.
  * Android 11-12 print `CredentialType: Pin`, 14+ `PIN`. */
 const androidCredentialIsSecure = (dump: string, userId: string) => {
-  const blocks = dump.split(/^\s*User (\d+)\s*$/m);
+  // Only `User State:` up to the next unindented section heading lists credentials per user.
+  const section = dump.split(/^User State:\s*$/m)[1]?.split(/^\S/m)[0] ?? "";
+  const blocks = section.split(/^\s*User (\d+)\s*$/m);
   const index = blocks.indexOf(userId, 1);
   const type =
     index === -1 ? undefined : /^\s*CredentialType:\s*(\w+)/m.exec(blocks[index + 1] ?? "");
-  // Android 9 prints no type: an unknown credential lets the agent in, as any unclear reading does.
+  // Android 9 prints no type: an unknown or missing credential lets the agent in, as any unclear reading does.
   return /^(?:pin|pattern|password)$/i.test(type?.[1] ?? "");
 };
 

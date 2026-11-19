@@ -116,6 +116,12 @@ const ANDROID_LOCKS = {
     adb.window = adbAnswer("    mShowingDream=false mDreamingLockscreen=true\n");
     adb.lockSettings = lockSettings("Pattern");
   },
+  "PIN lock screen after a stray user line": (adb: FakeAdb) => {
+    adb.window = KEYGUARD;
+    adb.lockSettings = adbAnswer(
+      `Keys:\n  User 0\n    CredentialType: NONE\n${lockSettings("PIN").stdout}Storage:\n`,
+    );
+  },
   "unreadable current user": (adb: FakeAdb) => {
     adb.currentUser = adbAnswer("", 1);
     adb.users["0"] = adbAnswer("RUNNING_LOCKED\n");
@@ -652,6 +658,13 @@ describe("device setup consent", () => {
       physical: true,
       lock: "older pattern lock screen" as const,
     },
+    {
+      case: "an emulator whose dump names its user earlier",
+      deviceId: "emulator-5556",
+      booted: true,
+      physical: false,
+      lock: "PIN lock screen after a stray user line" as const,
+    },
   ])(
     "refuses agents $case while it reads as locked ($lock), and the user opens it to unlock",
     (row) =>
@@ -748,6 +761,15 @@ describe("device setup consent", () => {
       // Android 9 prints no credential type.
       case: "its lock screen's credential is unknown",
       adb: { window: KEYGUARD, lockSettings: adbAnswer("    User 0\n        SID = 0\n") },
+    },
+    {
+      case: "only a later section names a credential",
+      adb: {
+        window: KEYGUARD,
+        lockSettings: adbAnswer(
+          "User State:\n  User 0\n    Quality: 0\nStrongAuth:\n    CredentialType: PIN\n",
+        ),
+      },
     },
   ])("opens an Android device when $case, since only a locked reading refuses", (row) =>
     Effect.gen(function* () {
