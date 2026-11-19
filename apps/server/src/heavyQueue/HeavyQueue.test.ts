@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as HeavyQueue from "./HeavyQueue.ts";
 import * as Queue from "./queueFile.ts";
+import { recordRouteFault } from "./routeMemory.ts";
 import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, parseHeartbeat } from "./runner.ts";
 
 const holder: HeavyQueueEntry = {
@@ -588,6 +589,41 @@ describe("HeavyQueue", () => {
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("lists learned routes and forgets one or all, again harmlessly", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const fault = { kind: "missing-program", subject: "vp", line: "vp: not found" } as const;
+        recordRouteFault(dir, "vp@/a#missing-program", fault, 0, 7, 9);
+        recordRouteFault(dir, "vp@/a#missing-program", fault, 0, 7, 9);
+        recordRouteFault(dir, "cargo@/b#missing-program", fault, 0, 7, 9);
+        const { routes } = yield* queue.listRoutes();
+        const learnAfter = routes[0]!.learnAfter;
+        expect(routes).toEqual([
+          {
+            key: "vp@/a#missing-program",
+            kind: "missing-program",
+            faults: 2,
+            learnAfter,
+            learned: 2 >= learnAfter,
+            line: "vp: not found",
+            lastFaultAt: "1970-01-01T00:00:00.000Z",
+            expiresAt: expect.stringMatching(/^1970-01-/),
+          },
+          expect.objectContaining({ key: "cargo@/b#missing-program", faults: 1, learned: false }),
+        ]);
+        expect(yield* queue.forgetRoutes("vp@/a#missing-program")).toEqual({ removed: 1 });
+        expect(yield* queue.forgetRoutes("vp@/a#missing-program")).toEqual({ removed: 0 });
+        expect(yield* queue.forgetRoutes("all")).toEqual({ removed: 1 });
+        expect(yield* queue.forgetRoutes("all")).toEqual({ removed: 0 });
+        expect(yield* queue.listRoutes()).toEqual({ routes: [] });
+        NodeFS.writeFileSync(NodePath.join(dir, "routes.json"), "{not json");
+        const damaged = yield* queue.listRoutes();
+        expect(damaged.routes).toEqual([]);
+        expect(damaged.warning).toContain("routes.json.corrupt-");
       }),
     ),
   );

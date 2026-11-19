@@ -134,6 +134,30 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     expect(onLinux(`pgrep -f '[r]uns/${progress.id}' || echo none`)).toBe("none");
   });
 
+  /** Processes there still tagged with run `id` by `remoto-rodar`, in or out of its group. */
+  const tagged = (id: string) =>
+    onLinux(`grep -lzs '^REMOTO_RUN=${id}:' /proc/[0-9]*/environ | wc -l`);
+
+  it.each([
+    ["a background job in its group", "sleep 600 &"],
+    ["a job in its own session", "setsid sleep 600 &"],
+  ])("the run's end ends %s", async (_, leave) => {
+    const { outcome, progress } = await run(project(), `${leave} echo done`).done;
+    expect(outcome).toEqual({ kind: "finished", code: 0 });
+    expect(tagged(progress.id!)).toBe("0");
+  });
+
+  it("Stop ends a job in its own session too", async () => {
+    const job = run(project(), "setsid sleep 600 & sleep 600");
+    await job.running;
+    job.kill("SIGTERM");
+    const { progress } = await job.done;
+    expect(await stopRemote(machine, environment, progress.id!, progress.pgid)).toMatch(
+      /^(gone|stopped|killed)$/,
+    );
+    expect(tagged(progress.id!)).toBe("0");
+  });
+
   it("cannot confirm while the host is unreachable", async () => {
     expect(await stopRemote(machine, downEnvironment, "t3-runner-it-x-00000000", null)).toBe(
       "unreachable",

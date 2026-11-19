@@ -14,10 +14,32 @@ import { heavyStatus } from "./model.ts";
 import { HeavyToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(HeavyToolkit, {
-  t3_heavy: McpToolAccess.reads(({ action, id, to, commandLine }) =>
+  t3_heavy: McpToolAccess.reads(({ action, id, to, commandLine, key }) =>
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();
       const queue = yield* HeavyQueue.HeavyQueue;
+      const failed = (error: { readonly message: string }) =>
+        new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
+      if (action === "routes") {
+        const cwd =
+          scope.thread === undefined
+            ? undefined
+            : yield* threadWorkspaceRoot(scope.thread.threadId);
+        return yield* queue.listRoutes(cwd).pipe(Effect.mapError(failed));
+      }
+      if (action === "forget_route") {
+        yield* McpToolAccess.refuseReadOnlyClient;
+        if (key === undefined || key.trim() === "") {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "`forget_route` needs a `key` from `routes`, or `all`.",
+          });
+        }
+        const forgot = yield* queue.forgetRoutes(key.trim()).pipe(Effect.mapError(failed));
+        return forgot.removed > 0
+          ? forgot
+          : { ...forgot, note: "Nothing to forget: no learned route has that key now." };
+      }
       if (action === "promote") {
         yield* McpToolAccess.refuseReadOnlyClient;
         if (id === undefined) {

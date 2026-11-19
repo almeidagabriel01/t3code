@@ -15,6 +15,7 @@ import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
 import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
 import {
+  browserMissing,
   foldMarker,
   HEARTBEAT_COMMAND,
   MARKER,
@@ -167,7 +168,6 @@ export const withProjectBins = (
   command: ReadonlyArray<string>,
   cwd: string,
   root: string,
-  env: ReadonlyArray<string> = [],
   startMarker: string | null = null,
 ) => {
   // `remoto` starts in `pwd -P` there: a link inside the checkout changes how deep that is.
@@ -190,20 +190,48 @@ export const withProjectBins = (
   const passthrough = `b="\${T3_COPY%/*}/.t3-bin"; [ -x "$b/remoto" ] || { mkdir -p "$b" && printf '#!/bin/sh\\nexec "$@"\\n' > "$b/remoto.$$" && chmod +x "$b/remoto.$$" && mv -f "$b/remoto.$$" "$b/remoto"; } && export PATH="$b:$PATH";`;
   // Bring results back: what the command writes after this is newer than the marker.
   const mark =
-    startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
+    startMarker === null
+      ? ""
+      : ` ${touchStartMarker(`"$T3_COPY"${shellQuote(markerSuffix(startMarker))}`)};`;
   return [
     "bash",
     "-c",
-    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} exec "$@"`,
+    `${READ_ENV}; export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${passthrough} ${settle};${mark} printf '\\036remoto phase=command\\n' >&2; eval "$t3v"; exec "$@"`,
     "t3",
-    ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,
   ];
+};
+
+/** Reads `envHeader` off stdin into `$t3v` (applied right before the command), byte by byte so the input after it stays unread. */
+export const READ_ENV = 'IFS= read -r t3n && t3v=$(dd bs=1 count="$t3n" 2>/dev/null)';
+
+/**
+ * What a run there starts with on its stdin: the byte length, then `export NAME='value'` for each
+ * pair, and without `input` a redirect from /dev/null. Values never go in argv, which `ps` shows.
+ */
+const envHeader = (env: ReadonlyArray<string>, input: boolean) => {
+  const lines = env.flatMap((pair) => {
+    const at = pair.indexOf("=");
+    const name = pair.slice(0, at);
+    return /^[A-Za-z_]\w*$/.test(name)
+      ? [`export ${name}=${shellQuote(pair.slice(at + 1))}\n`]
+      : [];
+  });
+  const body = `${lines.join("")}${input ? "" : "exec </dev/null\n"}`;
+  return `${Buffer.byteLength(body)}\n${body}`;
 };
 
 const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
 /** Beside the copy (`runs/<id>.t3-start-<job>`), so `remoto`'s sync never deletes it. */
+/**
+ * Shell that stamps a run's start marker (a shell word) for `bringBack`'s `find -cnewer`. Linux
+ * stamps files from a coarse clock, so a file written in the marker's tick would look no newer:
+ * it waits for the clock to tick past the marker first (bash compares nanoseconds).
+ */
+export const touchStartMarker = (marker: string) =>
+  `touch -- ${marker} && until touch -- ${marker}.tick && [ ${marker}.tick -nt ${marker} ]; do :; done; rm -f -- ${marker}.tick`;
+
 const markerSuffix = (job: string) => {
   if (!SAFE_NAME.test(job)) throw new Error(`Unsafe job id: ${job}`);
   return `.t3-start-${job}`;
@@ -383,12 +411,43 @@ export interface BroughtBack {
   readonly copied: ReadonlyArray<string>;
   /** Changed on this Mac after `since`: left as they are. */
   readonly skipped: ReadonlyArray<string>;
+  /** Deleted there and still here: deletions are never applied. */
+  readonly deleted: ReadonlyArray<string>;
+  /** Bytes the copy would have taken when over `maxBytes`; then nothing is copied. */
+  readonly overCap: number | null;
 }
 
+/** A `find -name` pattern (`*`, `?`) as a whole-name test. */
+const nameMatcher = (patterns: ReadonlyArray<string>) => {
+  const sources = patterns.map(
+    (pattern) =>
+      `^${pattern
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".")}$`,
+  );
+  const test = sources.length === 0 ? null : new RegExp(sources.join("|"));
+  return (name: string) => test !== null && test.test(name);
+};
+
+/** Of `paths` (relative to `root`), the ones git ignores there: they never travel to Linux. */
+const ignoredHere = (root: string, paths: ReadonlyArray<string>) => {
+  if (paths.length === 0) return new Set<string>();
+  const result = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "--stdin"], {
+    input: `${paths.join("\n")}\n`,
+    encoding: "utf8",
+  });
+  return new Set(typeof result.stdout === "string" ? result.stdout.split("\n") : []);
+};
+
+/** Changed folders whose entries are compared for deletions. */
+const DELETION_FOLDERS = 500;
+
 /**
- * Copies to `root` what job `job` changed in copy `copyId` after its start marker, outside
- * `node_modules` and `.git`, except files this Mac changed after `since`; null when that fails.
- * Each side reads its own clock: change times there (synced files keep this Mac's mtimes).
+ * Copies to `root` what job `job` changed in copy `copyId` after its start marker, except names
+ * matching `exclude` and files this Mac changed after `since`, keeping their modes; null when
+ * that fails. Nothing is copied when it comes to more than `maxBytes`. Each side reads its own
+ * clock: change times there (synced files keep this Mac's mtimes).
  */
 export const bringBack = async (options: {
   readonly machine: RunnerMachineConfig;
@@ -397,60 +456,127 @@ export const bringBack = async (options: {
   readonly job: string;
   readonly root: string;
   readonly since: number;
+  readonly exclude: ReadonlyArray<string>;
+  readonly maxBytes: number;
 }): Promise<BroughtBack | null> => {
   const { machine, environment, copyId, root } = options;
   if (!SAFE_NAME.test(copyId) || !SAFE_NAME.test(options.job)) return null;
   const marker = `../${copyId}${markerSuffix(options.job)}`;
+  const prune =
+    options.exclude.length === 0
+      ? ""
+      : `\\( ${options.exclude.map((name) => `-name ${shellQuote(name)}`).join(" -o ")} \\) -prune -o`;
+  // NUL-separated records: a newline in a file name can't forge another. Each file is sized on
+  // its own, so a `find` that failed partway exits non-zero instead of reading as a full listing.
+  // ponytail: deletions are found in the first DELETION_FOLDERS changed folders only, by their
+  // direct entries; a full tree diff if a deeper count ever matters.
+  const swap = `tr '\\n\\000' '\\000\\n'`;
   const listed = await ssh(
     machine,
     environment,
     [
       `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
-      `find . \\( -name node_modules -o -name .git \\) -prune -o -type f -cnewer ${marker} -print || exit 1`,
+      `find . ${prune} -type f -cnewer ${marker} -exec sh -c 'for f; do printf "F %s %s\\000" $(wc -c < "$f") "$f"; done' sh {} + || exit 1`,
+      // Swapped, each record is one line for `head`.
+      `find . ${prune} -type d -cnewer ${marker} -print0 | ${swap} | head -n ${DELETION_FOLDERS} | ${swap} | xargs -0 sh -c 'for d; do printf "D %s\\000" "$d"; find "$d" -mindepth 1 -maxdepth 1 -exec printf "E %s\\000" {} +; done' sh`,
       `rm -f ${marker}`,
     ].join("\n"),
     (machine.runnerSshTimeoutSeconds + 60) * 1000,
   );
   if (listed.code !== 0) return null;
+  const excluded = nameMatcher(options.exclude);
+  // What a job there names is checked here too: nothing lands outside the checkout, in `.git`, or
+  // under a name the setting leaves out.
+  const safe = (path: string) =>
+    path
+      .split("/")
+      .every(
+        (name) =>
+          name !== "" && name !== "." && name !== ".." && name !== ".git" && !excluded(name),
+      );
+  const relative = (path: string) => (path === "." ? "" : path.replace(/^\.\//, ""));
   const copied: string[] = [];
   const skipped: string[] = [];
-  for (const line of listed.stdout.split("\n")) {
-    const path = line.replace(/^\.\//, "");
-    if (path === "" || path === line) continue;
-    let changedHere = false;
+  let bytes = 0;
+  const folders: string[] = [];
+  const there = new Set<string>();
+  for (const record of listed.stdout.split("\0")) {
+    const file = /^F (\d+) \.\/([\s\S]+)$/.exec(record);
+    if (file !== null) {
+      const path = file[2]!;
+      if (!safe(path)) continue;
+      let changedHere = false;
+      try {
+        changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
+      } catch {
+        // Not on this Mac: the job created it.
+      }
+      if (changedHere) skipped.push(path);
+      else {
+        copied.push(path);
+        bytes += Number(file[1]);
+      }
+    } else if (record.startsWith("D ")) {
+      const folder = relative(record.slice(2));
+      if (folder === "" || safe(folder)) folders.push(folder);
+    } else if (record.startsWith("E ")) there.add(relative(record.slice(2)));
+  }
+  const missing: string[] = [];
+  for (const folder of folders) {
+    let names: string[];
     try {
-      changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
+      names = NodeFS.readdirSync(NodePath.join(root, folder));
     } catch {
-      // Not on this Mac: the job created it.
+      continue;
     }
-    (changedHere ? skipped : copied).push(path);
+    for (const name of names) {
+      const path = folder === "" ? name : `${folder}/${name}`;
+      // `remoto` never sends these.
+      if (there.has(path) || excluded(name) || name === ".git" || name === ".DS_Store") continue;
+      try {
+        if (NodeFS.lstatSync(NodePath.join(root, path)).mtimeMs > options.since) continue;
+      } catch {
+        continue;
+      }
+      missing.push(path);
+    }
   }
+  const ignored = ignoredHere(root, missing);
+  const deleted = missing.filter((path) => !ignored.has(path)).sort();
+  if (bytes > options.maxBytes) return { copied: [], skipped, deleted, overCap: bytes };
   if (copied.length > 0) {
-    const list = NodePath.join(NodeOS.tmpdir(), `t3-bring-back-${process.pid}-${copyId}`);
-    NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
-    const shell = [
-      sshProgram(environment),
-      // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
-      "-o",
-      "ServerAliveInterval=30",
-      ...sshArgs(machine, environment, "").slice(0, -2),
-    ];
-    const sent = await run(
-      // The one `remoto` uses (openrsync on macOS).
-      environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
-      [
-        "-e",
-        shell.join(" "),
-        `--files-from=${list}`,
-        `${machine.runnerHost}:runs/${copyId}/`,
-        `${root}/`,
-      ],
-      environment,
-    );
-    NodeFS.rmSync(list, { force: true });
-    if (sent.code !== 0) return null;
+    const listDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bring-back-"));
+    try {
+      const list = NodePath.join(listDir, "files");
+      NodeFS.writeFileSync(list, `${copied.join("\0")}\0`);
+      const shell = [
+        sshProgram(environment),
+        // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
+        "-o",
+        "ServerAliveInterval=30",
+        ...sshArgs(machine, environment, "").slice(0, -2),
+      ];
+      const sent = await run(
+        // The one `remoto` uses (openrsync on macOS).
+        environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
+        [
+          // Keeps modes: a script made executable there stays executable here.
+          "-p",
+          "-e",
+          shell.join(" "),
+          "--from0",
+          `--files-from=${list}`,
+          `${machine.runnerHost}:runs/${copyId}/`,
+          `${root}/`,
+        ],
+        environment,
+      );
+      if (sent.code !== 0) return null;
+    } finally {
+      NodeFS.rmSync(listDir, { recursive: true, force: true });
+    }
   }
-  return { copied, skipped };
+  return { copied, skipped, deleted, overCap: null };
 };
 
 export type CopyRemovalResult = "removed" | "busy" | "unreachable";
@@ -569,10 +695,16 @@ export interface LinuxRunOptions {
   readonly environment: Env;
   readonly machine: RunnerMachineConfig;
   readonly macOnly: ReadonlyArray<string>;
-  /** `NAME=value` pairs the command runs with there. */
+  /** `NAME=value` pairs the command runs with there, sent on its stdin ahead of `input`. */
   readonly env?: ReadonlyArray<string>;
   /** The job whose start the wrapper marks there, so `bringBack` finds what it wrote. */
   readonly startMarker?: string;
+  /** An fd `remoto` gets as its stdin and passes to the command there (`forwardedInput`). */
+  readonly input?: number;
+  /** Reads `input` by position from here (`fileOffset`), never moving its offset, so never spent. */
+  readonly inputStart?: number;
+  /** It needs Playwright's Chromium there (`needsBrowser`). Unset, `remoto-rodar` decides alone. */
+  readonly browser?: boolean;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -588,6 +720,10 @@ export interface LinuxRun {
     readonly install: string | null;
     /** The fix for a dependency install the worktree's own files broke, before the command ran. */
     readonly worktree: string | null;
+    /** It took bytes off an `input` read in place: a rerun would not get them. */
+    readonly spentInput: boolean;
+    /** Sent without Chromium, its own output says Playwright found none. */
+    readonly browserMissing: boolean;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -612,6 +748,31 @@ const lineSplitter = (onLine: (line: string, newline: boolean) => void) => {
   };
 };
 
+/** `fd` when it is a pipe or a file: a TTY or `/dev/null` is no input to send to Linux. */
+export const forwardedInput = (fd: number) => {
+  try {
+    const stat = NodeFS.fstatSync(fd);
+    return stat.isFIFO() || stat.isFile() ? fd : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Where a file's reader is on `fd`, from `lsof`; null when it can't tell. */
+export const fileOffset = (fd: number) => {
+  try {
+    const out = NodeChildProcess.execFileSync(
+      "lsof",
+      ["-a", "-p", String(process.pid), "-d", String(fd), "-o", "-F", "o"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 },
+    );
+    const found = /^o0([tx])([0-9a-f]+)$/m.exec(out);
+    return found === null ? null : Number.parseInt(found[2]!, found[1] === "t" ? 10 : 16);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * `REMOTO_FALLBACK=nao`, so an unreachable host exits 75 instead of running here. Output passes
  * through unchanged except the marker lines, which become progress.
@@ -624,29 +785,50 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       remoteCommand(options.program, options.args, options.cwd, options.root),
       options.cwd,
       options.root,
-      options.env,
       options.startMarker ?? null,
     ),
     {
       cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...options.environment,
+        // Without it `remoto` runs `ssh -n`, which hands the command no stdin, so no `envHeader`.
+        REMOTO_STDIN: "1",
         REMOTO_FALLBACK: "nao",
         REMOTO_HOST: machine.runnerHost,
         REMOTO_MARKERS: "1",
+        ...(options.browser === undefined ? {} : { REMOTO_BROWSER: options.browser ? "1" : "0" }),
         REMOTO_TIMEOUT: String(machine.runnerSshTimeoutSeconds),
       },
     },
   );
+  // `remoto` may end without reading it (Linux unreachable): a write after that is no error.
+  child.stdin?.on("error", () => {});
+  child.stdin?.write(envHeader(options.env ?? [], options.input !== undefined));
+  let spentInput = false;
+  if (options.input === undefined) child.stdin?.end();
+  else if (child.stdin !== null) {
+    NodeFS.createReadStream("", {
+      fd: options.input,
+      autoClose: false,
+      ...(options.inputStart === undefined ? {} : { start: options.inputStart }),
+    })
+      .on("data", () => {
+        spentInput ||= options.inputStart === undefined;
+      })
+      .on("error", () => child.stdin?.end())
+      .pipe(child.stdin);
+  }
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
   let install: string | null = null;
   let worktree: string | null = null;
+  let lacksBrowser = false;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    if (options.browser === false) lacksBrowser ||= browserMissing(line);
     // Only the steps before the command: its own output may quote the same errors (a test name).
-    if (progress.running) return;
+    if (progress.running || progress.commandStarted) return;
     install ??= installFailure(line);
     worktree ??= worktreeProblemOf(line);
   };
@@ -654,26 +836,29 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const err = lineSplitter((line, newline) => {
     // A command whose last line has no newline puts the exit marker right after its text.
     const at = line.indexOf(MARKER);
-    if (at >= 0) {
+    const next = at >= 0 ? foldMarker(progress, line.slice(at)) : progress;
+    if (at >= 0 && next !== progress) {
       if (at > 0) options.stderr(line.slice(0, at));
-      progress = foldMarker(progress, line.slice(at));
+      progress = next;
       options.onProgress(progress);
       return;
     }
     scan(line);
     options.stderr(newline ? `${line}\n` : line);
   });
-  child.stdout.on("data", (chunk: Buffer) => {
+  child.stdout?.on("data", (chunk: Buffer) => {
     options.stdout(chunk);
     out.push(chunk.toString("utf8"));
   });
-  child.stderr.on("data", (chunk: Buffer) => err.push(chunk.toString("utf8")));
+  child.stderr?.on("data", (chunk: Buffer) => err.push(chunk.toString("utf8")));
   const done = new Promise<{
     outcome: RemoteOutcome;
     progress: RemoteProgress;
     platform: ReadonlyArray<string>;
     install: string | null;
     worktree: string | null;
+    spentInput: boolean;
+    browserMissing: boolean;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -687,6 +872,8 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
         platform: [...platform],
         install: progress.install ?? install,
         worktree,
+        spentInput,
+        browserMissing: lacksBrowser,
       });
     };
     child.on("error", (error) => {

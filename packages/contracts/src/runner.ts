@@ -2,6 +2,7 @@
  * Runner: where heavy work runs, this Mac or a Linux PC reached over SSH. Every value is a server
  * setting; the ones in `RUNNER_PROJECT_KEYS` also take a per-project override.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -20,6 +21,10 @@ export type RunnerFailedPolicy = typeof RunnerFailedPolicy.Type;
 /** What an unanswered question does once its deadline passes. */
 export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
 export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
+
+/** In Linux mode, what a job does while Linux is full: wait, take this Mac's room, or the shorter queue. */
+export const RunnerLinuxFullPolicy = Schema.Literals(["wait", "mac", "balance"]);
+export type RunnerLinuxFullPolicy = typeof RunnerLinuxFullPolicy.Type;
 
 export const RUNNER_LIMITS = {
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
@@ -41,12 +46,54 @@ export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
   runnerWhere: "mac" as RunnerWhere,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
+  runnerLinuxFull: "wait" as RunnerLinuxFullPolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
   runnerDropped: "agent" as RunnerFailedPolicy,
   runnerMacFirstAfter: 4,
   runnerLinuxEverything: false,
-  runnerBringBack: false,
+  runnerBringBack: true,
+  runnerRouteMemoryDays: 7,
+  /** Environment faults that teach a route: this program in this package then skips Linux. */
+  runnerRouteLearnAfter: 2,
+  /** File or folder names (`*` globs) never copied back from Linux. */
+  runnerBringBackExclude: [
+    "node_modules",
+    ".git",
+    ".turbo",
+    "*.tsbuildinfo",
+    // Native build output: a Linux build's binaries would replace this Mac's.
+    "target",
+    ".build",
+    "DerivedData",
+    "CMakeFiles",
+    "*.o",
+  ] as ReadonlyArray<string>,
+  /** A run whose results come to more than this many MB copies nothing back. */
+  runnerBringBackMaxMB: 200,
+  /** Programs only this Mac has: a heavy call that runs one stays here. */
+  runnerMacTools: [
+    "xcodebuild",
+    "xcrun",
+    "simctl",
+    "emulator",
+    "adb",
+    "gradle",
+    "gradlew",
+    "instruments",
+    "pod",
+    "pbcopy",
+    "security",
+    "defaults",
+    "open",
+    "osascript",
+    "screencapture",
+    "agent-device",
+    // It measures this Mac.
+    "hyperfine",
+    // It signs and ships with this Mac's keychain and Xcode.
+    "fastlane",
+  ] as ReadonlyArray<string>,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -89,6 +136,8 @@ export const RUNNER_DEFAULTS = {
   // A Linux job starts only while the PC keeps this much memory free and stays under this CPU use.
   runnerLinuxMemoryFloorPercent: 20,
   runnerLinuxCpuCeilingPercent: 70,
+  /** A job Linux stopped this often for memory beside others waits to run there alone. */
+  runnerLinuxEvictionsBeforeAlone: 2,
 } as const;
 
 /** Settings a project can override; the rest belong to the machine. */
@@ -96,6 +145,7 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerEnabled",
   "runnerWhere",
   "runnerUnavailable",
+  "runnerLinuxFull",
   "runnerAskMinutes",
   "runnerDeadlineAction",
   "runnerDropped",
@@ -104,6 +154,11 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerMacFirstAfter",
   "runnerLinuxEverything",
   "runnerBringBack",
+  "runnerRouteMemoryDays",
+  "runnerRouteLearnAfter",
+  "runnerBringBackExclude",
+  "runnerBringBackMaxMB",
+  "runnerMacTools",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -114,6 +169,7 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerStopWaitSeconds",
   "runnerLinuxMemoryFloorPercent",
   "runnerLinuxCpuCeilingPercent",
+  "runnerLinuxEvictionsBeforeAlone",
   "heavySlowAgentJobs",
 ] as const;
 /** Agents' running jobs drop to background CPU priority while this Mac stays over its CPU ceiling. */
@@ -171,6 +227,19 @@ export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
 export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
 export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
+export const RunnerLinuxEvictionsBeforeAlone = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10) || "Use 1 to 10 stops."),
+);
+/** Days a call with a learned route keeps going to this Mac. */
+export const RunnerRouteMemoryDays = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 90) || "Use 1 to 90 days."),
+);
+export const RunnerRouteLearnAfter = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10) || "Use 1 to 10 failures."),
+);
+export const RunnerBringBackMaxMB = Schema.Int.check(
+  Schema.makeFilter((value: number) => (value >= 1 && value <= 10_240) || "Use 1 to 10240 MB."),
+);
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -183,15 +252,31 @@ export const RunnerProjectConfig = Schema.Struct({
   runnerEnabled: Schema.Boolean,
   runnerWhere: RunnerWhere,
   runnerUnavailable: RunnerUnavailablePolicy,
+  runnerLinuxFull: RunnerLinuxFullPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxFull)),
+  ),
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,
   runnerDropped: RunnerFailedPolicy,
   runnerMacOnly: Schema.Array(Schema.String),
-  runnerLinuxCommands: Schema.Array(Schema.String),
   runnerMacFirstAfter: Schema.Int,
-  /** Can run on Linux is Everything: every work job may leave, except what must stay here. */
-  runnerLinuxEverything: Schema.Boolean,
   runnerBringBack: Schema.Boolean,
+  // Older publishers' blocks lack it.
+  runnerRouteMemoryDays: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteMemoryDays)),
+  ),
+  runnerRouteLearnAfter: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerRouteLearnAfter)),
+  ),
+  runnerBringBackExclude: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackExclude)),
+  ),
+  runnerBringBackMaxMB: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBackMaxMB)),
+  ),
+  runnerMacTools: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacTools)),
+  ),
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;
 
@@ -204,6 +289,9 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerStopWaitSeconds: Schema.Int,
   runnerLinuxMemoryFloorPercent: Schema.Int,
   runnerLinuxCpuCeilingPercent: Schema.Int,
+  runnerLinuxEvictionsBeforeAlone: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEvictionsBeforeAlone)),
+  ),
   heavySlowAgentJobs: Schema.Boolean,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

@@ -208,6 +208,7 @@ describe("heavy queue client guards", () => {
       WS_METHODS.heavyQueueSetRule,
       WS_METHODS.heavyQueueRoute,
       WS_METHODS.heavyQueueRouteAll,
+      WS_METHODS.heavyQueueForgetRoutes,
       WS_METHODS.heavyQueueSetMaxRunning,
       WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
       WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
@@ -217,6 +218,7 @@ describe("heavy queue client guards", () => {
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["terminal:operate"]);
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueSubscribe)).toBe(false);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueListRoutes)).toBe(false);
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueSubscribeCommands)).toBe(
       false,
     );

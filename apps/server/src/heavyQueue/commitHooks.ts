@@ -1,71 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off - The Bash hook decides synchronously, before the call runs.
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import { localGitOnly } from "./heavyHook.ts";
 
-import { commitOnly, gitCommand, type Part } from "./heavyHook.ts";
-
-/** The hooks a plain `git commit` runs before it records anything. */
-const COMMIT_HOOKS = ["pre-commit", "prepare-commit-msg", "commit-msg"];
-/** husky 9 and vite-plus: `_/<hook>` only sources `_/h`, which runs `../<hook>` when that file exists. */
-const SHIM = /^\.\s+"\$\(dirname\s+(--\s+)?"\$0"\)\/h"\s*$/m;
-
-const isFile = (path: string) => {
-  try {
-    return NodeFS.statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
-const runs = (dir: string, name: string) => {
-  const path = NodePath.join(dir, name);
-  try {
-    NodeFS.accessSync(path, NodeFS.constants.X_OK);
-    if (!NodeFS.statSync(path).isFile()) return false;
-    return !SHIM.test(NodeFS.readFileSync(path, "utf8")) || isFile(NodePath.join(dir, "..", name));
-  } catch {
-    return false;
-  }
-};
+export const COMMIT_RUNS_DIRECT = "A local git write: runs directly";
 
 /**
- * Whether `git commit` in `cwd` runs a hook, found where git looks: `core.hooksPath` (relative to
- * the worktree top), else the common git dir's `hooks/`, so worktrees share it. Only an executable
- * file counts, never a `.sample`. Outside a repository nothing runs; when git cannot answer at all,
- * a hook is assumed, which keeps the commit queued as before.
+ * "direct" for a line whose only work is local git (a commit, merge or rebase): it is quick even
+ * with hooks, which edit this Mac's checkout, so it never waits for a slot. Null for any other line.
  */
-const commitHookRuns = (cwd: string) => {
-  const found = NodeChildProcess.spawnSync("git", ["rev-parse", "--git-path", "hooks"], {
-    cwd,
-    encoding: "utf8",
-    timeout: 2000,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (found.error !== undefined) return true;
-  if (found.status !== 0) return false;
-  const dir = NodePath.resolve(cwd, found.stdout.trim());
-  return COMMIT_HOOKS.some((name) => runs(dir, name));
-};
-
-export const COMMIT_RUNS_DIRECT = "No commit hook in this repository: runs directly";
-
-/**
- * How a line whose only work is `git commit` runs from `cwd`: "direct" when no commit hook runs
- * there, "first" (queued ahead of other waiters) when one does. Null for any other line, which the
- * queue handles as usual. `git commit -n` is not work, so it never reaches here.
- */
-export const commitRoute = (line: string, cwd: string): "direct" | "first" | null => {
-  const commits = commitOnly(line);
-  if (commits === null) return null;
-  // `git -C <dir> commit` commits in that folder.
-  const folder = (part: Part) =>
-    NodePath.resolve(
-      cwd,
-      ...gitCommand(part.values, part.programAt).dirs.map((dir) =>
-        dir.replace(/^~(?=$|\/)/, NodeOS.homedir()),
-      ),
-    );
-  return commits.some((part) => commitHookRuns(folder(part))) ? "first" : "direct";
-};
+export const commitRoute = (line: string): "direct" | null =>
+  localGitOnly(line) ? "direct" : null;

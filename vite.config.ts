@@ -216,7 +216,11 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    // Packages merge this config and lint from their own folder: a relative path would miss it.
+    jsPlugins: [
+      NodeURL.fileURLToPath(new URL("./oxlint-plugin-t3code/index.ts", import.meta.url)),
+      "@shadcn/lint",
+    ],
     settings: {
       shadcn: { ui: "~/components/ui" },
     },

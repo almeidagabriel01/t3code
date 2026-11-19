@@ -16,7 +16,6 @@ import {
   lineParts,
   queueBashCall,
   readLine,
-  rewriteLine,
   workParts,
 } from "./heavyHook.ts";
 
@@ -42,12 +41,14 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["yarn build", "yarn build"],
   ["vpr test:unit", "vpr test:unit"],
   ["npx vitest run", "npx vitest run"],
+  // pnpm, yarn and bun run a bin by name when the word is not one of their own commands.
+  ["pnpm vitest run", "pnpm vitest run"],
+  ["yarn vitest run src/a.test.ts", "yarn vitest run src/a.test.ts"],
+  ["bun vitest run", "bun vitest run"],
+  ["pnpm -F web vitest run", "pnpm -F web vitest run"],
   ["pnpm exec playwright test", "pnpm exec playwright test"],
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
-  ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
-  // git's own options take a value before the subcommand.
-  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -75,8 +76,8 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
     "nohup env -u CI timeout -s INT 10 vp test run",
     "nohup env -u CI timeout -s INT 10 vp test run",
   ],
-  // A formatter given its files is light: the heavy work beside it is the segment.
-  ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx", "vp lint --no-ignore a.ts b.tsx"],
+  // A formatter or linter given its files is light: the heavy work beside it is the segment.
+  ["vp fmt a.ts b.tsx && vp lint --no-ignore a.ts b.tsx && vp test run", "vp test run"],
   ['f=(a.ts); vp fmt "${f[@]}" && vp test run src/a.test.ts', "vp test run src/a.test.ts"],
   [
     "cd apps/server && pnpm exec vp fmt src/x.ts && pnpm exec effect-tsgo tsrs --noEmit",
@@ -89,6 +90,10 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["vp fmt . && vp lint", "vp fmt ."],
   ["vp fmt apps/web && vp lint a.ts", "vp fmt apps/web"],
   ["pnpm run format", "pnpm run format"],
+  ["vp lint", "vp lint"],
+  ["vp lint --no-ignore", "vp lint --no-ignore"],
+  ["oxlint .", "oxlint ."],
+  ["eslint src", "eslint src"],
   // An expansion may name a folder or the whole tree, unless the line shows it lists files.
   ["vp fmt $(git ls-files)", "vp fmt $(git ls-files)"],
   ['vp fmt "$DIR"', 'vp fmt "$DIR"'],
@@ -109,6 +114,12 @@ const LIGHT = [
   "ls -la",
   "git status && git log --format=%H -3",
   "git checkout -b fix-build",
+  // A local git write is quick, even with hooks: it runs here, outside the queue.
+  "git add a && git commit -m 'fix: x'",
+  "git -C apps/web -c user.name=t commit -m x",
+  "git commit --amend --no-edit",
+  "git merge foo",
+  "git rebase main",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
   "git -C web commit -n -m wip",
@@ -144,6 +155,28 @@ const LIGHT = [
   "./node_modules/.bin/vp fmt apps/web/src/a.tsx",
   "vpr fmt a.ts",
   "vp fmt --check a.ts",
+  "vp fmt --stdin-filepath a.ts < a.ts",
+  "vp fmt --stdin-filepath=a.ts < a.ts > out.ts",
+  "vp fmt --check --ignore-path=.fmt-empty-ignore a.ts b.tsx",
+  // A linter given its files touches only those, like a formatter.
+  "vp lint a.ts b.tsx",
+  "vp lint --no-ignore a.ts b.tsx",
+  'files=(a.ts b.tsx); vp lint --no-ignore "${files[@]}"',
+  "pnpm exec vp lint src/x.ts",
+  "oxlint src/a.ts",
+  "npx eslint --fix src/a.ts",
+  // A program named like an object's own key is just a program.
+  "constructor test",
+  "toString build x",
+  // A bin that is no heavy tool, or a package manager's own light command, stays light.
+  "pnpm dev",
+  "yarn why vitest",
+  // An in-place edit with nothing heavy beside it runs here, outside the queue.
+  `sed -i '' -e '600,1000s/vp lint/vp check/g' heavyCli.test.ts && grep -n "lint" heavyCli.test.ts | sed -n 1,40p`,
+  "perl -pi -e 's/vp test/x/' src/a.ts",
+  "echo 'vp test run' > notes.md",
+  "printf x | tee -a notes.md",
+  "grep 'pnpm exec vp test run' src/a.ts",
   'for f in $(git diff --name-only t3/fork2...HEAD); do command vp fmt --stdin-filepath=$f < $f 2>/dev/null | cmp -s - $f || echo "fmt diff $f"; done; echo fmt-done',
 ];
 
@@ -291,14 +324,15 @@ describe("scripts the line runs", () => {
     },
   );
 
-  it.each(["bash missing.sh", "./missing.sh"])(
-    "queues %j on this Mac when the script can't be read",
-    (line) => {
-      expect(command(line)).toContain(
-        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
-      );
-    },
-  );
+  // The Runner decides where it runs: a script it couldn't read is no reason to stay here.
+  it.each([
+    ["bash missing.sh", "bash missing.sh"],
+    ["./missing.sh", "missing.sh"],
+  ])("queues %j, whose script can't be read, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
+  });
 
   it("reads no script without a reader, as before", () => {
     expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();
@@ -354,54 +388,34 @@ describe("an agent's own remoto call", () => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
   });
 
-  // Queued or left to the agent's remoto; then the line Linux mode runs here, one remoto per call.
+  // Queued or left to the agent's remoto.
   it.each([
-    [
-      `cd /w/s && remoto sh -c 'vp test run'`,
-      true,
-      null,
-      true,
-      `cd /w/s && remoto sh -c 'vp test run'`,
-    ],
-    [`cd /w/s && remoto sh -c 'vp test run'`, false, null, false, null],
-    [`remoto sh -c 'cd /w && remoto vp test'`, true, null, true, `sh -c 'cd /w && remoto vp test'`],
-    [`sh -c 'cd /w && remoto vp test run'`, true, null, false, null],
-    [`cd /w && bash -lc "remoto pnpm exec vp test run"`, true, null, false, null],
-    [
-      `vp lint && sh -c 'remoto vp test'`,
-      true,
-      null,
-      true,
-      `remoto vp lint && sh -c 'remoto vp test'`,
-    ],
-    [
-      `cd /w && vp lint && remoto vp test`,
-      true,
-      null,
-      true,
-      `cd /w && remoto vp lint && remoto vp test`,
-    ],
-    // Local heavy work beside the inner remoto still queues, and the part is never wrapped again.
-    [`sh -c 'vp lint && remoto vp test'`, true, null, true, `sh -c 'vp lint && remoto vp test'`],
-    [`sh -c 'vp lint && remoto vp test'`, false, null, true, `sh -c 'vp lint && remoto vp test'`],
-    ["sh ./check.sh", true, "cd /w && remoto vp test run", false, null],
-    ["sh ./check.sh", true, "vp lint && remoto vp test run", true, null],
-    // `t3 heavy` inside hands off like `remoto`: Linux, which has no `t3`, never runs that script.
-    ["sh ./check.sh", true, "t3 heavy -- vp lint && remoto vp test run", false, null],
-    ["sh ./check.sh", true, "vp lint && t3 heavy -- vp test run", true, null],
+    [`cd /w/s && remoto sh -c 'vp test run'`, true, null, true],
+    [`cd /w/s && remoto sh -c 'vp test run'`, false, null, false],
+    [`remoto sh -c 'cd /w && remoto vp test'`, true, null, true],
+    [`sh -c 'cd /w && remoto vp test run'`, true, null, false],
+    [`cd /w && bash -lc "remoto pnpm exec vp test run"`, true, null, false],
+    [`vp lint && sh -c 'remoto vp test'`, true, null, true],
+    [`cd /w && vp lint && remoto vp test`, true, null, true],
+    // Local heavy work beside the inner remoto still queues.
+    [`sh -c 'vp lint && remoto vp test'`, true, null, true],
+    [`sh -c 'vp lint && remoto vp test'`, false, null, true],
+    ["sh ./check.sh", true, "cd /w && remoto vp test run", false],
+    ["sh ./check.sh", true, "vp lint && remoto vp test run", true],
+    // `t3 heavy` inside hands off like `remoto`.
+    ["sh ./check.sh", true, "t3 heavy -- vp lint && remoto vp test run", false],
+    ["sh ./check.sh", true, "vp lint && t3 heavy -- vp test run", true],
     [
       "sh ./check.sh",
       true,
       `vp lint\nELECTRON_RUN_AS_NODE=1 '/App/T3 Code' '/App/bin.mjs' heavy --queue-dir '/q' -- vp test run`,
       true,
-      null,
     ],
-    ["remoto vp test run", false, null, false, null],
-  ])("%j (Runner %s, script %j) queued %s, runs %j", (command, runner, body, queued, linux) => {
+    ["remoto vp test run", false, null, false],
+  ])("%j (Runner %s, script %j) queued %s", (command, runner, body, queued) => {
     const readScript = () => body;
     const answer = queueBashCall(bash({ command }), PREFIX, {}, { runner, readScript });
     expect(answer !== null).toBe(queued);
-    if (linux !== null) expect(rewriteLine(command, "remoto")).toBe(linux);
     // A script that calls remoto is never Linux work, so it is never wrapped in another.
     if (body !== null) expect(workParts(readLine(command, readScript).parts)).toEqual([]);
   });

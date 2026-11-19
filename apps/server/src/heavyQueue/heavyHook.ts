@@ -41,20 +41,77 @@ const DIRECT = new Set([
   "mvn",
   "emulator",
 ]);
-const SUBCOMMANDS: Readonly<Record<string, RegExp>> = {
-  docker: /^(build|buildx|compose|run)$/,
-  cargo: /^(build|test|check|clippy|run|bench|nextest)$/,
-  go: /^(test|build|vet)$/,
-  swift: /^(build|test)$/,
-  expo: /^(run(:ios|:android)?|prebuild|export)$/,
-  eas: /^build$/,
-  simctl: /^boot$/,
+const SUBCOMMANDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  docker: ["build", "buildx", "compose", "run"],
+  cargo: ["build", "test", "check", "clippy", "run", "bench", "nextest"],
+  go: ["test", "build", "vet"],
+  swift: ["build", "test"],
+  expo: ["run", "run:ios", "run:android", "prebuild", "export"],
+  eas: ["build"],
+  simctl: ["boot"],
 };
 /** Script names that run tests, builds or checks; dev servers stay out, they never finish. */
-const SCRIPT =
-  /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$|^dev:desktop$/;
-const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
-const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+const SCRIPT_NAMES = [
+  "test",
+  "tests",
+  "build",
+  "check",
+  "lint",
+  "typecheck",
+  "e2e",
+  "bundle",
+  "compile",
+  "knip",
+  "coverage",
+  "fmt",
+  "format",
+  "ci",
+  "verify",
+];
+/** Scripts and programs that touch only the files they are given: light with a list of them. */
+const FORMAT_NAMES = ["fmt", "format", "lint"];
+const LINTERS = new Set(["oxlint", "eslint"]);
+const SCRIPT = new RegExp(`^(${SCRIPT_NAMES.join("|")})([:._-].*)?$|^dev:desktop$`);
+/** A table's own entry for a program name: `constructor` must not find Object's. */
+export const entryOf = <T>(table: Readonly<Record<string, T>>, name: string): T | undefined =>
+  Object.hasOwn(table, name) ? table[name] : undefined;
+
+export const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
+export const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+/** pnpm, yarn and bun run a bin by name (`pnpm vitest`) when the word is none of their own commands. */
+const BIN_RUNNERS = new Set(["pnpm", "yarn", "bun"]);
+const OWN_COMMANDS = /^(run|run-script|test|t|start|stop|restart|exec|dlx|x)$/;
+
+/**
+ * Where a package manager call names the bin it runs among its words: 1 for `pnpm exec vitest`,
+ * 0 for `pnpm vitest`, which runs it the same when no script has that name; null for neither.
+ */
+export const pmBinAt = (program: string, words: ReadonlyArray<string>) => {
+  const [first] = words;
+  if (!RUNNERS.has(program) || first === undefined) return null;
+  if (/^(exec|dlx|x)$/.test(first)) return 1;
+  return BIN_RUNNERS.has(program) && !OWN_COMMANDS.test(first) ? 0 : null;
+};
+const SCRIPT_RUNNERS = ["vpr", "make", "just"];
+
+/** Every program `heavyWords` can call heavy but `node` and `git`: a queue job's PATH shims. */
+export const SHIMMED = new Set([
+  ...DIRECT,
+  ...Object.keys(SUBCOMMANDS),
+  ...RUNNERS,
+  ...EXECUTORS,
+  ...SCRIPT_RUNNERS,
+]);
+/**
+ * For a shim's `case` filter, a superset of what `heavyWords` reads: programs always heavy, and
+ * the words (script names take a `:`-style suffix) that can make another call heavy.
+ */
+export const SHIM_FILTER = {
+  always: [...DIRECT],
+  words: [...DIRECT, ...Object.values(SUBCOMMANDS).flat(), "t", "dev:desktop"],
+  scripts: SCRIPT_NAMES.filter((name) => !FORMAT_NAMES.includes(name)),
+  formats: FORMAT_NAMES,
+};
 const PREFIXES = new Set([
   "time",
   "nice",
@@ -65,6 +122,7 @@ const PREFIXES = new Set([
   "timeout",
   "nohup",
   "eval",
+  "sudo",
 ]);
 
 const base = (word: string) => word.split("/").pop() ?? word;
@@ -83,6 +141,28 @@ const PREFIX_VALUE_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   time: new Set(["-f", "--format", "-o", "--output"]),
   exec: new Set(["-a"]),
   caffeinate: new Set(["-t", "-w"]),
+  sudo: new Set([
+    "-u",
+    "--user",
+    "-g",
+    "--group",
+    "-C",
+    "--close-from",
+    "-D",
+    "--chdir",
+    "-h",
+    "--host",
+    "-p",
+    "--prompt",
+    "-r",
+    "--role",
+    "-t",
+    "--type",
+    "-T",
+    "--command-timeout",
+    "-U",
+    "--other-user",
+  ]),
 };
 
 /** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */
@@ -117,7 +197,7 @@ const GIT_VALUE_OPTIONS = new Set([
  * Where git's subcommand sits past git's own options (`git -c k=v -C dir commit`), and the folders
  * its `-C` options move to, in order. `at` is the word of the program itself.
  */
-export const gitCommand = (values: ReadonlyArray<string>, at: number) => {
+const gitCommand = (values: ReadonlyArray<string>, at: number) => {
   let sub = at + 1;
   const dirs: string[] = [];
   while (sub < values.length && values[sub]!.startsWith("-")) {
@@ -141,12 +221,20 @@ export const FOLDER_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   make: ["-C", "--directory"],
 };
 
+/** Options whose value picks the packages a call runs in (`pnpm -F web vitest`), never a word. */
+const PICK_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  pnpm: ["-F", "--filter", "--filter-prod"],
+};
+
 /** Program and subcommand words with assignments, prefixes, flags and folder values removed. */
 const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
-  const folderFlags = FOLDER_FLAGS[program] ?? [];
+  const folderFlags = [
+    ...(entryOf(FOLDER_FLAGS, program) ?? []),
+    ...(entryOf(PICK_FLAGS, program) ?? []),
+  ];
   return {
     at,
     program,
@@ -157,7 +245,7 @@ const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   };
 };
 
-const FORMAT = /^(fmt|format)([:._-].*)?$/;
+const FORMAT = new RegExp(`^(${FORMAT_NAMES.join("|")})([:._-].*)?$`);
 // ponytail: source files only; a folder with a dot (`apps/v1.2`) must not pass. Add one when needed.
 const FILE_ARG =
   /(^|\/)[^/]*[^/.]\.(ts|tsx|js|mjs|cjs|jsx|json|jsonc|md|mdx|css|scss|html|yml|yaml|toml|vue|svelte)$/;
@@ -192,9 +280,18 @@ const fileListsOf = ({ commands, loops }: ParsedLine): ReadonlySet<string> => {
 };
 
 /**
- * Whether the script `words[at]` names is heavy. A formatter given its files one by one (or one
- * file on stdin) touches only those, so it is light; without them it walks the whole tree.
+ * A formatter or linter given its files one by one (or one file on stdin) touches only those, so it
+ * is light; without them it walks the whole tree.
  */
+const onlyFiles = (
+  files: ReadonlyArray<string>,
+  flags: ReadonlyArray<string>,
+  lists: ReadonlySet<string>,
+) =>
+  flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag)) ||
+  (files.length > 0 && files.every((file) => isFile(file) || lists.has(file)));
+
+/** Whether the script `words[at]` names is heavy. */
 const heavyScript = (
   words: ReadonlyArray<string>,
   at: number,
@@ -203,10 +300,7 @@ const heavyScript = (
 ) => {
   const script = words[at];
   if (script === undefined || !SCRIPT.test(script)) return false;
-  if (!FORMAT.test(script)) return true;
-  const files = words.slice(at + 1);
-  const stdin = flags.some((flag) => /^--stdin-file-?path(=|$)/.test(flag));
-  return !(stdin || (files.length > 0 && files.every((file) => isFile(file) || lists.has(file))));
+  return !FORMAT.test(script) || !onlyFiles(words.slice(at + 1), flags, lists);
 };
 
 const heavyWords = (
@@ -216,26 +310,25 @@ const heavyWords = (
   lists: ReadonlySet<string>,
 ): boolean => {
   const [first, second] = words;
-  if (DIRECT.has(program)) return true;
-  const sub = SUBCOMMANDS[program];
-  if (sub !== undefined) return first !== undefined && sub.test(first);
+  if (DIRECT.has(program)) return !(LINTERS.has(program) && onlyFiles(words, flags, lists));
+  const sub = entryOf(SUBCOMMANDS, program);
+  if (sub !== undefined) return first !== undefined && sub.includes(first);
   if (program === "xcrun" || EXECUTORS.has(program)) {
     return first !== undefined && heavyWords(base(first), words.slice(1), flags, lists);
   }
   if (program === "node") return flags.some((flag) => /^--test(=|$)/.test(flag));
-  if (program === "git") {
-    return first === "commit" && !flags.some((flag) => flag === "--no-verify" || flag === "-n");
-  }
-  if (program === "vpr" || program === "make" || program === "just") {
+  if (SCRIPT_RUNNERS.includes(program)) {
     return heavyScript(words, 0, flags, lists);
   }
   if (!RUNNERS.has(program) || first === undefined) return false;
-  if (first === "exec" || first === "dlx" || first === "x") {
+  const binAt = pmBinAt(program, words);
+  if (binAt === 1) {
     return second !== undefined && heavyWords(base(second), words.slice(2), flags, lists);
   }
   // `vp test`, `npm test`, `yarn build`: package managers run these scripts by name.
   if (first === "t" || heavyScript(words, 0, flags, lists)) return true;
-  // `pnpm --filter web run build`: a flag's value can sit before `run`.
+  if (binAt === 0 && heavyWords(base(first), words.slice(1), flags, lists)) return true;
+  // `npm --prefix x run build`: a flag's value can sit before `run`.
   const runAt = words.findIndex((word) => word === "run" || word === "run-script");
   return runAt >= 0 && heavyScript(words, runAt + 1, flags, lists);
 };
@@ -253,9 +346,7 @@ const PROGRAMS = [
   ...DIRECT,
   ...Object.keys(SUBCOMMANDS),
   ...RUNNERS,
-  "vpr",
-  "make",
-  "just",
+  ...SCRIPT_RUNNERS,
   "remoto",
   // Scripts: the queue reads them (`bash x.sh`, `./verify`).
   "sh",
@@ -270,7 +361,6 @@ const PROGRAMS = [
  */
 const HEAVY_PREFILTER = STARTS.flatMap((start) => [
   ...PROGRAMS.map((program) => `*${start}${program}${END}*`),
-  `*${start}git${END}*commit*`,
   `*${start}node${END}*--test*`,
   `*${start}./*`,
 ])
@@ -284,7 +374,8 @@ const HEAVY_PREFILTER = STARTS.flatMap((start) => [
  */
 export const hookScript = (hookCommand: string) => `#!/bin/sh
 # Written by T3 Code for its Claude Code hook (Settings > Maintenance > Heavy work).
-[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && exit 0
+# Read the input first even when leaving: a writer racing an early exit gets EPIPE.
+[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && { cat >/dev/null; exit 0; }
 input=
 while IFS= read -r line || [ -n "$line" ]; do input="$input$line
 "; done
@@ -334,7 +425,6 @@ export interface Part {
 /** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
 export type ReadScript = (word: string) => string | null;
 export const SCRIPT_MAX_BYTES = 64 * 1024;
-export const UNREADABLE_SCRIPT = "Couldn't read this script";
 const SHEBANG = /^#!\s*(\S*\/)?(env\s+)?(sh|bash|zsh|dash)(\s|$)/;
 
 /** The path word of the script a command runs: `bash x.sh`, `./x.sh`, or any path (`./verify`). */
@@ -487,17 +577,21 @@ export const workParts = (parts: ReadonlyArray<Part>) => {
     : own.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
 };
 
-/** The `git commit` parts of a line whose only work is committing, or null for any other line. */
-export const commitOnly = (line: string) => {
-  const work = readLine(line).parts.filter((part) => part.heavy);
-  const commits = work.every(
-    (part) =>
-      part.nested === null &&
-      part.remoto === null &&
-      part.program === "git" &&
-      part.words[0] === "commit",
+const REMOTE_GIT = new Set(["push", "pull", "fetch", "clone", "ls-remote", "remote", "submodule"]);
+
+/** Whether a line's only work is local git (commit, merge, rebase, stash…): never a push or fetch. */
+export const localGitOnly = (line: string) => {
+  const work = workParts(readLine(line).parts);
+  return (
+    work.length > 0 &&
+    work.every(
+      (part) =>
+        part.nested === null &&
+        part.remoto === null &&
+        part.program === "git" &&
+        !REMOTE_GIT.has(part.words[0] ?? ""),
+    )
   );
-  return work.length > 0 && commits ? work : null;
 };
 
 /** Every part of a shell command line that is heavy work, in order. */
@@ -539,39 +633,12 @@ const spanEnd = (line: string, end: number) => {
   return at;
 };
 
-/**
- * The line with each work part sent through `executor`, spliced at source offsets so the user's
- * shell reads the rest as written: redirects, pipes, `;` and assignments stay local. Null runs
- * the work here. Either way an agent's `remoto` word goes, since T3 decides where work runs.
- */
-export const rewriteLine = (line: string, executor: string | null) => {
-  const { parts } = readLine(line);
-  const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
-  for (const part of parts) {
-    if (part.remoto !== null) {
-      edits.push({ start: part.remoto.start, end: spanEnd(line, part.remoto.end), text: "" });
-    }
-  }
-  if (executor !== null) {
-    for (const part of workParts(parts)) {
-      const { assigns, words } = part.command;
-      // `remoto` passes argv alone, so assignments travel as `env` arguments.
-      const env = assigns.map((word) => line.slice(word.start, word.end));
-      for (const word of assigns) {
-        edits.push({ start: word.start, end: spanEnd(line, word.end), text: "" });
-      }
-      const at = words[part.remoteAt]!.start;
-      edits.push({
-        start: at,
-        end: at,
-        text: `${executor} ${env.length === 0 ? "" : `env ${env.join(" ")} `}`,
-      });
-    }
-  }
-  return edits
+/** The line without an agent's `remoto` words: T3 decides where work runs. */
+const withoutRemoto = (line: string) =>
+  readLine(line)
+    .parts.flatMap((part) => (part.remoto === null ? [] : [part.remoto]))
     .toSorted((a, b) => b.start - a.start)
-    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), line);
-};
+    .reduce((text, word) => text.slice(0, word.start) + text.slice(spanEnd(line, word.end)), line);
 
 /**
  * A shell line as `[cd <dir> && …] <command>`: the folders its leading `cd`s name, in order (`~`
@@ -603,7 +670,7 @@ export const lineParts = (line: string) => {
   return {
     dirs,
     remoto: parts.some((part) => part.remoto !== null),
-    command: rewriteLine(line.slice(from), null).trimStart(),
+    command: withoutRemoto(line.slice(from)).trimStart(),
   };
 };
 
@@ -651,10 +718,6 @@ export const queueBashCall = (
     ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
     : heavySegment(command, options.readScript);
   if (segment === null) return null;
-  // A script it couldn't read may be heavy: it waits on this Mac, saying why.
-  const unreadable = readLine(segment, options.readScript).parts.some(
-    (part) => part.script !== null && part.script.body === null,
-  );
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   // A repeat of the same call attaches to its job instead of running it twice.
   const request =
@@ -667,7 +730,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${request}${unreadable ? ` --runner mac --route-reason ${shellQuote(UNREADABLE_SCRIPT)}` : ""} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

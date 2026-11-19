@@ -3,7 +3,6 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
-import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -17,8 +16,19 @@ import {
   type HeavyQueueLimitKey,
   type HeavyQueueRule,
   type HeavyRunner,
+  RunnerBringBackMaxMB,
+  RunnerDeadlineAction,
+  RunnerFailedPolicy,
+  RunnerLinuxEvictionsBeforeAlone,
+  RunnerLinuxFullPolicy,
+  RunnerPatterns,
   type RunnerProjectConfig,
+  RunnerRouteLearnAfter,
+  RunnerRouteMemoryDays,
+  RunnerUnavailablePolicy,
+  RunnerWhere,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_MAX_RUNNING,
@@ -54,8 +64,10 @@ import {
   parseLog,
   requeueRecord,
   startRecord,
+  type SyncBack,
   withRecord,
 } from "./heavyNotices.ts";
+import { listensHere } from "./localPorts.ts";
 import {
   beforeBoot,
   bootAtOf,
@@ -113,7 +125,7 @@ export const isAlive = (pid: number) => {
 
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-const withLock = <A>(dir: string, run: () => A): A => {
+export const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
   NodeFS.mkdirSync(dir, { recursive: true });
   while (true) {
@@ -225,6 +237,7 @@ interface JobResult {
   readonly line?: string;
   readonly name?: string;
   readonly error?: string;
+  readonly syncBack?: SyncBack;
 }
 const MAX_RESULTS = 200;
 const RESULT_TTL_MS = 3_600_000;
@@ -271,11 +284,40 @@ const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey
     : HEAVY_QUEUE_DEFAULTS[key];
 };
 
+/** Keys read whole only when valid: a null or bad one would throw where it is used. */
+const CHECKED_PROJECT_KEYS = {
+  runnerWhere: Schema.is(RunnerWhere),
+  runnerUnavailable: Schema.is(RunnerUnavailablePolicy),
+  runnerLinuxFull: Schema.is(RunnerLinuxFullPolicy),
+  runnerDeadlineAction: Schema.is(RunnerDeadlineAction),
+  runnerDropped: Schema.is(RunnerFailedPolicy),
+  runnerRouteMemoryDays: Schema.is(RunnerRouteMemoryDays),
+  runnerRouteLearnAfter: Schema.is(RunnerRouteLearnAfter),
+  runnerBringBackExclude: Schema.is(RunnerPatterns),
+  runnerBringBackMaxMB: Schema.is(RunnerBringBackMaxMB),
+  runnerMacTools: Schema.is(RunnerPatterns),
+} satisfies Partial<Record<keyof RunnerProjectConfig, (value: unknown) => boolean>>;
+
+/** Each checked key keeps a valid stored value, else its default. */
+const checked = <T extends object>(
+  config: T,
+  defaults: T,
+  checks: Partial<Record<keyof T, (value: unknown) => boolean>>,
+): T => {
+  const out = { ...config };
+  for (const key of Object.keys(checks) as Array<keyof T>) {
+    if (!checks[key]!(out[key])) out[key] = defaults[key];
+  }
+  return out;
+};
+
 /** An older publisher's settings lack newer keys, which read as their defaults. */
-const projectConfigOf = (value: unknown) => ({
-  ...DEFAULT_PROJECT_CONFIG,
-  ...(isObject(value) ? value : {}),
-});
+const projectConfigOf = (value: unknown) =>
+  checked(
+    { ...DEFAULT_PROJECT_CONFIG, ...(isObject(value) ? value : {}) },
+    DEFAULT_PROJECT_CONFIG,
+    CHECKED_PROJECT_KEYS,
+  );
 
 /** A block missing any part reads as no block, so a half-written one never routes anything. */
 const parseRunner = (value: unknown): RunnerBlock | null =>
@@ -287,7 +329,9 @@ const parseRunner = (value: unknown): RunnerBlock | null =>
     ? ({
         ...value,
         global: projectConfigOf(value.global),
-        machine: { ...DEFAULT_MACHINE_CONFIG, ...value.machine },
+        machine: checked({ ...DEFAULT_MACHINE_CONFIG, ...value.machine }, DEFAULT_MACHINE_CONFIG, {
+          runnerLinuxEvictionsBeforeAlone: Schema.is(RunnerLinuxEvictionsBeforeAlone),
+        }),
         projects: (value.projects as unknown[]).map((project) =>
           isObject(project) ? { ...project, config: projectConfigOf(project.config) } : project,
         ),
@@ -514,36 +558,15 @@ export const gitRootOf = (cwd: string) => {
   return found;
 };
 
-const LOCKFILES = ["pnpm-lock.yaml", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock"];
-/** How long an answer is reused: plans run every poll, while .gitignore and lockfiles change rarely. */
-const SYNCED_FRESH_MS = 60_000;
-const syncedPaths = new Map<string, { readonly at: number; readonly found: boolean }>();
-
-/**
- * Whether `remoto`'s copy of `path`'s checkout has it. It leaves out what git ignores, but
- * reinstalls a `node_modules` from a lockfile between the checkout and it.
- */
-export const syncedInCopy = (path: string, now = Date.now()): boolean => {
-  const known = syncedPaths.get(path);
-  if (known !== undefined && now - known.at < SYNCED_FRESH_MS) return known.found;
-  let found: boolean;
-  const root = gitRootOf(NodePath.dirname(path));
-  const modules = /^(.*?)[\\/]node_modules([\\/]|$)/.exec(path)?.[1];
-  if (root === null) found = true;
-  else if (modules !== undefined) {
-    found = false;
-    for (let dir = modules; dir.length >= root.length; dir = NodePath.dirname(dir)) {
-      if (LOCKFILES.some((name) => NodeFS.existsSync(NodePath.join(dir, name)))) found = true;
-      if (found || dir === root) break;
-    }
-  } else {
-    // Exit 0 is ignored; an error (1 is "not ignored") counts as there.
-    const check = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "-q", "--", path]);
-    found = check.status !== 0;
-  }
-  if (syncedPaths.size > 1000) syncedPaths.clear();
-  syncedPaths.set(path, { at: now, found });
-  return found;
+// `lsof` blocks and plans run often: a port's answer holds a few seconds.
+const LISTEN_TTL_MS = 5_000;
+const listens = new Map<number, { readonly at: number; readonly listens: boolean }>();
+const listening = (port: number) => {
+  const known = listens.get(port);
+  if (known !== undefined && Date.now() - known.at < LISTEN_TTL_MS) return known.listens;
+  const answer = listensHere(port);
+  listens.set(port, { at: Date.now(), listens: answer });
+  return answer;
 };
 
 const contextOf =
@@ -553,7 +576,7 @@ const contextOf =
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
-    synced: syncedInCopy,
+    listening,
   });
 
 /** Some project uses the Runner, so jobs can wait on either machine. */
@@ -666,6 +689,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       ...(workers === null ? {} : { workers }),
       ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
       ...(admit.ungated ? { ungated: true } : {}),
+      // Why "When Linux is full" sent it here, shown while it runs.
+      ...(admit.runner === "mac" && decision.moved[id] !== undefined
+        ? { routeReason: decision.moved[id] }
+        : {}),
       ...(admit.runner === "linux" && (ask !== undefined || route !== undefined)
         ? {
             held: {
@@ -698,22 +725,15 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     };
   }
   const ask = decision.asks[id];
-  const asked =
-    ask === undefined
-      ? entries
-      : entries.map((e) =>
-          e.id === id
-            ? {
-                ...e,
-                ask: {
-                  reason: ask,
-                  deadlineAt: new Date(
-                    now + configFor(doc, e.cwd).runnerAskMinutes * 60_000,
-                  ).toISOString(),
-                },
-              }
-            : e,
-        );
+  const moved = decision.moved[id];
+  const asked = entries.map((e) => {
+    if (e.id !== id) return e;
+    // A job moved for "When Linux is full" stays on this Mac once Linux frees up.
+    if (moved !== undefined) return { ...e, route: "mac" as const, routeReason: moved };
+    if (ask === undefined) return e;
+    const deadlineAt = now + configFor(doc, e.cwd).runnerAskMinutes * 60_000;
+    return { ...e, ask: { reason: ask, deadlineAt: new Date(deadlineAt).toISOString() } };
+  });
   // Counted on the machine it waits for, as the Resource Manager groups rows.
   const runner = decision.routes[id] ?? "mac";
   const machineOf = (e: HeavyQueueEntry) =>
@@ -930,7 +950,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
   const doc = readDoc(dir);
   const parts = lineParts(line);
   const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
-  const commit = commitRoute(parts.command, at);
+  const commit = commitRoute(parts.command);
   const handedOff = !parts.remoto && isQueued(parts.command, scriptReader(at));
   if (commit === "direct" || handedOff) {
     return {
@@ -938,6 +958,7 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       reason: handedOff ? HANDED_OFF_RUNS_DIRECT : COMMIT_RUNS_DIRECT,
       startsNow: true,
       linuxFull: false,
+      canceled: false,
     };
   }
   const id = `probe-${now}`;
@@ -949,8 +970,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     cwd: at,
     createdAt: new Date(now).toISOString(),
     startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
-    priority: commit === "first" ? "high" : "low",
+    // As `t3 heavy` queues an agent's job, behind the user's own.
+    priority: "low",
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(withProbe, now);
@@ -962,11 +983,14 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       withProbe.entries.findIndex((e) => e.id === id),
     )
     .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  // A job asked for Linux that needs this Mac never runs: it ends with this reason.
+  const cancel = plan.cancels[id];
   return {
     runsOn: plan.routes[id] ?? ("mac" as const),
-    reason: plan.reasons[id] ?? null,
-    startsNow: plan.admits[id] !== undefined,
+    reason: cancel ?? plan.reasons[id] ?? null,
+    startsNow: cancel === undefined && plan.admits[id] !== undefined,
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
+    canceled: cancel !== undefined,
   };
 };
 
@@ -1095,9 +1119,7 @@ export const finish = (
   mutate(
     dir,
     (doc) => {
-      const entry: (HeavyQueueEntry & { readonly line?: string }) | undefined = doc.entries.find(
-        (each) => each.id === id,
-      );
+      const entry: QueuedEntry | undefined = doc.entries.find((each) => each.id === id);
       const line = entry === undefined ? undefined : lineOf(entry);
       // Checked on this Mac: a 127 from a run that reached Linux is Linux's to explain.
       // `decided` was established for both machines, so it stands either way.
@@ -1110,6 +1132,7 @@ export const finish = (
         ...(line === undefined ? {} : { line }),
         ...(entry?.name === undefined ? {} : { name: entry.name }),
         ...(reason === undefined ? {} : { error: reason }),
+        ...(entry?.syncBack === undefined ? {} : { syncBack: entry.syncBack }),
       };
       return {
         doc: {
@@ -1126,6 +1149,30 @@ export const finish = (
     },
     now,
   );
+
+/** Adds one Linux call's sync-back to its job's totals, for the job's result and card. */
+export const addSyncBack = (dir: string, id: string, back: SyncBack) =>
+  mutate(dir, (doc) => ({
+    doc: {
+      ...doc,
+      entries: doc.entries.map((entry: QueuedEntry) => {
+        if (entry.id !== id) return entry;
+        const sum = entry.syncBack;
+        const overCapMB = Math.max(sum?.overCapMB ?? 0, back.overCapMB ?? 0);
+        return {
+          ...entry,
+          syncBack: {
+            copied: (sum?.copied ?? 0) + back.copied,
+            skipped: (sum?.skipped ?? 0) + back.skipped,
+            deleted: (sum?.deleted ?? 0) + back.deleted,
+            failed: (sum?.failed ?? 0) + back.failed,
+            ...(overCapMB === 0 ? {} : { overCapMB }),
+          },
+        };
+      }),
+    },
+    result: undefined,
+  }));
 
 /** Logs a Linux environment failure of a job still in the queue, for the problem detector to file. */
 export const recordFault = (dir: string, id: string, fault: Fault, now = Date.now()) =>
@@ -1608,16 +1655,7 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  const answer = interceptBashCall(
-    hookInput,
-    prefix,
-    modeFor(doc, at),
-    environment,
-    scriptReader(at),
-  );
-  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
-    ? null
-    : answer;
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at));
 };
 
 /** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */

@@ -2,10 +2,13 @@
  * The machine-wide heavy-work queue, shared with every T3 server and `t3 heavy` CLI on this
  * machine through one file. Agents and the server wait their turn here; only the user reorders.
  */
-// @effect-diagnostics nodeBuiltinImport:off - An entry id needs no Effect service.
+// @effect-diagnostics nodeBuiltinImport:off - An entry id and the home folder need no Effect service.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import {
   HeavyQueueError,
+  type HeavyQueueForgetRoutesResult,
+  type HeavyQueueListRoutesResult,
   type HeavyQueueSetAdmissionLimitsInput,
   type HeavyQueueState,
   type HeavyRunner,
@@ -34,6 +37,7 @@ import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
+import * as RouteMemory from "./routeMemory.ts";
 import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -119,6 +123,14 @@ export class HeavyQueue extends Context.Service<
     readonly routeAll: (
       runner: HeavyRunner,
     ) => Effect.Effect<ReadonlyArray<string>, HeavyQueueError>;
+    /** What route memory learned, with the Runner settings for `cwd` (the home folder by default). */
+    readonly listRoutes: (
+      cwd?: string,
+    ) => Effect.Effect<HeavyQueueListRoutesResult, HeavyQueueError>;
+    /** Forgets one learned route by key, or every one with `all`; one already gone removes 0. */
+    readonly forgetRoutes: (
+      key: string,
+    ) => Effect.Effect<HeavyQueueForgetRoutesResult, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -327,6 +339,25 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     );
   const change = (run: () => void) =>
     Effect.try({ try: run, catch: unavailable }).pipe(Effect.tap(() => announce));
+  /**
+   * Runs a route-memory call; a routes.json it had to move aside is logged and reported.
+   * Untraced: the calling method's span already covers it.
+   */
+  const withRoutes = Effect.fnUntraced(function* <A extends object>(
+    run: (warn: RouteMemory.Warn) => A,
+  ) {
+    let warning: string | undefined;
+    const result = yield* Effect.try({
+      try: () =>
+        run((message) => {
+          warning = message;
+        }),
+      catch: unavailable,
+    });
+    if (warning === undefined) return result;
+    yield* Effect.logWarning(`Heavy queue: ${warning}`);
+    return { ...result, warning };
+  });
 
   const withSlot = Effect.fnUntraced(function* <A, E, R>(
     label: string,
@@ -446,6 +477,15 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       Effect.try({ try: () => QueueFile.routeAll(dir, runner), catch: unavailable }).pipe(
         Effect.tap(() => announce),
       ),
+    ),
+    listRoutes: Effect.fn("HeavyQueue.listRoutes")(function* (cwd?: string) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* withRoutes((warn) => ({
+        routes: RouteMemory.learnedRoutes(dir, cwd ?? NodeOS.homedir(), now, warn),
+      }));
+    }),
+    forgetRoutes: Effect.fn("HeavyQueue.forgetRoutes")((key: string) =>
+      withRoutes((warn) => ({ removed: RouteMemory.forgetRoutes(dir, key, warn) })),
     ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),

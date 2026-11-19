@@ -164,6 +164,21 @@ describe("heavyStatus", () => {
       reason: "Linux is unavailable: waiting for it",
     },
     {
+      name: "canceled before it runs: never ask, and say why",
+      change: {
+        linux: { ...linux, online: false },
+        destination: {
+          ...toLinux,
+          reason: "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+          startsNow: false,
+          linuxFull: true,
+          canceled: true,
+        },
+      },
+      askUser: false,
+      reason: "Asked for Linux, but it needs this Mac: Mac-only tool: xcodebuild",
+    },
+    {
       name: "Linux-bound, a short wait such as a first health check: no ask",
       change: { linux, destination: { ...toLinux, startsNow: false } },
       askUser: false,
@@ -189,9 +204,13 @@ describe("heavyStatus", () => {
     },
     {
       name: "Mac-bound under pressure: ask",
-      change: { busyCores: 6, linux, destination: { ...toMac, reason: "Needs git" } },
+      change: {
+        busyCores: 6,
+        linux,
+        destination: { ...toMac, reason: "Changes this Mac's checkout: git commit" },
+      },
       askUser: true,
-      reason: "Needs git",
+      reason: "Changes this Mac's checkout: git commit",
     },
     {
       name: "Mac-bound, queue off: never ask",
@@ -315,13 +334,17 @@ const promoted: Array<readonly [string, string | undefined]> = [];
 const probed: Array<readonly [string, string]> = [];
 
 const movedAll: Array<"mac" | "linux"> = [];
+const listedRoutes: Array<string | undefined> = [];
+/** Learned route keys the mock queue still holds. */
+const learned = new Set<string>();
 let nextMoved: ReadonlyArray<string> = ["w"];
 let queueLinux: HeavyRunnerLinux | null = null;
 
 const callTool = (
   params: {
-    action: "status" | "promote" | "move_all";
+    action: "status" | "promote" | "move_all" | "routes" | "forget_route";
     id?: string;
+    key?: string;
     to?: "mac" | "linux";
     commandLine?: string;
   },
@@ -378,12 +401,38 @@ const callTool = (
                     reason: "Linux is unavailable: waiting for it",
                     startsNow: false,
                     linuxFull: true,
+                    canceled: false,
                   };
                 }),
           promote: (id, note) =>
             id === "gone"
               ? Effect.fail(new HeavyQueueError({ reason: "not-found", message: "No such entry." }))
               : Effect.sync(() => void promoted.push([id, note])),
+          listRoutes: (cwd) =>
+            Effect.sync(() => {
+              listedRoutes.push(cwd);
+              return {
+                routes: [...learned].map((key) => ({
+                  key,
+                  kind: "missing-program",
+                  faults: 2,
+                  learnAfter: 2,
+                  learned: true,
+                  line: "vp: not found",
+                  lastFaultAt: "2026-01-01T00:00:00.000Z",
+                  expiresAt: "2026-01-08T00:00:00.000Z",
+                })),
+              };
+            }),
+          forgetRoutes: (key) =>
+            key === "broken"
+              ? Effect.fail(new HeavyQueueError({ reason: "unavailable", message: "No queue." }))
+              : Effect.sync(() => {
+                  const removed = key === "all" ? learned.size : learned.has(key) ? 1 : 0;
+                  if (key === "all") learned.clear();
+                  else learned.delete(key);
+                  return { removed };
+                }),
           routeAll: (runner) =>
             Effect.sync(() => {
               movedAll.push(runner);
@@ -522,6 +571,52 @@ describe("t3_heavy", () => {
       nextMoved = ["w"];
       // Status alone moves nothing and says nothing about moves.
       expect((yield* callTool({ action: "status" })).at(-1)!.result).not.toHaveProperty("moved");
+    }),
+  );
+
+  it.effect("routes lists what route memory learned, read-only clients included", () =>
+    Effect.gen(function* () {
+      learned.clear();
+      learned.add("vp@/home/user/app#missing-program");
+      listedRoutes.length = 0;
+      const chunk = yield* callTool({ action: "routes" }, "read-only");
+      // A thread without a project folder leaves the Runner settings to the queue's default.
+      expect(listedRoutes).toEqual([undefined]);
+      expect(chunk.at(-1)!.result).toEqual({
+        routes: [
+          expect.objectContaining({ key: "vp@/home/user/app#missing-program", learned: true }),
+        ],
+      });
+    }),
+  );
+
+  it.effect("forget_route forgets one or all, again harmlessly, and never from read-only", () =>
+    Effect.gen(function* () {
+      learned.clear();
+      for (const key of ["vp@/a#missing-program", "cargo@/b#missing-program"]) learned.add(key);
+      const result = function* (params: { key?: string }, access?: "read-only") {
+        const chunk = yield* callTool({ action: "forget_route", ...params }, access);
+        return chunk.at(-1)!.encodedResult;
+      };
+      expect(yield* result({ key: "vp@/a#missing-program" }, "read-only")).toMatchObject({
+        code: "capability_denied",
+      });
+      expect(learned.size).toBe(2);
+      for (const params of [{}, { key: " " }]) {
+        expect(yield* result(params)).toMatchObject({ code: "invalid_request" });
+      }
+      expect(yield* result({ key: "vp@/a#missing-program" })).toEqual({ removed: 1 });
+      // A retry lands on the same state: nothing left to forget, and no error.
+      expect(yield* result({ key: "vp@/a#missing-program" })).toEqual({
+        removed: 0,
+        note: "Nothing to forget: no learned route has that key now.",
+      });
+      expect(yield* result({ key: "all" })).toEqual({ removed: 1 });
+      expect(learned.size).toBe(0);
+      expect(yield* result({ key: "broken" })).toMatchObject({
+        code: "orchestration_error",
+        message: "No queue.",
+      });
     }),
   );
 });
