@@ -2021,6 +2021,56 @@ describe("t3 heavy", () => {
       }
     });
 
+    // A server runs until it is stopped: queued, it would hold a Mac slot for good.
+    it.each([
+      ["npx expo start --dev-client --port 8082 --clear", "direct"],
+      ["expo start -c", "direct"],
+      ["vite", "direct"],
+      ["vite dev --port 5174", "direct"],
+      ["next dev", "direct"],
+      ["npx react-native start --reset-cache", "direct"],
+      ["metro serve", "direct"],
+      ["storybook dev -p 6006", "direct"],
+      ["start-storybook -p 6006", "direct"],
+      ["pnpm run storybook", "direct"],
+      ["pnpm -F web dev", "direct"],
+      ["pnpm --filter web start", "direct"],
+      ["npm -w web run serve", "direct"],
+      ["yarn workspace web preview", "direct"],
+      ["pnpm run watch", "direct"],
+      ["vitest --watch", "direct"],
+      ["cd apps/web && pnpm build && pnpm preview", "direct"],
+      ["vite build", "queue"],
+      ["next build", "queue"],
+      ["pnpm serve-static-build", "queue"],
+      ["vp test run", "queue"],
+    ] as const)("%s: %s", (line, kind) => {
+      for (const runner of [true, false]) {
+        const launch = heavyLaunch(
+          { program: SH, args: ["-c", line], where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: true, runner }),
+          false,
+        );
+        expect(launch.kind).toBe(kind);
+      }
+    });
+
+    it("runs an agent's remoto call to a server here, outside the queue", () => {
+      const launch = heavyLaunch(
+        { program: SH, args: ["-c", "cd /p && remoto npx expo start"], where: undefined },
+        "/w",
+        "/h",
+        () => ({ enabled: true, runner: true }),
+        false,
+      );
+      expect(launch).toEqual({
+        kind: "direct",
+        run: { cwd: "/p", program: SH, args: ["-c", "npx expo start"] },
+      });
+    });
+
     it("still queues a script with heavy work of its own beside the hand-off", () => {
       const read = () => () => "vp lint\nt3 heavy -- vp test run\n";
       expect(

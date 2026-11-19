@@ -65,6 +65,7 @@ import {
   DEFAULT_MACHINE_CONFIG,
   askedLinux,
   eligibilityOf,
+  neverEnds,
   INSTALL_FAILED,
   linkAttempts,
   linkMachine,
@@ -228,7 +229,15 @@ export const jobOf = (
 };
 
 export type HeavyLaunch =
-  | { readonly kind: "direct" }
+  | {
+      readonly kind: "direct";
+      /** What runs instead of the command as written: a server an agent sent to `remoto`. */
+      readonly run?: {
+        readonly cwd: string;
+        readonly program: string;
+        readonly args: ReadonlyArray<string>;
+      };
+    }
   | {
       readonly kind: "queue";
       readonly cwd: string;
@@ -267,11 +276,15 @@ export const heavyLaunch = (
   ) {
     return { kind: "direct" };
   }
+  const line = jobLine(job.program, job.args);
   // Its heavy work already goes through `t3 heavy` or `remoto` inside: a slot here would only wait.
-  if (!job.remoto && isQueued(jobLine(job.program, job.args), readAt?.(job.cwd))) {
-    return { kind: "direct" };
+  if (!job.remoto && isQueued(line, readAt?.(job.cwd))) return { kind: "direct" };
+  // A server serves this Mac and never ends: no slot, and no Linux copy whose port nobody here sees.
+  if (command.where !== "linux" && neverEnds(line, readAt?.(job.cwd))) {
+    const { cwd, program, args } = job;
+    return job.remoto ? { kind: "direct", run: { cwd, program, args } } : { kind: "direct" };
   }
-  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args), job.cwd);
+  const commit = job.remoto ? null : commitRoute(line, job.cwd);
   if (commit === "direct") return { kind: "direct" };
   return {
     kind: "queue",
@@ -691,8 +704,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     scriptReader,
   );
   if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
+    const { run } = launch.kind === "direct" ? launch : {};
     // The shell reports a folder it cannot enter itself, as it would without T3.
-    runDirect(program, args, process.env);
+    if (run !== undefined && enterFolder(run.cwd)) runDirect(run.program, run.args, process.env);
+    else runDirect(program, args, process.env);
     return;
   }
   // A repeated request (same tool call, same agent retry) lands on the same job.

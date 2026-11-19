@@ -1572,6 +1572,50 @@
       "why": "only a whole watch segment watches"
     },
     {
+      "line": "npx expo start --dev-client --port 8082 --clear",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:expo start",
+      "why": "a dev server runs until stopped: never a queue slot, on either machine"
+    },
+    {
+      "line": "vite",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:vite"
+    },
+    {
+      "line": "next dev --turbo",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:next dev"
+    },
+    {
+      "line": "npx react-native start --reset-cache",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:react-native start"
+    },
+    {
+      "line": "metro serve",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:metro serve"
+    },
+    {
+      "line": "start-storybook -p 6006",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "serves-port:start-storybook"
+    },
+    {
+      "line": "vite build",
+      "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
+      "observed": "QA 2026-11-18",
+      "expect": "linux",
+      "why": "a build ends"
+    },
+    {
       "line": "bash -lc 'xcodebuild test'",
       "cwd": "/Users/dev/.t3/worktrees/t3code/t3-example",
       "observed": "QA 2026-11-18",

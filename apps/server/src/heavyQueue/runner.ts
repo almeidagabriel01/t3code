@@ -309,6 +309,9 @@ const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
   expo: /^start$/,
   wrangler: /^dev$/,
   storybook: /^(dev)?$/,
+  "start-storybook": /^/,
+  "react-native": /^start$/,
+  metro: /^(serve|start)?$/,
 };
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
 const EXEC = /^(exec|dlx|x)$/;
@@ -446,6 +449,16 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   const code = scriptCode(script);
   return code === null ? null : { code, subject: `${program} ${script}` };
 };
+
+/**
+ * A line that runs until it is stopped: some part of it serves a port or watches. A queue slot
+ * would be held for good, so it runs on this Mac outside the queue.
+ */
+export const neverEnds = (line: string, read?: ReadScript) =>
+  readLine(line, read).parts.some((part) => {
+    const code = part.handsOffInside ? undefined : programReason(part, [])?.code;
+    return code === "serves-port" || code === "watches";
+  });
 
 /** The package.json script a package manager call runs (`pnpm test`, `npm run e2e`), or null. */
 const scriptName = (values: ReadonlyArray<string>) => {
