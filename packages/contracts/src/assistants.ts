@@ -359,6 +359,15 @@ export const AssistantTeamChatWaitingRequest = Schema.Struct({
 });
 export type AssistantTeamChatWaitingRequest = typeof AssistantTeamChatWaitingRequest.Type;
 
+/** One request of a tab that waits on the user, so a count reads requests and not tabs. */
+export const AssistantTeamChatWaitingOwner = Schema.Struct({
+  /** As `AssistantTeamChatWaitingRequest.assistantId`: null means the group's lead. */
+  assistantId: Schema.NullOr(AssistantId),
+  /** Its open waits (`request:<id>`, `decision:<id>`): a client already listing one counts it there. */
+  waitKeys: Schema.Array(Schema.String),
+});
+export type AssistantTeamChatWaitingOwner = typeof AssistantTeamChatWaitingOwner.Type;
+
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
 export const AssistantTeamChatScope = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
@@ -370,6 +379,8 @@ export const AssistantTeamChatScope = Schema.Struct({
   waiting: Schema.Boolean,
   /** The oldest such request, while `waiting`; absent from older servers. */
   waitingRequest: Schema.optionalKey(AssistantTeamChatWaitingRequest),
+  /** Every such request, oldest first; absent when none, and from older servers. */
+  waitingRequests: Schema.optionalKey(Schema.Array(AssistantTeamChatWaitingOwner)),
   /** The tab's read position: its own, else the group's. */
   readSeq: Schema.Int,
   /** The project's title, kept after it is deleted; absent for General and unknown projects. */

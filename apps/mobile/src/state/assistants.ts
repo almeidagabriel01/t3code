@@ -150,6 +150,7 @@ const assistantStatusAtom = Atom.make((get) => {
     sites: get(assistantLiveWorkAtom).sites,
     reachable: (environmentId) =>
       environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
+    teams: get(assistantEntriesAtom).activeTeams,
   });
 }).pipe(Atom.withLabel("mobile-assistant-status"));
 

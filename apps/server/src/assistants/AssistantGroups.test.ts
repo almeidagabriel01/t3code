@@ -804,6 +804,11 @@ it.effect.each<{
   removed?: ReadonlyArray<string>;
   /** Each waiting tab's oldest waiting request and why, when the case checks them. */
   waitingRequests?: Record<string, readonly [requestId: string, reason: string]>;
+  /** Each waiting tab's requests, oldest first: owner (null for the lead) and open wait keys. */
+  waits?: Record<
+    string,
+    ReadonlyArray<readonly [owner: string | null, keys: ReadonlyArray<string>]>
+  >;
 }>([
   {
     // p1's task has stopped, so p1 stays listed even once read.
@@ -813,6 +818,34 @@ it.effect.each<{
     cursors: {},
     removed: [],
     waitingRequests: { p2: ["gm:3", "wait"], "": ["gm:5", "project"] },
+    waits: { p2: [[null, ["w1"]]], "": [[null, []]] },
+  },
+  {
+    name: "a tab lists every waiting request once, with all its open waits and its first owner",
+    steps: [
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, wait_key, assistant_id, created_at)
+          VALUES ('gm:8', '${TEAM}', 8, 'assistant', 'notice', 'x', 'gm:3', NULL, 'p2',
+            'decision:d2', 'bo', 't')`,
+      },
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, created_at)
+          VALUES ('gm:9', '${TEAM}', 9, 'user', 'message', 'x', 'gm:9', 'p2', 'p2', 't')`,
+      },
+      { sql: rootTask("gm:9", "paused") },
+    ],
+    scopes: { p1: [1, false, 0], p2: [2, true, 0], "": [1, true, 0] },
+    cursors: {},
+    waitingRequests: { p2: ["gm:3", "wait"], "": ["gm:5", "project"] },
+    waits: {
+      p2: [
+        [null, ["w1", "decision:d2"]],
+        ["ada", []],
+      ],
+      "": [[null, []]],
+    },
   },
   {
     name: "a tab leads to its oldest waiting request, a wait before a newer paused task",
@@ -955,7 +988,7 @@ it.effect.each<{
     titles: { p1: PROJECT_TITLES.p1!, p2: PROJECT_TITLES.p2!, p9: null, "": null },
     removed: ["p2", "p9"],
   },
-])("$name", ({ steps, readSeq, scopes, cursors, titles, removed, waitingRequests }) => {
+])("$name", ({ steps, readSeq, scopes, cursors, titles, removed, waitingRequests, waits }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
@@ -1046,6 +1079,23 @@ it.effect.each<{
           ),
         ),
         waitingRequests,
+      );
+    }
+    if (waits !== undefined) {
+      assert.deepEqual(
+        Object.fromEntries(
+          (chat.scopes ?? []).flatMap((scope) =>
+            scope.waitingRequests === undefined
+              ? []
+              : [
+                  [
+                    scope.projectId ?? "",
+                    scope.waitingRequests.map((request) => [request.assistantId, request.waitKeys]),
+                  ],
+                ],
+          ),
+        ) as typeof waits,
+        waits,
       );
     }
     const stored = yield* sql<{ readonly scope: string; readonly read_seq: number }>`

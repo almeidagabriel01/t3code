@@ -1,6 +1,5 @@
 import { applyAssistantGroupsEvent } from "@t3tools/client-runtime/assistantGroupChat";
 import { DEFAULT_ASSISTANT_AUTONOMY } from "@t3tools/contracts";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -29,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 type RowProps = {
+  icon?: string;
   label: string;
   description?: string;
   detail?: string;
@@ -40,7 +40,9 @@ const ui = vi.hoisted(() => {
   const row = (props: RowProps) => (
     <p data-row={props.label}>
       {props.leading}
-      {[props.label, props.description, props.detail].filter(Boolean).join(" | ")}
+      {[props.icon && `(${props.icon})`, props.label, props.description, props.detail]
+        .filter(Boolean)
+        .join(" | ")}
     </p>
   );
   return {
@@ -76,6 +78,9 @@ vi.mock("../../components/ui/ListSection", () => ({
   ),
 }));
 vi.mock("../../components/ui/ListRowLayout", () => ({ ListRowLayout: ui.row }));
+vi.mock("../settings/components/SettingsModelPicker", () => ({
+  useModelDisplayName: () => (selection: { model: string }) => `listed:${selection.model}`,
+}));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: ui.pressable }));
 vi.mock("../../components/ui/ListActionRow", () => ({ ListActionRow: ui.pressable }));
 vi.mock("../../components/ui/Button", () => ({ Button: ui.pressable }));
@@ -286,13 +291,14 @@ describe("Assistant info", () => {
     expect(container.textContent).toContain("[ada:working]AdaCFOWorking");
     expect(section("Working now")).toEqual(["[ada:working]Fix login | API | Running"]);
     expect(section("Projects")).toEqual(["Web", "API | Ada is working here"]);
-    expect(section("Groups")).toEqual(["Crew"]);
+    expect(section("Groups")).toEqual(["(person.2) | Crew"]);
+    // Every row has its own icon and a value; the model reads as its environment lists it.
     expect(section("Access")).toEqual([
-      "Tool access | access:read-only",
-      "Asks before acting | On",
-      `Model | ${formatModelSlugName("claude-opus-5-5")}`,
-      "When it finds a problem | Fix small things",
-      "Spending limit | $3 spent",
+      "(key) | Tool access | access:read-only",
+      "(questionmark.bubble) | Asks before acting | On",
+      "(brain) | Model | listed:claude-opus-5-5",
+      "(wrench.and.screwdriver) | When it finds a problem | Fix small things",
+      "(gauge.with.dots.needle.50percent) | Spending limit | $3 spent",
     ]);
 
     await press("Fix login");
@@ -318,11 +324,11 @@ describe("Assistant info", () => {
     using _screen = showAssistant("bo");
     expect(section("Working now")).toEqual(["Nothing running"]);
     expect(section("Projects")).toEqual(["All projects"]);
-    expect(section("Groups")).toEqual(["Crew | Lead"]);
+    expect(section("Groups")).toEqual(["(person.2) | Crew | Lead"]);
     expect(section("Access")).toEqual([
-      "Tool access | access:read-only",
-      "Asks before acting | Off",
-      "When it finds a problem | Offer to fix",
+      "(key) | Tool access | access:read-only",
+      "(questionmark.bubble) | Asks before acting | Off",
+      "(wrench.and.screwdriver) | When it finds a problem | Offer to fix",
     ]);
   });
 

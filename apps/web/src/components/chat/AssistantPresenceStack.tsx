@@ -309,14 +309,14 @@ export function AssistantPresenceStack(props: {
     />
   );
   return (
-    // Narrow headers give the title room; the same assistants stay reachable from the minimap marks.
+    // Always shown: no other entry reaches these rows' actions, so a narrow header truncates its title instead.
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
             type="button"
             aria-label={`Assistants in this thread: ${senders.length}`}
-            className={`flex shrink-0 cursor-pointer items-center rounded-md p-0.5 transition-colors hover:bg-foreground/8 @max-xl/header:hidden [-webkit-app-region:no-drag] ${FOCUS_RING}`}
+            className={`flex shrink-0 cursor-pointer items-center rounded-md p-0.5 transition-colors hover:bg-foreground/8 [-webkit-app-region:no-drag] ${FOCUS_RING}`}
           />
         }
       >

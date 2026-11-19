@@ -1,8 +1,10 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import { assistantIndicator, folderIndicator } from "@t3tools/client-runtime/sidebarZones";
 
-type Presence = { mood: string; detail: string; since: string | null; queued?: number };
+type Presence = { mood: AssistantMood; detail: string; since: string | null; queued?: number };
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
@@ -224,14 +226,31 @@ vi.mock("../../state/assistants", () => ({
     };
   },
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
-  useAssistantStatus: () => ({
-    of: (_environmentId: string, assistant: { threadId: string | null } | null): Presence =>
+  useAssistantStatus: () => {
+    const of = (_environmentId: string, assistant: { threadId: string | null } | null): Presence =>
       (assistant?.threadId != null ? mocks.presence[assistant.threadId] : undefined) ?? {
         mood: "idle",
         detail: "Idle",
         since: null,
+      };
+    return {
+      of,
+      // The shared readers over this mock's statuses; each member that needs you counts one wait.
+      indicator: (_environmentId: string, _assistantId: string, status: Presence) =>
+        assistantIndicator({ needsYou: 0, mood: status.mood }),
+      group: (
+        team: { environmentId: string },
+        members: ReadonlyArray<{ threadId: string | null }>,
+      ) => {
+        const moods = members.map((member) => ({ mood: of(team.environmentId, member).mood }));
+        return folderIndicator({
+          needsYou: moods.filter((member) => member.mood === "needs").length,
+          members: moods,
+          chat: null,
+        });
       },
-  }),
+    };
+  },
   useAssistantTasks: () => [],
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
     mocks.spendQuery(environmentId, assistantId);
@@ -356,14 +375,18 @@ describe("assistants page", () => {
     expect(text).toContain("No members yet.");
     expect(byLabel("Scout, Website")).not.toBeNull();
     expect(text).toContain("Needs your approval");
-    // Cards and group headers say their status in a thread row's words.
+    // Cards and group headers say their status in the sidebar's words.
     expect(
       byLabel("Asker, All projects")?.querySelector('[data-testid="assistant-status"]')
         ?.textContent,
-    ).toBe("Approval");
+    ).toBe("Needs you");
+    expect(
+      byLabel("Jarvis, All projects")?.querySelector('[data-testid="assistant-status"]')
+        ?.textContent,
+    ).toBe("Working");
     const groupStatus = container.querySelectorAll('[data-testid="group-status"]');
     // Asker waits under "Needs you", yet its group still says so.
-    expect([...groupStatus].map((node) => node.textContent)).toEqual(["Approval"]);
+    expect([...groupStatus].map((node) => node.textContent)).toEqual(["Needs you"]);
     // A member card names its groups; an unassigned one has none.
     expect(byLabel("Jarvis, All projects")?.textContent).toContain("Growth");
     expect(byLabel("Loose, All projects")?.textContent).not.toContain("Growth");

@@ -23,14 +23,12 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
-  CircleDashedIcon,
   CirclePauseIcon,
   ClockAlertIcon,
   EllipsisIcon,
   InfoIcon,
   MailIcon,
   MailOpenIcon,
-  MessageCircleQuestionIcon,
   MessageSquareTextIcon,
   MessagesSquareIcon,
   PencilIcon,
@@ -63,7 +61,12 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantInfo } from "./assistantInfoState";
-import { AssistantAvatar, AssistantCluster } from "./assistantPresentation";
+import {
+  AssistantAvatar,
+  AssistantCluster,
+  ZONE_INDICATOR_ICON,
+  ZONE_INDICATOR_TONE,
+} from "./assistantPresentation";
 import {
   assistantFoldKey,
   AssistantTaskRows,
@@ -95,24 +98,6 @@ type IndicatorKind = ZoneIndicator["kind"];
 
 const indicatorLabel = (kind: IndicatorKind, count: number, subject: "assistant" | "group") =>
   zoneIndicatorLabel({ kind, count } as ZoneIndicator, subject);
-
-const INDICATOR_ICON = {
-  needs: MessageCircleQuestionIcon,
-  running: CircleDashedIcon,
-  failed: CircleAlertIcon,
-  limited: ClockAlertIcon,
-  paused: CirclePauseIcon,
-  unread: MailIcon,
-} as const;
-
-const INDICATOR_TONE = {
-  needs: "text-warning-foreground",
-  running: "text-info-foreground",
-  failed: "text-destructive-foreground",
-  limited: "text-warning-foreground",
-  paused: "text-warning-foreground",
-  unread: "text-info-foreground",
-} as const;
 
 const INDICATOR_DOT = {
   needs: "bg-warning",
@@ -524,7 +509,7 @@ function FolderIndicator(props: {
   readonly onOpen: (target: GroupChatTarget | null) => void;
 }) {
   const label = indicatorLabel(props.kind, props.count, "group");
-  const Icon = INDICATOR_ICON[props.kind];
+  const Icon = ZONE_INDICATOR_ICON[props.kind];
   return (
     <Tooltip>
       <TooltipTrigger
@@ -540,7 +525,7 @@ function FolderIndicator(props: {
             className={cn(
               "flex h-6 min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 text-xs font-normal tabular-nums hover:bg-foreground/8",
               FOCUS_RING,
-              INDICATOR_TONE[props.kind],
+              ZONE_INDICATOR_TONE[props.kind],
             )}
           />
         }
