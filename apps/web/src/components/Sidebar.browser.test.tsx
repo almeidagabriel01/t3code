@@ -262,6 +262,7 @@ function mockAssistantState(input: {
   readonly tasks?: ReadonlyArray<{
     readonly owner: string;
     readonly shell: EnvironmentThreadShell;
+    readonly dismissed?: boolean;
   }>;
   readonly projectThreads?: ReadonlyArray<EnvironmentThreadShell>;
   /** Assistants whose task list starts open. */
@@ -323,7 +324,7 @@ function mockAssistantState(input: {
           projectId: activeProject.id,
           title: task.shell.title,
           createdAt: "2026-01-01T00:00:00.000Z",
-          dismissedAt: null,
+          dismissedAt: task.dismissed ? "2026-01-03T00:00:00.000Z" : null,
         })),
     ]),
   );
@@ -483,6 +484,12 @@ describe("sidebar teams zone", () => {
       );
     // The assistant's chat and its task, then the same task in its project.
     expect(hints()).toEqual(["assistant:local:jarvis", TASK_COPY, "local:task-1"]);
+    // One number per thread: the task's two rows share the number Teams gave it.
+    const labels = [...screen.container.querySelectorAll("[data-jump-hint]")].map(
+      (hint) => hint.textContent,
+    );
+    expect(labels[2]).toBe(labels[1]);
+    expect(labels[1]).not.toBe(labels[0]);
     await userEvent.keyboard(`{/${modifier}}`);
     await userEvent.keyboard(`{${modifier}>}1{/${modifier}}`);
     await vi.waitFor(() =>
@@ -493,14 +500,15 @@ describe("sidebar teams zone", () => {
   });
 
   it.each([
-    { archived: false, listedUnderAssistant: true },
-    { archived: true, listedUnderAssistant: false },
+    { archived: false, dismissed: false, listedUnderAssistant: true },
+    { archived: true, dismissed: false, listedUnderAssistant: false },
+    { archived: false, dismissed: true, listedUnderAssistant: false },
   ])(
-    "an assistant archived=$archived keeps its task in the project list, under it: $listedUnderAssistant",
-    async ({ archived, listedUnderAssistant }) => {
+    "an assistant archived=$archived keeps its task dismissed=$dismissed in the project list, under it: $listedUnderAssistant",
+    async ({ archived, dismissed, listedUnderAssistant }) => {
       using _state = mockAssistantState({
         assistants: [{ id: "jarvis" }, { id: "nova", archived }],
-        tasks: [{ owner: "nova", shell: taskShell(1) }],
+        tasks: [{ owner: "nova", shell: taskShell(1), dismissed }],
         projectThreads: [threadShell(ProjectId.make("active"), 0)],
         expanded: ["nova"],
       });
