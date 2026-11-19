@@ -696,17 +696,23 @@ export const forwardsSignal = (signal: (typeof SIGNALS)[number], onTerminal: boo
 const spawnCode = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) =>
   new Promise<number>((resolve) => {
     const onTerminal = process.stdin.isTTY === true;
-    // Off a terminal nobody signals the group: the program leads its own, and a signal sent to
-    // this PID reaches its whole tree, past a launcher that dies without passing it on.
+    // Off a terminal nobody signals the group: an agent's own run leads its own, and a signal sent
+    // to this PID reaches its whole tree, past a launcher that dies without passing it on. Inside a
+    // job it stays in the job's group, which a stop kills whole.
+    const ownGroup =
+      !onTerminal &&
+      process.env[HEAVY_JOB_ENV] !== "1" &&
+      // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
+      NodeOS.platform() !== "win32";
     const child = NodeChildProcess.spawn(program, args, {
       stdio: "inherit",
       env,
-      detached: !onTerminal,
+      detached: ownGroup,
     });
     const forward = (signal: (typeof SIGNALS)[number]) => {
       if (!forwardsSignal(signal, onTerminal)) return;
       try {
-        if (onTerminal || child.pid === undefined) child.kill(signal);
+        if (!ownGroup || child.pid === undefined) child.kill(signal);
         else process.kill(-child.pid, signal);
       } catch {
         // Already gone.
