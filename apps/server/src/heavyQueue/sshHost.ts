@@ -19,10 +19,27 @@ export const sshHostname = (host: string, env: NodeJS.ProcessEnv = process.env):
   }
 };
 
-const resolved = new Map<string, string | null>();
+/** A failed lookup (ssh missing, a slow resolver) is asked again after this long. */
+export const FAILED_LOOKUP_RETRY_MS = 60_000;
 
-/** `sshHostname`, asked once per host for the life of the process. */
-export const cachedSshHostname = (host: string) => {
-  if (!resolved.has(host)) resolved.set(host, sshHostname(host));
-  return resolved.get(host) ?? null;
+/**
+ * `lookup`, asked once per host for the life of the process when it answers. A failure is kept
+ * for `FAILED_LOOKUP_RETRY_MS` only: a passing one must not leave the Runner's host unmatched.
+ */
+export const cacheHostnames = (
+  lookup: (host: string) => string | null,
+  now: () => number = Date.now,
+) => {
+  const resolved = new Map<string, { readonly name: string | null; readonly at: number }>();
+  return (host: string) => {
+    const known = resolved.get(host);
+    if (known !== undefined && (known.name !== null || now() - known.at < FAILED_LOOKUP_RETRY_MS)) {
+      return known.name;
+    }
+    const name = lookup(host);
+    resolved.set(host, { name, at: now() });
+    return name;
+  };
 };
+
+export const cachedSshHostname = cacheHostnames((host) => sshHostname(host));
