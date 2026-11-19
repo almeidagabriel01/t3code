@@ -281,6 +281,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  // Case 27: retired Runner keys from older clients stay in the file through every write.
+  it.effect("keeps the retired Linux allowlist and Everything on disk through edits", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const retired = {
+        runnerLinuxEverything: true,
+        runnerLinuxCommands: ["rspec"],
+        runnerMacOnly: ["fastlane"],
+      };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ ...retired, projectSettingsOverrides: { "project-a": retired } }),
+      );
+      yield* service.getSettings;
+
+      yield* service.updateSettings({ runnerAskMinutes: 7 });
+      // An older client still sends the retired keys.
+      yield* service.updateSettings({ runnerLinuxCommands: ["rspec", "jest"] });
+
+      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepInclude(persisted, {
+        ...retired,
+        runnerLinuxCommands: ["rspec", "jest"],
+        runnerAskMinutes: 7,
+      });
+      assert.deepEqual(persisted.projectSettingsOverrides, { "project-a": retired });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect(
     "refuses a changed project model on a missing or disabled instance, only when it changed",
     () =>

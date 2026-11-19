@@ -1,12 +1,16 @@
 import type { ReactNode } from "react";
-import { RUNNER_DEFAULTS, type HeavyQueueState, type ServerSettings } from "@t3tools/contracts";
+import {
+  RUNNER_SETTING_DEFAULTS,
+  type RunnerSettingKey,
+} from "@t3tools/client-runtime/state/runnerModel";
+import type { HeavyQueueState, ServerSettings } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
 
-type Settings = Pick<ServerSettings, keyof typeof RUNNER_DEFAULTS>;
+type Settings = Pick<ServerSettings, RunnerSettingKey>;
 
 const mocks = vi.hoisted(() => ({
   scope: { kind: "environment", environmentIds: ["env"] } as {
@@ -92,7 +96,7 @@ function setup(
     environmentIds: over.environmentIds ?? ["env"],
   };
   mocks.state = { enabled: true, paused: false, linux: null, ...over.state };
-  mocks.settings = { ...RUNNER_DEFAULTS, ...settings };
+  mocks.settings = { ...RUNNER_SETTING_DEFAULTS, ...settings };
   mocks.mixed = over.mixed ?? [];
   mocks.target = over.target ?? null;
   return render(<RunnerSettingsSection />, { router: false }); // rows are mocked
@@ -178,7 +182,7 @@ it("clamps numbers to their range and rejects a bad host inline", async () => {
   await host.fill("pc");
   await host.element().blur();
   mocks.update.mock.calls[1]![1].onFailed();
-  await expect.element(host).toHaveValue(RUNNER_DEFAULTS.runnerHost);
+  await expect.element(host).toHaveValue(RUNNER_SETTING_DEFAULTS.runnerHost);
 });
 
 it("edits a command list as chips: remove, add on Enter, skip repeats, cap the length", async () => {
@@ -193,8 +197,12 @@ it("edits a command list as chips: remove, add on Enter, skip repeats, cap the l
   await userEvent.click(screen.getByRole("button", { name: "Add to Can run on Linux" }));
   await expect.element(add).toHaveValue("");
   expect(patches()).toEqual([
-    { runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands.filter((c) => c !== "vitest") },
-    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "rspec"] },
+    {
+      runnerLinuxCommands: RUNNER_SETTING_DEFAULTS.runnerLinuxCommands.filter(
+        (c) => c !== "vitest",
+      ),
+    },
+    { runnerLinuxCommands: [...RUNNER_SETTING_DEFAULTS.runnerLinuxCommands, "rspec"] },
   ]);
 
   await using full = await setup({

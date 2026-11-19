@@ -11,15 +11,46 @@ import type {
   HeavyRunnerPhase,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
-  RunnerKey,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
-import { HEAVY_QUEUE_DEFAULTS } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, RUNNER_DEFAULTS, RUNNER_PROJECT_KEYS } from "@t3tools/contracts";
+
+/** Runner defaults the settings screens use; the deprecated two leave with their controls. */
+export const RUNNER_SETTING_DEFAULTS = {
+  ...RUNNER_DEFAULTS,
+  runnerLinuxEverything: false,
+  runnerLinuxCommands: [
+    "test",
+    "vitest",
+    "jest",
+    "mocha",
+    "pytest",
+    "e2e",
+    "playwright",
+    "coverage",
+    "lint",
+    "oxlint",
+    "eslint",
+    "check",
+    "clippy",
+    "typecheck",
+    "tsc",
+    "tsgo",
+    "effect-tsgo",
+    "knip",
+  ] as ReadonlyArray<string>,
+};
+export type RunnerSettingKey = keyof typeof RUNNER_SETTING_DEFAULTS;
+export const RUNNER_SETTING_PROJECT_KEYS = [
+  ...RUNNER_PROJECT_KEYS,
+  "runnerLinuxCommands",
+  "runnerLinuxEverything",
+] as const;
 
 /** Every Runner setting's label and description; web and mobile both read these. */
 export const RUNNER_SETTING_COPY: Record<
-  RunnerKey,
+  RunnerSettingKey,
   { readonly title: string; readonly description: string }
 > = {
   runnerEnabled: {
@@ -442,7 +473,7 @@ export function runnerEverythingOn(where: RunnerWhere | null, everything: boolea
  * while Everything is off. Null (targets disagree) counts as applying.
  */
 export function runnerModeFieldApplies(
-  key: RunnerKey,
+  key: RunnerSettingKey,
   where: RunnerWhere | null,
   everything: boolean | null,
 ): boolean {
@@ -465,7 +496,7 @@ export interface RunnerChoices {
  * a field, and show it with this note only when a search lands on it. A mixed choice counts as
  * applying, so a field never hides while some selected target still uses it.
  */
-export function runnerFieldIdle(key: RunnerKey, choices: RunnerChoices): string | null {
+export function runnerFieldIdle(key: RunnerSettingKey, choices: RunnerChoices): string | null {
   if (key === "runnerEnabled") return null;
   if (choices.runnerEnabled === false) return "Only applies while the Runner is on.";
   switch (key) {

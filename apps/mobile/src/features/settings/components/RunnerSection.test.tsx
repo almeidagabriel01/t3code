@@ -1,13 +1,13 @@
 import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
+  type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
   DEFAULT_SERVER_SETTINGS,
   RUNNER_DEFAULTS,
   type EnvironmentId,
   type HeavyQueueState,
-  type RunnerKey,
   type ServerSettings,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -150,8 +150,8 @@ async function mount(
     settings?: Partial<ServerSettings>;
     projectSelected?: boolean;
     overridden?: ReadonlyArray<RunnerProjectKey>;
-    mixed?: ReadonlyArray<RunnerKey>;
-    disabled?: ReadonlyArray<RunnerKey>;
+    mixed?: ReadonlyArray<RunnerSettingKey>;
+    disabled?: ReadonlyArray<RunnerSettingKey>;
     linux?: HeavyQueueState["linux"];
     severalMachines?: boolean;
   } = {},

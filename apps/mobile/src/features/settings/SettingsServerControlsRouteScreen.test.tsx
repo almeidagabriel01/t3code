@@ -480,7 +480,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(JSON.parse(queue.dataset.runner!)).toEqual({
       enabled: false,
       where: "automatic",
-      everything: DEFAULT_SERVER_SETTINGS.runnerLinuxEverything,
+      everything: false,
     });
     act(() => queue.click());
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
