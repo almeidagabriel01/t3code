@@ -12705,6 +12705,153 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Claude opens the wake turn seconds after the notification; an empty roster in between let
+  // automatic settlement detach the idle session and lose the wake.
+  const awaitedTaskNotifiedWhileIdle = Effect.gen(function* () {
+    const harness = yield* makeWakeHarness;
+    const now = yield* DateTime.now;
+    const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+    if (awaitBackgroundTasks === undefined) {
+      throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+    }
+    const marks = (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask> | undefined) =>
+      (tasks ?? []).map((task) => [task.taskId, task.awaited === true]);
+    const nextRoster = Effect.fn("nextRoster")(function* (
+      matches: (tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) => boolean,
+    ) {
+      while (true) {
+        const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+        const tasks = providerThread.pendingBackgroundTasks ?? [];
+        if (matches(tasks)) return tasks;
+      }
+    });
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-awaited-wake-1"),
+        text: "Run the build in the background and wait for it.",
+        attachments: [],
+      }),
+    );
+    yield* harness.offerAndWait(wakeTaskStarted);
+    yield* awaitBackgroundTasks({
+      providerThread: harness.providerThread,
+      taskIds: [WAKE_TASK_ID],
+      awaited: true,
+    });
+    yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true));
+    yield* Queue.offer(harness.sdkMessages, turnOneResult);
+    yield* harness.awaitTerminal(1);
+    // Events reach the harness in order, so nothing emitted before the terminal lands after it.
+    const idleFrom = harness.events.length;
+    const idleRosters = () =>
+      harness.events
+        .slice(idleFrom)
+        .flatMap((event) =>
+          event.type === "provider_thread.updated"
+            ? [event.providerThread.pendingBackgroundTasks]
+            : [],
+        );
+
+    yield* harness.offerAndWait(wakeNotification);
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [],
+        uuid: "00000000-0000-4000-8000-000000000111",
+        session_id: WAKE_NATIVE_SESSION,
+      }),
+    );
+    // The notification and the empty level each publish the roster once.
+    yield* harness.until(() => idleRosters().length >= 2);
+    assert.deepStrictEqual(idleRosters().map(marks), [
+      [[WAKE_TASK_ID, true]],
+      [[WAKE_TASK_ID, true]],
+    ]);
+    yield* Queue.takeAll(harness.providerThreadReceipts);
+    assert.isTrue(yield* harness.hasPendingBackgroundWork);
+    assert.lengthOf(harness.continuationRequests, 0);
+    return { harness, now, nextRoster };
+  });
+
+  it.effect("keeps an awaited task pending from its idle notification until the wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { harness, now, nextRoster } = yield* awaitedTaskNotifiedWhileIdle;
+
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.notEqual(harness.continuationRequests[0]?.delivery, "message_text");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-awaited-wake-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* nextRoster((tasks) => tasks.length === 0);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.continuationRequests, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("prompts the agent once when Claude never opens an awaited task's wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { harness, nextRoster } = yield* awaitedTaskNotifiedWhileIdle;
+
+        yield* TestClock.adjust("2 minutes");
+        yield* harness.awaitContinuation(1);
+        const prompt = harness.continuationRequests[0];
+        assert.equal(prompt?.delivery, "message_text");
+        assert.include(prompt?.detail ?? "", WAKE_SUMMARY);
+        assert.isDefined(prompt?.messageId);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // A prompt that never starts a turn must not pin the session forever.
+        yield* TestClock.adjust("2 minutes");
+        yield* nextRoster((tasks) => tasks.length === 0);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.lengthOf(harness.continuationRequests, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([true, false])(
     "carries a rejected wake rate limit into the continuation failure (event=%s)",
     (standaloneEvent) =>
