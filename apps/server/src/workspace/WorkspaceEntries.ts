@@ -23,6 +23,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -260,6 +261,29 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
+      const typedPath = input.query.trim().replace(/^@/, "").replace(/^\.\//, "");
+      const directoryPath = typedPath.slice(0, Math.max(0, typedPath.lastIndexOf("/")));
+      // The index never enters heavy folders, so a path typed into one lists that folder.
+      if (WorkspaceSearchIndex.hasHeavyDirectorySegment(directoryPath)) {
+        const leaf = typedPath.slice(directoryPath.length + 1).toLowerCase();
+        const listed = yield* list({ cwd: normalizedCwd, directoryPath }).pipe(
+          Effect.orElseSucceed(() => ({ entries: [], truncated: false })),
+        );
+        const entries = listed.entries.filter(
+          (entry) =>
+            entry.path
+              .slice(entry.path.lastIndexOf("/") + 1)
+              .toLowerCase()
+              .startsWith(leaf) &&
+            (input.imageOnly
+              ? entry.kind === "file" && isProjectFaviconPath(entry.path)
+              : input.kind === undefined || entry.kind === input.kind),
+        );
+        return {
+          entries: entries.slice(0, input.limit),
+          truncated: entries.length > input.limit,
+        };
+      }
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
