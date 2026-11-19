@@ -16,8 +16,26 @@ const needsYou = makeThreadFixture({
   hasPendingApprovals: true,
 });
 
+const task = makeThreadFixture({
+  id: ThreadId.make("thread-task"),
+  environmentId: env,
+  title: "Ada's task",
+  runtime: {
+    status: "running",
+    activeRunId: null,
+    providerInstanceId: null,
+    providerName: null,
+    lastError: null,
+    updatedAt: "2026-11-19T10:00:00.000Z",
+  },
+} as never);
+const { mocks } = vi.hoisted(() => ({
+  mocks: { shells: [] as unknown[], working: [] as unknown[] },
+}));
+
+vi.mock("../sidebar/useSidebarZones", () => ({ useWorkingRows: () => mocks.working }));
 vi.mock("../../state/entities", () => ({
-  useThreadShells: () => [needsYou],
+  useThreadShells: () => mocks.shells,
   useProjects: () => [],
   useDelegatedUnderParent: () => new Set(),
   useQuietThreadShell: () => null,
@@ -43,8 +61,39 @@ vi.mock("../WorkspacePageHeader", () => ({
   WorkspacePageHeader: (props: { children?: ReactNode }) => <div>{props.children}</div>,
 }));
 
+const workingRow = (thread: typeof task, line: string) => ({
+  item: {
+    key: `${thread.environmentId}:${thread.id}`,
+    consumer: { kind: "assistant", threadId: thread.id, environmentId: env },
+    ownerAssistantId: "ada",
+    shell: thread,
+  },
+  title: thread.title,
+  line,
+});
+
 describe("ActivityPage", () => {
+  it("lists working assistants with who and where, once each, in the count", async () => {
+    mocks.shells = [needsYou, task];
+    const helper = makeThreadFixture({
+      id: ThreadId.make("assistant:ada:1"),
+      environmentId: env,
+      title: "Ada",
+    });
+    mocks.working = [workingRow(task, "Ada · VPS"), workingRow(helper, "Ada · Mac")];
+    await using screen = await render(<ActivityPage />, { router: "/activity" });
+    await expect.element(screen.getByRole("heading", { name: "Working (2)" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /Ada's task\s*Ada · VPS/ }))
+      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /^Ada\s*Ada · Mac/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Ada's task/ }).elements()).toHaveLength(1);
+    await expect.element(screen.getByText("1 need you · 2 working")).toBeVisible();
+  });
+
   it("remembers a thread opened from Activity as the place Close returns to", async () => {
+    mocks.shells = [needsYou];
+    mocks.working = [];
     await using screen = await render(<ActivityPage />, { router: "/activity" });
     const router = screen.router!;
     using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };

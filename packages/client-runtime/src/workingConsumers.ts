@@ -1,76 +1,75 @@
-import type { ThreadOwner, ZoneShell } from "./sidebarZones.ts";
+import {
+  AssistantId,
+  AssistantTeamId,
+  consumerRefFromThread,
+  type ConsumerRef,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+
+import type { ThreadOwner } from "./sidebarZones.ts";
 import type { EnvironmentThreadShell } from "./state/models.ts";
 import { resolveSidebarThreadStatus, sidebarStatusIsRunning } from "./state/threadAttention.ts";
 
-// ponytail: local stand-in for contracts' `ConsumerRef`; swap the type when it lands.
-export interface WorkingConsumer {
-  readonly kind: "thread" | "assistant" | "groupMember" | "subagent";
-  /** The machine the work runs on: the running thread's own environment. */
-  readonly environmentId: string;
-  /** Null for a group member the server reports running before its thread reaches this client. */
-  readonly threadId: string | null;
-  readonly assistantId: string | null;
-  readonly groupId: string | null;
-  readonly parentThreadId: string | null;
-  readonly providerInstanceId: string | null;
-}
+export type WorkingShell = Pick<
+  EnvironmentThreadShell,
+  | "environmentId"
+  | "id"
+  | "providerInstanceId"
+  | "lineage"
+  | "delegatedFrom"
+  | "archivedAt"
+  | "sideChatOf"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "pendingSubagentRequest"
+  | "pendingGuestMessageCount"
+  | "runtime"
+  | "blockedOnThreadWait"
+  | "createdAt"
+  | "title"
+> & { readonly latestRun: { readonly startedAt?: string | null | undefined } | null };
 
-export type WorkingShell = ZoneShell &
-  Pick<
-    EnvironmentThreadShell,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "pendingSubagentRequest"
-    | "pendingGuestMessageCount"
-    | "runtime"
-    | "blockedOnThreadWait"
-    | "createdAt"
-    | "sideChatOf"
-  > & {
-    readonly lineage: {
-      readonly parentThreadId: string | null;
-      readonly relationshipToParent?: string | null | undefined;
-    };
-    readonly latestRun: { readonly startedAt?: string | null | undefined } | null;
-    readonly modelSelection: { readonly instanceId: string };
-  };
+/** A group member the server reports running before its thread reaches this client. */
+export interface PendingMember {
+  readonly kind: "groupMember";
+  readonly threadId: null;
+  readonly environmentId: EnvironmentId;
+  readonly assistantId: AssistantId;
+  readonly groupId: AssistantTeamId;
+}
 
 const idAfterEnvironment = (key: string) => key.slice(key.indexOf(":") + 1);
 
-/** Who a thread's work belongs to, from its lineage and `threadOwnerResolver`'s owner. */
-export function consumerOfThread(shell: WorkingShell, owner: ThreadOwner): WorkingConsumer {
-  const assistantId = owner.kind === "assistant" ? idAfterEnvironment(owner.assistantKey) : null;
+/**
+ * `consumerRefFromThread`, told who owns the thread: an assistant's launched task and its work
+ * routed to a linked machine are the assistant's, and a linked machine's task for a project
+ * thread lists under that thread, as a subagent does.
+ */
+function consumerOf(shell: WorkingShell, owner: ThreadOwner): ConsumerRef {
   const groupId =
-    owner.kind === "assistant" && owner.teamKey !== null ? idAfterEnvironment(owner.teamKey) : null;
-  // Work a linked environment runs for a project thread lists under it, as a subagent does; for
-  // an assistant's thread it is that assistant's own work on another machine.
-  const parentThreadId =
-    shell.lineage.relationshipToParent === "subagent"
-      ? shell.lineage.parentThreadId
-      : assistantId === null
-        ? (shell.delegatedFrom?.threadId ?? null)
-        : null;
-  return {
-    kind:
-      parentThreadId !== null
-        ? "subagent"
-        : groupId !== null
-          ? "groupMember"
-          : assistantId !== null
-            ? "assistant"
-            : "thread",
-    environmentId: shell.environmentId,
-    threadId: shell.id,
-    assistantId,
-    groupId,
-    parentThreadId,
-    providerInstanceId: shell.runtime?.providerInstanceId ?? shell.modelSelection.instanceId,
-  };
+    owner.kind === "assistant" && owner.teamKey !== null
+      ? AssistantTeamId.make(idAfterEnvironment(owner.teamKey))
+      : null;
+  const ref = consumerRefFromThread(shell, shell.environmentId, groupId);
+  const { threadId, environmentId, providerInstanceId } = ref;
+  const base = { threadId, environmentId, providerInstanceId };
+  if (ref.kind === "subagent") return ref;
+  if (owner.kind === "assistant") {
+    const assistantId = AssistantId.make(idAfterEnvironment(owner.assistantKey));
+    return groupId === null
+      ? { kind: "assistant", ...base, assistantId }
+      : { kind: "groupMember", ...base, assistantId, groupId };
+  }
+  return shell.delegatedFrom == null
+    ? ref
+    : { kind: "subagent", ...base, parentThreadId: shell.delegatedFrom.threadId };
 }
 
 export interface WorkingItem<S extends WorkingShell = WorkingShell> {
   readonly key: string;
-  readonly consumer: WorkingConsumer;
+  readonly consumer: ConsumerRef | PendingMember;
+  /** The assistant whose work this is, also for its subagents; null for a project's. */
+  readonly ownerAssistantId: AssistantId | null;
   /** Null for a member known only from `runningMemberIds`. */
   readonly shell: S | null;
 }
@@ -83,10 +82,10 @@ export function workingItems<S extends WorkingShell>(input: {
   readonly shells: ReadonlyArray<S>;
   readonly ownerOf: (shell: Pick<S, "environmentId" | "id">) => ThreadOwner;
   readonly teams: ReadonlyArray<{
-    readonly environmentId: string;
+    readonly environmentId: EnvironmentId;
     readonly team: {
-      readonly id: string;
-      readonly chat?: { readonly runningMemberIds?: ReadonlyArray<string> } | null | undefined;
+      readonly id: AssistantTeamId;
+      readonly chat?: { readonly runningMemberIds?: ReadonlyArray<AssistantId> } | null | undefined;
     };
   }>;
 }): ReadonlyArray<WorkingItem<S>> {
@@ -94,16 +93,21 @@ export function workingItems<S extends WorkingShell>(input: {
   const covered = new Set<string>();
   for (const shell of input.shells) {
     if (shell.archivedAt !== null || shell.sideChatOf != null) continue;
-    const consumer = consumerOfThread(shell, input.ownerOf(shell));
+    const owner = input.ownerOf(shell);
+    const consumer = consumerOf(shell, owner);
     if (consumer.kind === "thread") continue;
     // A member whose thread waits on the user is a Needs you item, not a second working row.
-    if (consumer.groupId !== null) {
+    if (consumer.kind === "groupMember") {
       covered.add(`${shell.environmentId}:${consumer.groupId}:${consumer.assistantId}`);
     }
     if (!sidebarStatusIsRunning(resolveSidebarThreadStatus(shell))) continue;
     items.push({
       key: `${shell.environmentId}:${shell.id}`,
       consumer,
+      ownerAssistantId:
+        owner.kind === "assistant"
+          ? AssistantId.make(idAfterEnvironment(owner.assistantKey))
+          : null,
       shell,
       at: shell.latestRun?.startedAt ?? shell.createdAt,
     });
@@ -120,9 +124,8 @@ export function workingItems<S extends WorkingShell>(input: {
           threadId: null,
           assistantId,
           groupId: team.id,
-          parentThreadId: null,
-          providerInstanceId: null,
         },
+        ownerAssistantId: assistantId,
         shell: null,
         at: "",
       });
@@ -138,7 +141,7 @@ export function workingItems<S extends WorkingShell>(input: {
  * "Ada · Backend · MacBook" or "Subagent of Fix login · VPS".
  */
 export function workingConsumerLine(
-  consumer: WorkingConsumer,
+  item: Pick<WorkingItem, "consumer" | "ownerAssistantId">,
   names: {
     readonly assistant: (environmentId: string, assistantId: string) => string | undefined;
     readonly group: (environmentId: string, groupId: string) => string | undefined;
@@ -146,33 +149,30 @@ export function workingConsumerLine(
     readonly environment: (environmentId: string) => string | undefined;
   },
 ): string {
+  const { consumer } = item;
   const { environmentId } = consumer;
   const assistant =
-    consumer.assistantId === null
+    item.ownerAssistantId === null
       ? undefined
-      : (names.assistant(environmentId, consumer.assistantId) ?? "Assistant");
-  const group =
-    consumer.groupId === null
-      ? undefined
-      : (names.group(environmentId, consumer.groupId) ?? "Group");
+      : (names.assistant(environmentId, item.ownerAssistantId) ?? "Assistant");
   const who =
     consumer.kind === "subagent"
-      ? `Subagent of ${
-          assistant ??
-          (consumer.parentThreadId === null
-            ? undefined
-            : names.thread(environmentId, consumer.parentThreadId)) ??
-          "a thread"
-        }`
+      ? `Subagent of ${assistant ?? names.thread(environmentId, consumer.parentThreadId) ?? "a thread"}`
       : assistant;
-  return [who, consumer.kind === "subagent" ? undefined : group, names.environment(environmentId)]
+  const group =
+    consumer.kind === "groupMember"
+      ? consumer.groupId === null
+        ? "Group"
+        : (names.group(environmentId, consumer.groupId) ?? "Group")
+      : undefined;
+  return [who, group, names.environment(environmentId)]
     .filter((part) => part !== undefined && part !== "")
     .join(" · ");
 }
 
-export type WorkingNames = Parameters<typeof workingConsumerLine>[1];
+type WorkingNames = Parameters<typeof workingConsumerLine>[1];
 
-export interface WorkingRow<S extends WorkingShell & { readonly title: string }> {
+export interface WorkingRow<S extends WorkingShell> {
   readonly item: WorkingItem<S>;
   /** The thread's title; a member known only from `runningMemberIds` reads as its group's task. */
   readonly title: string;
@@ -180,13 +180,13 @@ export interface WorkingRow<S extends WorkingShell & { readonly title: string }>
 }
 
 /** Working rows as every client draws them, in `workingItems` order. */
-export function workingRows<S extends WorkingShell & { readonly title: string }>(
+export function workingRows<S extends WorkingShell>(
   items: ReadonlyArray<WorkingItem<S>>,
   names: WorkingNames,
 ): ReadonlyArray<WorkingRow<S>> {
   return items.map((item) => ({
     item,
     title: item.shell?.title ?? "Group task",
-    line: workingConsumerLine(item.consumer, names),
+    line: workingConsumerLine(item, names),
   }));
 }

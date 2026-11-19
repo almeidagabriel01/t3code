@@ -31,17 +31,20 @@ export function WorkingZone(props: { readonly gutter: number; readonly sidebar?:
         <Text className={cn("font-t3-bold text-2xs", muted)}>{rows.length}</Text>
       </View>
       {shown.map(({ item, title, line }) => {
-        const { environmentId, threadId, groupId } = item.consumer;
-        // By id: an assistant's threads are never in a project list.
+        const { consumer } = item;
+        const { environmentId } = consumer;
+        // By id: an assistant's threads are never in a project list. A member whose thread has
+        // not arrived opens its group.
         const open = () =>
-          threadId !== null
-            ? selectDetail({ name: "Thread", params: { environmentId, threadId } })
-            : groupId !== null
-              ? selectDetail({
-                  name: "AssistantGroupChat",
-                  params: { environmentId, teamId: groupId },
-                })
-              : undefined;
+          consumer.threadId !== null
+            ? selectDetail({
+                name: "Thread",
+                params: { environmentId, threadId: consumer.threadId },
+              })
+            : selectDetail({
+                name: "AssistantGroupChat",
+                params: { environmentId, teamId: consumer.groupId },
+              });
         return (
           <Pressable
             key={item.key}

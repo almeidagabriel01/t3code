@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { WorkingRow } from "@t3tools/client-runtime/workingConsumers";
-import type { AssistantTeamId, EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { AssistantTeamId, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -19,11 +19,10 @@ export function openWorkingRow(
   },
 ) {
   const { consumer } = row.item;
-  const environmentId = consumer.environmentId as EnvironmentId;
   if (consumer.threadId !== null) {
-    open.thread(scopeThreadRef(environmentId, consumer.threadId as ThreadId));
-  } else if (consumer.groupId !== null) {
-    open.group(environmentId, consumer.groupId as AssistantTeamId);
+    open.thread(scopeThreadRef(consumer.environmentId, consumer.threadId));
+  } else {
+    open.group(consumer.environmentId, consumer.groupId);
   }
 }
 
