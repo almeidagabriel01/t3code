@@ -89,6 +89,11 @@ const HEAVY_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
   ".mypy_cache",
   ".tox",
   ".terraform",
+  ".t3",
+  // Exact Chromium/Electron cache folder names: a pattern like `*cache*` would hide source folders.
+  "Cache",
+  "GPUCache",
+  "Code Cache",
 ]);
 
 export function hasHeavyDirectorySegment(relativePath: string): boolean {

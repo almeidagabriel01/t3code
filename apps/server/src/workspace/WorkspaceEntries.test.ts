@@ -477,6 +477,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       "node_modules/pkg/index.js",
       "packages/ui/node_modules/dep/index.js",
       "dist/out.js",
+      ".t3/userdata/state.sqlite",
+      "profile/Cache/data_0",
+      "profile/GPUCache/index",
+      "profile/Code Cache/js/index",
     ];
     const writeHiddenFixture = Effect.fn(function* (cwd: string) {
       for (const file of hiddenFixture) yield* writeTextFile(cwd, file, "x");
@@ -507,7 +511,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       (git) =>
         Effect.gen(function* () {
           const cwd = yield* makeTempDir({ prefix: "t3code-workspace-hidden-", git });
-          yield* writeTextFile(cwd, ".gitignore", ".env*\nnode_modules/\ndist/\nsecrets/\n");
+          yield* writeTextFile(
+            cwd,
+            ".gitignore",
+            ".env*\nnode_modules/\ndist/\nsecrets/\n.t3/\nprofile/\n",
+          );
           yield* writeHiddenFixture(cwd);
 
           const all = yield* searchPaths(cwd, "");
@@ -526,6 +534,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             "node_modules/pkg/index.js",
             "packages/ui/node_modules/dep/index.js",
             "dist/out.js",
+            ".t3/userdata",
+            "profile/Cache/data_0",
+            "profile/GPUCache/index",
+            "profile/Code Cache/js/index",
           ]) {
             expect(all).not.toContain(heavy);
           }
