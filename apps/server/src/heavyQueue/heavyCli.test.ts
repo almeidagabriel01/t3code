@@ -569,11 +569,11 @@ describe("t3 heavy", () => {
       );
       expect(await piped.exited).toBe(0);
       expect(piped.stdout()).toBe(`vp|test|run|a.test.ts| in ${NodeFS.realpathSync(sub)}\n`);
-      // With no heavy call to pick out, the line itself is what it asked Linux to run.
+      // A light call under `remoto` still goes: the agent chose Linux for it.
       script(NodePath.join(dir, "bin"), "npm", 'echo "npm on mac: $*"');
       const light = heavyHere(dir, ["/bin/sh", "-c", "remoto npm run cobertura"], env);
       expect(await light.exited).toBe(0);
-      expect(light.stdout()).toBe(`bash|-c|npm run cobertura| in ${NodeFS.realpathSync(dir)}\n`);
+      expect(light.stdout()).toBe(`npm|run|cobertura| in ${NodeFS.realpathSync(dir)}\n`);
     });
 
     const echoArgs = [
@@ -581,6 +581,37 @@ describe("t3 heavy", () => {
       `printf '%s|' "$@"; echo " in $(pwd -P)\${A+ A=$A}\${K+ K=$K}\${NPM_TOKEN+ NPM_TOKEN=$NPM_TOKEN}"`,
       `printf '${M} exit=0\\n' >&2`,
     ].join("\n");
+
+    // The plan and `linux-part` ask the same rule: an agent's own `remoto` call skips this Mac's
+    // checks, its words expanded here as the agent's shell would. Other calls are still judged.
+    it.each([
+      ['remoto bash -c "$(cat O/body.sh)"', "mac", "bash|-c|echo body-ran| in R\n"],
+      ["remoto bash O/body.sh", "mac", "bash|-c|echo body-ran|O/body.sh| in R\n"],
+      ["remoto vp test run /etc/hosts", "mac", "vp|test|run|/etc/hosts| in R\n"],
+      ["remoto sh -c 'vp test run /etc/hosts'", "mac", "vp|test|run|/etc/hosts| in R\n"],
+      [
+        "remoto vp test run a && vp check /etc/hosts",
+        "linux",
+        "vp|test|run|a| in R\nvp on mac: check /etc/hosts\n",
+      ],
+      ["vp test run /etc/hosts", "linux", "vp on mac: test run /etc/hosts\n"],
+    ] as const)("%s (Runner on %s) runs where the plan put it", async (line, where, out) => {
+      const { dir, env } = setup(echoArgs, { runnerWhere: where });
+      const outside = NodeFS.realpathSync(tempDir());
+      NodeFS.writeFileSync(NodePath.join(outside, "body.sh"), "echo body-ran");
+      const run = heavyHere(dir, ["/bin/sh", "-c", line.replaceAll("O/", `${outside}/`)], env);
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(
+        out.replaceAll("O/", `${outside}/`).replaceAll(" R\n", ` ${NodeFS.realpathSync(dir)}\n`),
+      );
+    });
+
+    it("a bare remoto job skips this Mac's checks on Linux too", async () => {
+      const { dir, env } = setup(echoArgs, { runnerWhere: "mac" });
+      const run = heavyHere(dir, ["remoto", "vp", "test", "run", "/etc/hosts"], env);
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(`vp|test|run|/etc/hosts| in ${NodeFS.realpathSync(dir)}\n`);
+    });
 
     it("a cd into another checkout runs on Linux from that folder, not the session's", async () => {
       const { dir, env } = setup(echoArgs);

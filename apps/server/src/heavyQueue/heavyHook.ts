@@ -822,19 +822,27 @@ const spanEnd = (line: string, end: number) => {
   return at;
 };
 
-/** The line without an agent's `remoto` words: T3 decides where work runs. */
-const withoutRemoto = (line: string) =>
+/**
+ * The line without an agent's `remoto` words: T3 decides where work runs. `keepCommands` keeps
+ * those before a command: a Linux attempt sends that call as the agent chose.
+ */
+const withoutRemoto = (line: string, keepCommands = false) =>
   readLine(line)
-    .parts.flatMap((part) => (part.remoto === null ? [] : [part.remoto]))
+    .parts.flatMap((part) =>
+      part.remoto === null ||
+      (keepCommands && !/^[A-Za-z_]\w*=/.test(part.values[part.remoteAt] ?? ""))
+        ? []
+        : [part.remoto],
+    )
     .toSorted((a, b) => b.start - a.start)
     .reduce((text, word) => text.slice(0, word.start) + text.slice(spanEnd(line, word.end)), line);
 
 /**
  * A shell line as `[cd <dir> && …] <command>`: the folders its leading `cd`s name, in order (`~`
- * unexpanded), whether an agent's `remoto` runs in it, and the rest with `remoto` taken out.
- * Parsing stops at the first `cd` it cannot resolve, which stays in `command`.
+ * unexpanded), whether an agent's `remoto` runs in it, and the rest with `remoto` taken out
+ * unless `keepRemoto`. Parsing stops at the first `cd` it cannot resolve, which stays in `command`.
  */
-export const lineParts = (line: string) => {
+export const lineParts = (line: string, keepRemoto = false) => {
   const { parts } = readLine(line);
   const dirs: string[] = [];
   let from = 0;
@@ -859,7 +867,7 @@ export const lineParts = (line: string) => {
   return {
     dirs,
     remoto: parts.some((part) => part.remoto !== null),
-    command: withoutRemoto(line.slice(from)).trimStart(),
+    command: withoutRemoto(line.slice(from), keepRemoto).trimStart(),
   };
 };
 

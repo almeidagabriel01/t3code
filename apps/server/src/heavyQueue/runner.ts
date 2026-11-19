@@ -1602,6 +1602,13 @@ export const askedLinux = (entry: HeavyQueueEntry) =>
 export const sentToLinux = (entry: HeavyQueueEntry) =>
   entry.ssh === true || (entry.where === "linux" && !isCall(entry) && !askedLinux(entry));
 
+/**
+ * An agent's own `remoto` or `ssh` outranks this Mac's checks, unless the user moved the job here:
+ * the plan asks it of the job, and `linux-part` of the call that sat under `remoto`.
+ */
+export const agentChoseLinux = (entry: HeavyQueueEntry) =>
+  entry.ssh === true || (sentToLinux(entry) && entry.route !== "mac");
+
 /** `--runner mac` with no reason given, on work Linux could run: kept here, and said so. */
 export const ASKED_MAC_NEEDLESSLY =
   "Asked for this Mac, but nothing here needs it: drop --runner mac so the PC can take it";
@@ -1621,8 +1628,7 @@ export const intentOf = (
     const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
   }
-  // Its own ssh or `remoto` already sends it there: this Mac's checks on the line don't apply.
-  if (entry.ssh === true || (sentToLinux(entry) && entry.route !== "mac")) {
+  if (agentChoseLinux(entry)) {
     return { intent: "linux", reason: "" };
   }
   const verdict = eligibilityOf(entry, context);

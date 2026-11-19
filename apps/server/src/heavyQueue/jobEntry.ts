@@ -12,26 +12,28 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 /**
  * The job a command really is. A shell line's leading `cd <dir> &&` steps become the folder it
  * starts from, so the queue, its project settings and Linux all see that folder, and an agent's own
- * `remoto` around the command is dropped.
+ * `remoto` around the command is dropped. `keepRemoto` keeps it for a Linux attempt: its words
+ * expand here, as the agent's shell would have, and that call skips this Mac's checks.
  */
 export const jobOf = (
   program: string,
   args: ReadonlyArray<string>,
   cwd: string,
   home: string,
+  keepRemoto = false,
 ): {
   readonly cwd: string;
   readonly program: string;
   readonly args: ReadonlyArray<string>;
   readonly remoto: boolean;
 } => {
-  if (NodePath.basename(program) === "remoto") {
+  if (NodePath.basename(program) === "remoto" && !keepRemoto) {
     // `remoto` alone has no command: an empty one, which the queue refuses as `remoto`'s misuse.
     return { cwd, program: args[0] ?? "", args: args.slice(1), remoto: true };
   }
   const at = lineAt(program, args);
-  if (at === null) return { cwd, program, args, remoto: false };
-  const parts = lineParts(args[at]!);
+  if (at === null) return { cwd, program, args, remoto: NodePath.basename(program) === "remoto" };
+  const parts = lineParts(args[at]!, keepRemoto);
   return {
     cwd: startFolder(parts.dirs, cwd, home),
     program,

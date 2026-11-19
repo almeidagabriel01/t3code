@@ -70,6 +70,7 @@ import {
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
+  agentChoseLinux,
   askedLinux,
   eligibilityOf,
   neverEnds,
@@ -349,12 +350,15 @@ export const heavyLaunch = (
 const BIN_PATH = /(^|\/)node_modules\/\.bin\/([^/]+)$/;
 
 /**
- * A project bin a line names by path (`./node_modules/.bin/vitest`) goes through `call` as is,
- * by `env`: after `nice` or `timeout`, a leading `ELECTRON_RUN_AS_NODE=1` would be the program.
+ * A project bin a line names by path (`./node_modules/.bin/vitest`), and an agent's `remoto`, go
+ * through `call` as is, by `env`: after `nice` or `timeout`, a leading `ELECTRON_RUN_AS_NODE=1`
+ * would be the program.
  */
 export const callingBins = (line: string, call: string) =>
   readLine(line)
     .parts.flatMap((part) => {
+      // An agent's `remoto` goes through `call` whole: its call is the one it chose for Linux.
+      if (part.remoto !== null) return [part.remoto.start];
       const word = part.command.words[part.programAt];
       const name = word === undefined ? undefined : BIN_PATH.exec(word.value)?.[2];
       return name !== undefined && SHIMMED.has(name) ? [word!.start] : [];
@@ -778,6 +782,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     scriptReader,
   );
   if (launch.kind === "refused") return refuse(launch.reason);
+  // A Linux attempt keeps the agent's `remoto` words; a Mac attempt runs the line without them.
+  const sent =
+    launch.kind === "queue" && launch.where === "linux"
+      ? jobOf(program, args, process.cwd(), NodeOS.homedir(), true)
+      : null;
   if (launch.kind === "direct" && launch.service === true) {
     process.stderr.write(
       `[t3 heavy] keeps running (${name ?? labelOf(program, args)}): runs outside the queue; its load counts in this Mac's reading.\n`,
@@ -899,8 +908,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
             {
               dir,
               id,
-              program: launch.program,
-              args: launch.args,
+              program: sent?.program ?? launch.program,
+              args: sent?.args ?? launch.args,
               machine,
               environment,
               ssh: launch.ssh === true,
@@ -1138,6 +1147,8 @@ const PHASE_LABEL = { syncing: "syncing", installing: "installing deps", running
 const runnerName = (runner: "mac" | "linux") => (runner === "linux" ? "Linux" : "this Mac");
 
 const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
+/** Set for the calls of a shell text an agent's `remoto` ran: each is the agent's choice. */
+const REMOTO_ENV = "T3CODE_HEAVY_REMOTO";
 /** Set when the job's line reads its own stdin (`while read`): its calls then leave a pipe here. */
 const LINE_READS_ENV = "T3CODE_HEAVY_LINE_READS";
 const READS_STDIN = /(?:^|[\s;&|({!])(?:read|mapfile|readarray)(?=[\s;&|)]|$)/;
@@ -1264,6 +1275,12 @@ const partRemoteFiles = (dir: string, id: string) => {
  * to Linux through its shim while redirects, pipes and the rest stay here. A call Linux never ran
  * or dropped ends the group, so the line never carries on past it.
  */
+/** A line a Linux job runs here, its heavy and `remoto` calls each sent out; else it goes whole. */
+const runsHere = (text: string, read: ReadScript) => {
+  const { unsafe, parts } = readLine(text, read);
+  return unsafe !== null || parts.some((part) => part.heavy || part.remoto !== null);
+};
+
 const runLinuxAttempt = async (
   job: {
     readonly dir: string;
@@ -1287,12 +1304,10 @@ const runLinuxAttempt = async (
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
-  // A shell line runs here as written, its heavy calls through the shims. A program alone, or a
-  // line read in full with no heavy call to pick out, is itself the work.
+  // A shell line runs here as written, its heavy and `remoto` calls through `call`. A program
+  // alone, or a line read in full with neither to pick out, is itself the work.
   const text = lineOf(job.program, job.args);
-  const read = text === null ? null : readLine(text, scriptReader(process.cwd()));
-  const line =
-    job.ssh || (read !== null && (read.unsafe !== null || read.parts.some((part) => part.heavy)));
+  const line = job.ssh || (text !== null && runsHere(text, scriptReader(process.cwd())));
   const shell = line ? job.program : "/bin/sh";
   const run = withShims(
     dir,
@@ -1533,18 +1548,23 @@ const runRoutes = (args: ReadonlyArray<string>) => {
 };
 
 /** Runs a call here as the program it names, past the shims; `strip` keeps its own calls here. */
-const runHere = (program: string, args: ReadonlyArray<string>, strip: boolean) => {
+const runHere = (
+  program: string,
+  args: ReadonlyArray<string>,
+  strip: boolean,
+  extra: NodeJS.ProcessEnv = {},
+) => {
   const real = realProgram(program, process.env.PATH);
   // A bare name left unresolved would find its own shim on PATH: shim, call, shim, without end.
   if (!real.includes("/")) {
     process.stderr.write(`[t3 heavy] ${program}: not found on this Mac\n`);
     process.exit(127);
   }
-  runDirect(
-    real,
-    args,
-    strip ? { ...process.env, PATH: withoutShims(process.env.PATH) } : process.env,
-  );
+  runDirect(real, args, {
+    ...process.env,
+    ...(strip ? { PATH: withoutShims(process.env.PATH) } : {}),
+    ...extra,
+  });
 };
 
 /**
@@ -1562,6 +1582,7 @@ const spawnCall = (
     PATH: withoutShims(process.env.PATH),
     [CALL_ENV]: "1",
     [CALL_KEYS_ENV]: keys.join(" "),
+    [REMOTO_ENV]: undefined,
     [HEAVY_JOB_ENV]: undefined,
     [LINUX_JOB_ENV]: undefined,
     [MAC_JOB_ENV]: undefined,
@@ -1599,6 +1620,16 @@ const runCall = (
     process.stderr.write("[t3 heavy] call needs a program.\n");
     process.exit(2);
   }
+  // The agent's own `remoto` in a Linux job, its words expanded here: its call goes as chosen. A
+  // shell text that runs here, as a line would, sends each of its calls as chosen.
+  if (environment[HEAVY_JOB_ENV] === "1" && linuxJob !== undefined && given === "remoto") {
+    const [program, ...rest] = args;
+    const text = program === undefined ? null : lineOf(program, rest);
+    if (text !== null && runsHere(text, scriptReader(process.cwd()))) {
+      return runHere(program!, rest, false, { [REMOTO_ENV]: "1" });
+    }
+    if (program !== undefined) return void runLinuxPart(dir, program, rest, linuxJob, true);
+  }
   if (
     environment[HEAVY_JOB_ENV] !== "1" ||
     (linuxJob === undefined && macJob === undefined) ||
@@ -1606,7 +1637,9 @@ const runCall = (
   ) {
     return runHere(given, args, false);
   }
-  if (linuxJob !== undefined) return void runLinuxPart(dir, given, args, linuxJob);
+  if (linuxJob !== undefined) {
+    return void runLinuxPart(dir, given, args, linuxJob, environment[REMOTO_ENV] === "1");
+  }
   const cwd = process.cwd();
   const doc = readDoc(dir);
   const config = configFor(doc, cwd);
@@ -1636,6 +1669,7 @@ const runLinuxPart = async (
   given: string,
   givenArgs: ReadonlyArray<string>,
   id: string,
+  underRemoto = false,
 ) => {
   const remoto = process.env.T3CODE_REMOTO;
   if (remoto === undefined) {
@@ -1653,8 +1687,11 @@ const runLinuxPart = async (
   const cwd = moved?.cwd ?? process.cwd();
   const [program, ...args] = moved?.values ?? [given, ...givenArgs];
   const root = gitRootOf(cwd);
+  const entry = doc.entries.find((each) => each.id === id);
   // Asked for Linux: none of its calls runs here, so the job ends with why instead.
-  const linuxOnly = doc.entries.some((entry) => entry.id === id && askedLinux(entry));
+  const linuxOnly = entry !== undefined && askedLinux(entry);
+  // The same rule as the plan's: the agent's own `remoto` call skips this Mac's checks.
+  const chosen = underRemoto && entry !== undefined && agentChoseLinux(entry);
   const toMac = (reason: string) =>
     linuxOnly
       ? endLine(dir, id, {
@@ -1678,7 +1715,9 @@ const runLinuxPart = async (
   // Expanded now, so what only the shell knew (`$FILES`, `cd $d`) is judged too.
   const config = configFor(doc, cwd);
   const days = config.runnerRouteMemoryDays;
-  const here = callMacReason(dir, [program, ...args], cwd, config, lineEnv(dir, id));
+  const here = chosen
+    ? null
+    : callMacReason(dir, [program, ...args], cwd, config, lineEnv(dir, id));
   if (here !== null) return toMac(macReasonText(here));
   const env = [
     ...lineEnv(dir, id),
