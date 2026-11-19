@@ -32,6 +32,7 @@ import type * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -1644,6 +1645,42 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(result._tag, "Failure");
       assert.deepStrictEqual(recovery.calls, []);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("takes the next turn as soon as it reports the previous turn's end", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) =>
+          event.providerTurn.id === turn.providerTurn.id &&
+          event.providerTurn.status === "completed",
+      );
+      const ended = harness.allEvents.length - 1;
+      // The ended turn's thread state lands before its end, never on top of the next turn's.
+      assert.isTrue(
+        harness.allEvents
+          .slice(0, ended)
+          .some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.lastRunOrdinal === 1 &&
+              event.providerThread.status === "idle",
+          ),
+      );
+      const next = yield* harness.runtime
+        .startTurn(yield* turnInput(harness.providerThread, 2, harness.policy))
+        .pipe(Effect.exit);
+      assert.strictEqual(next._tag, "Success", String(next));
+    }).pipe(
+      // The finishing fiber yields between its writes, so the next start can run between them.
+      Effect.provideService(References.MaxOpsBeforeYield, 8),
+      Effect.scoped,
+      Effect.provide(testLayer),
+    ),
   );
 
   it.effect("reports a no-op compaction as a visible failure and permits another turn", () =>
