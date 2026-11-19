@@ -1456,6 +1456,13 @@ describe("Runner in the queue file", () => {
     expect(Queue.readDoc(dir).events).toEqual([
       expect.objectContaining({ kind: "linux-lost", dropped: true, unconfirmed: true }),
     ]);
+    // A link error belongs to its attempt: the next one without an error says none.
+    Queue.requeue(dir, "b", { linkFailures: 1, linkError: "ssh: connection refused" });
+    expect(Queue.read(dir).find((each) => each.id === "b")).toMatchObject({
+      linkError: "ssh: connection refused",
+    });
+    Queue.requeue(dir, "b", { linkFailures: 2 });
+    expect(Queue.read(dir).find((each) => each.id === "b")).not.toHaveProperty("linkError");
   });
 
   // Its process gone, nothing stops the run on Linux: the record holds the folder until one does.
@@ -1836,6 +1843,12 @@ describe("Runner in the queue file", () => {
     {
       name: "an agent's remoto goes to Linux even with a file only this Mac has",
       line: "remoto vp test run /etc/hosts",
+      over: { runnerWhere: "mac" as const },
+      expected: { runsOn: "linux", canceled: false, startsNow: true },
+    },
+    {
+      name: "an agent's own ssh to the Runner's host goes to Linux, as the hook queues it",
+      line: "ssh remoto 'cd /w && vp test run'",
       over: { runnerWhere: "mac" as const },
       expected: { runsOn: "linux", canceled: false, startsNow: true },
     },

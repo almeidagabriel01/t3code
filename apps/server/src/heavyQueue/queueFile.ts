@@ -58,6 +58,7 @@ import {
   lineParts,
   PACKAGE_SCRIPT,
   SCRIPT_MAX_BYTES,
+  sshWork,
   type ReadScript,
 } from "./heavyHook.ts";
 import { cachedSshHostname } from "./sshHost.ts";
@@ -848,6 +849,7 @@ const withoutAttempt = ({
   cpu: _cpu,
   memory: _memory,
   stop: _stop,
+  linkError: _linkError,
   ...rest
 }: QueuedEntry) => ({ ...rest, startedAt: null });
 
@@ -912,6 +914,7 @@ const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decid
       intentOf(entry, contexts(entry.cwd)).intent,
       admit.runner,
       now,
+      decision.reasons[id],
     );
     const displacedWhy = record?.kind === "displaced" ? decision.reasons[id] : undefined;
     const started: HeavyQueueEntry = {
@@ -1241,16 +1244,16 @@ export const readPlan = (dir: string, now = Date.now()) => {
 export const HANDED_OFF_RUNS_DIRECT =
   "Its heavy work already goes through t3 heavy or remoto: runs directly";
 
-/**
- * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
- * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
- * and waiters ahead fill its slots.
- */
 const classOf = (cost: { readonly class: CostClass; readonly why: string }) => ({
   class: cost.class,
   classWhy: cost.why,
 });
 
+/**
+ * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
+ * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
+ * and waiters ahead fill its slots.
+ */
 export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
   const doc = readDoc(dir);
   // The job the hook would queue: `$SHELL -c '<line>'`, built as `t3 heavy` builds it.
@@ -1269,6 +1272,12 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
     };
   }
   const id = `probe-${now}`;
+  // Work sent over the agent's own `ssh` to the Runner's host is queued for Linux, as the hook does.
+  const mode = modeFor(doc, job.cwd);
+  const ssh =
+    mode.runner &&
+    mode.runnerHost !== undefined &&
+    sshWork(line, mode.runnerHost, cachedSshHostname) !== null;
   const probed = jobEntryOf(
     {
       id,
@@ -1280,7 +1289,8 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
       createdAt: new Date(now).toISOString(),
       // As `t3 heavy` queues an agent's job, behind the user's own.
       priority: "low",
-      ...(job.remoto ? { where: "linux" as const } : {}),
+      ...(job.remoto || ssh ? { where: "linux" as const } : {}),
+      ...(ssh ? { ssh: true } : {}),
     },
     scriptReader(job.cwd),
   );
@@ -1899,6 +1909,7 @@ export const requeue = (
     | "unconfirmed"
     | "linuxFailedAt"
     | "linkFailures"
+    | "linkError"
     | "failure"
     | "evictedAt"
     | "evictions"
