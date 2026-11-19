@@ -14,14 +14,11 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
-  ProviderInstanceId,
-  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
-  type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
@@ -53,250 +50,49 @@ import {
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
+import {
+  agentList,
+  bigPickle,
+  emptyShellInventory,
+  event,
+  instanceId,
+  mcpRules,
+  modelCatalog,
+  noOpenRequests,
+  openCode2ReplayRuntime,
+  openCode2TurnSlotRace,
+  opening,
+  out,
+  policy,
+  PROMPT_ID,
+  promptAccepted,
+  providerThread,
+  reply,
+  replyData,
+  resumed,
+  SESSION,
+  sessionInfo,
+  supervisedRules,
+  t3Rules,
+  threadId,
+  TITLE,
+  turnInput,
+  withInstructions,
+  WORK,
+} from "./OpenCode2AdapterV2.testkit.ts";
 import {
   makeProviderReplayGate,
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
-import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
-
-const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
-const WORK = "/work/opencode2";
-const instanceId = ProviderInstanceId.make("opencode");
-const threadId = ThreadId.make("thread:opencode2-adapter");
-
-const out = (type: string, input?: unknown): ProviderReplayEntry => ({
-  type: "expect_outbound",
-  frame: input === undefined ? { type } : { type, input },
-});
-const reply = (operation: string, data: unknown): ProviderReplayEntry => ({
-  type: "emit_inbound",
-  frame: { type: "sdk.response", operation, data },
-});
-const replyData = (operation: string, data: unknown) => reply(operation, { data });
-const event = (
-  type: string,
-  data: Record<string, unknown>,
-  label?: string,
-  version = 1,
-): ProviderReplayEntry => ({
-  type: "emit_inbound",
-  frame: {
-    type: "sdk.event",
-    event: {
-      id: `evt_${type.replaceAll(".", "")}0000`,
-      created: 1,
-      type,
-      ...(type.startsWith("rpc.") ? { location: { directory: WORK } } : {}),
-      data,
-      durable: { ...durable.durable, version },
-    },
-  },
-  ...(label === undefined ? {} : { label }),
-});
-const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
-
-const mcpRules = [
-  { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
-];
-const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
-const TITLE = "Prime check";
-const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
-  id: SESSION,
-  title: TITLE,
-  permissions: t3Rules,
-  projectID: "global",
-  model: { id: "big-pickle", providerID: "opencode", variant: "default" },
-  cost: 0,
-  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: { created: 1790656601394, updated: 1790656601394 },
-  location: { directory: WORK },
-  ...overrides,
-});
-const modelCatalog = {
-  location: { directory: WORK },
-  data: [
-    {
-      id: "big-pickle",
-      modelID: "big-pickle",
-      providerID: "opencode",
-      family: "big-pickle",
-      name: "Big Pickle",
-      compatibility: { reasoningField: "reasoning_content" },
-      package: "@opencode/ai/providers/openai-compatible",
-      settings: { apiKey: "public", baseURL: "https://opencode.ai/zen/v1", provider: "opencode" },
-      capabilities: { tools: true, input: ["text"], output: ["text"] },
-      variants: [],
-      time: { released: 1760659200000 },
-      cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
-      status: "active",
-      enabled: true,
-      limit: { context: 200000, input: 160000, output: 32000 },
-    },
-  ],
-};
-
-const PROMPT_ID = "msg_0eb735d41001NJee1EvVePJAK5";
-const promptAccepted = replyData("session.prompt", {
-  id: PROMPT_ID,
-  sessionID: SESSION,
-  time: { created: 1790656601410 },
-  type: "user",
-  payload: { text: "hi" },
-  delivery: "steer",
-});
-
-const emptyShellInventory: ReadonlyArray<ProviderReplayEntry> = [
-  out("shell.list", "<any>"),
-  reply("shell.list", { location: { directory: WORK }, data: [] }),
-];
-
-const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
-  out("permission.list", { sessionID: SESSION }),
-  replyData("permission.list", []),
-  out("session.form.list", { sessionID: SESSION }),
-  replyData("session.form.list", []),
-];
-
-const withInstructions = (
-  entries: ReadonlyArray<ProviderReplayEntry>,
-): ReadonlyArray<ProviderReplayEntry> => {
-  const first = entries.findIndex(
-    (entry) =>
-      entry.type === "expect_outbound" &&
-      typeof entry.frame === "object" &&
-      entry.frame !== null &&
-      "type" in entry.frame &&
-      ([
-        "session.prompt",
-        "session.command",
-        "session.compact",
-        "command.list",
-        "skill.list",
-        "rpc.call",
-      ].includes(String(entry.frame.type)) ||
-        ("input" in entry.frame &&
-          typeof entry.frame.input === "object" &&
-          (entry.frame.input as { key?: unknown } | null)?.key === "t3-code-memory")),
-  );
-  const after = entries.findIndex(
-    (entry, index) =>
-      index < first &&
-      entry.type === "emit_inbound" &&
-      typeof entry.frame === "object" &&
-      entry.frame !== null &&
-      "operation" in entry.frame &&
-      entry.frame.operation === "mcp.add",
-  );
-  const at = after < 0 ? first : after + 1;
-  return first < 0
-    ? entries
-    : [
-        ...entries.slice(0, at),
-        out("session.instructions.entry.put", {
-          sessionID: SESSION,
-          key: "t3-code",
-          value: "<any>",
-        }),
-        reply("session.instructions.entry.put", null),
-        ...entries.slice(at),
-      ];
-};
 
 const openCode2ReplayRuntimeWithInstructions = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: { readonly external?: boolean },
 ) => openCode2ReplayRuntime(withInstructions(entries), options);
 
-const opening: ReadonlyArray<ProviderReplayEntry> = [
-  out("event.subscribe"),
-  out("model.list", "<any>"),
-  reply("model.list", modelCatalog),
-];
 const directoryModels = (directory: string): ReadonlyArray<ProviderReplayEntry> => [
   out("model.list", { "location[directory]": directory }),
   reply("model.list", { ...modelCatalog, location: { directory } }),
-];
-
-const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
-const policy = (runtimeMode: "full-access" | "approval-required" = "full-access") => ({
-  runtimeMode,
-  interactionMode: "default" as const,
-  cwd: WORK,
-});
-
-const providerThread = (now: DateTime.Utc): OrchestrationV2ProviderThread => ({
-  id: ProviderThreadId.make("provider-thread:opencode2-adapter"),
-  driver: OPENCODE_PROVIDER,
-  providerInstanceId: instanceId,
-  providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
-  appThreadId: threadId,
-  ownerNodeId: null,
-  nativeThreadRef: { driver: OPENCODE_PROVIDER, nativeId: SESSION, strength: "strong" },
-  nativeConversationHeadRef: null,
-  status: "idle",
-  firstRunOrdinal: null,
-  lastRunOrdinal: null,
-  handoffIds: [],
-  forkedFrom: null,
-  createdAt: now,
-  updatedAt: now,
-});
-
-const turnInput = (
-  thread: OrchestrationV2ProviderThread,
-  modelSelection: ModelSelection = bigPickle,
-  runtimeMode: "full-access" | "approval-required" = "full-access",
-) => ({
-  appThread: { title: TITLE } as OrchestrationV2AppThread,
-  threadId,
-  runId: RunId.make("run:opencode2-adapter"),
-  runOrdinal: 1,
-  providerTurnOrdinal: 1,
-  attemptId: RunAttemptId.make("attempt:opencode2-adapter"),
-  rootNodeId: NodeId.make("node:opencode2-adapter"),
-  providerThread: thread,
-  message: {
-    messageId: MessageId.make("message:opencode2-adapter"),
-    text: "hi",
-    attachments: [],
-    createdBy: "user" as const,
-    creationSource: "web" as const,
-    scheduledTaskId: undefined,
-    senderThreadId: undefined,
-  },
-  modelSelection,
-  runtimePolicy: policy(runtimeMode),
-});
-
-const buildPaths = [
-  {
-    action: "external_directory",
-    resource: "/home/.local/share/opencode/tool-output/*",
-    effect: "allow",
-  },
-];
-const agentList = {
-  location: { directory: WORK },
-  data: [
-    {
-      id: "build",
-      name: "Build",
-      request: { settings: {}, headers: {}, body: {} },
-      description: "The default agent.",
-      mode: "primary",
-      hidden: false,
-      permissions: [{ action: "*", resource: "*", effect: "allow" }, ...buildPaths],
-    },
-  ],
-};
-const supervisedRules = [
-  { action: "shell", resource: "*", effect: "ask" },
-  { action: "edit", resource: "*", effect: "ask" },
-  { action: "external_directory", resource: "*", effect: "ask" },
-  ...buildPaths,
-  ...mcpRules,
 ];
 
 const shellAsk = {
@@ -326,83 +122,6 @@ const colorForm = {
     },
   ],
 };
-
-const resumed = (
-  entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: {
-    readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
-    readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
-    readonly lastRunOrdinal?: number;
-    readonly goal?: OrchestrationV2ProviderThread["goal"];
-    readonly external?: boolean;
-    readonly supervised?: boolean;
-    readonly replayGate?: ProviderReplayGate;
-    readonly attachmentsDir?: string;
-    readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
-    readonly fileSystem?: FileSystem.FileSystem;
-    readonly onPrompt?: (input: unknown) => void;
-    readonly borrowers?: { current: number };
-  },
-) =>
-  Effect.gen(function* () {
-    const runtime = yield* openCode2ReplayRuntime(
-      [
-        ...opening,
-        out("session.get", { sessionID: SESSION }),
-        replyData("session.get", sessionInfo()),
-        ...noOpenRequests,
-        ...(options?.version === "2.2.5" || options?.version === "2.2.6"
-          ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
-          : []),
-        ...(options?.shellRecovery ??
-          (options?.version === undefined
-            ? []
-            : [
-                ...(options.version === "2.2.6"
-                  ? [out("job.list", { kind: "shell" }), reply("job.list", { data: [] })]
-                  : emptyShellInventory),
-              ])),
-        ...withInstructions([
-          ...(options?.supervised === true
-            ? [
-                out("agent.list", "<any>"),
-                reply("agent.list", agentList),
-                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-                reply("session.update", null),
-              ]
-            : []),
-          ...entries,
-        ]),
-      ],
-      {
-        ...(options?.version === undefined ? {} : { version: options.version }),
-        ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
-        ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
-        ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
-        ...(options?.external === undefined ? {} : { external: options.external }),
-        ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
-        ...(options?.attachmentsDir === undefined
-          ? {}
-          : { attachmentsDir: options.attachmentsDir }),
-        ...(options?.resolveExtractedTextPath === undefined
-          ? {}
-          : { resolveExtractedTextPath: options.resolveExtractedTextPath }),
-      },
-    );
-    const thread = yield* runtime.resumeThread({
-      providerThread: {
-        ...providerThread(yield* DateTime.now),
-        ...(options?.lastRunOrdinal === undefined
-          ? {}
-          : { lastRunOrdinal: options.lastRunOrdinal }),
-        ...(options?.goal === undefined ? {} : { goal: options.goal }),
-      },
-      threadId,
-      modelSelection: bigPickle,
-      runtimePolicy: policy(options?.supervised === true ? "approval-required" : "full-access"),
-    });
-    return { runtime, thread };
-  });
 
 const requestOf = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
   runtime.events.pipe(
@@ -789,32 +508,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
 
   it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
     Effect.gen(function* () {
-      // The session forks its inbound frame reader when it opens, so it opens under the race's
-      // scheduler, inside startFirst.
-      const opened = yield* Deferred.make<Effect.Success<ReturnType<typeof resumed>>>();
-      const startOn = (session: Effect.Success<ReturnType<typeof resumed>>) =>
-        session.runtime.startTurn(turnInput(session.thread));
-      const exit = yield* startNextTurnAtTurnEnd({
-        events: Stream.unwrap(
-          Effect.map(Deferred.await(opened), (session) => session.runtime.events),
-        ),
-        startFirst: Effect.gen(function* () {
-          const session = yield* resumed([
-            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-            promptAccepted,
-            event("session.execution.succeeded", { sessionID: SESSION }),
-            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-            promptAccepted,
-          ]);
-          yield* Deferred.succeed(opened, session);
-          return yield* startOn(session);
-        }),
-        // The script ends the first turn as soon as its prompt is accepted.
-        endFirst: Effect.void,
-        startNext: Effect.flatMap(Deferred.await(opened), startOn),
-      });
+      const { exit } = yield* openCode2TurnSlotRace;
       assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a turn running through a start event this build cannot decode", () =>

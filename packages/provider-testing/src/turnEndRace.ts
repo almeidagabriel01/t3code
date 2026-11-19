@@ -6,6 +6,9 @@ import type * as Fiber from "effect/Fiber";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 
+/** Drivers whose turn ended and whose next start then ran inside the race, in this test worker. */
+export const turnSlotRaceDrivers = new Set<string>();
+
 /**
  * The turn-slot contract every adapter with a turn slot runs: the server starts the next turn as
  * soon as it reads a turn's terminal update, so by then the slot must be free. Starts the next turn
@@ -44,10 +47,11 @@ export const startNextTurnAtTurnEnd = Effect.fnUntraced(function* <
           event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
       ),
       Stream.take(1),
-      Stream.runForEach(() =>
+      Stream.runForEach((ended) =>
         Effect.withFiber((fiber) => {
           consumers.add(fiber);
           return Effect.exit(input.startNext).pipe(
+            Effect.tap(() => Effect.sync(() => turnSlotRaceDrivers.add(ended.driver))),
             Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
           );
         }),
