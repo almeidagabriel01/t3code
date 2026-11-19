@@ -1968,6 +1968,12 @@ describe("patterns and eligibility", () => {
     ["podman run --net=host nginx", "serves-port", "podman run"],
     ["docker compose run --service-ports web", "serves-port", "docker compose"],
     ["docker-compose up -d", "serves-port", "docker-compose up"],
+    // A project, file or profile named like a subcommand is that option's value.
+    ["docker compose -p build up -d", "serves-port", "docker compose"],
+    ["docker compose -p logs up", "serves-port", "docker compose"],
+    ["docker compose --profile run -f top.yml up", "serves-port", "docker compose"],
+    ["docker-compose --project-name top up -d", "serves-port", "docker-compose up"],
+    ["docker compose -p build logs web", "mac-docker", "docker compose"],
     ["T3CODE_HOME=/home/me/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
     ["T3CODE_HOME=~/.t3/dev vp test run", "mac-env", "/home/me/.t3/dev"],
     ["env CLAUDE_CONFIG_DIR=/home/me/.claude vp test run", "mac-env", "/home/me/.claude"],

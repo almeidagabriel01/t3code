@@ -314,6 +314,19 @@ const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
 const COMPOSE_SUBCOMMAND =
   /^(attach|build|commit|config|cp|create|down|events|exec|export|images|kill|logs|ls|pause|port|ps|pull|push|restart|rm|run|scale|start|stats|stop|top|unpause|up|version|wait|watch)$/;
+/** Compose options before the subcommand whose next word is their value (`-p build up`). */
+const COMPOSE_VALUE_FLAGS = new Set([
+  "-p",
+  "--project-name",
+  "-f",
+  "--file",
+  "--profile",
+  "--project-directory",
+  "--env-file",
+  "--ansi",
+  "--progress",
+  "--parallel",
+]);
 // `-dp 80:80` and `-itP` end a short cluster with a publish flag; `-ePATH=…` does not.
 const PUBLISHES = /^(-[dit]*[pP]|--publish(-all)?(=|$)|--service-ports$|--net(work)?=host$)/;
 
@@ -326,7 +339,6 @@ const dockerReason = (
   first: string,
   after: ReadonlyArray<string>,
 ): MacReason | null => {
-  const named = { subject: `${program} ${first}` };
   const compose =
     program === "docker-compose"
       ? after
@@ -334,12 +346,19 @@ const dockerReason = (
         ? after.slice(after.indexOf("compose") + 1)
         : null;
   const args = compose ?? after;
-  // In compose, `-p` before the subcommand names the project.
+  // In compose, the subcommand is the first word that is no option or option value: `-p build`
+  // names the project.
   const at =
     compose === null
       ? args.indexOf(first)
-      : args.findIndex((word) => COMPOSE_SUBCOMMAND.test(word));
+      : args.findIndex(
+          (word, index) =>
+            !word.startsWith("-") &&
+            !COMPOSE_VALUE_FLAGS.has(args[index - 1] ?? "") &&
+            COMPOSE_SUBCOMMAND.test(word),
+        );
   const sub = args[at] ?? "";
+  const named = { subject: `${program} ${program === "docker-compose" ? sub : first}` };
   const rest = args.slice(at + 1);
   const publishes = rest.some(
     (word, index) =>
@@ -999,16 +1018,16 @@ export interface LinuxJobMemory {
   readonly bytes: number;
 }
 
-/**
- * The busy share between two `/proc/stat` `cpu` lines, 0–100: busy is all but idle and iowait,
- * over user..steal (guest time is already inside user and nice). Null when either line is
- * missing or the counters did not move forward.
- */
 const cpuTimes = (line: string | undefined) => {
   const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
   return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
 };
 
+/**
+ * The busy share between two `/proc/stat` `cpu` lines, 0–100: busy is all but idle and iowait,
+ * over user..steal (guest time is already inside user and nice). Null when either line is
+ * missing or the counters did not move forward.
+ */
 const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
   const [a, b] = [cpuTimes(before), cpuTimes(after)];
   if (a === null || b === null) return null;
@@ -1304,10 +1323,6 @@ export const LINUX_SETTLE_MS = 60_000;
 // Half the entry floor, so a stop never makes room that lets the same start back in at once.
 export const LINUX_EVICT_SHARE = 0.5;
 
-/**
- * Linux's heavy work outside the queue: the heartbeat already leaves out each job's own session,
- * and this the copies of jobs still syncing or installing, before they have a session to show.
- */
 /** Containers nothing ties to a job, thread or project: named apart from loose work. */
 const unknownContainersNote = (outside: ReadonlyArray<LinuxOutside>) => {
   const count = outside.filter(
@@ -1320,6 +1335,10 @@ const unknownContainersNote = (outside: ReadonlyArray<LinuxOutside>) => {
   return count === 0 ? "" : ` (${count} container${count === 1 ? "" : "s"} of unknown origin)`;
 };
 
+/**
+ * Linux's heavy work outside the queue: the heartbeat already leaves out each job's own session,
+ * and this the copies of jobs still syncing or installing, before they have a session to show.
+ */
 export const linuxOutside = (
   health: Pick<LinuxHealth, "outside">,
   entries: ReadonlyArray<HeavyQueueEntry>,
