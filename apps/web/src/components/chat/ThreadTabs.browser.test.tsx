@@ -14,6 +14,7 @@ import {
   dropThreadContext,
   endThreadContextDrag,
   moveThreadContextDrag,
+  THREAD_CONTEXT_DROP_EVENT,
   threadContextDropTargetProps,
 } from "./threadContextDrag";
 
@@ -425,6 +426,32 @@ describe("dragging threads onto the thread area", () => {
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/x"));
     expect(dropThreadContext({ x: 5000, y: 5000 }, [ref("x")], label)).toBe(false);
     expect(dropThreadContext(rightEdge, [ref("x"), ref("y")], label)).toBe(false);
+  });
+
+  it("mentions a sidebar thread dropped on the composer and splits below on the band above it", async () => {
+    await setup();
+    await using screen = await render(<Harness route="a" />, { router: "/env/a" });
+    await vi.waitFor(() => expect(workspace()).toBeDefined());
+    const composer = screen.getByTestId("composer").element();
+    const mentioned = vi.fn();
+    composer.addEventListener(THREAD_CONTEXT_DROP_EVENT, (event) =>
+      mentioned((event as CustomEvent<ReadonlyArray<ScopedThreadRef>>).detail),
+    );
+    const { rect } = center(screen.getByTestId("route-column").element());
+    const composerRect = composer.getBoundingClientRect();
+    await act(() => {
+      expect(dropThreadContext(center(composer), [ref("x")], label)).toBe(true);
+    });
+    expect(mentioned).toHaveBeenCalledWith([ref("x")]);
+    expect(workspace()?.groups).toHaveLength(1);
+
+    const aboveComposer = { x: rect.left + rect.width / 2, y: composerRect.top - 5 };
+    await act(() => {
+      expect(dropThreadContext(aboveComposer, [ref("x")], label)).toBe(true);
+    });
+    expect(mentioned).toHaveBeenCalledTimes(1);
+    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a"], ["env:x"]]);
+    expect(workspace()?.layout).toMatchObject({ type: "split", direction: "vertical" });
   });
 
   it("moves a tab into another group's strip, collapsing the group it left", async () => {

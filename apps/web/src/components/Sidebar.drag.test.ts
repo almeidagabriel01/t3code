@@ -423,6 +423,20 @@ describe("sidebar drag projection", () => {
     },
   );
 
+  it("keeps the full label height above rows shorter than a card", () => {
+    const items = [pinnedHeader, divider, thread("a1", "active"), thread("a2", "active")];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: [],
+      settledExpanded: false,
+      boundaryLabelHeight: 24,
+    });
+    const args = layout(items, "a2", "a2", 1, 36);
+    const top = (index: number) => args.rects[index]!.top + strategy({ ...args, index })!.y;
+    expect(top(1)).toBe(100 + 24 + 1);
+    expect(top(2)).toBe(100 + 24 + 1 + 24 + 1);
+  });
+
   it.each([
     ["p", -83, -1],
     ["s", 0, 82],

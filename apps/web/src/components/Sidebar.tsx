@@ -858,6 +858,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     readonly activeSection: SidebarSection;
     readonly occurredAt: string;
     readonly activationY: number | null;
+    /** Screen pixels per CSS pixel of the list, measured at pickup. */
+    readonly listScale: number;
     readonly targetSection: SidebarSection | null;
     readonly contextDrag: boolean;
   } | null>(null);
@@ -1779,11 +1781,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       `[data-testid="sidebar-pinned-header"][data-sidebar-scope="${CSS.escape(projectKey)}"]`,
     );
     const list = header?.closest("ul");
+    let listScale = 1;
     if (list && header) {
       const listRect = list.getBoundingClientRect();
-      const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+      if (list.offsetWidth > 0) listScale = listRect.width / list.offsetWidth;
       dragLabelOffsetRef.current =
-        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * listScale;
     } else {
       dragLabelOffsetRef.current = 0;
     }
@@ -1796,6 +1799,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       occurredAt: nowIso(),
       activationY:
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
+      listScale,
     });
   };
   const handleThreadDragOver = (event: DragOverEvent) => {
@@ -1840,7 +1844,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: dragItems,
     enabled: !isContextDrag,
-    boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+    boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT * (dragState?.listScale ?? 1),
     settledOrder: draggedSettledOrder,
     ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
     settledExpanded: dragEntry?.settledExpanded ?? false,
