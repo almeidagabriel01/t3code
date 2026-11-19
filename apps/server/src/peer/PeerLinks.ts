@@ -748,7 +748,7 @@ const make = Effect.gen(function* () {
       (failure._tag === "HttpClientError" && failure.response?.status === 404)
     ) {
       yield* recordOutcome(link.environmentId, {
-        error: `${link.label} runs a T3 Code version that cannot renew links. Update it before ${DateTime.formatIso(link.expiresAt)}.`,
+        error: `${link.label} runs a T3 Code version that cannot renew links. Update it before ${DateTime.formatIsoDateUtc(link.expiresAt)}.`,
       });
       return { link, outcome: "incompatible" };
     }

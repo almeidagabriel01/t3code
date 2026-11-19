@@ -572,6 +572,30 @@ it.effect("keeps a link alive while its peer answers, and says when the peer ref
       expect((yield* stored()).expiresAt.epochMilliseconds).toBe(30 * day);
       yield* probe(a);
 
+      // A peer from before links renewed themselves answers as B but has no renewal route.
+      const older = yield* serveRaw((request) =>
+        request.url.startsWith("/.well-known/t3/environment")
+          ? HttpClient.get(`${b.url}${request.url}`).pipe(
+              Effect.flatMap((response) => response.text),
+              Effect.map((body) =>
+                HttpServerResponse.text(body, { contentType: "application/json" }),
+              ),
+              Effect.provide(FetchHttpClient.layer),
+              Effect.orDie,
+            )
+          : Effect.succeed(HttpServerResponse.empty({ status: 404 })),
+      );
+      const setUrl = (url: string) =>
+        a.sql`UPDATE peer_environment_links SET urls_json = ${JSON.stringify([url])}`;
+      yield* setUrl(older);
+      expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["incompatible"]);
+      const outdated = yield* stored();
+      expect(outdated.lastError).toBe(
+        "Box runs a T3 Code version that cannot renew links. Update it before 1970-01-31.",
+      );
+      expect(outdated.expiresAt.epochMilliseconds).toBe(30 * day);
+      yield* setUrl(b.url);
+
       const [session] = yield* linkedSessions(b);
       yield* b.auth.revokeSession(session!.sessionId);
       expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["rejected"]);
