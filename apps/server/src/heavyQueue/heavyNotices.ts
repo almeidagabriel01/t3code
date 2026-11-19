@@ -739,7 +739,7 @@ export interface RawNotice {
 
 const machineName = (runner: HeavyRunner) => (runner === "linux" ? "Linux" : "this Mac");
 const short = (name: string) => (name.length > 60 ? `${name.slice(0, 59)}…` : name);
-const jobs = (count: number) => `${count} jobs`;
+const jobs = (count: number) => counted(count, "job", "jobs");
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / MINUTE))} min`;
 
 /** Tell the agent hands the failure back: the agent, not the user, does what comes next. */
@@ -824,6 +824,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         one: `${name} was cancelled`,
         many: (n) => `${jobs(n)} were cancelled`,
         description: `${record.dropped ? "Linux dropped it" : "Linux was unavailable"} and nobody answered in time`,
+        manyDescription: `${record.dropped ? "Linux dropped them" : "Linux was unavailable"} and nobody answered in time`,
       });
     case "linux-lost": {
       const steps = (several: boolean) => [
@@ -879,6 +880,12 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         description:
           record.cause === "dropped"
             ? "Linux dropped it mid-run"
+            : record.cause === "deadline"
+              ? "Linux was unavailable and nobody answered in time"
+              : "Linux is unavailable",
+        manyDescription:
+          record.cause === "dropped"
+            ? "Linux dropped them mid-run"
             : record.cause === "deadline"
               ? "Linux was unavailable and nobody answered in time"
               : "Linux is unavailable",
@@ -951,6 +958,7 @@ export const rawNotices = (tick: NoticeTick): ReadonlyArray<RawNotice> => {
   }
   for (const stuck of tick.stuck) {
     const on = machineName(stuck.job.runner);
+    const over = `${on === "this Mac" ? "This Mac" : on} stays over its limits: ${stuck.why}`;
     notices.push({
       group: `stuck:${stuck.job.runner}`,
       seed: `stuck:${stuck.job.id}`,
@@ -960,7 +968,8 @@ export const rawNotices = (tick: NoticeTick): ReadonlyArray<RawNotice> => {
       job: stuck.job,
       one: `${short(stuck.job.name)} has waited ${minutes(stuck.waitedMs)} on ${on}`,
       many: (n) => `${jobs(n)} are stuck waiting on ${on}`,
-      description: `${on === "this Mac" ? "This Mac" : on} stays over its limits: ${stuck.why}${stuck.usualMs === null ? "" : `. It usually takes ${minutes(stuck.usualMs)}`}`,
+      description: `${over}${stuck.usualMs === null ? "" : `. It usually takes ${minutes(stuck.usualMs)}`}`,
+      manyDescription: `${over}${stuck.usualMs === null ? "" : `. They usually take ${minutes(stuck.usualMs)}`}`,
     });
   }
   return notices;
