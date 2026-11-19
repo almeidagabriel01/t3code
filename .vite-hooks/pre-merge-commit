@@ -1,0 +1,3 @@
+# Same knip guard as pre-push, for merges made on main.
+[ "$(git symbolic-ref --short -q HEAD)" = main ] || exit 0
+if command -v remoto >/dev/null 2>&1; then remoto vp run knip:check; else vp run knip:check; fi
