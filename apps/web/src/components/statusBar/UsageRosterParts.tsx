@@ -6,7 +6,13 @@ import {
   type UsageSession,
   type UsageSessionState,
 } from "@t3tools/client-runtime/state/usageSessions";
-import type { ServerProviderUsageWindow, UsageResetDisplay } from "@t3tools/contracts";
+import type {
+  ConsumerKind,
+  ConsumerRef,
+  InstanceSpendResult,
+  ServerProviderUsageWindow,
+  UsageResetDisplay,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
@@ -175,6 +181,83 @@ export function UsageSessionsList({
               {finishedOpen ? <SessionGroups sessions={finished} titles={titles} /> : null}
             </>
           ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const CONSUMER_KIND_LABEL: Record<ConsumerKind, string> = {
+  thread: "Threads",
+  assistant: "Assistants",
+  groupMember: "Group members",
+  subagent: "Subagents",
+};
+
+/** Names a consumer from what the client already holds; the server only sends ids. */
+export function consumerLabel(
+  consumer: ConsumerRef,
+  names: {
+    readonly thread: (threadId: string) => string | undefined;
+    readonly assistant: (assistantId: string) => string | undefined;
+  },
+): string {
+  switch (consumer.kind) {
+    case "thread":
+      return names.thread(consumer.threadId) ?? "Thread";
+    case "assistant":
+      return names.assistant(consumer.assistantId) ?? "Assistant";
+    case "groupMember":
+      return `${names.assistant(consumer.assistantId) ?? "Assistant"} in a group`;
+    case "subagent":
+      return `Subagent of ${names.thread(consumer.parentThreadId) ?? "a thread"}`;
+  }
+}
+
+/** "Who used it": spend per kind, then the heaviest consumers, as the server aggregated them. */
+export function ConsumerSpendList({
+  spend,
+  label,
+  formatUsd,
+  equivalent,
+}: {
+  readonly spend: Pick<InstanceSpendResult["instances"][number], "consumers" | "consumerKinds">;
+  readonly label: (consumer: ConsumerRef) => string;
+  readonly formatUsd: (value: number) => string;
+  /** Subscription accounts: the dollars are API-priced, not billed. */
+  readonly equivalent: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const kinds = spend.consumerKinds ?? [];
+  const consumers = spend.consumers ?? [];
+  if (kinds.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-0.5 pl-7.5">
+      <Disclosure open={open} onToggle={() => setOpen(!open)}>
+        {kinds.length > 1 ? `By consumer · ${kinds.length} kinds` : "By consumer"}
+      </Disclosure>
+      {open ? (
+        <div className="flex flex-col gap-1 px-1">
+          <span className="text-3xs text-muted-foreground tabular-nums">
+            {kinds
+              .map((row) => `${CONSUMER_KIND_LABEL[row.kind]} ${formatUsd(row.periodUsd)}`)
+              .join(" · ")}
+            {equivalent ? " · API-equivalent, last 30 days" : " · last 30 days"}
+          </span>
+          {consumers.map((row) => (
+            <span
+              key={`${row.consumer.kind}:${row.consumer.threadId}`}
+              className="flex min-w-0 items-center gap-1.5 text-2xs"
+            >
+              <span className="min-w-0 flex-1 truncate text-foreground">{label(row.consumer)}</span>
+              <span className="shrink-0 text-3xs text-muted-foreground">
+                {CONSUMER_KIND_LABEL[row.consumer.kind]}
+              </span>
+              <span className="w-28 shrink-0 text-end text-3xs tabular-nums text-muted-foreground">
+                {formatUsd(row.todayUsd)} today · {formatUsd(row.periodUsd)}
+              </span>
+            </span>
+          ))}
         </div>
       ) : null}
     </div>

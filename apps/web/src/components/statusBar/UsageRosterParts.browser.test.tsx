@@ -1,11 +1,17 @@
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ConsumerRef, ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { UsageSession } from "@t3tools/client-runtime/state/usageSessions";
 import { describe, expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
-import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
+import {
+  ConsumerSpendList,
+  consumerLabel,
+  LimitName,
+  ResetText,
+  UsageSessionsList,
+} from "./UsageRosterParts";
 
 const NOW = Date.parse("2026-11-09T12:00:00.000Z");
 const weekly = {
@@ -74,5 +80,64 @@ describe("UsageSessionsList", () => {
     );
     await expect.element(screen.getByText("Sessions", { exact: true })).toBeVisible();
     expect(screen.container.textContent).not.toContain("running");
+  });
+});
+
+describe("ConsumerSpendList", () => {
+  const ref = (consumer: object) =>
+    ({ environmentId: "env", providerInstanceId: "a", ...consumer }) as ConsumerRef;
+  const names = {
+    thread: (id: string) => (id === "root" ? "Fix login" : undefined),
+    assistant: (id: string) => (id === "j" ? "Jarvis" : undefined),
+  };
+
+  it("names every consumer kind, falling back when the client lacks the record", () => {
+    expect(
+      [
+        ref({ kind: "thread", threadId: "root" }),
+        ref({ kind: "thread", threadId: "gone" }),
+        ref({ kind: "assistant", threadId: "assistant:j:2", assistantId: "j" }),
+        ref({ kind: "groupMember", threadId: "t", assistantId: "x", groupId: null }),
+        ref({ kind: "subagent", threadId: "child", parentThreadId: "root" }),
+      ].map((consumer) => consumerLabel(consumer, names)),
+    ).toEqual(["Fix login", "Thread", "Jarvis", "Assistant in a group", "Subagent of Fix login"]);
+  });
+
+  it("stays collapsed behind its disclosure, then shows totals per kind and each consumer", async () => {
+    await using screen = await render(
+      <ConsumerSpendList
+        spend={{
+          consumers: [
+            {
+              consumer: ref({ kind: "assistant", threadId: "assistant:j:2", assistantId: "j" }),
+              todayUsd: 1,
+              periodUsd: 3,
+            },
+          ],
+          consumerKinds: [
+            { kind: "assistant", todayUsd: 1, periodUsd: 3 },
+            { kind: "thread", todayUsd: 0, periodUsd: 2 },
+          ],
+        }}
+        label={(consumer) => consumerLabel(consumer, names)}
+        formatUsd={(value) => `$${value}`}
+        equivalent
+      />,
+      { router: false },
+    );
+    expect(screen.container.textContent).toBe("By consumer · 2 kinds");
+    await userEvent.click(screen.getByRole("button", { name: "By consumer · 2 kinds" }));
+    const text = screen.container.textContent ?? "";
+    expect(text).toContain("Assistants $3 · Threads $2 · API-equivalent, last 30 days");
+    expect(text).toContain("Jarvis");
+    expect(text).toContain("$1 today · $3");
+  });
+
+  it("renders nothing for a server that sends no breakdown", async () => {
+    await using screen = await render(
+      <ConsumerSpendList spend={{}} label={() => ""} formatUsd={String} equivalent={false} />,
+      { router: false },
+    );
+    expect(screen.container.textContent).toBe("");
   });
 });

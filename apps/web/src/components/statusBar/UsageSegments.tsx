@@ -52,7 +52,14 @@ import {
 import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
 import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
-import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
+import {
+  ConsumerSpendList,
+  consumerLabel,
+  LimitName,
+  ResetText,
+  UsageSessionsList,
+} from "./UsageRosterParts";
+import { useAssistantEntries } from "../../state/assistants";
 import { useUsageItems } from "./useUsageItems";
 import { ResetCreditDialog, useResetCredit } from "../usage/UsageLimits";
 import { type ResetCreditChoice, resetCreditChoices } from "@t3tools/shared/usageLimits";
@@ -484,8 +491,39 @@ function RosterRow({
         </div>
       )}
       <RosterResetCredits item={item} now={now} onUse={onUseReset} />
+      <RosterConsumers item={item} />
       {showSessions ? <RosterSessions item={item} now={now} /> : null}
     </div>
+  );
+}
+
+function RosterConsumers({ item }: { readonly item: UsageItem }) {
+  const spend = useInstanceSpend(item);
+  const threads = useThreadShells();
+  const { active, archived } = useAssistantEntries();
+  if (spend.consumerKinds === undefined) return null;
+  const titles = new Map(
+    threads
+      .filter((thread) => thread.environmentId === item.environmentId)
+      .map((thread) => [thread.id as string, thread.title]),
+  );
+  const names = new Map(
+    [...active, ...archived]
+      .filter((entry) => entry.environmentId === item.environmentId)
+      .map((entry) => [entry.assistant.id as string, entry.assistant.name]),
+  );
+  return (
+    <ConsumerSpendList
+      spend={spend}
+      formatUsd={formatUsd}
+      equivalent={!isApiKeyItem(item.entry.snapshot)}
+      label={(consumer) =>
+        consumerLabel(consumer, {
+          thread: (id) => titles.get(id),
+          assistant: (id) => names.get(id),
+        })
+      }
+    />
   );
 }
 
