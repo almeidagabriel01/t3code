@@ -893,6 +893,24 @@ describe("When Linux is full", () => {
     }
   });
 
+  // A move is for good: only a Mac short of slots alone may take it, never one holding it back.
+  it.each([
+    ["memory pressure", { ...CALM, pressureLevel: 2 }],
+    ["the job's own memory", { ...CALM, availableMemoryBytes: 7 * GIB }],
+  ] as const)("free Mac slots holding the job back for %s: no move", (_, sample) => {
+    for (const policy of ["mac", "balance"] as const) {
+      const plan = planRoutes(
+        input(
+          [...macJobs(1), ...linuxJobs(2), a()],
+          { runnerWhere: "linux", runnerLinuxFull: policy },
+          { health: READ, maxRunning: 3, runnerOn: true, sample },
+        ),
+      );
+      expect(plan.routes.a).toBe("linux");
+      expect(plan.moved).toEqual({});
+    }
+  });
+
   it.each([
     ["asked for Linux", a({ where: "linux", linuxOnly: true } as never), {}, READ, "linux-wait"],
     ["Start now", a({ forced: true }), {}, READ, "linux-start"],

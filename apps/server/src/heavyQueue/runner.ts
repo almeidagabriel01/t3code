@@ -1314,6 +1314,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macShorter = () =>
     macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
   /** Each machine's wait for `entry` in rounds of its slots; one that can't start it now counts one. */
+  /**
+   * Nothing but its slots keeps this Mac from starting `entry`: no sustained or instant limit, no
+   * job running alone, and the job fits beside the others. A Linux-full move is for good, so a
+   * Mac holding the job back for any other reason never takes it.
+   */
+  const macTakes = (entry: HeavyQueueEntry) =>
+    !macOver &&
+    !macExclusive &&
+    (!queueOn ||
+      macCount === 0 ||
+      !fresh ||
+      (machineHold(sample, input) === null && jobVerdict(input, sample, entry).hold === null));
   const macWaitsLess = (entry: HeavyQueueEntry) => {
     const macSlots = Math.max(1, input.maxRunning);
     const macWait = macRoom(entry) ? 0 : Math.max(1, macCount + 1 - macSlots) / macSlots;
@@ -1337,8 +1349,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       moved[entry.id] = reason;
       toMac(entry, reason);
     };
-    if (policy === "mac" && macRoom(entry)) return move(LINUX_FULL_MAC);
-    if (policy === "balance" && !macOver && macWaitsLess(entry)) return move(LINUX_FULL_SHORTER);
+    if (policy === "mac" && macTakes(entry) && macRoom(entry)) return move(LINUX_FULL_MAC);
+    if (policy === "balance" && macTakes(entry) && macWaitsLess(entry)) {
+      return move(LINUX_FULL_SHORTER);
+    }
     toLinux(entry, busy);
     if (policy === "balance") reasons[entry.id] = LINUX_FULL_WAITING;
   };
