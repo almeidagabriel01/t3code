@@ -252,6 +252,10 @@ describe("routing matrix", () => {
         ),
       );
       expect(outcomeOf(plan, "w")).toBe(expected(queue, runner, where, linux, mac, kind));
+      // R4.6: every job routed to Linux says why, the ones it starts now included.
+      if (plan.routes.w === "linux" && plan.cancels.w === undefined) {
+        expect(plan.reasons.w).toBeDefined();
+      }
       // R4.4: in Automatic, no waiter stays on this Mac in a tick Linux could start it.
       if (runner && where === "automatic" && kind === "eligible" && linux === "online") {
         if (queue !== "paused") expect(plan.routes.w).toBe("linux");
@@ -299,16 +303,19 @@ describe("routing matrix", () => {
 
   it("Automatic with five agents starts one on Linux, gives this Mac one it can't", () => {
     const entries = ["a", "b", "c", "d", "e"].map((id) => job(id, "vp test run"));
-    const plan = planRoutes(input(entries, { runnerWhere: "automatic" }, { health: READ }));
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "automatic" }, { health: READ, runnerOn: true }),
+    );
     // b waits on a reading that shows a's load; the rest queue for Linux behind this Mac's waiter.
     expect(plan.routes).toEqual({ a: "linux", b: "mac", c: "linux", d: "linux", e: "linux" });
     expect(plan.admits).toEqual({
       a: { runner: "linux", ungated: false },
       b: { runner: "mac", ungated: false },
     });
-    expect(plan.reasons.d).toBe(
-      "Linux can't start it yet: a reading a minute after the last job started there",
-    );
+    expect([plan.reasons.b, plan.reasons.d]).toEqual([
+      "This Mac took it: no fresh reading of Linux's load",
+      "Linux can't start it yet: no fresh reading of its load",
+    ]);
   });
 
   it("Automatic keeps the waiters past a full Mac on Linux", () => {
@@ -501,6 +508,14 @@ describe("routing matrix", () => {
   it("the job's own --runner wins over the project and takes unlisted work", () => {
     const plan = planRoutes(input([job("a", "just deploy", { where: "linux" })]));
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
+    const asked = planRoutes(
+      input([job("a", "just deploy", { where: "linux", linuxOnly: true } as never)]),
+    );
+    // An agent's `remoto` did not ask for Linux; `--runner linux` did.
+    expect([plan.reasons.a, asked.reasons.a]).toEqual([
+      "Sent to Linux with remoto",
+      "Asked for Linux",
+    ]);
   });
 
   it("the user's route wins, but never sends Mac-only work to Linux", () => {

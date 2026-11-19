@@ -1100,6 +1100,16 @@ export const intentOf = (
   );
 };
 
+/** Why this Mac took a job Linux couldn't start now, worded for the Mac's row. */
+const macTookWhy = (busy: LinuxBusy) =>
+  busy.kind === "slots"
+    ? "Linux is full"
+    : busy.kind === "limits"
+      ? "Linux is at its limits"
+      : busy.kind === "reading"
+        ? "no fresh reading of Linux's load"
+        : busy.why;
+
 /**
  * Decides every waiter in queue order. Automatic: Linux whenever it can start the job now; else
  * this Mac, if it has room and no waiter; else the job waits for Linux. Mac first: this Mac up to
@@ -1362,7 +1372,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(
           entry,
           hybrid && busy !== null
-            ? `This Mac took it: ${busy.kind === "slots" ? "Linux is full" : busy.why}`
+            ? `This Mac took it: ${macTookWhy(busy)}`
             : "Mac first: this Mac has room",
         );
         continue;
@@ -1375,8 +1385,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toLinuxNow(entry, worktree, hybrid ? "Linux first: the PC can start it now" : macFirstWhy);
       } else {
         toLinux(entry, busy);
-        if (hybrid) reasons[entry.id] = `Linux can't start it yet: ${busy.why}`;
-        else if (past) reasons[entry.id] = macFirstWhy;
+        if (hybrid) {
+          const why = busy.kind === "reading" ? "no fresh reading of its load" : busy.why;
+          reasons[entry.id] = `Linux can't start it yet: ${why}`;
+        } else if (past) reasons[entry.id] = macFirstWhy;
       }
       continue;
     }
@@ -1394,9 +1406,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           worktree,
           entry.route === "linux"
             ? "Moved to Linux"
-            : entry.where === "linux"
+            : askedLinux(entry)
               ? "Asked for Linux"
-              : "Runner set to Linux",
+              : entry.where === "linux"
+                ? "Sent to Linux with remoto"
+                : "Runner set to Linux",
         );
       }
       continue;
