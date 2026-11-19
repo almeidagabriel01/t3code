@@ -109,6 +109,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
         linux: state.linux,
         routes: state.routes,
         costs: state.costs,
+        order: state.order,
         threadId: scope.thread?.threadId,
         busyCores: state.machine?.busyCores ?? NodeOS.loadavg()[0] ?? 0,
         cpuCount: resources.cpuCount,

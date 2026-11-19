@@ -52,6 +52,8 @@ export const heavyStatus = (input: {
   readonly routes: HeavyQueueState["routes"];
   /** Each entry's cost class; absent from older servers, where every job fills a slot. */
   readonly costs?: HeavyQueueState["costs"];
+  /** Why each waiter sits where it does; `entries` already lists waiters in that order. */
+  readonly order?: HeavyQueueState["order"];
   readonly command: string;
   /** Every heavy command running now, queued or run directly, with its tree's usage on this Mac. */
   readonly commands: ReadonlyArray<HeavyCommand>;
@@ -91,6 +93,7 @@ export const heavyStatus = (input: {
         // Its place in the line for its own machine.
         position: inLine(entry) ? positions[runsOn] : 0,
         ...(input.reasons[entry.id] === undefined ? {} : { reason: input.reasons[entry.id] }),
+        ...(input.order?.[entry.id] === undefined ? {} : { order: input.order[entry.id] }),
         ...tagOf(entry),
       };
     });

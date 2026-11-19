@@ -307,6 +307,7 @@ describe("heavyStatus", () => {
         entry("w-mac-2", "me", null),
       ],
       routes: { "w-linux": "linux", "w-mac": "mac", "w-mac-2": "mac" },
+      order: { "w-mac": { code: "light", text: "light: ahead" } },
       commands: [
         { ...command, entryId: "on-linux", pid: 1 },
         { ...command, entryId: "on-mac", pid: 2 },
@@ -324,6 +325,13 @@ describe("heavyStatus", () => {
       ["orphan", undefined, 0],
       ["w-mac", "mac", 1],
       ["w-mac-2", "mac", 2],
+    ]);
+    // Why each waiter sits where it does, as the queue publishes it; an older server sends none.
+    expect(status.waiting.map((w) => w.order ?? null)).toEqual([
+      null,
+      null,
+      { code: "light", text: "light: ahead" },
+      null,
     ]);
     expect(status.yours).toEqual([
       { id: "w-linux", position: 1, runsOn: "linux" },
