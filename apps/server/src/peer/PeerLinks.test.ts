@@ -6,6 +6,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -564,7 +565,7 @@ it.effect("keeps a link alive while its peer answers, and says when the peer ref
       // Both sides aged to 10 days left, past half the link's life, without walking the
       // clock: each environment's 2s revocation watcher would wake ~400k times a week.
       // SessionStore.test covers a session outliving the expiry signed into its token.
-      const tenDaysLeft = new Date(10 * day).toISOString();
+      const tenDaysLeft = DateTime.formatIso(DateTime.makeUnsafe(10 * day));
       yield* b.sql`UPDATE auth_sessions SET expires_at = ${tenDaysLeft}`;
       yield* a.sql`UPDATE peer_environment_links SET expires_at = ${tenDaysLeft}`;
       const [first] = yield* a.links.renewAll;
