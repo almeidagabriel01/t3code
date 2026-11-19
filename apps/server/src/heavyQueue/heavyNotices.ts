@@ -480,16 +480,25 @@ export const meaningfulLines = (text: string) =>
     .filter((line) => !RULE.test(line));
 
 const FAILURE = /\bFAIL\b|\bERR_[A-Z0-9_]+|\bERR!|[A-Za-z]*Error\b|\berror TS\d+/;
+const WARNING = /^(?:(?:npm|pnpm|yarn|node)\s+)?warn(?:ing)?\b|^\(node:\d+\)\s|^[\w.-]*Warning:/i;
+/** A warning that still reports a failure, such as cargo's `warning: build failed`. */
+const FAILED =
+  /\b(?:fail(?:s|ed|ure)?|fatal|errors?|abort(?:ing|ed)?|refus(?:e|ed|ing)|cannot|can't|unable|denied|exit(?:ing)? with code)\b/i;
+
+/** A line that is only a warning: it never names what failed, whatever the exit code says. */
+const warningOnly = (line: string) =>
+  WARNING.test(line) && !FAILURE.test(line) && !FAILED.test(line);
 
 /**
  * The lines of a chunk of output worth quoting on a card: the first one that names a failure, and
- * the last meaningful one, both without ANSI codes, rules, or T3's own notes.
+ * the last meaningful one that is not only a warning, both without ANSI codes, rules, or T3's own
+ * notes.
  */
 export const errorLineOf = (text: string) => {
   const lines = meaningfulLines(text).filter((line) => !line.startsWith("[t3 heavy]"));
   return {
     failure: lines.find((line) => FAILURE.test(line)) ?? null,
-    last: lines.at(-1) ?? null,
+    last: lines.findLast((line) => !warningOnly(line)) ?? null,
   };
 };
 

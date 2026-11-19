@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import {
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   RUNNER_SETTING_DEFAULTS,
   type RunnerSettingKey,
 } from "@t3tools/client-runtime/state/runnerModel";
@@ -165,7 +167,22 @@ it("saves the Mac first, Everything, failure and bring-back choices", async () =
   const everything = linux.getByRole("switch", { name: "Everything" });
   await expect.element(everything).toBeChecked();
   await userEvent.click(everything);
-  expect(patches()).toEqual([{ runnerLinuxEverything: false }]);
+  const full = linux.getByRole("group", { name: "When Linux is full" });
+  expect(
+    full
+      .getByRole("button")
+      .elements()
+      .map((button) => button.textContent),
+  ).toEqual(Object.values(RUNNER_LINUX_FULL_LABEL));
+  await expect
+    .element(full.getByRole("button", { name: RUNNER_LINUX_FULL_LABEL.wait }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect.element(linux.getByText(RUNNER_LINUX_FULL_DESCRIPTION.wait)).toBeVisible();
+  await userEvent.click(full.getByRole("button", { name: RUNNER_LINUX_FULL_LABEL.mac }));
+  expect(patches()).toEqual([{ runnerLinuxEverything: false }, { runnerLinuxFull: "mac" }]);
+
+  await using balance = await setup({ ...ON, runnerWhere: "linux", runnerLinuxFull: "balance" });
+  await expect.element(balance.getByText(RUNNER_LINUX_FULL_DESCRIPTION.balance)).toBeVisible();
 });
 
 it("clamps numbers to their range and rejects a bad host inline", async () => {
@@ -237,6 +254,7 @@ it("shows only the fields the current choices use", async () => {
     await using other = await setup({ ...ON, runnerWhere: where });
     expect(other.container.textContent).not.toContain("Send to Linux after");
     expect(other.container.querySelector('[aria-label="Everything"]')).toBeNull();
+    expect(other.container.textContent).not.toContain("When Linux is full");
   }
 
   await using hybrid = await setup({ ...ON, runnerWhere: "automatic", runnerDropped: "ask" });
@@ -274,6 +292,21 @@ it("shows a hidden field a search lands on, with why it does nothing now", async
 
   await using everything = await setup(ON, { target: "runner-linux-everything" });
   await expect.element(everything.getByRole("switch", { name: "Everything" })).toBeVisible();
+  await expect
+    .element(everything.getByText("Only applies when Where jobs run is Linux."))
+    .toBeVisible();
+
+  await using full = await setup(ON, { target: "runner-linux-full" });
+  await expect.element(full.getByRole("group", { name: "When Linux is full" })).toBeVisible();
+  await expect.element(full.getByText("Only applies when Where jobs run is Linux.")).toBeVisible();
+  // Off, the Runner's own reason wins, and the group still opens for the row.
+  await using fullOff = await setup({ runnerEnabled: false }, { target: "runner-linux-full" });
+  await expect.element(fullOff.getByRole("group", { name: "When Linux is full" })).toBeVisible();
+  const offRow = fullOff
+    .getByRole("heading", { name: "When Linux is full" })
+    .element().parentElement!;
+  expect(offRow.textContent).toContain("Only applies while the Runner is on.");
+  expect(offRow.textContent).not.toContain("Where jobs run is Linux");
 
   await using folded = await setup(ON, { target: "runner-ssh-timeout" });
   await expect.element(folded.getByLabelText("SSH timeout")).toBeVisible();
@@ -298,10 +331,20 @@ it("says how Linux is doing in the header and on the host row", async () => {
 });
 
 it("resets to the built-in value, but leaves machine rows alone in a project", async () => {
-  await using env = await setup({ ...ON, runnerWhere: "linux", runnerLinuxSlots: 4 });
+  await using env = await setup({
+    ...ON,
+    runnerWhere: "linux",
+    runnerLinuxFull: "balance",
+    runnerLinuxSlots: 4,
+  });
   await userEvent.click(env.getByRole("button", { name: "Reset Where heavy work runs" }));
+  await userEvent.click(env.getByRole("button", { name: "Reset When Linux is full" }));
   await userEvent.click(env.getByRole("button", { name: "Reset Jobs at once on Linux" }));
-  expect(patches()).toEqual([{ runnerWhere: "automatic" }, { runnerLinuxSlots: 2 }]);
+  expect(patches()).toEqual([
+    { runnerWhere: "automatic" },
+    { runnerLinuxFull: "wait" },
+    { runnerLinuxSlots: 2 },
+  ]);
 
   await using project = await setup(
     { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },

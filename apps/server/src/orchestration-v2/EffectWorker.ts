@@ -1,4 +1,4 @@
-import { CommandId, MessageId } from "@t3tools/contracts";
+import { CommandId, latestProviderTurnForAttempt, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import {
@@ -45,7 +46,7 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
  * replacement turn.
  */
 function isNonRetryableProviderTurnControlFailure(effectType: string, errorText: string): boolean {
-  if (effectType !== "provider-turn.interrupt") {
+  if (effectType !== "provider-turn.interrupt" && effectType !== "run-attempt.interrupt") {
     return false;
   }
   return (
@@ -94,6 +95,90 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const interruptProviderTurn = (
+      effect: EffectOutbox.OrchestrationEffectV2,
+      request: Extract<
+        EffectOutbox.OrchestrationEffectRequestV2,
+        { readonly type: "provider-turn.interrupt" }
+      >,
+    ) =>
+      providerTurnControl
+        .interrupt({
+          threadId: effect.threadId,
+          providerSessionId: request.providerSessionId,
+          providerThreadId: request.providerThreadId,
+          providerTurnId: request.providerTurnId,
+          ...(request.subagent === undefined
+            ? {}
+            : {
+                subagent: {
+                  ...request.subagent,
+                  requestedAt: DateTime.makeUnsafe(effect.createdAt),
+                },
+              }),
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            request.subagent === undefined
+              ? Effect.void
+              : Effect.logWarning("orchestration-v2.subagent-stop-failed", {
+                  effectId: effect.id,
+                  cause,
+                }),
+          ),
+          Effect.map((outcome) => ({ unresponsive: false, outcome }) as const),
+          // Settling here would end the run while the agent may still be running; the
+          // user decides with Force stop instead.
+          Effect.catchIf(
+            (cause) => request.subagent === undefined && cause.unresponsive === true,
+            () => Effect.succeed({ unresponsive: true, outcome: undefined } as const),
+          ),
+          Effect.catchIf(
+            (cause) =>
+              request.subagent === undefined &&
+              isNonRetryableProviderTurnControlFailure(
+                request.type,
+                Cause.pretty(Cause.fail(cause)),
+              ),
+            () => Effect.succeed({ unresponsive: false, outcome: undefined } as const),
+          ),
+          Effect.andThen(({ unresponsive, outcome }) =>
+            unresponsive
+              ? threads.dispatch({
+                  type: "thread.interrupt.unresponsive",
+                  commandId: CommandId.make(`${effect.id}:unresponsive`),
+                  threadId: effect.threadId,
+                  providerThreadId: request.providerThreadId,
+                  providerTurnId: request.providerTurnId,
+                })
+              : request.subagent !== undefined && outcome === undefined
+                ? Effect.void
+                : threads.dispatch({
+                    type: "thread.background-work.settle",
+                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                    ...(request.subagent === undefined || outcome === undefined
+                      ? {}
+                      : {
+                          subagent: {
+                            id: request.subagent.id,
+                            stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                            outcome,
+                          },
+                        }),
+                    threadId: effect.threadId,
+                    providerThreadId: request.providerThreadId,
+                    providerTurnId: request.providerTurnId,
+                  }),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationEffectExecutionError({
+                effectId: effect.id,
+                effectType: effect.request.type,
+                cause,
+              }),
+          ),
+        );
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
@@ -160,7 +245,12 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-turn.start":
             return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+              .start({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                willRetry,
+                mayWaitForStoppedTurns: true,
+              })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -171,76 +261,15 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.interrupt": {
+          case "provider-turn.interrupt":
+            return interruptProviderTurn(effect, effect.request);
+          case "run-attempt.interrupt": {
             const request = effect.request;
-            return providerTurnControl
-              .interrupt({
-                threadId: effect.threadId,
-                providerSessionId: request.providerSessionId,
-                providerThreadId: request.providerThreadId,
-                providerTurnId: request.providerTurnId,
-                ...(request.subagent === undefined
-                  ? {}
-                  : {
-                      subagent: {
-                        ...request.subagent,
-                        requestedAt: DateTime.makeUnsafe(effect.createdAt),
-                      },
-                    }),
+            return threads
+              .getThreadRecords(effect.threadId, ["providerTurns"], {
+                providerTurnAttemptIds: [request.attemptId],
               })
               .pipe(
-                Effect.tapError((cause) =>
-                  request.subagent === undefined
-                    ? Effect.void
-                    : Effect.logWarning("orchestration-v2.subagent-stop-failed", {
-                        effectId: effect.id,
-                        cause,
-                      }),
-                ),
-                Effect.map((outcome) => ({ unresponsive: false, outcome }) as const),
-                // Settling here would end the run while the agent may still be running; the
-                // user decides with Force stop instead.
-                Effect.catchIf(
-                  (cause) => request.subagent === undefined && cause.unresponsive === true,
-                  () => Effect.succeed({ unresponsive: true, outcome: undefined } as const),
-                ),
-                Effect.catchIf(
-                  (cause) =>
-                    request.subagent === undefined &&
-                    isNonRetryableProviderTurnControlFailure(
-                      request.type,
-                      Cause.pretty(Cause.fail(cause)),
-                    ),
-                  () => Effect.succeed({ unresponsive: false, outcome: undefined } as const),
-                ),
-                Effect.andThen(({ unresponsive, outcome }) =>
-                  unresponsive
-                    ? threads.dispatch({
-                        type: "thread.interrupt.unresponsive",
-                        commandId: CommandId.make(`${effect.id}:unresponsive`),
-                        threadId: effect.threadId,
-                        providerThreadId: request.providerThreadId,
-                        providerTurnId: request.providerTurnId,
-                      })
-                    : request.subagent !== undefined && outcome === undefined
-                      ? Effect.void
-                      : threads.dispatch({
-                          type: "thread.background-work.settle",
-                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                          ...(request.subagent === undefined || outcome === undefined
-                            ? {}
-                            : {
-                                subagent: {
-                                  id: request.subagent.id,
-                                  stoppedAt: DateTime.makeUnsafe(effect.createdAt),
-                                  outcome,
-                                },
-                              }),
-                          threadId: effect.threadId,
-                          providerThreadId: request.providerThreadId,
-                          providerTurnId: request.providerTurnId,
-                        }),
-                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -249,6 +278,23 @@ export const layerExecutor: Layer.Layer<
                       cause,
                     }),
                 ),
+                Effect.flatMap(({ providerTurns }) => {
+                  const turn = latestProviderTurnForAttempt(
+                    providerTurns.filter(
+                      (candidate) => candidate.providerThreadId === request.providerThreadId,
+                    ),
+                    request.attemptId,
+                  );
+                  // An unrecorded turn is interrupted by its run's ingestion when it records it.
+                  return turn?.status !== "running"
+                    ? Effect.void
+                    : interruptProviderTurn(effect, {
+                        type: "provider-turn.interrupt",
+                        providerSessionId: request.providerSessionId,
+                        providerThreadId: request.providerThreadId,
+                        providerTurnId: turn.id,
+                      });
+                }),
               );
           }
           case "provider-turn.steer":
@@ -391,6 +437,7 @@ export const layerExecutor: Layer.Layer<
                         })
                       : Effect.void,
                 ),
+                // No stopped-turn wait: this start already awaited the terminal, and a deferral would replay it.
                 Effect.andThen(
                   providerTurnStart.start({
                     threadId: effect.threadId,
@@ -651,6 +698,14 @@ export const layerExecutor: Layer.Layer<
   }),
 );
 
+const isEffectNotReady = Schema.is(EffectOutbox.EffectNotReadyError);
+const notReadyIn = (error: unknown): EffectOutbox.EffectNotReadyError | undefined =>
+  isEffectNotReady(error)
+    ? error
+    : Predicate.hasProperty(error, "cause")
+      ? notReadyIn(error.cause)
+      : undefined;
+
 // A running effect blocks later work on its thread and its lease is never reclaimed in-process,
 // so a stop that hangs must give up and fall through to the normal retry/fail path.
 const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
@@ -879,6 +934,28 @@ export const layerWithOptions = (
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
 
+          const notReady = Option.flatMap(Cause.findErrorOption(exit.cause), (failure) =>
+            Option.fromNullishOr(notReadyIn(failure)),
+          );
+          if (Option.isSome(notReady)) {
+            const deferred = yield* outbox
+              .retry({
+                effectId: effect.id,
+                workerId,
+                error: notReady.value.reason,
+                delayMs: notReady.value.retryAfterMs,
+                refundAttempt: true,
+              })
+              .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+            if (!deferred && !(yield* wasCancelled(effect.id))) {
+              return yield* new OrchestrationEffectWorkerError({
+                operation: "reschedule",
+                effectId: effect.id,
+                cause: "The worker no longer owns the effect lease.",
+              });
+            }
+            return true;
+          }
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {

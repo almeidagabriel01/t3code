@@ -2121,6 +2121,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       const window = windowOf(turn.input.runtimePolicy.cwd, turn.input.modelSelection.model);
       const lastStep = turn.lastStep;
+      // The server starts the next turn on this end, so the thread and session settle first.
+      if (state.subagent === undefined) {
+        state.providerThread = {
+          ...state.providerThread,
+          status: threadDisposition === "broken" ? "error" : "idle",
+          updatedAt: completedAt,
+        };
+        yield* emitProviderThread(state);
+        const anyActive = [...threads.values()].some(
+          (candidate) => candidate.subagent === undefined && candidate.active !== undefined,
+        );
+        yield* setSessionStatus(
+          pending.size > 0 ? "waiting" : anyActive ? "running" : "ready",
+          null,
+        );
+      }
       yield* emitProviderTurn(state, turn, {
         ...turn.providerTurn,
         status: terminal.status,
@@ -2157,16 +2173,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      state.providerThread = {
-        ...state.providerThread,
-        status: threadDisposition === "broken" ? "error" : "idle",
-        updatedAt: completedAt,
-      };
-      yield* emitProviderThread(state);
-      const anyActive = [...threads.values()].some(
-        (candidate) => candidate.subagent === undefined && candidate.active !== undefined,
-      );
-      yield* setSessionStatus(pending.size > 0 ? "waiting" : anyActive ? "running" : "ready", null);
       const base = {
         type: "turn.terminal" as const,
         driver,

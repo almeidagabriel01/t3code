@@ -13,6 +13,7 @@ import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   runnerModeFieldApplies,
+  runnerModeFieldIdle,
   RUNNER_LINUX_FULL_DESCRIPTION,
   RUNNER_LINUX_FULL_LABEL,
   runnerWhereLine,
@@ -139,6 +140,28 @@ describe("Linux status", () => {
     ],
     [{ ...linux, online: false, error: "Connection refused" }, "Linux offline: Connection refused"],
     [{ ...linux, online: false }, "Linux offline"],
+    [
+      { ...linux, online: false, status: "unresponsive", error: "banner exchange" },
+      "Linux not responding, too loaded to answer: banner exchange",
+    ],
+    [
+      { ...linux, status: "over-limit", overLimitBy: "memory stalled 57% of the time (limit 10%)" },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free · over its limits: memory stalled 57% of the time (limit 10%)",
+    ],
+    // The line shows free memory itself: the limit names its threshold, one formatter for both.
+    [
+      {
+        ...linux,
+        availableMemoryBytes: 819 * 1024 ** 2,
+        status: "over-limit",
+        overLimitBy: "819 MB free, keeping 10%",
+        overLimits: [
+          { limit: "memory", value: 819 * 1024 ** 2, threshold: 10 },
+          { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
+        ],
+      },
+      "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 819 MB free · over its limits: keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
+    ],
     [{ ...linux, online: null }, "Checking Linux (pc)…"],
   ] as const)("%j reads %s", (state, text) => {
     expect(linuxLine(state)).toBe(text);
@@ -309,6 +332,19 @@ describe("Runner copy and mode fields", () => {
     ["runnerLinuxCommands", "automatic", true, true],
   ] as const)("%s under %s, Everything %s: %s", (key, where, everything, applies) => {
     expect(runnerModeFieldApplies(key, where, everything)).toBe(applies);
+  });
+
+  it.each([
+    ["runnerLinuxFull", "linux", false, null],
+    ["runnerLinuxFull", null, false, null],
+    ["runnerLinuxFull", "automatic", false, "Only applies when Where jobs run is Linux."],
+    ["runnerLinuxEverything", "mac", false, "Only applies when Where jobs run is Linux."],
+    ["runnerMacFirstAfter", "linux", false, "Only applies when Where jobs run is Mac first."],
+    ["runnerLinuxCommands", "linux", true, "Only applies while Everything is off."],
+    ["runnerBringBack", "mac", false, null],
+    ["runnerHost", "linux", true, null],
+  ] as const)("why %s does nothing under %s, Everything %s: %s", (key, where, everything, idle) => {
+    expect(runnerModeFieldIdle(key, where, everything)).toBe(idle);
   });
 
   it.each([

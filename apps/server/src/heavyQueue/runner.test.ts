@@ -2391,25 +2391,33 @@ describe("Linux health", () => {
     const text = [
       "1.25 0.80 0.50 2/400 1234",
       "6",
-      "               total        used        free      shared  buff/cache   available",
-      "Mem:     12000000000  3000000000  6000000000     1000000  3000000000  8500000000",
-      "Swap:     4000000000           0  4000000000",
+      "MemTotal:       11718750 kB",
+      "MemAvailable:    8300781 kB",
     ].join("\n");
+    const none = {
+      swapTotalBytes: null,
+      swapFreeBytes: null,
+      pressure: null,
+      jobMemory: {},
+      outside: [],
+    };
     expect(parseHeartbeat(text)).toEqual({
       cpuPercent: null,
       load1: 1.25,
       cpuCount: 6,
-      totalMemoryBytes: 12_000_000_000,
-      availableMemoryBytes: 8_500_000_000,
+      totalMemoryBytes: 11_718_750 * 1024,
+      availableMemoryBytes: 8_300_781 * 1024,
+      ...none,
     });
-    // `/proc/uptime` comes last: seconds since boot, then idle time.
+    // `/proc/uptime`: seconds since boot, then idle time.
     expect(parseHeartbeat(`${text}\n300.25 1650.10`)).toEqual({
       cpuPercent: null,
       load1: 1.25,
       cpuCount: 6,
-      totalMemoryBytes: 12_000_000_000,
-      availableMemoryBytes: 8_500_000_000,
+      totalMemoryBytes: 11_718_750 * 1024,
+      availableMemoryBytes: 8_300_781 * 1024,
       uptimeSeconds: 300.25,
+      ...none,
     });
     expect(parseHeartbeat("garbage")).toEqual({
       cpuPercent: null,
@@ -2417,6 +2425,7 @@ describe("Linux health", () => {
       cpuCount: null,
       totalMemoryBytes: null,
       availableMemoryBytes: null,
+      ...none,
     });
   });
 
@@ -2690,7 +2699,8 @@ describe("Linux copy of a removed worktree", () => {
       }
       const ended = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
       expect(run(ended)).toBe("removed");
-      expect(NodeFS.readdirSync(runs)).toEqual([]);
+      // The lock file stays: a later run locks the same file, never a deleted one.
+      expect(NodeFS.readdirSync(runs)).toEqual([`${id}.lock`]);
     } finally {
       NodeFS.rmSync(home, { recursive: true, force: true });
     }

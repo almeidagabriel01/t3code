@@ -8,6 +8,7 @@ import type {
   HeavyQueueState,
   HeavyRunner,
   HeavyRunnerLinux,
+  HeavyRunnerLinuxOver,
   HeavyRunnerPhase,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
@@ -15,7 +16,13 @@ import type {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
-import { HEAVY_QUEUE_DEFAULTS, RUNNER_DEFAULTS, RUNNER_PROJECT_KEYS } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  RUNNER_DEFAULTS,
+  RUNNER_PROJECT_KEYS,
+  formatBytes,
+  linuxOverText,
+} from "@t3tools/contracts";
 
 /** Runner defaults the settings screens use; the deprecated two leave with their controls. */
 export const RUNNER_SETTING_DEFAULTS = {
@@ -349,12 +356,27 @@ export function heavyModeLine(mode: HeavyModeInput): string {
   }
 }
 
-const GB = 1024 ** 3;
+/**
+ * Why Linux is over its limits, for words shown beside its CPU and memory readings: those two
+ * limits name only their threshold, since the reading beside them carries the number.
+ */
+export function linuxOverReasons(linux: HeavyRunnerLinux): string | undefined {
+  if (linux.status !== "over-limit") return undefined;
+  const shown = (over: HeavyRunnerLinuxOver) =>
+    over.limit === "memory"
+      ? linux.availableMemoryBytes !== null
+      : over.limit === "cpu" && linux.cpuPercent !== undefined && linux.cpuPercent !== null;
+  const words = linux.overLimits?.map((over) => linuxOverText(over, shown(over))).join("; ");
+  return words || linux.overLimitBy;
+}
 
 /** "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free", or why it is not. */
 export function linuxLine(linux: HeavyRunnerLinux): string {
   const jobs = `${linux.running} of ${linux.slots} running`;
   if (linux.online === null) return `Checking Linux (${linux.host})…`;
+  if (linux.status === "unresponsive") {
+    return `Linux not responding, too loaded to answer${linux.error === undefined ? "" : `: ${linux.error}`}`;
+  }
   if (!linux.online) {
     return `Linux offline${linux.error === undefined ? "" : `: ${linux.error}`}`;
   }
@@ -367,10 +389,10 @@ export function linuxLine(linux: HeavyRunnerLinux): string {
       ? ""
       : ` · load ${linux.load1.toFixed(1)}${linux.cpuCount === null ? "" : ` on ${linux.cpuCount} cores`}`;
   const memory =
-    linux.availableMemoryBytes === null
-      ? ""
-      : ` · ${(linux.availableMemoryBytes / GB).toFixed(1)} GB free`;
-  return `Linux online · ${jobs}${cpu}${load}${memory}`;
+    linux.availableMemoryBytes === null ? "" : ` · ${formatBytes(linux.availableMemoryBytes)} free`;
+  const reasons = linuxOverReasons(linux);
+  const over = reasons === undefined ? "" : ` · over its limits: ${reasons}`;
+  return `Linux online · ${jobs}${cpu}${load}${memory}${over}`;
 }
 
 /** "4:05" until the deadline, never negative. */
@@ -507,21 +529,70 @@ export function runnerEverythingOn(where: RunnerWhere | null, everything: boolea
   return where === "linux" && everything === true;
 }
 
-/**
- * Whether a mode-specific field belongs to the picked mode, and the Linux list to Linux mode only
- * while Everything is off. Null (targets disagree) counts as applying.
- */
+interface RunnerModeScope {
+  /** Null (targets disagree) counts as applying. */
+  readonly applies: (where: RunnerWhere | null, everything: boolean | null) => boolean;
+  readonly idle: string;
+}
+
+const LINUX_MODE: RunnerModeScope = {
+  applies: (where) => where === null || where === "linux",
+  idle: "Only applies when Where jobs run is Linux.",
+};
+
+/** Every Runner key states whether it depends on the picked mode; null means it applies in all. */
+const RUNNER_MODE_SCOPE: Record<RunnerSettingKey, RunnerModeScope | null> = {
+  runnerEnabled: null,
+  runnerWhere: null,
+  runnerUnavailable: null,
+  runnerLinuxFull: LINUX_MODE,
+  runnerAskMinutes: null,
+  runnerDeadlineAction: null,
+  runnerDropped: null,
+  runnerMacFirstAfter: {
+    applies: (where) => where === null || where === "macFirst",
+    idle: "Only applies when Where jobs run is Mac first.",
+  },
+  runnerLinuxEverything: LINUX_MODE,
+  runnerBringBack: null,
+  runnerRouteMemoryDays: null,
+  runnerRouteLearnAfter: null,
+  runnerBringBackExclude: null,
+  runnerBringBackMaxMB: null,
+  runnerMacTools: null,
+  runnerMacOnly: null,
+  runnerLinuxCommands: {
+    applies: (where, everything) => !runnerEverythingOn(where, everything),
+    idle: "Only applies while Everything is off.",
+  },
+  runnerHost: null,
+  runnerLinuxSlots: null,
+  runnerHeartbeatSeconds: null,
+  runnerOfflineAfterFailures: null,
+  runnerSshTimeoutSeconds: null,
+  runnerStopWaitSeconds: null,
+  runnerLinuxMemoryFloorPercent: null,
+  runnerLinuxCpuCeilingPercent: null,
+  runnerLinuxEvictionsBeforeAlone: null,
+};
+
+/** Whether a field belongs to the picked mode (and the Linux list to Linux while Everything is off). */
 export function runnerModeFieldApplies(
   key: RunnerSettingKey,
   where: RunnerWhere | null,
   everything: boolean | null,
 ): boolean {
-  if (key === "runnerMacFirstAfter") return where === null || where === "macFirst";
-  if (key === "runnerLinuxEverything" || key === "runnerLinuxFull") {
-    return where === null || where === "linux";
-  }
-  if (key === "runnerLinuxCommands") return !runnerEverythingOn(where, everything);
-  return true;
+  return RUNNER_MODE_SCOPE[key]?.applies(where, everything) ?? true;
+}
+
+/** Why a mode-specific field does nothing under the picked mode, or null when it applies. */
+export function runnerModeFieldIdle(
+  key: RunnerSettingKey,
+  where: RunnerWhere | null,
+  everything: boolean | null,
+): string | null {
+  const scope = RUNNER_MODE_SCOPE[key];
+  return scope === null || scope.applies(where, everything) ? null : scope.idle;
 }
 
 /** The effective values Runner fields depend on; null where the selected targets disagree. */

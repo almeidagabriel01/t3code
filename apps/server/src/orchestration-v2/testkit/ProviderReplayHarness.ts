@@ -51,6 +51,7 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as CommandOutputRecorder from "./CommandOutputRecorder.ts";
+import * as TurnSettlementContract from "./TurnSettlementContract.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
@@ -229,14 +230,23 @@ export function runOrchestratorV2ProviderReplayScenario<
         : [],
     ) ?? [],
   );
-  const layer = layerProviderReplay(scenario, harness, {
-    ...options,
-    replayGate,
-  });
+  const sessions: Array<TurnSettlementContract.RecordedAdapterSession> = [];
+  const layer = layerWithRegistry(
+    scenario,
+    TurnSettlementContract.layerRecordingAdapterEvents(
+      harness.makeProviderAdapterRegistryLayer(scenario.transcript, { replayGate }),
+      sessions,
+    ),
+    options,
+  );
 
   return Effect.gen(function* () {
     const result = yield* runOrchestratorV2Scenario(scenario, { replayGate });
     const recorder = yield* CommandOutputRecorder.CommandOutputRecorder;
+    const violations = TurnSettlementContract.turnSettlementViolations(sessions);
+    if (violations.length > 0) {
+      return yield* Effect.die(new Error(`${scenario.name}: ${violations.join("; ")}`));
+    }
     return { ...result, commandOutput: yield* recorder.snapshot };
   }).pipe(Effect.provide(layer));
 }

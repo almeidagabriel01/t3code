@@ -6,25 +6,7 @@ import type { HeavyQueueEntry } from "@t3tools/contracts";
 
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 /** Options that pick a workspace package (`pnpm --filter web dev`): their value is no script. */
-const SELECTOR_FLAGS = new Set(["--filter", "-F", "--workspace"]);
-/** Options whose value picks the packages a call runs in (`pnpm -F web vitest`), never a word. */
-export const PICK_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  pnpm: ["-F", "--filter", "--filter-prod"],
-};
-/** The packages a call's pick options name, from its raw words (`pnpm -F web`, `--filter=web`). */
-export const pickedOf = (program: string, values: ReadonlyArray<string>) => {
-  const flags = Object.hasOwn(PICK_FLAGS, program) ? PICK_FLAGS[program]! : [];
-  return values.flatMap((value, at) => {
-    const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
-    const picked =
-      flag === undefined
-        ? undefined
-        : value === flag
-          ? values[at + 1]
-          : value.slice(flag.length + 1);
-    return picked === undefined || picked === "" ? [] : [picked];
-  });
-};
+const SELECTOR_FLAGS = new Set(["--filter", "-F", "--filter-prod", "--workspace"]);
 const RUN = /^(run|run-script)$/;
 const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
 /** A finite step a script's name may also name: `serve-static-build` builds and ends. */
@@ -64,6 +46,20 @@ export const runTarget = (
   return { program: words[at]?.split("/").pop() ?? "", words: words.slice(at + 1) };
 };
 
+/** A package manager's words without its package pick (`pnpm -F web vitest` runs `vitest`). */
+export const withoutPick = (
+  program: string,
+  words: ReadonlyArray<string>,
+  flags: ReadonlyArray<string>,
+) => {
+  if (!PACKAGE_MANAGERS.has(program) || !flags.some((flag) => SELECTOR_FLAGS.has(flag))) {
+    return words;
+  }
+  // The selector's value is the first word that is not `run`, wherever the selector sits.
+  const value = words.findIndex((word) => !RUN.test(word));
+  return words.filter((_, index) => index !== value);
+};
+
 /** A dev server by its script or program (`vp run dev`, `next dev`, `expo start`). */
 const isDevServer = (
   program: string,
@@ -71,14 +67,7 @@ const isDevServer = (
   flags: ReadonlyArray<string> = [],
 ) => {
   const target = runTarget(program, words);
-  // A pick option's value already left the words (`PICK_FLAGS`); any other selector's is still there.
-  const picks = Object.hasOwn(PICK_FLAGS, target.program) ? PICK_FLAGS[target.program]! : [];
-  const selected =
-    PACKAGE_MANAGERS.has(target.program) &&
-    flags.some((f) => SELECTOR_FLAGS.has(f) && !picks.includes(f));
-  // The selector's value is the first word that is not `run`, wherever the selector sits.
-  const value = selected ? target.words.findIndex((word) => !RUN.test(word)) : -1;
-  const [first = "", second = ""] = target.words.filter((_, index) => index !== value);
+  const [first = "", second = ""] = withoutPick(target.program, target.words, flags);
   // A program can be named like an object key (`__proto__`): only the table's own entries count.
   if (Object.hasOwn(DEV_PROGRAMS, target.program) && DEV_PROGRAMS[target.program]!.test(first)) {
     return true;

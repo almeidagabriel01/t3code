@@ -1,4 +1,6 @@
 import {
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   type RunnerSettingKey,
@@ -93,11 +95,17 @@ vi.mock("../../../components/ui/IconButton", () => ({
 vi.mock("../../../components/ui/ListChoiceRow", () => ({
   ListChoiceRow: (props: {
     label: string;
+    description?: string;
     selected: boolean;
     disabled?: boolean;
     onPress: () => void;
   }) => (
-    <button aria-checked={props.selected} disabled={props.disabled} onClick={props.onPress}>
+    <button
+      aria-checked={props.selected}
+      data-description={props.description}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
       {props.label}
     </button>
   ),
@@ -268,7 +276,7 @@ describe("RunnerSection", () => {
         "Connection checks",
       ],
       hidden: [],
-      visible: ["Can run on Linux", "Wait for an answer"],
+      visible: ["Can run on Linux", "Wait for an answer", "When Linux is full"],
     },
     {
       name: "jobs stay on this Mac: no Linux command list",
@@ -281,7 +289,7 @@ describe("RunnerSection", () => {
         "If Linux is unavailable",
         "Connection checks",
       ],
-      hidden: ["Can run on Linux"],
+      hidden: ["Can run on Linux", "When Linux is full"],
       visible: ["Always on this Mac", "Linux host"],
     },
     {
@@ -300,7 +308,7 @@ describe("RunnerSection", () => {
         "Connection checks",
       ],
       hidden: ["Wait for an answer", "If nobody answers"],
-      visible: ["Can run on Linux", "When Linux is offline"],
+      visible: ["Can run on Linux", "When Linux is offline", "When Linux is full"],
     },
   ])(
     "hides what does nothing when $name",
@@ -331,6 +339,40 @@ describe("RunnerSection", () => {
     expect(offText).toContain(EVERYTHING);
     expect(offText).toContain("Can run on Linux");
     await off.unmount();
+  });
+
+  it("in Linux mode, picks what a job does while Linux is full, per project with a way back", async () => {
+    const view = await mount({
+      settings: { runnerWhere: "linux", runnerLinuxFull: "mac" },
+      projectSelected: true,
+      overridden: ["runnerLinuxFull"],
+    });
+    const labels = Object.values(RUNNER_LINUX_FULL_LABEL);
+    const rows = labels.map((label) => view.button(label)!);
+    expect(
+      rows.map((b) => [b.textContent, b.dataset.description, b.getAttribute("aria-checked")]),
+    ).toEqual([
+      ["Wait for Linux", RUNNER_LINUX_FULL_DESCRIPTION.wait, "false"],
+      ["Use this Mac", RUNNER_LINUX_FULL_DESCRIPTION.mac, "true"],
+      ["Balance by load", RUNNER_LINUX_FULL_DESCRIPTION.balance, "false"],
+    ]);
+    const title = [...view.host.querySelectorAll("p")].find((row) =>
+      row.textContent?.startsWith("When Linux is full"),
+    );
+    expect(title?.textContent).toContain("Set for this project.");
+    await view.click("Balance by load");
+    await view.click("Use environment value");
+    expect(view.write).toHaveBeenCalledWith({ runnerLinuxFull: "balance" });
+    expect(view.reset).toHaveBeenCalledWith("runnerLinuxFull");
+    await view.unmount();
+
+    const inherited = await mount({ settings: { runnerWhere: "linux" }, projectSelected: true });
+    const row = [...inherited.host.querySelectorAll("p")].find((p) =>
+      p.textContent?.startsWith("When Linux is full"),
+    );
+    expect(row?.textContent).toContain("Inherited from the environment.");
+    expect(inherited.button("Use environment value")).toBeUndefined();
+    await inherited.unmount();
   });
 
   it("shows which project fields inherit and resets an overridden one", async () => {

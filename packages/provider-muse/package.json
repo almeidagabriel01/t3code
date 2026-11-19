@@ -22,6 +22,10 @@
     "./testing": {
       "types": "./src/testing.ts",
       "import": "./src/testing.ts"
+    },
+    "./server/adapter.testkit": {
+      "types": "./src/server/adapter.testkit.ts",
+      "import": "./src/server/adapter.testkit.ts"
     }
   },
   "scripts": {

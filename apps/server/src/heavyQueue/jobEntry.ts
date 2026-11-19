@@ -85,6 +85,7 @@ export const jobEntryOf = (
     | "routeReason"
     | "where"
     | "forced"
+    | "ssh"
   > & { readonly program: string; readonly args: ReadonlyArray<string> },
   readScript: ReadScript,
 ): QueuedEntry => {

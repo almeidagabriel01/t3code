@@ -61,6 +61,7 @@ import {
   SCRIPT_MAX_BYTES,
   type ReadScript,
 } from "./heavyHook.ts";
+import { cachedSshHostname } from "./sshHost.ts";
 import {
   deadlineRecord,
   endedRecord,
@@ -330,7 +331,7 @@ export const withLock = <A>(dir: string, run: () => A): A => {
 
 const queuePath = (dir: string) => NodePath.join(dir, "queue.json");
 
-interface QueueDoc {
+export interface QueueDoc {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   /** False: every waiter starts at once. Absent in older files, which read as on. */
   readonly enabled: boolean;
@@ -691,7 +692,12 @@ export type StartResult =
     }
   | { readonly status: "removed" }
   /** Its question went unanswered and the deadline action is Cancel. */
-  | { readonly status: "canceled"; readonly reason: string };
+  | {
+      readonly status: "canceled";
+      readonly reason: string;
+      /** T3 itself failed its Linux run (`failure`), not Linux being away or a deadline. */
+      readonly t3Fault: boolean;
+    };
 
 type Decided<A> = { readonly doc: QueueDoc; readonly result: A };
 
@@ -741,6 +747,7 @@ export const configFor = (doc: Pick<QueueDoc, "runner">, cwd: string): RunnerPro
 export const modeFor = (doc: Pick<QueueDoc, "enabled" | "runner">, cwd: string) => ({
   enabled: doc.enabled,
   runner: configFor(doc, cwd).runnerEnabled,
+  ...(doc.runner === null ? {} : { runnerHost: doc.runner.machine.runnerHost }),
 });
 
 const gitRoots = new Map<string, string | null>();
@@ -878,7 +885,11 @@ const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decid
         // Tell the agent cancels with no question: the requeue already logged the loss.
         events: withRecord(doc.events, entry.ask === undefined ? null : deadlineRecord(entry, now)),
       },
-      result: { status: "canceled", reason: canceled },
+      result: {
+        status: "canceled",
+        reason: canceled,
+        t3Fault: (entry as QueuedEntry).failure !== undefined,
+      },
     };
   }
   const admit = decision.admits[id];
@@ -1113,7 +1124,13 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      remember(linuxHistory, signature, { durationMs }, after.historyCommands);
+      const memoryBytes = gone.peakMemory;
+      remember(
+        linuxHistory,
+        signature,
+        memoryBytes === undefined ? { durationMs } : { durationMs, memoryBytes },
+        after.historyCommands,
+      );
     } else {
       if (gone.peakMemory === undefined) continue;
       const run = {
@@ -1695,6 +1712,32 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
       : { doc, result: false },
   );
 
+/** A running Linux job's session memory from a heartbeat, and its peak, for what it reserves and learns. */
+const withLinuxMemory = (
+  entry: QueuedEntry,
+  linux: Pick<LinuxHealth, "jobMemory" | "outside">,
+): QueuedEntry => {
+  const { jobMemory } = linux;
+  const id = entry.remote?.id;
+  if (entry.startedAt === null || entry.runner !== "linux" || entry.phase !== "running") {
+    return entry;
+  }
+  if (entry.ssh === true) {
+    // Its own ssh session, found by the job id that ssh sent along.
+    const session = linux.outside?.find((item) => item.jobId === entry.id);
+    if (session === undefined) return entry;
+    const bytes = session.memoryBytes;
+    return { ...entry, memory: bytes, peakMemory: Math.max(entry.peakMemory ?? 0, bytes) };
+  }
+  const job =
+    id !== undefined && jobMemory !== undefined && Object.hasOwn(jobMemory, id)
+      ? jobMemory[id]
+      : undefined;
+  // Only this run's own group: a stale pgid file may name a reused pid.
+  if (job === undefined || job.pgid !== entry.remote?.pgid) return entry;
+  return { ...entry, memory: job.bytes, peakMemory: Math.max(entry.peakMemory ?? 0, job.bytes) };
+};
+
 /**
  * Folds one heartbeat into Linux health, offline only after the configured failures in a row. A
  * reading also marks the Linux runs that must stop (`linuxStops`), and settles the lost runs a
@@ -1715,7 +1758,8 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
       const ended = new Set(
         doc.lostRuns.filter((lost) => !lostRuns.includes(lost)).map((lost) => lost.entryId),
       );
-      const entries = doc.entries.map((entry: QueuedEntry): QueuedEntry => {
+      const entries = doc.entries.map((each: QueuedEntry): QueuedEntry => {
+        const entry = withLinuxMemory(each, linux);
         const stop = stops[entry.id];
         // A restart outranks a memory stop: that run's process group is gone with it.
         if (stop !== undefined && (entry.stop === undefined || stop === "reboot")) {
@@ -2050,6 +2094,7 @@ export const answerBashCall = (
   return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at), {
     probe: (line) => probe(dir, line, cwd),
     inT3,
+    resolveHost: cachedSshHostname,
   });
 };
 

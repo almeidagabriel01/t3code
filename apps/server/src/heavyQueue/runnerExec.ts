@@ -33,6 +33,8 @@ import {
   remotePgidScript,
   remoteStopScript,
   removeCopyScript,
+  idleCopiesScript,
+  unresponsiveFailure,
   sshArgs,
   type HealthCheck,
   type RemoteOutcome,
@@ -371,7 +373,13 @@ const ssh = (
   environment: Env,
   command: string,
   timeoutMs: number,
-): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> =>
+): Promise<{
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  /** Our own timeout ended it: ssh got in, then nothing came back. */
+  readonly timedOut: boolean;
+}> =>
   new Promise((resolve) => {
     NodeChildProcess.execFile(
       sshProgram(environment),
@@ -379,12 +387,13 @@ const ssh = (
       { timeout: timeoutMs, env: { ...process.env, ...environment }, maxBuffer: 64 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+        const timedOut = error !== null && error.killed === true;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr), timedOut });
       },
     );
   });
 
-/** One heartbeat: load, cores and memory, or why ssh could not get them. */
+/** One heartbeat: memory, pressure, CPU and each run's memory, or why ssh could not get them. */
 export const checkLinux = async (
   machine: RunnerMachineConfig,
   environment: Env,
@@ -398,7 +407,11 @@ export const checkLinux = async (
   );
   if (result.code === 0) return { ok: true, reading: parseHeartbeat(result.stdout) };
   const why = result.stderr.trim().split("\n").pop() ?? "";
-  return { ok: false, error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why };
+  return {
+    ok: false,
+    error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why,
+    unresponsive: unresponsiveFailure(result.timedOut, result.stderr),
+  };
 };
 
 const run = (
@@ -606,6 +619,25 @@ export const removeRunnerCopy = async (
   );
   const said = result.stdout.trim().split("\n").pop();
   return result.code === 0 && (said === "removed" || said === "busy") ? said : "unreachable";
+};
+
+/** The Linux copies idle past `days` that no run holds; null when Linux is unreachable. */
+export const idleRunnerCopies = async (
+  machine: RunnerMachineConfig,
+  environment: Env,
+  days: number,
+  now: number,
+): Promise<ReadonlyArray<string> | null> => {
+  const result = await ssh(
+    machine,
+    environment,
+    idleCopiesScript(days, now / 1000),
+    (machine.runnerSshTimeoutSeconds + 60) * 1000,
+  );
+  if (result.code !== 0) return null;
+  return result.stdout
+    .split("\n")
+    .flatMap((line) => (line.startsWith("idle ") ? [line.slice(5)] : []));
 };
 
 export type StopResult = "gone" | "stopped" | "killed" | "alive" | "unreachable";

@@ -7777,12 +7777,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updated.set(String(turn.id), turn);
             return updated;
           });
-          yield* emitProviderEvent({
-            type: "provider_turn.updated",
-            driver,
-            threadId: context.input.threadId,
-            providerTurn: turn,
-          });
+          // The server starts the next turn on the terminal update, so this turn's state settles and
+          // the slot frees first.
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          const childTurnsContinue =
+            settledStatus === "failed" &&
+            (options?.childTurnsContinue === true ||
+              (followsAgentWorkState &&
+                rootSessionId !== null &&
+                hasWorkingDescendant(rootSessionId)));
+          const subagentsRequiringCarryover = [...context.subagents.values()].filter(
+            acpSubagentHasPendingBackgroundWork,
+          );
+          if (subagentsRequiringCarryover.length > 0 && !directStopQuarantine) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            if (sessionId !== null) {
+              yield* Ref.set(carryoverSubagents, {
+                sessionId,
+                projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
+                subagents: subagentsRequiringCarryover,
+              });
+            }
+          }
           const updatedProviderThread: OrchestrationV2ProviderThread = {
             ...context.input.providerThread,
             providerSessionId: input.providerSessionId,
@@ -7802,13 +7818,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             providerThread: updatedProviderThread,
           });
-          const rootSessionId = yield* Ref.get(activeSessionId);
-          const childTurnsContinue =
-            settledStatus === "failed" &&
-            (options?.childTurnsContinue === true ||
-              (followsAgentWorkState &&
-                rootSessionId !== null &&
-                hasWorkingDescendant(rootSessionId)));
+          const offersContinuation =
+            postSettleContinuationEnabled &&
+            settledStatus === "completed" &&
+            !directStopQuarantine &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            ((yield* Ref.get(wakeBuffer)).length > 0 ||
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0);
+          if (
+            settledStatus !== "completed" ||
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0
+          ) {
+            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+          }
+          steerInjections.clear();
+          yield* Ref.set(activeTurn, null);
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver,
+            threadId: context.input.threadId,
+            providerTurn: turn,
+          });
           yield* emitProviderEvent(
             settledStatus === "failed"
               ? {
@@ -7843,39 +7873,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   threadDisposition: "reusable",
                 },
           );
-          const subagentsRequiringCarryover = [...context.subagents.values()].filter(
-            acpSubagentHasPendingBackgroundWork,
-          );
-          if (subagentsRequiringCarryover.length > 0 && !directStopQuarantine) {
-            const sessionId = yield* Ref.get(activeSessionId);
-            if (sessionId !== null) {
-              yield* Ref.set(carryoverSubagents, {
-                sessionId,
-                projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
-                subagents: subagentsRequiringCarryover,
-              });
-            }
-          }
-          yield* Ref.set(activeTurn, null);
-          steerInjections.clear();
-          if (
-            postSettleContinuationEnabled &&
-            settledStatus === "completed" &&
-            !directStopQuarantine &&
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-            ((yield* Ref.get(wakeBuffer)).length > 0 ||
-              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
-          ) {
+          if (offersContinuation) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {
               yield* offerContinuationRun(sessionId);
             }
-          }
-          if (
-            settledStatus !== "completed" ||
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0
-          ) {
-            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
           }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });

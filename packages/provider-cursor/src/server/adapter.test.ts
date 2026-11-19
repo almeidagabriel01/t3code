@@ -16,6 +16,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -34,6 +35,7 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
+import { cursorTurnSlotRace } from "./adapter.testkit.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { loadCursorSdk } from "./sdk.ts";
 
@@ -956,6 +958,22 @@ describe("CursorAdapterV2", () => {
         Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
     ),
+  );
+
+  it.effect("accepts a new turn from the consumer of the terminal provider turn event", () =>
+    Effect.gen(function* () {
+      const { exit, seen } = yield* cursorTurnSlotRace;
+      assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
+      // The ended turn's thread state lands before its end (the last event seen), never on top of
+      // the next turn's.
+      assert.isTrue(
+        seen.some(
+          (earlier) =>
+            earlier.type === "provider_thread.updated" &&
+            earlier.providerThread.lastRunOrdinal === 1,
+        ),
+      );
+    }),
   );
 
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>

@@ -3,17 +3,31 @@ import {
   type ModelSelection,
   NodeId,
   ProjectId,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   RunAttemptId,
   RunId,
   type OrchestrationV2ProviderThread,
-  type ThreadId,
+  ProviderSessionId,
+  ThreadId,
   ProviderDriverKind,
   ProviderReplayEntry,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
-import type * as DateTime from "effect/DateTime";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DateTime from "effect/DateTime";
+import type * as Duration from "effect/Duration";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import type * as EffectAcpProtocol from "effect-acp/protocol";
+import type * as EffectAcpSchema from "effect-acp/compat";
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as Effect from "effect/Effect";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
@@ -26,7 +40,13 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
-import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "@t3tools/provider-acp/server/adapter";
+import {
+  ACP_PROTOCOL,
+  AcpProviderCapabilitiesV2,
+  makeAcpAdapterV2,
+  type AcpAdapterV2Flavor,
+  type AcpAdapterV2RuntimeInput,
+} from "@t3tools/provider-acp/server/adapter";
 
 export const AcpReplayTranscript = Schema.Struct({
   provider: ProviderDriverKind,
@@ -315,3 +335,220 @@ export function makeTurnInput(input: {
     runtimePolicy: input.runtimePolicy,
   };
 }
+
+const layerHost = TestProviderHost.layer().pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+export const layerTest = Layer.mergeAll(
+  DocumentText.layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  NodeServices.layer,
+  NodeCrypto.layer,
+  IdAllocator.layer,
+  McpProviderSessions.layer,
+  layerHost,
+);
+
+export const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
+
+export function makeMockRuntime(input: {
+  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly mockAgentPath: string;
+  readonly environment?:
+    | Readonly<Record<string, string>>
+    | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
+  readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
+  readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
+  readonly ownDescendantProcessGroups?: boolean;
+  readonly ownDetachedProcessGroup?: boolean;
+  readonly processGroupPlatform?: NodeJS.Platform;
+  readonly processGroupTerminationGrace?: Duration.Input;
+  readonly linuxCgroupController?: AcpSessionRuntime.AcpSessionRuntimeOptions["linuxCgroupController"];
+  readonly posixProcessTreeController?: AcpSessionRuntime.AcpSessionRuntimeOptions["posixProcessTreeController"];
+  readonly windowsProcessTreeTerminator?: AcpSessionRuntime.AcpSessionRuntimeOptions["windowsProcessTreeTerminator"];
+  readonly wrapCancel?: (
+    cancel: AcpSessionRuntime.AcpSessionRuntime["Service"]["cancel"],
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["cancel"];
+  readonly wrapOutgoingResponse?: (
+    onOutgoingResponse: NonNullable<AcpAdapterV2RuntimeInput["onOutgoingResponse"]>,
+  ) => NonNullable<AcpAdapterV2RuntimeInput["onOutgoingResponse"]>;
+  readonly wrapRuntime?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    runtimeOrdinal: number,
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"];
+}): AcpAdapterV2Flavor["makeRuntime"] {
+  let runtimeOrdinal = 0;
+  return (runtimeInput) =>
+    Effect.gen(function* () {
+      runtimeOrdinal += 1;
+      const protocolEvents = input.protocolEvents;
+      const protocolLogging =
+        protocolEvents === undefined
+          ? runtimeInput.protocolLogging
+          : {
+              ...runtimeInput.protocolLogging,
+              logIncoming: true,
+              logOutgoing: true,
+              logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
+                Queue.offer(protocolEvents, event).pipe(
+                  Effect.andThen(runtimeInput.protocolLogging.logger?.(event) ?? Effect.void),
+                  Effect.asVoid,
+                ),
+            };
+      const context = yield* Layer.build(
+        AcpSessionRuntime.layer({
+          ...runtimeInput,
+          ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
+          ...(input.ownDetachedProcessGroup === undefined
+            ? {}
+            : { ownDetachedProcessGroup: input.ownDetachedProcessGroup }),
+          ...(input.ownDescendantProcessGroups === undefined
+            ? {}
+            : { ownDescendantProcessGroups: input.ownDescendantProcessGroups }),
+          ...(input.ownDetachedProcessGroup === true
+            ? { processGroupPlatform: input.processGroupPlatform ?? "linux" }
+            : {}),
+          ...(input.processGroupTerminationGrace === undefined
+            ? {}
+            : { processGroupTerminationGrace: input.processGroupTerminationGrace }),
+          ...(input.linuxCgroupController === undefined
+            ? {}
+            : { linuxCgroupController: input.linuxCgroupController }),
+          ...(input.posixProcessTreeController === undefined
+            ? {}
+            : { posixProcessTreeController: input.posixProcessTreeController }),
+          ...(input.windowsProcessTreeTerminator === undefined
+            ? {}
+            : { windowsProcessTreeTerminator: input.windowsProcessTreeTerminator }),
+          protocolLogging,
+          spawn: {
+            command: process.execPath,
+            args: [input.mockAgentPath],
+            cwd: runtimeInput.cwd,
+            env: {
+              T3_ACP_SESSION_LIFECYCLE: "1",
+              ...(typeof input.environment === "function"
+                ? input.environment(runtimeOrdinal)
+                : input.environment),
+            },
+          },
+          authMethodId: "test",
+          ...(input.wrapOutgoingResponse === undefined ||
+          runtimeInput.onOutgoingResponse === undefined
+            ? {}
+            : {
+                onOutgoingResponse: input.wrapOutgoingResponse(runtimeInput.onOutgoingResponse),
+              }),
+        }).pipe(
+          Layer.provide(
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+          ),
+        ),
+      );
+      const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+        Effect.provide(context),
+      );
+      const wrapped = {
+        ...runtime,
+        ...(input.wrapCancel === undefined ? {} : { cancel: input.wrapCancel(runtime.cancel) }),
+      };
+      return input.wrapRuntime?.(wrapped, runtimeOrdinal) ?? wrapped;
+    });
+}
+
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
+export const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
+  readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
+  readonly runtimeMode?: "full-access" | "approval-required";
+}) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+  const instanceId = ProviderInstanceId.make("acp-prompt-inactivity");
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      promptInactivityTimeout: "15 minutes",
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath: yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        ),
+        environment: input.environment,
+        wrapRuntime: (runtime) => {
+          natives.push(runtime);
+          return runtime;
+        },
+      }),
+    },
+    selfInvocation: yield* resolveSelfInvocation(),
+  });
+  const threadId = ThreadId.make("thread-acp-prompt-inactivity");
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: input.runtimeMode ?? "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-inactivity"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const startTurn = (ordinal: number) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) =>
+        runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+        ),
+      ),
+    );
+  return {
+    runtime,
+    natives,
+    startTurn,
+    /** A turn still running makes the next start fail, without waiting on time. */
+    nextTurnRejected: (ordinal: number) =>
+      startTurn(ordinal).pipe(
+        Effect.flip,
+        Effect.map(
+          (error) =>
+            isProviderAdapterProtocolError(error.cause) &&
+            error.cause.reason === "previous_turn_active",
+        ),
+        Effect.catchCause(() => Effect.succeed(false)),
+      ),
+    emitUpdate: (notification: EffectAcpSchema.SessionNotification) =>
+      natives.at(-1)!.request("_test/emit-update", notification),
+    terminals: (count: number) =>
+      runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(count),
+        Stream.runCollect,
+        Effect.map((events) =>
+          Array.from(events, (event) => {
+            if (event.type !== "turn.terminal") throw new Error("Expected a turn terminal");
+            return event;
+          }),
+        ),
+      ),
+  };
+});
+
+/** The turn-slot race on the ACP adapter every ACP driver shares; the mock agent ends each prompt itself. */
+export const acpTurnSlotRace = Effect.gen(function* () {
+  const harness = yield* makePromptInactivityHarness({ environment: () => ({}) });
+  const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+  const exit = yield* startNextTurnAtTurnEnd({
+    events: harness.runtime.events.pipe(Stream.tap((event) => Effect.sync(() => seen.push(event)))),
+    startFirst: harness.startTurn(1),
+    endFirst: Effect.void,
+    startNext: harness.startTurn(2),
+  });
+  return { exit, seen };
+}).pipe(Effect.provide(layerTest), Effect.scoped);

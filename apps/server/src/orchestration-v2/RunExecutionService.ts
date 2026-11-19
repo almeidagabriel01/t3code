@@ -1351,6 +1351,38 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
+        let startChecked = false;
+        // Stop can end the run while the adapter is starting its turn, before the turn is
+        // recorded. Checked after the turn's write, so a Stop that saw no turn ended the run first.
+        const stopTurnOfEndedRun = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          if (
+            event.type !== "provider_turn.updated" ||
+            event.providerTurn.status !== "running" ||
+            event.providerTurn.runAttemptId !== input.attempt.id ||
+            event.providerTurn.providerThreadId !== input.providerThread.id ||
+            input.shouldStartProviderTurn === undefined ||
+            startChecked ||
+            (yield* Ref.get(rootTerminalSeen))
+          )
+            return;
+          const current = yield* Effect.exit(input.shouldStartProviderTurn());
+          if (Exit.isFailure(current)) return;
+          startChecked = true;
+          if (current.value) return;
+          yield* Effect.logWarning("orchestration-v2.turn-started-after-stop", {
+            runId: input.run.id,
+            providerTurnId: event.providerTurn.id,
+          });
+          // Detached: an adapter can await its own event stream while confirming the stop.
+          yield* input.session
+            .interruptTurn({
+              providerThread: input.providerThread,
+              providerTurnId: event.providerTurn.id,
+            })
+            .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+        });
         const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         // Ends once the root turn and the children it drives settle. Background commands such
         // as a dev server keep this consumer alive afterwards and must not pin preview focus.
@@ -1568,6 +1600,7 @@ export const layer: Layer.Layer<
           );
           if (deliveredEvent) {
             storedEventCount = yield* ingestDelivered(event, deliveredEvent);
+            yield* stopTurnOfEndedRun(event);
           } else if (
             event.type === "turn_item.updated" &&
             (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&

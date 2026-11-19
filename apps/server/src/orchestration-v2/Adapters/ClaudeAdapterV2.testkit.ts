@@ -1,4 +1,16 @@
-import { ClaudeSettings } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  MessageId,
+  NodeId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   forkSession,
   query,
@@ -20,12 +32,16 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -37,6 +53,11 @@ import {
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { startNextTurnAtTurnEnd } from "@t3tools/provider-testing/turnEndRace";
+import type { ClaudeModelCatalog } from "../../provider/ClaudeModelCatalog.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -50,7 +71,7 @@ export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as cons
 export const claudeBackgroundWakeResultLabel = (wakeNumber: number) =>
   `result:background-wake:${wakeNumber}`;
 
-const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+export const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 const ClaudeAgentSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(ClaudeAdapterV2.CLAUDE_PROVIDER),
@@ -2846,3 +2867,429 @@ export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayT
     assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
   };
 }
+
+export const CLAUDE_TEST_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+  model: "claude-sonnet-4-6",
+  options: [{ id: "effort", value: "ultrathink" }],
+} satisfies ModelSelection;
+
+export const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  cwd: "/workspace",
+});
+
+function makeClaudeTestAppThread(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly now: DateTime.Utc;
+}): OrchestrationV2AppThread {
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id: input.threadId,
+    projectId: ProjectId.make(`project-${input.threadId}`),
+    title: "Claude attachment test",
+    providerInstanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: input.providerThread.id,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: input.threadId,
+    },
+    forkedFrom: null,
+    createdAt: input.now,
+    updatedAt: input.now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+}
+
+export function makeClaudeTestTurnInput(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly now: DateTime.Utc;
+  readonly attemptId: RunAttemptId;
+  readonly text: string;
+  readonly attachments: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
+  readonly providerTurnOrdinal?: number;
+  readonly nativeThreadHasTurns?: boolean;
+  readonly messageCreatedBy?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["createdBy"];
+  readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
+  readonly modelSelection?: ModelSelection;
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+}): ProviderAdapter.ProviderAdapterV2TurnInput {
+  return {
+    appThread: makeClaudeTestAppThread(input),
+    threadId: input.threadId,
+    runId: RunId.make(`run-${input.attemptId}`),
+    runOrdinal: 1,
+    providerTurnOrdinal: input.providerTurnOrdinal ?? 1,
+    ...(input.nativeThreadHasTurns === undefined
+      ? {}
+      : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+    attemptId: input.attemptId,
+    rootNodeId: NodeId.make(`node-${input.attemptId}`),
+    providerThread: input.providerThread,
+    message: {
+      createdBy: input.messageCreatedBy ?? "user",
+      creationSource: input.messageCreationSource ?? "web",
+      messageId: MessageId.make(`message-${input.attemptId}`),
+      text: input.text,
+      attachments: input.attachments,
+    },
+    modelSelection: input.modelSelection ?? CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: input.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY,
+  };
+}
+
+export const WAKE_NATIVE_SESSION = "native-thread-claude-wake";
+
+// Harnesses notify after every recorded event, continuation, or prompt, so a
+// wait re-checks exactly when the state it reads changes. Subscribing before
+// the first check means a change that lands in between is not lost.
+export const makeChangeSignal = Effect.gen(function* () {
+  const changes = yield* PubSub.unbounded<void>();
+  const until = (predicate: () => boolean): Effect.Effect<void> =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(changes);
+        while (!predicate()) yield* PubSub.take(subscription);
+      }),
+    );
+  return { notify: PubSub.publish(changes, undefined), until };
+});
+
+export const makeWakeHarnessWithOptions = (options?: {
+  readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
+  readonly interrupt?: Effect.Effect<void>;
+  readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
+  readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
+  readonly stopTask?: (
+    taskId: string,
+  ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+  readonly backgroundTasks?: (
+    toolUseId: string,
+  ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+  readonly mcp?: Pick<
+    ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
+    "mcpServerStatus" | "readMcpResource" | "callMcpTool"
+  > &
+    Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly subagentLaunchToolUseId?: string;
+  readonly nativeSessionId?: string;
+  readonly settings?: ClaudeSettings;
+  readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
+  readonly freshQueueOnReopen?: boolean;
+  readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
+  readonly allocateSessionId?: Effect.Effect<string>;
+  readonly promptSuggestions?: boolean;
+}) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-v2-wake-",
+    });
+    const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+    const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+    const offerAndWait = Effect.fnUntraced(function* (
+      message: SDKMessage,
+      offered?: Deferred.Deferred<void>,
+    ) {
+      const processed = yield* Deferred.make<void>();
+      processedMessages.set(message, processed);
+      yield* Queue.offer(processQueues.at(-1) ?? sdkMessages, message);
+      if (offered !== undefined) yield* Deferred.succeed(offered, undefined);
+      yield* Deferred.await(processed);
+    });
+    const changes = yield* makeChangeSignal;
+    const offeredMessages: Array<SDKUserMessage> = [];
+    const permissionModeChanges: Array<string> = [];
+    const liveSelectionChanges: Array<unknown> = [];
+    const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+      [];
+    const continuationReceipts =
+      yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+    const terminalReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+      >();
+    const subagentReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
+      >();
+    const systemNoticeReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
+      >();
+    const runtimeRequestReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+      >();
+    const planReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "plan.updated" }>
+      >();
+    const providerThreadReceipts =
+      yield* Queue.unbounded<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+      >();
+    let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+      ...(options?.modelCatalog === undefined ? {} : { modelCatalog: options.modelCatalog }),
+      environment: options?.environment ?? {},
+      attachmentsDir,
+      fileSystem,
+      path: yield* Path.Path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator,
+      continuationRequests: {
+        offer: (request) =>
+          Effect.sync(() => {
+            continuationRequests.push(request);
+          }).pipe(
+            Effect.andThen(Queue.offer(continuationReceipts, request)),
+            Effect.andThen(changes.notify),
+          ),
+      },
+      queryRunner: {
+        allocateSessionId:
+          options?.allocateSessionId ??
+          Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
+        open: (input) =>
+          Effect.gen(function* () {
+            openedOptions = input.options;
+            const processMessages =
+              options?.freshQueueOnReopen === true && processQueues.length > 0
+                ? yield* Queue.unbounded<SDKMessage>()
+                : sdkMessages;
+            const messages = Stream.fromQueue(processMessages).pipe(
+              Stream.flatMap((message) =>
+                Stream.make(message).pipe(
+                  Stream.concat(
+                    Stream.fromEffect(
+                      Effect.suspend(() => {
+                        const processed = processedMessages.get(message);
+                        return processed === undefined
+                          ? Effect.void
+                          : Deferred.succeed(processed, undefined);
+                      }),
+                    ).pipe(Stream.drain),
+                  ),
+                ),
+              ),
+            );
+            if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
+              processQueues.push(processMessages);
+              return {
+                messages,
+                offer: (message: SDKUserMessage) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }).pipe(Effect.andThen(changes.notify)),
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: (mode) =>
+                  Effect.sync(() => {
+                    permissionModeChanges.push(mode);
+                  }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
+                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
+                stopTask: options?.stopTask ?? (() => Effect.void),
+                interrupt: Effect.void,
+                close: Queue.shutdown(processMessages),
+              };
+            }
+            processQueues.push(sdkMessages);
+            return {
+              messages,
+              offer: (message) =>
+                Effect.sync(() => {
+                  offeredMessages.push(message);
+                }).pipe(Effect.andThen(changes.notify)),
+              setModel: (model) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push({ model });
+                }),
+              applyFlagSettings: (settings) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push(settings);
+                }).pipe(
+                  Effect.andThen(() => options?.applyFlagSettings?.(settings) ?? Effect.void),
+                ),
+              setPermissionMode: (mode) =>
+                Effect.sync(() => {
+                  permissionModeChanges.push(mode);
+                }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
+              backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+              mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
+              readMcpResource:
+                options?.mcp?.readMcpResource ?? (() => Effect.die("unexpected MCP resource read")),
+              callMcpTool:
+                options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
+              listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
+              stopTask: options?.stopTask ?? (() => Effect.void),
+              interrupt: options?.interrupt ?? Effect.void,
+              close: options?.close?.(sdkMessages) ?? Effect.void,
+            };
+          }),
+        forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
+        subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make("thread-claude-wake");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      promptSuggestions: Effect.succeed(options?.promptSuggestions === true),
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    const eventHooks: Array<
+      (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>
+    > = [];
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          for (const hook of eventHooks) yield* hook(event);
+          if (event.type === "subagent.updated") {
+            yield* Queue.offer(subagentReceipts, event);
+          }
+          if (event.type === "turn.terminal") {
+            yield* Queue.offer(terminalReceipts, event);
+          }
+          if (event.type === "runtime_request.updated") {
+            yield* Queue.offer(runtimeRequestReceipts, event);
+          }
+          if (event.type === "plan.updated") {
+            yield* Queue.offer(planReceipts, event);
+          }
+          if (event.type === "provider_thread.updated") {
+            yield* Queue.offer(providerThreadReceipts, event);
+          }
+          if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
+            yield* Queue.offer(systemNoticeReceipts, event);
+          }
+          yield* changes.notify;
+        }),
+      ),
+      Effect.forkScoped,
+    );
+    if (runtime.hasPendingBackgroundWork === undefined) {
+      throw new Error("Claude adapter runtime must expose hasPendingBackgroundWork.");
+    }
+    const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+    const terminalEvents = () =>
+      events.filter(
+        (
+          event,
+        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          event.type === "turn.terminal",
+      );
+    return {
+      attachmentsDir,
+      runtime,
+      providerThread,
+      threadId,
+      sdkMessages,
+      processQueues,
+      offerAndWait,
+      offeredMessages,
+      promptUuid: (index: number) => {
+        const uuid = offeredMessages[index]?.uuid;
+        if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
+        return uuid;
+      },
+      permissionModeChanges,
+      liveSelectionChanges,
+      continuationRequests,
+      continuationReceipts,
+      events,
+      eventHooks,
+      terminalReceipts,
+      subagentReceipts,
+      systemNoticeReceipts,
+      runtimeRequestReceipts,
+      planReceipts,
+      providerThreadReceipts,
+      getOpenedOptions: () => openedOptions,
+      terminalEvents,
+      hasPendingBackgroundWork,
+      until: changes.until,
+      awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
+      awaitContinuation: (count: number) =>
+        changes.until(() => continuationRequests.length >= count),
+    };
+  });
+
+export const claudeTurnSlotRace = Effect.gen(function* () {
+  const harness = yield* makeWakeHarnessWithOptions({
+    close: (sdkMessages) => Queue.shutdown(sdkMessages),
+    freshQueueOnReopen: true,
+  });
+  const now = yield* DateTime.now;
+  const turnInput = (index: 1 | 2) =>
+    makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread: harness.providerThread,
+      now,
+      attemptId: RunAttemptId.make(`attempt-claude-consumer-${index}`),
+      text: index === 1 ? "Run sleep 60." : "Next.",
+      attachments: [],
+      providerTurnOrdinal: index,
+      nativeThreadHasTurns: index === 2,
+    });
+  const firstInput = turnInput(1);
+  const firstTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+    driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+    nativeTurnId: `turn:${firstInput.attemptId}`,
+  });
+  // The harness already drains the runtime's events, so relay them to the race's consumer.
+  const relay = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  harness.eventHooks.push((event) => Queue.offer(relay, event));
+  const exit = yield* startNextTurnAtTurnEnd({
+    events: Stream.fromQueue(relay),
+    startFirst: harness.runtime.startTurn(firstInput),
+    endFirst: harness.runtime.interruptTurn({
+      providerThread: harness.providerThread,
+      providerTurnId: firstTurnId,
+    }),
+    startNext: harness.runtime.startTurn(turnInput(2)),
+  });
+  return { exit };
+}).pipe(
+  Effect.provide(
+    Layer.mergeAll(
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
+    ),
+  ),
+  Effect.scoped,
+);

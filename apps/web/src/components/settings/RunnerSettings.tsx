@@ -3,12 +3,14 @@ import {
   linuxLine,
   RUNNER_DEADLINE_LABEL,
   RUNNER_FAILED_POLICY_LABEL,
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
   runnerEverythingOn,
   runnerFieldIdle,
-  runnerModeFieldApplies,
+  runnerModeFieldIdle,
   runnerWhereLine,
   RUNNER_SETTING_DEFAULTS,
   type RunnerChoices,
@@ -57,7 +59,12 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-type ChoiceKey = "runnerWhere" | "runnerUnavailable" | "runnerDropped" | "runnerDeadlineAction";
+type ChoiceKey =
+  | "runnerWhere"
+  | "runnerLinuxFull"
+  | "runnerUnavailable"
+  | "runnerDropped"
+  | "runnerDeadlineAction";
 type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 
 /** The queue × Runner sentence, from this scope's effective Runner values. */
@@ -566,6 +573,7 @@ const SEARCH_ID: Partial<Record<RunnerSettingKey, SettingsSearchItemId>> = {
   runnerWhere: "runner-where",
   runnerMacFirstAfter: "runner-mac-first-after",
   runnerLinuxEverything: "runner-linux-everything",
+  runnerLinuxFull: "runner-linux-full",
   runnerBringBack: "runner-bring-back",
   runnerLinuxCommands: "runner-linux-commands",
   runnerMacOnly: "runner-mac-only",
@@ -601,12 +609,13 @@ export function RunnerSettingsSection() {
   const { title } = searchableSetting("runner-enabled");
   /** A field shows when it applies, or when a search lands on it (then with why it is idle). */
   const field = (key: RunnerSettingKey) => {
-    const idle = runnerFieldIdle(key, choices);
-    const applies = runnerModeFieldApplies(key, choices.runnerWhere, everythingSet);
-    return { shown: (idle === null && applies) || target === SEARCH_ID[key], idle };
+    const idle =
+      runnerFieldIdle(key, choices) ?? runnerModeFieldIdle(key, choices.runnerWhere, everythingSet);
+    return { shown: idle === null || target === SEARCH_ID[key], idle };
   };
   const macFirstAfter = field("runnerMacFirstAfter");
   const everything = field("runnerLinuxEverything");
+  const linuxFull = field("runnerLinuxFull");
   const linuxCommands = field("runnerLinuxCommands");
   const askMinutes = field("runnerAskMinutes");
   const deadline = field("runnerDeadlineAction");
@@ -638,7 +647,15 @@ export function RunnerSettingsSection() {
             }
           />
         </SettingsGroup>
-        {anyShown("runnerWhere", "runnerLinuxCommands", "runnerMacOnly") ? (
+        {anyShown(
+          "runnerWhere",
+          "runnerLinuxFull",
+          "runnerMacFirstAfter",
+          "runnerLinuxEverything",
+          "runnerLinuxCommands",
+          "runnerMacOnly",
+          "runnerBringBack",
+        ) ? (
           <RunnerGroup title="Where jobs run">
             <SegmentedRow
               settingKey="runnerWhere"
@@ -647,6 +664,19 @@ export function RunnerSettingsSection() {
               idle={field("runnerWhere").idle}
               description={(value) => runnerWhereLine(value, everythingSet)}
             />
+            {linuxFull.shown ? (
+              <SegmentedRow
+                settingKey="runnerLinuxFull"
+                searchId="runner-linux-full"
+                labels={RUNNER_LINUX_FULL_LABEL}
+                idle={linuxFull.idle}
+                description={(value) =>
+                  value === null
+                    ? RUNNER_SETTING_COPY.runnerLinuxFull.description
+                    : RUNNER_LINUX_FULL_DESCRIPTION[value]
+                }
+              />
+            ) : null}
             {macFirstAfter.shown ? (
               <NumberRow
                 settingKey="runnerMacFirstAfter"

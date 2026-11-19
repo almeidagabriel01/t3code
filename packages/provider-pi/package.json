@@ -18,6 +18,10 @@
     "./server/usage": {
       "types": "./src/server/usage.ts",
       "import": "./src/server/usage.ts"
+    },
+    "./server/adapter.testkit": {
+      "types": "./src/server/adapter.testkit.ts",
+      "import": "./src/server/adapter.testkit.ts"
     }
   },
   "scripts": {

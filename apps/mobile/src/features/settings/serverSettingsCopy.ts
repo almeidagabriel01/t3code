@@ -6,6 +6,8 @@ import {
 import {
   RUNNER_DEADLINE_LABEL,
   RUNNER_FAILED_POLICY_LABEL,
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
@@ -227,6 +229,8 @@ export const MAINTENANCE_SERVER_PAGE_LABELS: readonly string[] = [
   ...Object.values(RUNNER_SETTING_COPY).map(({ description }) => description),
   ...Object.values(RUNNER_WHERE_LABEL),
   ...Object.values(RUNNER_POLICY_LABEL),
+  ...Object.values(RUNNER_LINUX_FULL_LABEL),
+  ...Object.values(RUNNER_LINUX_FULL_DESCRIPTION),
   ...Object.values(RUNNER_FAILED_POLICY_LABEL),
   ...Object.values(RUNNER_DEADLINE_LABEL),
   ...Object.values(RUNNER_SECTION_COPY).flatMap((entry) => Object.values(entry)),

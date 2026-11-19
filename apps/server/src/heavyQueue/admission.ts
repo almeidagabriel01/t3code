@@ -4,6 +4,7 @@
  */
 import {
   fillsStandardSlot,
+  formatBytes,
   HEAVY_QUEUE_DEFAULTS,
   heavyHoldText,
   heavyOrderText,
@@ -14,7 +15,7 @@ import {
   type HeavyQueueOrderCode,
 } from "@t3tools/contracts";
 
-import { kindOf, pickedOf, runTarget } from "./commandShapes.ts";
+import { kindOf, runTarget } from "./commandShapes.ts";
 import { costOf, filesOf, workPartsOf, type Cost as JobCost } from "./costClass.ts";
 import { heavyRoute, localGitOnly } from "./heavyHook.ts";
 
@@ -114,8 +115,10 @@ export const workersFor = (cpuCount: number, busyCores: number | null): number =
   Math.max(2, Math.min(cpuCount - 1, Math.floor(cpuCount - (busyCores ?? 0))));
 
 export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
-/** Linux runs by command: only their time, since their usage is measured on the PC, not here. */
-export type LinuxHistory = Readonly<Record<string, ReadonlyArray<{ readonly durationMs: number }>>>;
+/** Linux runs by command: their time, and their session's peak memory once a heartbeat read it. */
+export type LinuxHistory = Readonly<
+  Record<string, ReadonlyArray<{ readonly durationMs: number; readonly memoryBytes?: number }>>
+>;
 
 const median = (values: ReadonlyArray<number>) =>
   values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)] ?? null;
@@ -141,7 +144,6 @@ const MEMORY_REOPEN_POINTS = 5;
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
 const MIB = 1024 ** 2;
-const GIB = 1024 ** 3;
 
 /** How admission sizes jobs, kept in the queue file beside the Mac's limits. */
 export interface SizingLimits {
@@ -161,8 +163,7 @@ const COMMAND_WORD = /^[a-z@][\w:.@+-]*$/i;
 /** One work part's key: its program (past `exec`/`dlx`), subcommand words and file scope. */
 const partSignature = (part: ReturnType<typeof workPartsOf>[number]) => {
   const { program, words } = runTarget(part.program, part.words);
-  // The package a pick option names keys the run too: `pnpm -F web build` is not `-F api`'s.
-  const command: string[] = [program, ...pickedOf(part.program, part.values)];
+  const command: string[] = [program];
   for (const word of words) {
     if (command.length > (program === "git" ? 1 : 3) || !COMMAND_WORD.test(word)) break;
     if (/\.\w{1,5}$/.test(word)) break;
@@ -257,6 +258,26 @@ export const estimate = (
   };
 };
 
+/**
+ * The memory a Linux run of `entry` is taken to reach: its command's worst run there, not the
+ * usual one, since Linux re-reads only once a minute and its OOM killer takes whatever is
+ * running; a command never measured there gets the unseen guess.
+ */
+export const linuxEstimate = (
+  history: LinuxHistory,
+  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  guesses: Guesses,
+) => {
+  const peaks = runsOf(history, entry).flatMap((run) =>
+    typeof run.memoryBytes === "number" && run.memoryBytes > 0 ? [run.memoryBytes] : [],
+  );
+  if (peaks.length > 0) return Math.max(...peaks);
+  return (
+    (kindOf(entry) === "medium" ? guesses.unseenMediumMegabytes : guesses.unseenHeavyMegabytes) *
+    MIB
+  );
+};
+
 /** Learned to stay small; a command never seen is not light. */
 const isLight = (
   input: Pick<PlanInput, "history" | keyof SizingLimits>,
@@ -300,7 +321,6 @@ export interface Plan {
   readonly hold: HeavyQueueHold | null;
 }
 
-const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 /** Rounded as the summary shows it, so a row and the summary never disagree. */
 const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sample.cpuCount)) * 100);
 
@@ -383,7 +403,7 @@ export const jobVerdict = (
     return {
       cost,
       hold: "job-memory" as const,
-      why: `memory floor: ${gb(room)} room, needs ${gb(cost.memoryBytes)}`,
+      why: `memory floor: ${formatBytes(room)} room, needs ${formatBytes(cost.memoryBytes)}`,
     };
   }
   if (cost.cpu > budget.cpu) {
@@ -704,8 +724,8 @@ export const plan = (input: PlanInput): Plan => {
           entry,
           "job-memory",
           need > input.lightJobMegabytes * MIB
-            ? `memory short: only jobs under ${input.lightJobMegabytes} MB start, needs ${gb(need)}`
-            : `memory short: ${gb(room)} room keeping half the floor, needs ${gb(need)}`,
+            ? `memory short: only jobs under ${input.lightJobMegabytes} MB start, needs ${formatBytes(need)}`
+            : `memory short: ${formatBytes(room)} room keeping half the floor, needs ${formatBytes(need)}`,
         );
         continue;
       }
@@ -719,7 +739,7 @@ export const plan = (input: PlanInput): Plan => {
           standard.reserved > 0 && need <= room + standard.reserved ? "reserved" : "job-memory",
           standard.reserved > 0 && need <= room + standard.reserved
             ? undefined
-            : `memory floor: ${gb(room)} room, needs ${gb(need)}`,
+            : `memory floor: ${formatBytes(room)} room, needs ${formatBytes(need)}`,
         );
         continue;
       }

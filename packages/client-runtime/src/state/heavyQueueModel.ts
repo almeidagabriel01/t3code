@@ -1,5 +1,6 @@
 import {
   fillsStandardSlot,
+  formatBytes,
   heavyHoldText,
   type HeavyCommand,
   type HeavyQueueCostClass,
@@ -8,10 +9,12 @@ import {
   type HeavyQueueRule,
   type HeavyQueueState,
   type HeavyRunner,
+  type HeavyRunnerLinux,
+  type HeavyRunnerLinuxLimit,
   type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 
-import { linuxLine, runnerBadge } from "./runnerModel.ts";
+import { linuxLine, linuxOverReasons, runnerBadge } from "./runnerModel.ts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -114,12 +117,8 @@ export function formatDuration(fromIso: string, now: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const GB = 1024 ** 3;
 const cores = (n: number) => `${n.toFixed(1)} cores`;
-const MB = 1024 ** 2;
-// Below a gigabyte "0.0 GB" hides real usage, so small amounts read in megabytes.
-const gb = (bytes: number) =>
-  bytes < GB ? `${Math.max(1, Math.round(bytes / MB))} MB` : `${(bytes / GB).toFixed(1)} GB`;
+const gb = formatBytes;
 const usualTime = (ms: number) => {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -461,16 +460,68 @@ export const formatFreeMemory = gb;
 export interface MachineGauge {
   readonly share: number | null;
   readonly value: string;
-  /** A condition holding the queue is about this gauge; `hint` then names it. */
+  /** A limit or hold is about this gauge; the Mac's `hint` names it, Linux's status hint does. */
   readonly warn: boolean;
   readonly hint: string;
 }
+
+/** A machine's state chip: `ok` only while it takes work, `warn` past its limits, `danger` gone. */
+export interface MachineStatusChip {
+  readonly text: string;
+  readonly tone: "muted" | "ok" | "warn" | "danger";
+}
+
+/** Linux's chip, from its `status`; an older server without one reports only `online`. */
+export const linuxChip = (
+  linux: Pick<HeavyRunnerLinux, "online" | "status">,
+): MachineStatusChip => {
+  const status =
+    linux.status ?? (linux.online === null ? undefined : linux.online ? "online" : "offline");
+  switch (status) {
+    case "online":
+      return { text: "online", tone: "ok" };
+    case "over-limit":
+      return { text: "over limits", tone: "warn" };
+    case "unresponsive":
+      return { text: "not responding", tone: "warn" };
+    case "offline":
+      return { text: "offline", tone: "danger" };
+    default:
+      return { text: "checking", tone: "muted" };
+  }
+};
+
+/** The Linux gauge each limit warns on; the rest have no gauge and show only in the status hint. */
+const LIMIT_GAUGE: Record<HeavyRunnerLinuxLimit, "cpu" | "memory" | null> = {
+  memory: "memory",
+  "memory-pressure": null,
+  swap: null,
+  "io-pressure": null,
+  "cpu-pressure": "cpu",
+  cpu: "cpu",
+};
+
+/** "remoto · over limits · keeping 10% of memory free": host, the chip's words, then why. */
+const linuxStatusHint = (linux: HeavyRunnerLinux) => {
+  const { text } = linuxChip(linux);
+  const reason =
+    linux.status === "over-limit"
+      ? linuxOverReasons(linux)
+      : linux.status === "unresponsive"
+        ? (linux.error ?? "too loaded to answer")
+        : linux.online === false
+          ? linux.error
+          : undefined;
+  return [linux.host, text, reason].filter((part) => part !== undefined && part !== "").join(" · ");
+};
 
 /** One machine of the machine bar. */
 export interface MachineBarRow {
   readonly runner: HeavyRunner;
   /** Linux's connection, null while it is being checked; always true for the Mac. */
   readonly online: boolean | null;
+  /** Null for the Mac, which has no connection to show. */
+  readonly chip: MachineStatusChip | null;
   readonly statusHint: string | null;
   /** Both null while Linux is not online; `offline` then says so. */
   readonly cpu: MachineGauge | null;
@@ -556,6 +607,7 @@ export function machineBar(
   const mac: MachineBarRow = {
     runner: "mac",
     online: true,
+    chip: null,
     statusHint: null,
     cpu:
       cpu === null
@@ -604,14 +656,19 @@ export function machineBar(
   };
   if (linux === null) return { mac, linux: null };
   const linuxRunning = work.linux.running.length;
-  const live = linux.online === true;
+  const live = linux.online === true && linux.status !== "unresponsive";
   const cores = linux.cpuCount;
+  const statusHint = linuxStatusHint(linux);
+  const past = (on: "cpu" | "memory") =>
+    linux.status === "over-limit" &&
+    (linux.overLimits ?? []).some((over) => LIMIT_GAUGE[over.limit] === on);
   return {
     mac,
     linux: {
       runner: "linux",
       online: linux.online,
-      statusHint: live ? `${linux.host} · online` : linuxLine(linux),
+      chip: linuxChip(linux),
+      statusHint,
       cpu: !live
         ? null
         : linux.cpuPercent === undefined || linux.cpuPercent === null
@@ -619,7 +676,7 @@ export function machineBar(
           : {
               share: linux.cpuPercent / 100,
               value: `${Math.round(linux.cpuPercent)}%`,
-              warn: false,
+              warn: past("cpu"),
               hint: `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
             },
       memory: !live
@@ -632,12 +689,20 @@ export function machineBar(
                   ? null
                   : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
               value: gb(linux.availableMemoryBytes),
-              warn: false,
+              warn: past("memory"),
               hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
             },
       offline: live
         ? null
-        : { text: linux.online === false ? "Offline" : "Checking…", hint: linuxLine(linux) },
+        : {
+            text:
+              linux.status === "unresponsive"
+                ? "Not responding"
+                : linux.online === false
+                  ? "Offline"
+                  : "Checking…",
+            hint: statusHint,
+          },
       slots: {
         running: linuxRunning,
         slots: linux.slots,

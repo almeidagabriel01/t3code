@@ -2,6 +2,8 @@ import {
   linuxLine,
   RUNNER_DEADLINE_LABEL,
   RUNNER_FAILED_POLICY_LABEL,
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
@@ -24,6 +26,7 @@ import {
   runnerPatterns,
   runnerPatternsError,
   type EnvironmentId,
+  type RunnerLinuxFullPolicy,
   type RunnerNumberKey,
   type RunnerWhere,
   type ServerSettings,
@@ -281,11 +284,14 @@ export function RunnerSection(props: {
         onPress={() => props.reset(key)}
       />
     ) : null;
-  const policy = <K extends "runnerUnavailable" | "runnerDropped" | "runnerDeadlineAction">(
+  const policy = <
+    K extends "runnerUnavailable" | "runnerLinuxFull" | "runnerDropped" | "runnerDeadlineAction",
+  >(
     key: K,
     icon: AppSymbolName,
     options: ReadonlyArray<ServerSettings[K]>,
     labels: Record<ServerSettings[K], string>,
+    descriptions?: Record<ServerSettings[K], string>,
   ) => (
     <>
       <ListRowLayout
@@ -297,6 +303,7 @@ export function RunnerSection(props: {
         <ListChoiceRow
           key={option}
           label={labels[option]}
+          description={descriptions?.[option]}
           selected={!props.mixed(key) && settings[key] === option}
           disabled={props.disabledFor(key)}
           onPress={() => props.write(patchOf(key, option))}
@@ -403,6 +410,15 @@ export function RunnerSection(props: {
             </Text>
           </View>
           {resetRow("runnerWhere")}
+          {shown("runnerLinuxFull")
+            ? policy(
+                "runnerLinuxFull",
+                "gauge.with.dots.needle.50percent",
+                Object.keys(RUNNER_LINUX_FULL_LABEL) as RunnerLinuxFullPolicy[],
+                RUNNER_LINUX_FULL_LABEL,
+                RUNNER_LINUX_FULL_DESCRIPTION,
+              )
+            : null}
           {shown("runnerMacFirstAfter") ? number("runnerMacFirstAfter") : null}
           {shown("runnerLinuxEverything") ? toggle("runnerLinuxEverything", "server.rack") : null}
           {shown("runnerLinuxCommands") ? commands("runnerLinuxCommands") : null}

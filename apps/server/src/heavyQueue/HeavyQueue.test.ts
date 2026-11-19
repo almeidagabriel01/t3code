@@ -762,13 +762,110 @@ describe("Linux as clients see it", () => {
       availableMemoryBytes: null,
       totalMemoryBytes: null,
       error: "refused",
+      status: "offline",
     });
     Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("1.234 1 1 1/1 1\n6\n") });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
       online: true,
       load1: 1.2,
       cpuCount: 6,
+      status: "online",
     });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
+  });
+
+  it("lists work outside the queue while Linux answers, never a running job's own copy", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const container = {
+      cgroup: "/system.slice/docker-1.scope",
+      pid: 9,
+      cpu: 5.8,
+      memoryBytes: 8 * 1024 ** 3,
+      command: "yes",
+      container: { id: "0123456789ab", name: "erp-ci", image: "alpine" },
+      threadId: "teste",
+    };
+    // Still syncing: its copy has no session yet, so the heartbeat cannot tell it is the queue's.
+    const syncing = { ...container, cgroup: "/s.scope", runId: "app-0123abcd" };
+    // An ssh job's session, tagged by the job id its ssh sent: the job's, with its memory.
+    const session = { cgroup: "/u/session-12.scope", pid: 7, cpu: 2, memoryBytes: 3 * 1024 ** 3 };
+    Queue.enqueue(dir, {
+      ...holder,
+      id: "ssh-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      phase: "running",
+      ssh: true,
+    });
+    Queue.enqueue(dir, {
+      ...holder,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      remote: { id: "app-0123abcd" },
+    });
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const tagged = { ...session, command: "", jobId: "ssh-1" };
+    const reading = {
+      ...parseHeartbeat("1 1 1 1/1 1\n6\n"),
+      outside: [container, syncing, tagged],
+    };
+    Queue.recordHealth(dir, { ok: true, reading }, at);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))?.outside).toEqual([container]);
+    expect(Queue.read(dir).find((entry) => entry.id === "ssh-1")).toMatchObject({
+      memory: 3 * 1024 ** 3,
+      peakMemory: 3 * 1024 ** 3,
+    });
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("outside");
+  });
+
+  it("words free memory as its gauge does: 819 MB, never 0.8 GB", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const short = ["0.40 0.30 0.20 1/900 4321", "6", "MemTotal:       12582912 kB"];
+    const reading = parseHeartbeat([...short, "MemAvailable:     838656 kB"].join("\n"));
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      availableMemoryBytes: 819 * 1024 ** 2,
+      overLimitBy: "819 MB free, keeping 20%",
+    });
+  });
+
+  it("names the limit Linux is over, and tells not answering from offline", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    // Load 206 over an idle CPU, memory stalled 57%: held for memory, never for the load.
+    const thrashing = [
+      "206.00 180.00 120.00 9/900 4321",
+      "6",
+      "MemTotal:       12582912 kB",
+      "MemAvailable:    5242880 kB",
+      "psi memory full avg10=57.00 avg60=55.00 avg300=57.00 total=3",
+    ].join("\n");
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(thrashing) }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      overLimitBy: "memory stalled 57% of the time (limit 10%)",
+      overLimits: [{ limit: "memory-pressure", value: 57, threshold: 10 }],
+    });
+    const timedOut = { ok: false as const, error: "Connection timed out during banner exchange" };
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 60_000);
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      online: false,
+      status: "unresponsive",
+      error: "Connection timed out during banner exchange",
+    });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimitBy");
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimits");
   });
 });
