@@ -1074,9 +1074,12 @@ describe("CursorAdapterV2", () => {
         makeDispatcher: () => base.makeDispatcher(),
         shouldYield: (fiber) => !consumers.has(fiber) && fiber.currentOpCount >= 3,
       };
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      let threadSettledFirst = false;
       const exit = yield* Effect.gen(function* () {
         yield* runtime.events.pipe(
           Stream.tap(() => Deferred.succeed(consumerReady, undefined)),
+          Stream.tap((event) => Effect.sync(() => seen.push(event))),
           Stream.filter(
             (event) =>
               event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
@@ -1084,6 +1087,12 @@ describe("CursorAdapterV2", () => {
           Stream.take(1),
           Stream.runForEach(() =>
             Effect.withFiber((fiber) => {
+              // The ended turn's thread state lands before its end, never on top of the next turn's.
+              threadSettledFirst = seen.some(
+                (earlier) =>
+                  earlier.type === "provider_thread.updated" &&
+                  earlier.providerThread.lastRunOrdinal === 1,
+              );
               consumers.add(fiber);
               return Effect.exit(runtime.startTurn(turnInput(2))).pipe(
                 Effect.flatMap((exit) => Deferred.succeed(nextStart, exit)),
@@ -1098,6 +1107,7 @@ describe("CursorAdapterV2", () => {
         return yield* Deferred.await(nextStart);
       }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
       assert.isTrue(Exit.isSuccess(exit), `the next start failed: ${JSON.stringify(exit)}`);
+      assert.isTrue(threadSettledFirst);
     }).pipe(
       Effect.scoped,
       Effect.provide(

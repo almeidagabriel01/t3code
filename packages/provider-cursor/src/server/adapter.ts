@@ -2173,7 +2173,22 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           yield* completeReasoning(input.context);
           yield* completeAssistant(input.context);
-          // The server starts the next turn on the terminal event, so free the slot first.
+          // The server starts the next turn on the terminal event, so this turn's thread state
+          // settles and the slot frees first.
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerThread: {
+              ...input.context.input.providerThread,
+              providerSessionId: session.id,
+              status: "active",
+              firstRunOrdinal:
+                input.context.input.providerThread.firstRunOrdinal ??
+                input.context.input.runOrdinal,
+              lastRunOrdinal: input.context.input.runOrdinal,
+              updatedAt: completedAt,
+            },
+          });
           if (input.status === "interrupted" && input.context.prompt !== undefined) {
             yield* Ref.set(interruptedPrompt, {
               agent: input.context.run.agentId,
@@ -2191,20 +2206,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               status: input.status,
               completedAt,
             }),
-          });
-          yield* emitProviderEvent({
-            type: "provider_thread.updated",
-            driver: CursorAgentSdk.CURSOR_PROVIDER,
-            providerThread: {
-              ...input.context.input.providerThread,
-              providerSessionId: session.id,
-              status: "active",
-              firstRunOrdinal:
-                input.context.input.providerThread.firstRunOrdinal ??
-                input.context.input.runOrdinal,
-              lastRunOrdinal: input.context.input.runOrdinal,
-              updatedAt: completedAt,
-            },
           });
           const threadDisposition = input.threadDisposition ?? "reusable";
           yield* emitProviderEvent(
