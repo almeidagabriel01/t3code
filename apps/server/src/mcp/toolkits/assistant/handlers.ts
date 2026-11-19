@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   type Assistant,
   assistantEffectiveProjectIds,
+  type AssistantEnvironmentPreference,
   type AssistantError,
   assistantIdFromThreadId,
   type AutonomyError,
@@ -11,7 +12,9 @@ import {
   type AssistantTeam,
   type AssistantToolAccess,
   type AssistantsUpdateInput,
+  type EnvironmentId,
   OrchestratorMcpFailure,
+  type PeerLink,
   type ProjectId,
   runtimeModeForToolAccess,
   type ThreadId,
@@ -26,8 +29,10 @@ import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
 import * as ChannelOutbox from "../../../channels/ChannelOutbox.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import { runtimeModeRank } from "../../delegatedTaskModes.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
 import { requireUserTurn } from "../../turnOrigin.ts";
@@ -36,10 +41,87 @@ import { type AssistantParameters, AssistantToolkit } from "./tools.ts";
 
 type Out = Record<string, Schema.Json>;
 
+const invalid = (message: string) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message });
+
+/** What a stored environment default can name here: this server, its stored links, or "auto". */
+interface Environments {
+  readonly localId: EnvironmentId;
+  readonly enabled: boolean;
+  readonly links: ReadonlyArray<PeerLink>;
+}
+
+/** Stored links only: reading a default never asks a peer whether it answers. */
+const environments = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  const links = yield* PeerLinks.PeerLinks;
+  return {
+    localId: scope.environmentId,
+    enabled: yield* links.enabled,
+    links: yield* links.stored.pipe(Effect.orElseSucceed((): ReadonlyArray<PeerLink> => [])),
+  } satisfies Environments;
+});
+
+const isLocal = (preference: string, view: Environments) =>
+  preference === "local" || preference === view.localId;
+
+const environmentLabel = (preference: AssistantEnvironmentPreference, view: Environments) =>
+  isLocal(preference, view)
+    ? "Local"
+    : preference === "auto"
+      ? "Auto"
+      : (view.links.find((link) => link.environmentId === preference)?.label ?? preference);
+
+/** null: none set, so its work runs here (or, in a group's thread, on the group's default). */
+const environmentOf = (
+  preference: AssistantEnvironmentPreference | null | undefined,
+  view: Environments,
+): Schema.Json =>
+  preference == null
+    ? null
+    : {
+        value: preference,
+        label: environmentLabel(preference, view),
+        state: isLocal(preference, view)
+          ? "ok"
+          : !view.enabled
+            ? "linked_environments_off"
+            : preference === "auto" || view.links.some((link) => link.environmentId === preference)
+              ? "ok"
+              : "unavailable",
+      };
+
+/** Accepts "local", "auto", this server's id, or a link's id or label; stores the id. */
+const pickEnvironment = (
+  wanted: string | null | undefined,
+  view: Environments,
+): Effect.Effect<AssistantEnvironmentPreference | null | undefined, OrchestratorMcpFailure> => {
+  if (wanted == null) return Effect.succeed(wanted);
+  const trimmed = wanted.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === "local" || lower === "auto") return Effect.succeed(lower);
+  if (trimmed === view.localId) return Effect.succeed(view.localId);
+  const byId = view.links.find((link) => link.environmentId === trimmed);
+  const byLabel = view.links.filter((link) => link.label.toLowerCase() === lower);
+  const link = byId ?? (byLabel.length === 1 ? byLabel[0] : undefined);
+  if (link !== undefined) return Effect.succeed(link.environmentId);
+  const options = [
+    'Local ("local")',
+    ...view.links.map((each) => `${each.label} ("${each.environmentId}")`),
+    'Auto ("auto")',
+  ];
+  return Effect.fail(
+    invalid(
+      `"${trimmed}" is not this server or one of its linked environments. Use one of: ${options.join(", ")}.`,
+    ),
+  );
+};
+
 const brief = (
   assistant: Assistant,
   all: ReadonlyArray<Assistant>,
   teams: ReadonlyArray<AssistantTeam>,
+  view: Environments,
 ): Out => ({
   assistantId: assistant.id,
   handle: assistant.handle,
@@ -73,6 +155,7 @@ const brief = (
           providerInstanceId: assistant.defaultModelSelection.instanceId,
           model: assistant.defaultModelSelection.model,
         },
+  defaultEnvironment: environmentOf(assistant.defaultEnvironment, view),
   teams: teams
     .filter((team) => team.memberIds.includes(assistant.id))
     .map((team) => ({
@@ -80,12 +163,10 @@ const brief = (
       members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
       lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
       projectIds: [...team.projectIds],
+      defaultEnvironment: environmentOf(team.defaultEnvironment, view),
     })),
   archived: assistant.archivedAt !== null,
 });
-
-const invalid = (message: string) =>
-  new OrchestratorMcpFailure({ code: "invalid_request", message });
 
 const failure = (error: AssistantError) =>
   error.reason === "storage" ? unavailable() : invalid(error.message);
@@ -116,11 +197,18 @@ const read = Effect.fn("mcp.assistant.read")(function* (input: AssistantParamete
   const assistants = yield* AssistantService.AssistantService;
   const all = yield* assistants.list.pipe(Effect.mapError(unavailable));
   const teams = yield* assistants.teams.pipe(Effect.mapError(unavailable));
+  const view = yield* environments;
   if (input.action === "list")
-    return { assistants: all.map((assistant) => brief(assistant, all, teams)) } satisfies Out;
+    return {
+      assistants: all.map((assistant) => brief(assistant, all, teams, view)),
+    } satisfies Out;
   const found = yield* find(all, input.handle, "read");
   const { tasks, truncated } = yield* assistants.tasksOf(found.id as AssistantId);
-  return { ...brief(found, all, teams), tasks, ...(truncated ? { tasksTruncated: true } : {}) };
+  return {
+    ...brief(found, all, teams, view),
+    tasks,
+    ...(truncated ? { tasksTruncated: true } : {}),
+  };
 });
 
 /** Only active assistants can be named; the first handle that is not one is reported. */
@@ -194,7 +282,8 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   const all = yield* assistants.list.pipe(Effect.mapError(unavailable));
   const teams = yield* assistants.teams.pipe(Effect.mapError(unavailable));
   const key = `${caller.scope.requestNamespace}:${input.clientRequestId?.trim() || `auto:${sha(input)}`}`;
-  const show = (assistant: Assistant) => brief(assistant, all, teams);
+  const view = yield* environments;
+  const show = (assistant: Assistant) => brief(assistant, all, teams, view);
   const done = (status: string, assistant: Assistant): Out => ({
     status,
     assistant: show(assistant),
@@ -225,6 +314,13 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
     (input.projectIds !== undefined || input.projectId !== undefined)
   )
     yield* requireUserTurn(caller, "change which projects an assistant may work in");
+  // Where work runs spends the user's machines, so only the user moves it.
+  if (input.action === "update" && input.defaultEnvironment !== undefined)
+    yield* requireUserTurn(caller, "change where an assistant's work runs");
+  const defaultEnvironment =
+    input.action === "update" || input.action === "group_update"
+      ? yield* pickEnvironment(input.defaultEnvironment, view)
+      : undefined;
   /** One chat line per change, so a repeat of the same call adds none. */
   const announce = (team: AssistantTeam, lines: ReadonlyArray<string>) =>
     caller.caller === undefined
@@ -440,6 +536,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
         ...(input.role === undefined ? {} : { role: input.role }),
         ...(avatar === undefined ? {} : { avatar }),
         ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
+        ...(defaultEnvironment === undefined ? {} : { defaultEnvironment }),
         // Only the mode changes; its rules, projects and channels stay as the user set them.
         ...(input.notifications === undefined && input.onProblem === undefined
           ? {}
@@ -472,7 +569,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       yield* announce(team, [
         `created the group "${team.name}"${members.length === 0 ? "" : ` with ${listOf(team.memberIds)}`}`,
       ]);
-      return { status: "created", group: teamBrief(team, all) };
+      return { status: "created", group: teamBrief(team, all, view) };
     }
     default: {
       const wanted = input.group?.trim().toLowerCase();
@@ -514,6 +611,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           ...(input.removeProjects === undefined
             ? {}
             : { removeProjectIds: input.removeProjects as ReadonlyArray<ProjectId> }),
+          ...(defaultEnvironment === undefined ? {} : { defaultEnvironment }),
         })
         .pipe(Effect.mapError(failure));
       const gained = updated.projectIds.filter((id) => !team.projectIds.includes(id));
@@ -533,16 +631,29 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
                 ? "removed the group's lead"
                 : `made ${nameOf(updated.leadId)} the group's lead`,
             ]),
+        // Last, so the lines above keep their request ids.
+        ...((updated.defaultEnvironment ?? null) === (team.defaultEnvironment ?? null)
+          ? []
+          : [
+              updated.defaultEnvironment == null
+                ? "cleared the group's default environment"
+                : `set the group's default environment to ${environmentLabel(updated.defaultEnvironment, view)}`,
+            ]),
       ]);
-      return { status: "updated", group: teamBrief(updated, all) };
+      return { status: "updated", group: teamBrief(updated, all, view) };
     }
   }
 });
 
-const teamBrief = (team: AssistantTeam, all: ReadonlyArray<Assistant>): Out => ({
+const teamBrief = (
+  team: AssistantTeam,
+  all: ReadonlyArray<Assistant>,
+  view: Environments,
+): Out => ({
   groupId: team.id,
   name: team.name,
   projectIds: [...team.projectIds],
+  defaultEnvironment: environmentOf(team.defaultEnvironment, view),
   members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
   lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
 });
