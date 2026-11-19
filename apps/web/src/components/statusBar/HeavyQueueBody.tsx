@@ -430,7 +430,9 @@ function QueueRow({
     ...(onLinux && running
       ? []
       : [{ label: "Usage", value: usageLine(entry, state) ?? "Unknown" }]),
-    ...(reason === undefined ? [] : [{ label: "Why waiting", value: reason }]),
+    ...(reason === undefined
+      ? []
+      : [{ label: running ? "Why here" : "Why waiting", value: reason }]),
     ...(entry.note === undefined ? [] : [{ label: "Note", value: entry.note }]),
     ...(entry.unconfirmed === true
       ? [{ label: "Earlier run", value: RUNNER_UNCONFIRMED_NOTE }]

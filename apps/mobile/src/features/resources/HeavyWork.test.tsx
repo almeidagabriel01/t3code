@@ -352,7 +352,8 @@ describe("HeavyWorkSection", () => {
       ],
       {
         rules: [{ root: "/work/app", priority: "first" }],
-        reasons: { b: "letting the last one ramp up" },
+        // A running job's reason says why it runs here, a waiter's why it waits.
+        reasons: { a: "Pinned to this Mac: --runner mac", b: "letting the last one ramp up" },
         estimates: { c: { cpu: 2, memoryBytes: GIB, durationMs: 60_000 } },
         // A running row has no place in line, so its stale order never shows.
         order: {
@@ -381,6 +382,7 @@ describe("HeavyWorkSection", () => {
         "Running1m",
         "PriorityProject: Always first · Low priority",
         "UsageUnknown",
+        "Why herePinned to this Mac: --runner mac",
         "Processpid 1",
       ].join(""),
     );
