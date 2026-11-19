@@ -557,25 +557,39 @@ export type StatusTeam = ZoneTeam & {
 
 /**
  * Group requests that wait on the user and belong to this assistant: the member the server names
- * as the request's owner, else the group's lead (its routing and project questions). Each tab
- * reports its oldest waiting request only.
+ * as the request's owner, else the group's lead (its routing and project questions). A request
+ * whose wait `listed` already holds (a Needs you item key, as `request:<env>:<id>`) counts there.
+ * An older server sends only each tab's oldest waiting request.
  */
 export function assistantTeamWaits(
   teams: ReadonlyArray<StatusTeam>,
   environmentId: string,
   assistantId: string,
+  listed: ReadonlySet<string> = new Set(),
 ): number {
   let waits = 0;
   for (const { environmentId: teamEnvironmentId, team } of teams) {
     if (teamEnvironmentId !== environmentId) continue;
     for (const scope of team.chat?.scopes ?? []) {
       if (!scope.waiting) continue;
-      const owner = scope.waitingRequest?.assistantId ?? team.leadId;
-      if (owner === assistantId) waits += 1;
+      const requests = scope.waitingRequests ?? [
+        { assistantId: scope.waitingRequest?.assistantId ?? null, waitKeys: [] },
+      ];
+      for (const request of requests) {
+        if (request.waitKeys.some((key) => listed.has(waitItemKey(environmentId, key)))) continue;
+        if ((request.assistantId ?? team.leadId) === assistantId) waits += 1;
+      }
     }
   }
   return waits;
 }
+
+/** A group wait key (`decision:<id>`) as the Needs you item key of the same wait. */
+const waitItemKey = (environmentId: string, waitKey: string) => {
+  const colon = waitKey.indexOf(":");
+  if (colon < 0) return waitKey;
+  return `${waitKey.slice(0, colon)}:${environmentId}:${waitKey.slice(colon + 1)}`;
+};
 
 /**
  * Every assistant's `assistantStatus` at once, from the shared state both clients hold: `items` is
@@ -597,9 +611,10 @@ export function assistantStatusOf<
 }) {
   const { shells, sites, teams } = input;
   const items = needsYouItems({ shells, decisions: input.decisions, ownerOf: input.ownerOf });
+  const listed = new Set(items.map((item) => item.key));
   const needsYou = (environmentId: string, assistantId: string) =>
     countWaits(items, { assistantKeys: new Set([keyOf(environmentId, assistantId)]) }) +
-    assistantTeamWaits(teams, environmentId, assistantId);
+    assistantTeamWaits(teams, environmentId, assistantId, listed);
   const read = (environmentId: string, assistantId: string, presence: AssistantPresence) =>
     assistantStatus({
       presence,

@@ -686,13 +686,78 @@ describe("a group request that waits on the user", () => {
     expect(status.group(teams[0]!, [lead, qa])?.kind === "needs").toBe(groupNeeds > 0);
   });
 
-  it("counts one wait per waiting tab it owns", () => {
+  it("counts one wait per waiting tab it owns from an older server", () => {
     const teams = [team([scope(true, null), scope(true, "lead"), scope(true, "qa")])];
     expect([
       assistantTeamWaits(teams, "e", "lead"),
       assistantTeamWaits(teams, "e", "qa"),
       assistantTeamWaits(teams, "other", "lead"),
     ]).toEqual([2, 1, 0]);
+  });
+
+  const requests = (...owners: ReadonlyArray<readonly [string | null, ...string[]]>) => ({
+    ...scope(true, owners[0]![0]),
+    waitingRequests: owners.map(([owner, ...waitKeys]) => ({
+      assistantId: owner === null ? null : AssistantId.make(owner),
+      waitKeys,
+    })),
+  });
+  // qa's own group thread may hold a decision d1 and a pending request p1, listed in Needs you.
+  const qaThread = (pending: boolean) =>
+    ({
+      ...(idle("qa") as object),
+      id: "group:qa",
+      pendingRequest: pending
+        ? { id: "p1", kind: "command", createdAt: "2026-01-01T00:00:01.000Z" }
+        : null,
+    }) as never;
+  const d1 = {
+    environmentId: "e",
+    decision: { ...decision("d1").decision, fromThreadId: "group:qa" },
+  };
+  it.each([
+    [
+      "a member's decision mirrored in the group",
+      [d1],
+      false,
+      [requests(["qa", "decision:d1"])],
+      1,
+      0,
+    ],
+    ["a member's request mirrored in the group", [], true, [requests(["qa", "request:p1"])], 1, 0],
+    [
+      "two distinct waits of a member",
+      [d1],
+      false,
+      [requests(["qa", "decision:d1"], ["qa", "decision:d9"])],
+      2,
+      0,
+    ],
+    // ProOps · Dev: the lead's routing question in one tab and two project questions in General.
+    [
+      "every request of the lead, not every tab",
+      [],
+      false,
+      [requests([null]), requests([null], [null])],
+      0,
+      3,
+    ],
+  ] as const)("%s", (_name, decisions, pending, scopes, qaNeeds, leadNeeds) => {
+    const status = assistantStatusOf({
+      shells: [idle("lead"), qaThread(pending)],
+      decisions,
+      ownerOf: (shell) =>
+        shell.id === "group:qa"
+          ? { kind: "assistant", assistantKey: "e:qa", teamKey: "e:dev" }
+          : { kind: "project" },
+      sites: [],
+      reachable: () => true,
+      teams: [team(scopes)],
+    });
+    expect([status.needsYou("e", "qa"), status.needsYou("e", "lead")]).toEqual([
+      qaNeeds,
+      leadNeeds,
+    ]);
   });
 });
 
