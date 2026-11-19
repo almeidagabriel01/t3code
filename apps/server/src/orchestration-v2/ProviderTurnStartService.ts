@@ -272,7 +272,7 @@ export const layer: Layer.Layer<
     // so time spent behind earlier effects on the thread does not use it up.
     const firstWaitAt = new Map<RunId, number>();
     // A stopped run's native turn can outlive its Stop and hold the provider's turn slot. The start
-    // waits outside the worker slot, in place in its thread's queue; past the window it runs anyway.
+    // waits outside the worker slot, in place in its thread's queue, and reports "stuck" past the window.
     const awaitStoppedTurns = Effect.fn("ProviderTurnStartService.awaitStoppedTurns")(
       function* (input: {
         readonly threadId: ThreadId;
@@ -581,15 +581,27 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (input.mayWaitForStoppedTurns === true) {
-        yield* awaitStoppedTurns({
+      if (
+        input.mayWaitForStoppedTurns === true &&
+        (yield* awaitStoppedTurns({
           threadId: input.threadId,
           runId,
           providerThread,
           providerSessionId: providerThread.providerSessionId,
           providerTurns: projection.providerTurns,
           attempts: projection.attempts,
+        })) === "stuck"
+      ) {
+        yield* settleStartFailure({
+          signal: "stopped-turn-still-running",
+          title: "Previous turn still running",
+          error: new ProviderTurnStartError({
+            runId,
+            cause: `Run ${runId} found a stopped provider turn still running after ${STOPPED_TURN_WAIT_MS} ms.`,
+          }),
+          message: "The stopped turn has not ended yet. Send the message again once it ends.",
         });
+        return;
       }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =

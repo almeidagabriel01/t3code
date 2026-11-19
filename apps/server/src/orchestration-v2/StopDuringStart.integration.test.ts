@@ -344,6 +344,9 @@ const stopDuringStart = (
             failed: after.turnItems.some(
               (item) => item.runId === after.runs[1]?.id && item.type === "error",
             ),
+            failure: after.turnItems.find(
+              (item) => item.runId === after.runs[1]?.id && item.type === "error",
+            ),
           };
         });
         if (scenario === "stop-in-window") {
@@ -374,11 +377,15 @@ const stopDuringStart = (
           assert.isFalse((yield* nextOutcome).failed, "still inside the ten-second window");
           yield* TestClock.adjust("2 seconds");
           yield* worker.drain();
-          // Past the window the start runs and the provider's refusal is reported.
-          const { after, failed } = yield* nextOutcome;
+          // Past the window the start fails without asking the provider, saying why.
+          const { after, failure } = yield* nextOutcome;
           assert.lengthOf(started, 1);
-          assert.isTrue(failed);
           assert.equal(after.runs[1]?.status, "failed");
+          assert.equal(failure?.type, "error");
+          assert.equal(
+            failure?.type === "error" ? failure.failure?.message : undefined,
+            "The stopped turn has not ended yet. Send the message again once it ends.",
+          );
           return;
         }
 
