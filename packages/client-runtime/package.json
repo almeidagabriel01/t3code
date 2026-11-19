@@ -379,6 +379,10 @@
       "types": "./src/sidebarZones.ts",
       "default": "./src/sidebarZones.ts"
     },
+    "./workingConsumers": {
+      "types": "./src/workingConsumers.ts",
+      "default": "./src/workingConsumers.ts"
+    },
     "./assistantCluster": {
       "types": "./src/assistantCluster.ts",
       "default": "./src/assistantCluster.ts"
