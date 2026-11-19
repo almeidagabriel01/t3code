@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  assistantWorkHeadline,
   assistantMemories,
   assistantMemoryScopeKinds,
   assistantRetryPlan,
@@ -132,6 +133,88 @@ describe("assistantWorkStatus", () => {
       autonomyEnabled: false,
     });
     expect(status).toMatchObject({ title: "Its project is missing" });
+  });
+});
+
+describe("assistantWorkHeadline", () => {
+  const live = (mood: "idle" | "working" | "needs" | "failed", detail: string) =>
+    ({ mood, detail, since: null, reading: false, queued: 0 }) as const;
+  const ok = { ok: true } as const;
+  const down = {
+    ok: false,
+    severity: "blocked",
+    title: "Codex is not available",
+    detail: "Its provider is off, not installed or down.",
+    fix: null,
+  } as const;
+  it.each([
+    [
+      "ready only with nothing pending",
+      ok,
+      live("idle", "Idle"),
+      true,
+      ["ready", "Ready to work", "Nothing is in its way."],
+    ],
+    ["needs you beats ready", ok, live("needs", "Needs you"), true, ["needs", "Needs you", null]],
+    [
+      "its own question says what it asked",
+      ok,
+      live("needs", "Asked you a question"),
+      true,
+      ["needs", "Needs you", "Asked you a question"],
+    ],
+    [
+      "needs you beats a blocker",
+      down,
+      live("needs", "Needs you"),
+      true,
+      ["needs", "Needs you", null],
+    ],
+    [
+      "a blocker beats work",
+      down,
+      live("working", "Working"),
+      true,
+      ["blocked", down.title, down.detail],
+    ],
+    [
+      "work beats ready",
+      ok,
+      live("working", "Fixing the login"),
+      true,
+      ["working", "Working", "Fixing the login"],
+    ],
+    [
+      "work beats a paused autonomy",
+      { ...down, severity: "limited" },
+      live("working", "Working"),
+      true,
+      ["working", "Working", null],
+    ],
+    [
+      "a failed run says so",
+      ok,
+      live("failed", "Last run failed"),
+      true,
+      ["failed", "Last run failed", null],
+    ],
+    [
+      "unknown connection changes nothing",
+      ok,
+      live("idle", "Idle"),
+      null,
+      ["ready", "Ready to work", "Nothing is in its way."],
+    ],
+    [
+      "a disconnected environment wins",
+      down,
+      live("needs", "Needs you"),
+      false,
+      ["offline", "This environment is disconnected", null],
+    ],
+  ] as const)("%s", (_name, status, presence, reachable, expected) => {
+    const headline = assistantWorkHeadline(status, presence, reachable);
+    expect([headline.kind, headline.title, headline.detail]).toEqual(expected);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   assistantFace,
   assistantGroupThreadsOf,
   assistantPresence,
+  assistantPresenceOf,
   assistantQueuedLabel,
   assistantRobotLook,
   assistantRobotSpec,
@@ -255,6 +256,16 @@ describe("assistantPresence with group threads", () => {
     ];
     expect(assistantGroupThreadsOf(shells, "e1", "ada")).toEqual([shells[0]]);
     expect(shells.map(assistantGroupOwnerKey)).toEqual(["e1:ada", undefined, "e2:ada", "e1:adam"]);
+  });
+
+  it.each([
+    ["idle own chat, working group", { id: "ada", threadId: "assistant:ada:1" }, "working"],
+    ["no conversation yet, working group", { id: "ada", threadId: null }, "working"],
+    ["another assistant", { id: "bo", threadId: "assistant:bo:1" }, "idle"],
+    ["a deleted assistant", null, "idle"],
+  ] as const)("reads %s as the sidebar does", (_name, assistant, mood) => {
+    const own = shell({ id: "assistant:ada:1" as never, title: "Ada" });
+    expect(assistantPresenceOf(assistant, environmentId, [own, working]).mood).toBe(mood);
   });
 });
 

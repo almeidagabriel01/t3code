@@ -7,10 +7,12 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -113,6 +115,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
         yield* sessions.awaitInvalidation(client.sessionId);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("closes a live socket when another process revokes its session", () =>
+    Effect.gen(function* () {
+      const republished: Array<string> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          if (options.name === "SessionStore.republishExternalRevocations") {
+            republished.push(options.name);
+          }
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-external-revoke-" });
+        const openStore = Effect.fn(function* () {
+          const context = yield* Layer.build(yield* makeDiskSessionStoreLayer(baseDir));
+          return Context.get(context, SessionStore.SessionStore);
+        });
+        const server = yield* openStore();
+        const revoked = yield* server.issue({ subject: "revoked" });
+        const kept = yield* server.issue({ subject: "kept" });
+        const revokedSocket = yield* server
+          .awaitInvalidation(revoked.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const keptClosed = yield* Deferred.make<void>();
+        yield* server
+          .awaitInvalidation(kept.sessionId)
+          .pipe(
+            Effect.andThen(Deferred.succeed(keptClosed, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        // Without outside writes the watcher only checks the version.
+        yield* TestClock.adjust(Duration.seconds(10));
+        expect(republished).toHaveLength(0);
+
+        // The CLI revokes through its own store and connection.
+        const cli = yield* openStore();
+        yield* cli.revoke(revoked.sessionId);
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* Fiber.join(revokedSocket);
+        expect(republished.length).toBeGreaterThan(0);
+        expect(yield* Deferred.isDone(keptClosed)).toBe(false);
+      }).pipe(Effect.scoped, Effect.withTracer(tracer));
+    }),
   );
 
   it.effect("expires a connected session at its credential deadline", () =>

@@ -31,6 +31,7 @@ import {
 import { ProjectActionsList } from "./ProjectActionsList";
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 export function ProjectActionsSettings() {
@@ -108,13 +109,15 @@ export function ProjectActionsSettings() {
   };
 
   return (
-    <SettingsSection id="project-actions" title="Actions">
+    <SettingsSection
+      id={searchableSetting("project-actions").id}
+      title={settingCopy("project-actions").title}
+    >
       <SettingsRow
         serverScoped
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
-        title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        {...settingCopy("project-actions")}
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
@@ -173,7 +176,9 @@ export function ProjectActionsSettings() {
       />
       {mixed ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- mixed-state notice, not a setting
           title="Different actions across environments"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- mixed-state notice, not a setting
           description="Choose one environment to edit its list. Adding an action here adds it on every selected environment."
         />
       ) : (
@@ -186,7 +191,9 @@ export function ProjectActionsSettings() {
       )}
       {t3File.status === "invalid" ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
           title="t3.json is invalid"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
           description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
           className="text-warning"
         />

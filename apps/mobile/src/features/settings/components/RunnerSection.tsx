@@ -1,17 +1,23 @@
 import {
-  heavyModeLine,
   linuxLine,
   RUNNER_DEADLINE_LABEL,
+  RUNNER_FAILED_POLICY_LABEL,
   RUNNER_POLICY_LABEL,
-  RUNNER_WHERE_LABEL,
   RUNNER_SETTING_COPY,
+  RUNNER_WHERE_LABEL,
+  runnerEverythingOn,
+  runnerFieldIdle,
+  runnerModeFieldApplies,
+  runnerWhereLine,
+  type RunnerChoices,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
+  RUNNER_DEFAULTS,
   RUNNER_LIMITS,
   RUNNER_PROJECT_KEYS,
   RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerUnavailablePolicy,
-  RunnerWhere,
   runnerHostError,
   runnerNumberError,
   runnerPatterns,
@@ -19,6 +25,7 @@ import {
   type EnvironmentId,
   type RunnerKey,
   type RunnerNumberKey,
+  type RunnerWhere,
   type ServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -27,21 +34,38 @@ import { View } from "react-native";
 
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
+import { Chip } from "../../../components/ui/Chip";
+import { IconButton } from "../../../components/ui/IconButton";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
+import { SegmentedControl } from "../../../components/ui/SegmentedControl";
 import { useHeavyQueueState } from "../../../state/heavyQueue";
 import { SettingsActionRow } from "./SettingsActionRow";
 import { SettingsSection } from "./SettingsSection";
+import { RUNNER_SECTION_COPY } from "./runnerSectionCopy";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 export type RunnerProjectKey = (typeof RUNNER_PROJECT_KEYS)[number];
 type Check = { readonly error: string } | { readonly patch: ServerSettingsPatch | null };
+type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 
 const patchOf = (key: RunnerKey, value: unknown) => ({ [key]: value }) as ServerSettingsPatch;
 const isProjectKey = (key: RunnerKey): key is RunnerProjectKey =>
   RUNNER_PROJECT_KEYS.includes(key as RunnerProjectKey);
+const UNIT: Record<(typeof RUNNER_LIMITS)[RunnerNumberKey]["unit"], string> = {
+  minutes: "min",
+  jobs: "jobs",
+  seconds: "s",
+  failures: "failures",
+  percent: "%",
+};
 const range = (key: RunnerNumberKey) =>
   `${RUNNER_LIMITS[key].min} to ${RUNNER_LIMITS[key].max} ${RUNNER_LIMITS[key].unit}.`;
+/** In the order the choice shows them: from all-local to all-remote. */
+const WHERE_OPTIONS = (Object.keys(RUNNER_WHERE_LABEL) as RunnerWhere[]).map((value) => ({
+  value,
+  label: RUNNER_WHERE_LABEL[value],
+}));
 
 /** A typed value, checked as typed and saved on end editing or when the screen closes. */
 function DraftField(props: {
@@ -49,8 +73,10 @@ function DraftField(props: {
   readonly description: string;
   readonly value: string;
   readonly disabled: boolean;
-  readonly multiline?: boolean;
+  readonly unit?: string;
   readonly numeric?: boolean;
+  /** A line under the field, such as the Linux status. */
+  readonly status?: string;
   /** Selected targets disagree: the field starts empty and any valid entry saves. */
   readonly mixed: boolean;
   readonly check: (text: string) => Check;
@@ -76,28 +102,106 @@ function DraftField(props: {
     <View className="gap-2 px-4 py-3">
       <Text className="text-base text-foreground">{props.label}</Text>
       <Text className="text-sm text-foreground-muted">{props.description}</Text>
-      <AppTextInput
-        key={props.mixed ? null : props.value}
-        accessibilityLabel={props.label}
-        defaultValue={props.mixed ? "" : props.value}
-        placeholder={props.mixed ? "Mixed" : undefined}
-        editable={!props.disabled}
-        multiline={props.multiline}
-        keyboardType={props.numeric ? "number-pad" : "default"}
-        autoCapitalize="none"
-        autoCorrect={false}
-        className={
-          props.multiline
-            ? "min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
-            : "min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
-        }
-        onChangeText={(text) => {
-          draft.current = { text, over: props.value };
-          const result = props.check(text);
-          setError("error" in result ? result.error : null);
-        }}
-        onEndEditing={commit}
-      />
+      <View className="flex-row items-center gap-2">
+        <AppTextInput
+          key={props.mixed ? null : props.value}
+          accessibilityLabel={props.label}
+          defaultValue={props.mixed ? "" : props.value}
+          placeholder={props.mixed ? "Mixed" : undefined}
+          editable={!props.disabled}
+          keyboardType={props.numeric ? "number-pad" : "default"}
+          autoCapitalize="none"
+          autoCorrect={false}
+          className="min-h-10 flex-1 rounded-xl px-3 py-2 text-base text-foreground"
+          onChangeText={(text) => {
+            draft.current = { text, over: props.value };
+            const result = props.check(text);
+            setError("error" in result ? result.error : null);
+          }}
+          onEndEditing={commit}
+        />
+        {props.unit === undefined ? null : (
+          <Text className="text-base text-foreground-muted">{props.unit}</Text>
+        )}
+      </View>
+      {error === null ? null : (
+        <Text className="text-sm text-danger-foreground" accessibilityRole="alert">
+          {error}
+        </Text>
+      )}
+      {error !== null || props.status === undefined ? null : (
+        <Text className="text-sm text-foreground-muted">{props.status}</Text>
+      )}
+    </View>
+  );
+}
+
+/** Commands as removable chips, with a field that adds one. */
+function CommandsField(props: {
+  readonly label: string;
+  readonly description: string;
+  readonly value: ReadonlyArray<string>;
+  readonly disabled: boolean;
+  readonly mixed: boolean;
+  readonly onSave: (next: ReadonlyArray<string>) => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const save = (next: ReadonlyArray<string>) => {
+    const patterns = runnerPatterns(next);
+    const problem = runnerPatternsError(patterns);
+    setError(problem);
+    if (problem === null) props.onSave(patterns);
+    return problem === null;
+  };
+  const add = () => {
+    const command = typed.trim();
+    if (command === "") return;
+    if (props.value.includes(command) || save([...props.value, command])) setTyped("");
+  };
+  return (
+    <View className="gap-2 px-4 py-3">
+      <Text className="text-base text-foreground">{props.label}</Text>
+      <Text className="text-sm text-foreground-muted">{props.description}</Text>
+      {props.mixed ? null : (
+        <>
+          <View className="flex-row flex-wrap gap-2">
+            {props.value.map((command) => (
+              <Chip
+                key={command}
+                label={command}
+                trailingIcon="xmark"
+                accessibilityLabel={`Remove ${command} from ${props.label}`}
+                disabled={props.disabled}
+                onPress={() => save(props.value.filter((candidate) => candidate !== command))}
+              />
+            ))}
+          </View>
+          <View className="flex-row items-center gap-2">
+            <AppTextInput
+              accessibilityLabel={`Add a command to ${props.label}`}
+              placeholder="Add command"
+              value={typed}
+              editable={!props.disabled}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="done"
+              className="min-h-10 flex-1 rounded-xl px-3 py-2 text-base text-foreground"
+              onChangeText={(text) => {
+                setTyped(text);
+                setError(null);
+              }}
+              onSubmitEditing={add}
+            />
+            <IconButton
+              icon="plus"
+              accessibilityLabel={`Add to ${props.label}`}
+              disabled={props.disabled || typed.trim() === ""}
+              onPress={add}
+            />
+          </View>
+        </>
+      )}
       {error === null ? null : (
         <Text className="text-sm text-danger-foreground" accessibilityRole="alert">
           {error}
@@ -114,15 +218,6 @@ const numberCheck =
     const error = runnerNumberError(key, value);
     if (error !== null) return { error };
     return { patch: value === saved ? null : patchOf(key, value) };
-  };
-
-const patternsCheck =
-  (key: "runnerLinuxCommands" | "runnerMacOnly", saved: ReadonlyArray<string> | null) =>
-  (text: string): Check => {
-    const next = runnerPatterns(text.split("\n"));
-    const error = runnerPatternsError(next);
-    if (error !== null) return { error };
-    return { patch: next.join("\n") === saved?.join("\n") ? null : patchOf(key, next) };
   };
 
 const hostCheck =
@@ -147,16 +242,32 @@ export function RunnerSection(props: {
   readonly write: (patch: ServerSettingsPatch) => void;
   /** Drops the project's own value so it inherits the environment's again. */
   readonly reset: (key: RunnerProjectKey) => void;
-  /** Several machines selected: each machine's queue section carries its own status instead. */
+  /** Several machines selected: each machine's queue section carries its own Linux status. */
   readonly severalMachines?: boolean;
 }) {
   const { settings, projectSelected } = props;
   const state = useHeavyQueueState(props.environmentId);
+  const [checksOpen, setChecksOpen] = useState(false);
+  const choice = <K extends keyof RunnerChoices>(key: K) =>
+    (props.mixed(key) ? null : settings[key]) as RunnerChoices[K];
+  const choices: RunnerChoices = {
+    runnerEnabled: choice("runnerEnabled"),
+    runnerWhere: choice("runnerWhere"),
+    runnerUnavailable: choice("runnerUnavailable"),
+    runnerDropped: choice("runnerDropped"),
+  };
+  const everything = props.mixed("runnerLinuxEverything") ? null : settings.runnerLinuxEverything;
+  const shown = (...keys: ReadonlyArray<RunnerKey>) =>
+    keys.some(
+      (key) =>
+        runnerFieldIdle(key, choices) === null &&
+        runnerModeFieldApplies(key, choices.runnerWhere, everything),
+    );
   const scoped = (key: RunnerKey, text: string) => {
     if (!projectSelected) return text;
     if (!isProjectKey(key))
-      return `${text} Environment-wide setting. Select All projects to change it.`;
-    return `${text} ${props.overridden(key) ? "Set for this project." : "Inherited from the environment."}`;
+      return `${text} Environment-wide setting. Select All projects to change it.`.trim();
+    return `${text} ${props.overridden(key) ? "Set for this project." : "Inherited from the environment."}`.trim();
   };
   const resetRow = (key: RunnerProjectKey) =>
     projectSelected && props.overridden(key) ? (
@@ -167,9 +278,7 @@ export function RunnerSection(props: {
         onPress={() => props.reset(key)}
       />
     ) : null;
-  const choices = <
-    K extends "runnerWhere" | "runnerUnavailable" | "runnerDropped" | "runnerDeadlineAction",
-  >(
+  const policy = <K extends "runnerUnavailable" | "runnerDropped" | "runnerDeadlineAction">(
     key: K,
     icon: AppSymbolName,
     options: ReadonlyArray<ServerSettings[K]>,
@@ -199,6 +308,7 @@ export function RunnerSection(props: {
         label={RUNNER_SETTING_COPY[key].title}
         description={scoped(key, `${RUNNER_SETTING_COPY[key].description} ${range(key)}`)}
         value={String(settings[key])}
+        unit={UNIT[RUNNER_LIMITS[key].unit]}
         disabled={props.disabledFor(key)}
         numeric
         mixed={props.mixed(key)}
@@ -208,39 +318,58 @@ export function RunnerSection(props: {
       {isProjectKey(key) ? resetRow(key) : null}
     </>
   );
-  const patterns = (key: "runnerLinuxCommands" | "runnerMacOnly") => (
+  const commands = (key: PatternKey) => (
     <>
-      <DraftField
+      <CommandsField
         label={RUNNER_SETTING_COPY[key].title}
-        description={scoped(key, RUNNER_SETTING_COPY[key].description)}
-        value={settings[key].join("\n")}
+        description={scoped(
+          key,
+          props.mixed(key)
+            ? `${RUNNER_SETTING_COPY[key].description} Differs across the selected targets.`
+            : RUNNER_SETTING_COPY[key].description,
+        )}
+        value={settings[key]}
         disabled={props.disabledFor(key)}
-        multiline
         mixed={props.mixed(key)}
-        check={patternsCheck(key, props.mixed(key) ? null : settings[key])}
-        onSave={props.write}
+        onSave={(next) => props.write(patchOf(key, next))}
+      />
+      {props.mixed(key) ? (
+        <SettingsActionRow
+          icon="arrow.counterclockwise"
+          label="Use the defaults everywhere"
+          disabled={props.disabledFor(key)}
+          onPress={() => props.write(patchOf(key, RUNNER_DEFAULTS[key]))}
+        />
+      ) : null}
+      {resetRow(key)}
+    </>
+  );
+  const toggle = (key: "runnerLinuxEverything" | "runnerBringBack", icon: AppSymbolName) => (
+    <>
+      <SettingsSwitchRow
+        icon={icon}
+        label={RUNNER_SETTING_COPY[key].title}
+        subtitle={
+          scoped(
+            key,
+            // With Everything on, the Where line already says what it does.
+            key === "runnerLinuxEverything" && runnerEverythingOn(choices.runnerWhere, everything)
+              ? ""
+              : RUNNER_SETTING_COPY[key].description,
+          ) || undefined
+        }
+        value={props.mixed(key) ? null : settings[key]}
+        disabled={props.disabledFor(key)}
+        onValueChange={(value) => props.write(patchOf(key, value))}
       />
       {resetRow(key)}
     </>
   );
+  const where = choices.runnerWhere;
+  const whereDisabled = props.disabledFor("runnerWhere");
   return (
     <>
-      <SettingsSection title="Runner">
-        {props.severalMachines === true ? null : (
-          <ListRowLayout
-            icon="arrow.left.arrow.right"
-            label={heavyModeLine({
-              queueEnabled: state.enabled,
-              queuePaused: state.paused,
-              runnerEnabled: settings.runnerEnabled,
-              where: settings.runnerWhere,
-              overflow: settings.runnerOverflow,
-            })}
-          />
-        )}
-        {props.severalMachines === true || state.linux === null ? null : (
-          <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
-        )}
+      <SettingsSection title={RUNNER_SECTION_COPY.runner.title}>
         <SettingsSwitchRow
           icon="desktopcomputer"
           label={RUNNER_SETTING_COPY.runnerEnabled.title}
@@ -250,50 +379,117 @@ export function RunnerSection(props: {
           onValueChange={(value) => props.write({ runnerEnabled: value })}
         />
         {resetRow("runnerEnabled")}
-        {choices("runnerWhere", "laptopcomputer", RunnerWhere.literals, RUNNER_WHERE_LABEL)}
-        {number("runnerOverflow")}
       </SettingsSection>
-      <SettingsSection title="Runner commands">
-        {patterns("runnerLinuxCommands")}
-        {patterns("runnerMacOnly")}
-      </SettingsSection>
-      <SettingsSection title="When Linux is unavailable">
-        {choices(
-          "runnerUnavailable",
-          "wifi.slash",
-          RunnerUnavailablePolicy.literals,
-          RUNNER_POLICY_LABEL,
-        )}
-        {choices(
-          "runnerDropped",
-          "exclamationmark.triangle",
-          RunnerUnavailablePolicy.literals,
-          RUNNER_POLICY_LABEL,
-        )}
-        {number("runnerAskMinutes")}
-        {choices(
-          "runnerDeadlineAction",
-          "timer",
-          RunnerDeadlineAction.literals,
-          RUNNER_DEADLINE_LABEL,
-        )}
-      </SettingsSection>
-      <SettingsSection title="Linux PC" footer="These apply to every project on this environment.">
-        <DraftField
-          label={RUNNER_SETTING_COPY.runnerHost.title}
-          description={scoped("runnerHost", RUNNER_SETTING_COPY.runnerHost.description)}
-          value={settings.runnerHost}
-          disabled={props.disabledFor("runnerHost")}
-          mixed={props.mixed("runnerHost")}
-          check={hostCheck(props.mixed("runnerHost") ? null : settings.runnerHost)}
-          onSave={props.write}
-        />
-        {number("runnerLinuxSlots")}
-        {number("runnerHeartbeatSeconds")}
-        {number("runnerOfflineAfterFailures")}
-        {number("runnerSshTimeoutSeconds")}
-        {number("runnerStopWaitSeconds")}
-      </SettingsSection>
+      {shown("runnerWhere", "runnerLinuxCommands", "runnerMacOnly") ? (
+        <SettingsSection title={RUNNER_SECTION_COPY.whereJobsRun.title}>
+          <View
+            className={whereDisabled ? "gap-2 px-4 py-3 opacity-45" : "gap-2 px-4 py-3"}
+            pointerEvents={whereDisabled ? "none" : "auto"}
+          >
+            <Text className="text-base text-foreground">
+              {RUNNER_SETTING_COPY.runnerWhere.title}
+            </Text>
+            <SegmentedControl
+              variant="card"
+              options={WHERE_OPTIONS}
+              selected={where}
+              onSelect={(value) => props.write({ runnerWhere: value })}
+            />
+            <Text className="text-sm text-foreground-muted">
+              {scoped("runnerWhere", runnerWhereLine(where, everything))}
+            </Text>
+          </View>
+          {resetRow("runnerWhere")}
+          {shown("runnerMacFirstAfter") ? number("runnerMacFirstAfter") : null}
+          {shown("runnerLinuxEverything") ? toggle("runnerLinuxEverything", "server.rack") : null}
+          {shown("runnerLinuxCommands") ? commands("runnerLinuxCommands") : null}
+          {shown("runnerMacOnly") ? commands("runnerMacOnly") : null}
+          {toggle("runnerBringBack", "tray.and.arrow.down")}
+        </SettingsSection>
+      ) : null}
+      {shown(
+        "runnerHost",
+        "runnerLinuxSlots",
+        "runnerLinuxCpuCeilingPercent",
+        "runnerLinuxMemoryFloorPercent",
+      ) ? (
+        <SettingsSection
+          title={RUNNER_SECTION_COPY.linuxPc.title}
+          footer={RUNNER_SECTION_COPY.linuxPc.description}
+        >
+          <DraftField
+            label={RUNNER_SETTING_COPY.runnerHost.title}
+            description={scoped("runnerHost", RUNNER_SETTING_COPY.runnerHost.description)}
+            value={settings.runnerHost}
+            disabled={props.disabledFor("runnerHost")}
+            mixed={props.mixed("runnerHost")}
+            {...(props.severalMachines === true || state.linux === null
+              ? {}
+              : { status: linuxLine(state.linux) })}
+            check={hostCheck(props.mixed("runnerHost") ? null : settings.runnerHost)}
+            onSave={props.write}
+          />
+          {number("runnerLinuxSlots")}
+          {number("runnerLinuxCpuCeilingPercent")}
+          {number("runnerLinuxMemoryFloorPercent")}
+        </SettingsSection>
+      ) : null}
+      {shown("runnerUnavailable", "runnerDropped", "runnerAskMinutes", "runnerDeadlineAction") ? (
+        <SettingsSection title={RUNNER_SECTION_COPY.linuxUnavailable.title}>
+          {shown("runnerUnavailable")
+            ? policy(
+                "runnerUnavailable",
+                "wifi.slash",
+                RunnerUnavailablePolicy.literals,
+                RUNNER_POLICY_LABEL,
+              )
+            : null}
+          {shown("runnerDropped")
+            ? policy(
+                "runnerDropped",
+                "exclamationmark.triangle",
+                RunnerFailedPolicy.literals,
+                RUNNER_FAILED_POLICY_LABEL,
+              )
+            : null}
+          {shown("runnerAskMinutes") ? number("runnerAskMinutes") : null}
+          {shown("runnerDeadlineAction")
+            ? policy(
+                "runnerDeadlineAction",
+                "timer",
+                RunnerDeadlineAction.literals,
+                RUNNER_DEADLINE_LABEL,
+              )
+            : null}
+        </SettingsSection>
+      ) : null}
+      {shown(
+        "runnerHeartbeatSeconds",
+        "runnerOfflineAfterFailures",
+        "runnerSshTimeoutSeconds",
+        "runnerStopWaitSeconds",
+      ) ? (
+        <SettingsSection title={RUNNER_SECTION_COPY.connectionChecks.title}>
+          <SettingsActionRow
+            icon="stethoscope"
+            label={
+              checksOpen
+                ? RUNNER_SECTION_COPY.connectionChecks.hide
+                : RUNNER_SECTION_COPY.connectionChecks.show
+            }
+            description={RUNNER_SECTION_COPY.connectionChecks.description}
+            onPress={() => setChecksOpen(!checksOpen)}
+          />
+          {checksOpen ? (
+            <>
+              {number("runnerHeartbeatSeconds")}
+              {number("runnerOfflineAfterFailures")}
+              {number("runnerSshTimeoutSeconds")}
+              {number("runnerStopWaitSeconds")}
+            </>
+          ) : null}
+        </SettingsSection>
+      ) : null}
     </>
   );
 }

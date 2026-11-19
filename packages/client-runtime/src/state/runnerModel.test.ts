@@ -3,10 +3,19 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   askRemaining,
+  heavyLimitIdle,
   heavyModeLine,
   linuxLine,
+  moveAllActions,
+  askAnswers,
   routeActions,
+  RUNNER_SETTING_COPY,
+  RUNNER_WHERE_DESCRIPTION,
+  runnerModeFieldApplies,
+  runnerWhereLine,
   runnerBadge,
+  runnerFieldIdle,
+  type RunnerChoices,
 } from "./runnerModel.ts";
 
 const entry = (extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -35,8 +44,9 @@ describe("the queue × Runner line", () => {
     queueEnabled: boolean,
     queuePaused: boolean,
     runnerEnabled: boolean,
-    where: "mac" | "linux" | "automatic",
-  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, overflow: 3 });
+    where: "mac" | "linux" | "automatic" | "macFirst",
+    everything: boolean,
+  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, everything });
 
   it.each([
     [true, false, false, "mac", "Heavy jobs wait their turn on this Mac."],
@@ -56,7 +66,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "automatic",
-      "Heavy jobs queue on this Mac; past 3 jobs, listed commands go to Linux.",
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     ],
     [false, false, true, "mac", "No queue: heavy jobs start on this Mac right away."],
     [
@@ -71,23 +81,45 @@ describe("the queue × Runner line", () => {
       true,
       true,
       "automatic",
-      "No queue: jobs start here right away until 3 jobs run, then listed commands go to Linux.",
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     ],
-  ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
-    expect(line(queue, paused, runner, where)).toBe(text);
-  });
-
-  it("says one job, not one jobs", () => {
-    expect(
-      heavyModeLine({
-        queueEnabled: true,
-        queuePaused: false,
-        runnerEnabled: true,
-        where: "automatic",
-        overflow: 1,
-      }),
-    ).toContain("past 1 job,");
-  });
+    [
+      true,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
+    ],
+    [
+      false,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
+    ],
+    [
+      true,
+      false,
+      true,
+      "linux",
+      "Heavy commands run on Linux; what has to stay here waits its turn on this Mac.",
+      true,
+    ],
+    [
+      false,
+      false,
+      true,
+      "linux",
+      "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away.",
+      true,
+    ],
+    [true, true, true, "linux", "Queue paused: nothing new starts on this Mac or Linux.", true],
+  ] as const)(
+    "queue %s paused %s Runner %s %s",
+    (queue, paused, runner, where, text, everything: boolean = false) => {
+      expect(line(queue, paused, runner, where, everything)).toBe(text);
+    },
+  );
 });
 
 describe("Linux status", () => {
@@ -118,7 +150,7 @@ describe("a row's runner", () => {
     [
       entry({ startedAt: "x", runner: "linux", phase: "installing" }),
       { linux: null, routes: {} },
-      { runner: "linux", label: "Linux · Installing deps" },
+      { runner: "linux", label: "Linux · Installing" },
     ],
     [entry({ startedAt: "x", runner: "linux" }), state, { runner: "linux", label: "Linux" }],
     [entry({ startedAt: "x" }), state, { runner: "mac", label: "This Mac" }],
@@ -148,10 +180,184 @@ describe("a row's runner", () => {
     ]);
     expect(routeActions(entry({ server: true }), state)).toEqual([]);
     expect(routeActions(entry(), { ...state, linux: null })).toEqual([]);
+    // Run on Linux while it is offline is the "Wait for Linux" answer, so it stays.
+    const offline = { ...state, linux: { ...linux, online: false } };
+    expect(routeActions(entry(), offline).map((a) => a.runner)).toEqual(["mac", "linux"]);
   });
 
-  it("an unconfirmed drop reruns only with a warning and force", () => {
-    const [mac] = routeActions(entry({ unconfirmed: true }), state);
+  it("an unconfirmed drop reruns only with a warning and force; its question's answer never forces", () => {
+    const [mac, linux] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
+    // On Linux the rerun never runs beside the earlier one.
+    expect(linux).toMatchObject({
+      force: true,
+      confirm:
+        "Linux hasn't confirmed the earlier run stopped. T3 stops it before this run starts there; if it can't, this run waits until the earlier one ends. Run it anyway?",
+    });
+    const ask = { reason: "dropped" as const, deadlineAt: "2026-01-01T00:00:00.000Z" };
+    // Pinned or not, the question offers both places; Linux takes it once it confirms.
+    for (const route of [undefined, "linux" as const]) {
+      expect(
+        askAnswers(entry({ unconfirmed: true, ask, ...(route ? { route } : {}) }), state),
+      ).toEqual([
+        { runner: "mac", label: "Run on this Mac", confirm: null, force: false },
+        { runner: "linux", label: "Run on Linux", confirm: null, force: false },
+      ]);
+    }
   });
+});
+
+describe("Move all", () => {
+  const base = {
+    entries: [entry()],
+    linux,
+    routes: {} as Record<string, "mac" | "linux">,
+    macOnly: [] as string[],
+  };
+  const labels = (state: Parameters<typeof moveAllActions>[0]) =>
+    moveAllActions(state).map((action) => action.label);
+
+  it.each([
+    ["a waiter headed here can go to Linux", base, ["Move all to Linux"]],
+    [
+      "a waiter headed to Linux can come back",
+      { ...base, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
+    [
+      "waiters on both sides offer both ways",
+      { ...base, entries: [entry(), entry({ id: "b" })], routes: { b: "linux" } },
+      ["Move all to this Mac", "Move all to Linux"],
+    ],
+    ["Mac-only work stays", { ...base, macOnly: ["a"] }, []],
+    ["a job asked for this Mac stays", { ...base, entries: [entry({ where: "mac" })] }, []],
+    ["running jobs stay", { ...base, entries: [entry({ startedAt: "x" })] }, []],
+    ["an unconfirmed run stays", { ...base, entries: [entry({ unconfirmed: true })] }, []],
+    ["a server slot stays", { ...base, entries: [entry({ server: true })] }, []],
+    [
+      "every job tied to this Mac (Mac-only, or its project's Runner off) moves nothing",
+      { ...base, entries: [entry(), entry({ id: "b" })], macOnly: ["a", "b"] },
+      [],
+    ],
+    [
+      "one job that can go is enough",
+      { ...base, entries: [entry(), entry({ id: "b" })], macOnly: ["a"] },
+      ["Move all to Linux"],
+    ],
+    ["Linux offline takes nothing", { ...base, linux: { ...linux, online: false } }, []],
+    ["Linux still being checked takes nothing", { ...base, linux: { ...linux, online: null } }, []],
+    [
+      "Linux offline still brings Linux waiters back",
+      { ...base, linux: { ...linux, online: false }, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
+    ["no Runner, no Linux target", { ...base, linux: null }, []],
+    [
+      "no Runner still brings Linux waiters back",
+      { ...base, linux: null, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
+  ] as const)("%s", (_name, state, expected) => {
+    expect(labels(state as never)).toEqual(expected);
+  });
+});
+
+describe("Runner copy and mode fields", () => {
+  it.each([
+    [RUNNER_SETTING_COPY.runnerDropped.title, "If a Linux run fails"],
+    [
+      RUNNER_SETTING_COPY.runnerDropped.description,
+      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
+    ],
+    [
+      RUNNER_SETTING_COPY.runnerWhere.description,
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
+    ],
+    [
+      RUNNER_WHERE_DESCRIPTION.automatic,
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
+    ],
+  ])("%s", (text, expected) => {
+    expect(text).toBe(expected);
+  });
+
+  it.each([
+    ["runnerMacFirstAfter", "macFirst", false, true],
+    ["runnerMacFirstAfter", null, false, true],
+    ["runnerMacFirstAfter", "linux", false, false],
+    ["runnerLinuxEverything", "linux", true, true],
+    ["runnerLinuxEverything", null, false, true],
+    ["runnerLinuxEverything", "macFirst", false, false],
+    ["runnerBringBack", "mac", false, true],
+    ["runnerLinuxCommands", "linux", false, true],
+    ["runnerLinuxCommands", "linux", true, false],
+    ["runnerLinuxCommands", "linux", null, true],
+    ["runnerLinuxCommands", "automatic", true, true],
+  ] as const)("%s under %s, Everything %s: %s", (key, where, everything, applies) => {
+    expect(runnerModeFieldApplies(key, where, everything)).toBe(applies);
+  });
+
+  it.each([
+    ["linux", true, RUNNER_SETTING_COPY.runnerLinuxEverything.description],
+    ["linux", false, RUNNER_WHERE_DESCRIPTION.linux],
+    ["linux", null, RUNNER_WHERE_DESCRIPTION.linux],
+    ["automatic", true, RUNNER_WHERE_DESCRIPTION.automatic],
+    [null, true, RUNNER_SETTING_COPY.runnerWhere.description],
+  ] as const)("the Where line under %s, Everything %s", (where, everything, line) => {
+    expect(runnerWhereLine(where, everything)).toBe(line);
+  });
+});
+
+describe("Runner fields that do nothing under the current choices", () => {
+  const on: RunnerChoices = {
+    runnerEnabled: true,
+    runnerWhere: "linux",
+    runnerUnavailable: "ask",
+    runnerDropped: "mac",
+  };
+
+  it.each([
+    ["runnerEnabled", { runnerEnabled: false }, null],
+    ["runnerHost", { runnerEnabled: false }, "Only applies while the Runner is on."],
+    ["runnerHost", {}, null],
+    [
+      "runnerLinuxCommands",
+      { runnerWhere: "mac" },
+      "Only applies when jobs run on Linux or Hybrid.",
+    ],
+    ["runnerLinuxCommands", { runnerWhere: null }, null],
+    ["runnerAskMinutes", {}, null],
+    ["runnerDeadlineAction", { runnerUnavailable: null }, null],
+    [
+      "runnerAskMinutes",
+      { runnerUnavailable: "wait" },
+      "Only applies when a choice above is Ask me.",
+    ],
+  ] as const)("%s with %o: %s", (key, choices, idle) => {
+    expect(runnerFieldIdle(key, { ...on, ...choices })).toBe(idle);
+  });
+});
+
+describe("heavyLimitIdle", () => {
+  const QUEUE_OFF =
+    "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.";
+  const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
+  it.each([
+    ["macCpuCeilingPercent", true, false, "mac", null],
+    ["macCpuCeilingPercent", false, true, "automatic", null],
+    ["macCpuCeilingPercent", false, true, null, null],
+    ["macCpuCeilingPercent", false, null, "automatic", null],
+    ["macCpuCeilingPercent", false, true, "macFirst", null],
+    ["macCpuCeilingPercent", false, true, "linux", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, true, "mac", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, false, "automatic", QUEUE_OFF],
+    ["heavyOverLimitSeconds", false, true, "linux", null],
+    ["heavyOverLimitSeconds", true, false, "mac", null],
+    ["heavyOverLimitSeconds", false, false, "automatic", BOTH_OFF],
+  ] as const)(
+    "%s with queue %s, Runner %s, %s",
+    (key, queueEnabled, runnerEnabled, runnerWhere, idle) => {
+      expect(heavyLimitIdle(key, { queueEnabled, runnerEnabled, runnerWhere })).toBe(idle);
+    },
+  );
 });

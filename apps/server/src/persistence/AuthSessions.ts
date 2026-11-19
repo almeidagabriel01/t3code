@@ -119,6 +119,8 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    /** Changes only when another connection (another process) commits to the database. */
+    readonly readExternalWriteVersion: () => Effect.Effect<number, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
 
@@ -480,6 +482,20 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Runs on the writer connection: data_version is per connection and ignores its own commits.
+  const readExternalWriteVersion: AuthSessionRepository["Service"]["readExternalWriteVersion"] =
+    () =>
+      sql<{ readonly data_version: number }>`PRAGMA data_version`.pipe(
+        Effect.map((rows) => rows[0]?.data_version ?? 0),
+        Effect.mapError(
+          (cause) =>
+            new PersistenceSqlError({
+              operation: "AuthSessionRepository.readExternalWriteVersion:query",
+              cause,
+            }),
+        ),
+      );
+
   return {
     create,
     createReplacingActive,
@@ -489,6 +505,7 @@ export const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    readExternalWriteVersion,
   } satisfies AuthSessionRepository["Service"];
 });
 

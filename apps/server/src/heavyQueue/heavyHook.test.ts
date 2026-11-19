@@ -13,8 +13,11 @@ import {
   interceptBashCall,
   isQueued,
   nameOf,
+  lineParts,
   queueBashCall,
-  unwrapRemoto,
+  readLine,
+  rewriteLine,
+  workParts,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -43,6 +46,8 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
   ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
+  // git's own options take a value before the subcommand.
+  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -50,6 +55,26 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["cargo test --locked", "cargo test --locked"],
   ["(cd web && vp build) | tail -5", "vp build"],
   ["make test", "make test"],
+  ["cat > a.sh <<'EOF'\necho hi\nEOF\nvp test run", "vp test run"],
+  ["timeout 110 vp test run", "timeout 110 vp test run"],
+  ["(nohup vp test run > /tmp/a.log 2>&1 &)", "nohup vp test run > /tmp/a.log 2>&1"],
+  ["nohup sh -c 'npx tsc --noEmit > /tmp/t.out' &", "nohup sh -c 'npx tsc --noEmit > /tmp/t.out'"],
+  ["X=$(vp test run 2>&1 | tail -1)", "vp test run 2>&1"],
+  ["nice -n 10 vp test run", "nice -n 10 vp test run"],
+  // A prefix option's value is not the program.
+  [
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+  ],
+  ["timeout --signal TERM 60 vp test run", "timeout --signal TERM 60 vp test run"],
+  ["nice --adjustment 5 vp test run", "nice --adjustment 5 vp test run"],
+  ["env -u CI -C apps/server vp test run", "env -u CI -C apps/server vp test run"],
+  ["caffeinate -w 123 vp test run", "caffeinate -w 123 vp test run"],
+  ["time -f %e vp test run", "time -f %e vp test run"],
+  [
+    "nohup env -u CI timeout -s INT 10 vp test run",
+    "nohup env -u CI timeout -s INT 10 vp test run",
+  ],
 ];
 
 const LIGHT = [
@@ -58,6 +83,8 @@ const LIGHT = [
   "git checkout -b fix-build",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
+  "git -C web commit -n -m wip",
+  "git -c commit.gpgsign=false log",
   "cat build.md",
   "rg docker apps/server",
   "rg 'vp test run' docs",
@@ -71,6 +98,14 @@ const LIGHT = [
   "cargo",
   "vpr dev",
   "",
+  // A heredoc is a script's text, not commands: editing a test file is not running it.
+  "cd /w && python3 - <<'EOF'\ns = 'cd apps/server && vp test run'\nEOF",
+  "cat <<-END > notes.md\n\tvp run build && npm test\n\tEND",
+  // Quoted text and patterns are arguments, never commands.
+  'grep -v "t3 heavy" log.txt',
+  'grep "a\\|vitest" src/x.ts',
+  "git log --grep 'vp test run' -1",
+  "bash -c 'echo vitest'",
 ];
 
 describe("heavy Bash commands", () => {
@@ -95,6 +130,14 @@ describe("heavy Bash commands", () => {
     ["vp test run heavyQueue", false],
     ["rg heavy apps", false],
     ["echo remoto && vp test run", false],
+    // Text is never a call; and a call does not cover heavy work outside it.
+    ['vp test run 2>&1 | grep -v "t3 heavy"', false],
+    ["git commit -m 'feat: t3 heavy -- vp test'", false],
+    ["t3 heavy -- vp lint && vp test run", false],
+    [
+      "A='/Applications/T3 Code (Beta).app/Contents'; ELECTRON_RUN_AS_NODE=1 \"$A/MacOS/T3 Code (Beta)\" \"$A/Resources/app.asar/apps/server/dist/bin.mjs\" heavy --queue-dir /q -- sh -c 'vp test'",
+      true,
+    ],
   ])("%s already queued: %s", (command, queued) => {
     expect(isQueued(command)).toBe(queued);
   });
@@ -102,6 +145,7 @@ describe("heavy Bash commands", () => {
   it.each([
     ["vp test run src/a.test.ts --watch", "vp test run"],
     ["git commit -m 'fix build'", "git commit"],
+    ["git -C web commit -m 'fix build'", "git commit"],
     ["npx vitest", "npx vitest"],
   ])("names %s as %s", (segment, name) => {
     expect(nameOf(segment)).toBe(name);
@@ -125,7 +169,7 @@ describe("the PreToolUse answer", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         updatedInput: {
-          command: `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
+          command: `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
           description: "Server tests",
           timeout: 600_000,
           run_in_background: false,
@@ -135,6 +179,17 @@ describe("the PreToolUse answer", () => {
       },
     });
     expect(answer!.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+
+  it.each([
+    ["toolu_9", " --request-id 'toolu_9' --name"],
+    ["", " --name"],
+    [42, " --name"],
+  ])("passes the call's tool-use id %j on, so a repeat attaches to its job", (id, expected) => {
+    const answer = queueBashCall({ ...bash({ command: "vp build" }), tool_use_id: id }, PREFIX);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toContain(
+      `${PREFIX}${expected} 'vp build'`,
+    );
   });
 
   it("never lowers a longer timeout and leaves a background call's limit alone", () => {
@@ -160,22 +215,84 @@ describe("the PreToolUse answer", () => {
   });
 });
 
-describe("an agent's own remoto call", () => {
+describe("scripts the line runs", () => {
+  const files: Record<string, string | null> = {
+    "/tmp/s/verify.sh": "cd /w && vp test run",
+    "./verify": "#!/bin/bash\nset -e\nvp run typecheck\n",
+    "./env-verify": "#!/usr/bin/env zsh\nnpx tsc --noEmit\n",
+    "./tool": "#!/usr/bin/env node\nrequire('x')\n",
+    "light.sh": "echo hi\nls\n",
+    "./light.sh": "echo hi\n",
+    "missing.sh": null,
+  };
+  const read = (word: string) => files[word] ?? null;
+  const command = (line: string) =>
+    queueBashCall(bash({ command: line }), PREFIX, {}, { readScript: read })?.hookSpecificOutput
+      .updatedInput.command ?? null;
+
   it.each([
-    ["remoto vp test run", "vp test run"],
-    [
-      "cd apps/server && remoto vp test run src/a.test.ts",
-      "cd apps/server && vp test run src/a.test.ts",
-    ],
-    ["  remoto ./scripts/check.sh --all", "./scripts/check.sh --all"],
-    ["ls && remoto vp test run", null],
-    ["REMOTO_HOST=pc remoto vp test", null],
-    ["remoto", null],
-  ])("%j unwraps to %j", (command, unwrapped) => {
-    expect(unwrapRemoto(command)).toBe(unwrapped);
+    ["bash /tmp/s/verify.sh", "bash /tmp/s/verify.sh"],
+    ["sh -e /tmp/s/verify.sh a b", "sh /tmp/s/verify.sh a"],
+    ["/tmp/s/verify.sh", "verify.sh"],
+    ["./verify", "verify"],
+    ["./env-verify --fast", "env-verify"],
+    ["cd /w && ./verify", "verify"],
+  ])("queues %j, whose script runs heavy work, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
   });
 
-  it("with the Runner on, becomes one job sent to Linux instead of a second wrapper", () => {
+  it.each(["bash light.sh", "./tool", "./light.sh", "bash -c 'echo hi'", "sh -s < light.sh"])(
+    "leaves %j alone: its script runs nothing heavy, or it is no script",
+    (line) => {
+      expect(command(line)).toBeNull();
+    },
+  );
+
+  it.each(["bash missing.sh", "./missing.sh"])(
+    "queues %j on this Mac when the script can't be read",
+    (line) => {
+      expect(command(line)).toContain(
+        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
+      );
+    },
+  );
+
+  it("reads no script without a reader, as before", () => {
+    expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();
+  });
+});
+
+describe("an agent's own remoto call", () => {
+  it.each([
+    ["remoto vp test run", [], true, "vp test run"],
+    [
+      "cd apps/server && remoto vp test run src/a.test.ts",
+      ["apps/server"],
+      true,
+      "vp test run src/a.test.ts",
+    ],
+    [`cd "/a b" && cd 'c' && remoto vp test`, ["/a b", "c"], true, "vp test"],
+    [
+      "cd /Users/me/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+      ["/Users/me/repo/apps/web"],
+      true,
+      "pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+    ],
+    ["  remoto ./scripts/check.sh --all", [], true, "./scripts/check.sh --all"],
+    ["cd /w && vp test run", ["/w"], false, "vp test run"],
+    ["cd /w && cd $X && remoto vp test", ["/w"], true, "cd $X && vp test"],
+    ["ls && remoto vp test run", [], true, "ls && vp test run"],
+    ["REMOTO_HOST=pc remoto vp test", [], true, "REMOTO_HOST=pc vp test"],
+    ["cd /w && (cd x && vp test)", ["/w"], false, "(cd x && vp test)"],
+    ["cd /w; vp test", [], false, "cd /w; vp test"],
+    ["remoto", [], false, "remoto"],
+  ])("%j starts in %j, remoto %s, running %j", (line, dirs, remoto, command) => {
+    expect(lineParts(line)).toEqual({ dirs, remoto, command });
+  });
+
+  it("with the Runner on, is queued as written and named by its own command; `t3 heavy` unwraps it", () => {
     const answer = queueBashCall(
       bash({ command: "cd apps/server && remoto vp test run" }),
       PREFIX,
@@ -183,19 +300,59 @@ describe("an agent's own remoto call", () => {
       { runner: true },
     );
     expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
-      `${PREFIX} --runner linux --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run'`,
+      `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
     );
     const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
-    expect(script!.hookSpecificOutput.updatedInput.command).toContain(
-      "--runner linux --name 'x.sh'",
-    );
+    expect(script!.hookSpecificOutput.updatedInput.command).toContain("--name 'x.sh'");
   });
 
   it.each([
     ["the Runner off", "remoto vp test run", false],
-    ["a shape it cannot unwrap", "ls && remoto vp test run", true],
+    ["the Runner off, after another command", "ls && remoto vp test run", false],
   ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+
+  // Queued or left to the agent's remoto; then the line Linux mode runs here, one remoto per call.
+  it.each([
+    [
+      `cd /w/s && remoto sh -c 'vp test run'`,
+      true,
+      null,
+      true,
+      `cd /w/s && remoto sh -c 'vp test run'`,
+    ],
+    [`cd /w/s && remoto sh -c 'vp test run'`, false, null, false, null],
+    [`remoto sh -c 'cd /w && remoto vp test'`, true, null, true, `sh -c 'cd /w && remoto vp test'`],
+    [`sh -c 'cd /w && remoto vp test run'`, true, null, false, null],
+    [`cd /w && bash -lc "remoto pnpm exec vp test run"`, true, null, false, null],
+    [
+      `vp lint && sh -c 'remoto vp test'`,
+      true,
+      null,
+      true,
+      `remoto vp lint && sh -c 'remoto vp test'`,
+    ],
+    [
+      `cd /w && vp lint && remoto vp test`,
+      true,
+      null,
+      true,
+      `cd /w && remoto vp lint && remoto vp test`,
+    ],
+    // Local heavy work beside the inner remoto still queues, and the part is never wrapped again.
+    [`sh -c 'vp lint && remoto vp test'`, true, null, true, `sh -c 'vp lint && remoto vp test'`],
+    [`sh -c 'vp lint && remoto vp test'`, false, null, true, `sh -c 'vp lint && remoto vp test'`],
+    ["sh ./check.sh", true, "cd /w && remoto vp test run", false, null],
+    ["sh ./check.sh", true, "vp lint && remoto vp test run", true, null],
+    ["remoto vp test run", false, null, false, null],
+  ])("%j (Runner %s, script %j) queued %s, runs %j", (command, runner, body, queued, linux) => {
+    const readScript = () => body;
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, { runner, readScript });
+    expect(answer !== null).toBe(queued);
+    if (linux !== null) expect(rewriteLine(command, "remoto")).toBe(linux);
+    // A script that calls remoto is never Linux work, so it is never wrapped in another.
+    if (body !== null) expect(workParts(readLine(command, readScript).parts)).toEqual([]);
   });
 });
 
@@ -253,6 +410,13 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
     "hands %j to T3, as the classifier calls it heavy",
     (command) => {
       expect(heavySegment(command)).not.toBeNull();
+      expect(run(reached, command)).toBe("T3");
+    },
+  );
+
+  it.each(["bash verify.sh", "./verify", "sh /tmp/s/check.sh --all", "zsh -e run.zsh"])(
+    "hands %j to T3, which reads the script it runs",
+    (command) => {
       expect(run(reached, command)).toBe("T3");
     },
   );

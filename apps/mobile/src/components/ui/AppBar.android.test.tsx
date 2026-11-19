@@ -4,6 +4,15 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", () => ({
   View: (props: { readonly children?: ReactNode }) => <div>{props.children}</div>,
+  Pressable: (props: {
+    readonly accessibilityLabel?: string;
+    readonly onPress?: () => void;
+    readonly children?: ReactNode;
+  }) => (
+    <button aria-label={props.accessibilityLabel} onClick={props.onPress}>
+      {props.children}
+    </button>
+  ),
   Keyboard: { dismiss: () => {} },
   BackHandler: { addEventListener: () => ({ remove: () => {} }) },
 }));
@@ -14,7 +23,11 @@ vi.mock("@react-navigation/native", () => ({
   },
 }));
 vi.mock("./AndroidScreenHeader.android", () => ({
-  AndroidScreenHeader: (props: { readonly title: string }) => <h1>{props.title}</h1>,
+  AndroidScreenHeader: (props: { readonly title: string; readonly titleContent?: ReactNode }) =>
+    props.titleContent ?? <h1>{props.title}</h1>,
+}));
+vi.mock("./AppText", () => ({
+  AppText: (props: { readonly children?: ReactNode }) => <span>{props.children}</span>,
 }));
 vi.mock("./WorkspaceAppBar.android", () => ({
   useHasWorkspaceAppBar: () => false,
@@ -55,4 +68,28 @@ it("renders a sheet bar without search outside a navigation container", () => {
   act(() => root.render(<AppBar sheet title="Arrange threads" />));
 
   expect(container.textContent).toBe("Arrange threads");
+});
+
+it("a pressable title shows its leading face and opens what it names", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const onPress = vi.fn();
+
+  act(() =>
+    root.render(
+      <AppBar
+        sheet
+        title="Ada"
+        titlePress={{ accessibilityLabel: "Ada, Assistant info", leading: <i>face</i>, onPress }}
+      />,
+    ),
+  );
+
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Ada, Assistant info"]');
+  expect(button?.textContent).toBe("faceAda");
+  act(() => button?.click());
+  expect(onPress).toHaveBeenCalledOnce();
 });

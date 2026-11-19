@@ -16,6 +16,7 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupProjectLabel,
@@ -150,7 +151,8 @@ import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantDialog } from "./assistantDialogState";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster, removedAssistantFace } from "./assistantPresentation";
+import { toggleAssistantInfo } from "./assistantInfoState";
 import {
   openAssistantGroupRoutines,
   openAssistantGroupSettings,
@@ -159,9 +161,11 @@ import {
 import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
+  type GroupLandedSend,
   type GroupProjectOption,
-  type GroupReplyQuote,
+  type GroupReplyTarget as ReplyTarget,
   type GroupSendResult,
+  type GroupSendRouting,
 } from "./GroupComposer";
 import { GroupMentionChip, type GroupMentionProject } from "./GroupMentionChip";
 import {
@@ -172,8 +176,6 @@ import {
 import { GroupTaskCard } from "./GroupTaskCard";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
-
-const MAX_STACKED_AVATARS = 4;
 
 function failed(title: string, message: string) {
   toastManager.add({ type: "error", title, description: message });
@@ -219,7 +221,6 @@ function GroupHeader(props: {
     return found ? getDisplayModelName(found) : formatModelSlugName(selection.model);
   };
   const archived = team.archivedAt !== null;
-  const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   const homeProjectId = props.members[0]?.projectId;
   const homeProject = useProjects().find(
     (project) => project.environmentId === environmentId && project.id === homeProjectId,
@@ -254,19 +255,32 @@ function GroupHeader(props: {
             </WorkspaceBreadcrumbText>
           </WorkspaceBreadcrumbItem>
         </WorkspaceBreadcrumb>
-        <span
-          className="flex shrink-0 items-center @max-md/header:hidden"
-          data-testid="group-avatars"
-        >
-          {shown.map((member) => (
-            <AssistantAvatar
-              key={member.id}
-              assistant={member}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-testid="group-avatars"
+                aria-label={`${team.name}, Group info`}
+                onClick={() =>
+                  toggleAssistantInfo({ kind: "group", environmentId, teamId: team.id })
+                }
+                className="flex shrink-0 cursor-pointer items-center rounded-sm transition-opacity hover:opacity-80 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @max-md/header:hidden"
+              />
+            }
+          >
+            <AssistantCluster
               environmentId={environmentId}
-              className="-ms-1.5 size-5 first:ms-0"
+              className="size-6"
+              faces={team.memberIds.map((id) => ({
+                key: id,
+                assistant:
+                  props.members.find((member) => member.id === id) ?? removedAssistantFace(id),
+              }))}
             />
-          ))}
-        </span>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Group info</TooltipPopup>
+        </Tooltip>
         {props.running > 0 ? (
           <Badge variant="info" size="sm" className="shrink-0" data-testid="group-running">
             {props.running} running
@@ -656,7 +670,16 @@ function FeedRow(props: {
         className={cn(ROW_CLASS, "flex-col gap-1", fromUser ? "items-end" : "items-start")}
       >
         {fromUser ? null : (
-          <span className="px-1 text-xs font-semibold text-muted-foreground">{label}</span>
+          <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground">
+            {author === undefined ? null : (
+              <AssistantAvatar
+                assistant={author}
+                environmentId={props.environmentId}
+                className="size-4"
+              />
+            )}
+            {label}
+          </span>
         )}
         {replyLine}
         <div
@@ -817,7 +840,9 @@ function RequestBody(props: {
 
 /** A project label truncated before its number, so "Removed project 2" never reads as the first. */
 function ProjectLabelText(props: { readonly label: string; readonly testId?: string }) {
-  const [, head = props.label, tail] = /^(.*?)( \d+)?$/.exec(props.label) ?? [];
+  const match = /^(.*?)( \d+)?$/.exec(props.label);
+  const head = match?.[1] ?? props.label;
+  const tail = match?.[2];
   return (
     <span className="flex min-w-0" data-testid={props.testId}>
       <span className="truncate">{head}</span>
@@ -996,12 +1021,6 @@ function GroupTabs(props: {
       </ScrollArea>
     </div>
   );
-}
-
-interface ReplyTarget {
-  readonly id: AssistantGroupMessage["id"];
-  readonly projectId: ProjectId | null;
-  readonly quote: GroupReplyQuote;
 }
 
 /** What the composer reaches in the feed, which is remounted for each tab. */
@@ -1438,7 +1457,8 @@ export function AssistantGroupChat(props: {
   const entries = useAssistantEntries();
   const actions = useAssistantGroupActions(environmentId);
   const flows = useAssistantTeamFlows(environmentId);
-  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  // The reply being written, for the tab it was opened in.
+  const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<ReplyTarget> | null>(null);
   const [memberModel, setMemberModel] = useState<Assistant | null>(null);
   const [projectModelOpen, setProjectModelOpen] = useState(false);
   // The composer's model for the next message only; it never saves a default.
@@ -1473,10 +1493,15 @@ export function AssistantGroupChat(props: {
     saved: savedTab,
   });
   const tabKey = tab?.key ?? null;
-  // Another tab, chosen or not (a saved tab loading, a removed one), drops both picks for good.
+  // Another tab, chosen or not (a saved tab loading, a removed one), drops the picks for good,
+  // and an open reply, which would answer a request out of view; the draft itself stays.
   const heldModelPick = assistantGroupTabPick(modelPick, tabKey);
   if (heldModelPick !== modelPick) setModelPick(null);
   if (assistantGroupTabPick(composerPick, tabKey) !== composerPick) setComposerPick(null);
+  if (assistantGroupTabPick(replyPick, tabKey) !== replyPick) setReplyPick(null);
+  const replyTo = assistantGroupTabPick(replyPick, tabKey)?.value ?? null;
+  const setReplyTo = (target: ReplyTarget | null) =>
+    setReplyPick(target === null ? null : { tab: tabKey, value: target });
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   useShowGroupTab(environmentId, teamId, pending ? undefined : tabKey);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
@@ -1535,19 +1560,7 @@ export function AssistantGroupChat(props: {
         : { projectId: groupComposerProject }),
       ...(messageModel === undefined ? {} : { modelSelection: messageModel }),
     });
-    if (reply.ok) {
-      feedHandle.current?.followEnd();
-      // A reply or tab the user opened while the post was on its way stays.
-      setReplyTo((current) => (current === replyTo ? null : current));
-      setComposerPick((current) => (current === composerPick ? null : current));
-      setModelPick((current) => (current === modelPick ? null : current));
-      // A send that lands in another tab's project takes the user there, so it never vanishes.
-      const landed = replyTo?.projectId ?? groupComposerProject;
-      if (tabs !== null && tab !== null) {
-        setSavedTab((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed) ?? saved);
-      }
-      return { ok: true };
-    }
+    if (reply.ok) return { ok: true };
     return {
       ok: false,
       message:
@@ -1556,6 +1569,29 @@ export function AssistantGroupChat(props: {
           ? "This group is archived. Restore it to write here."
           : reply.message,
     };
+  };
+
+  // One way a send lands, by its reply or by the chat showing its post.
+  const landed = (sent: GroupLandedSend) => {
+    feedHandle.current?.followEnd();
+    // A reply or tab the user opened while the post was on its way stays.
+    setReplyPick((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setComposerPick((current) =>
+      assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
+    );
+    setModelPick((current) => assistantGroupLandedPick(current, sent.routing?.modelPick ?? null));
+    // A send that lands in another tab's project takes the user there, so it never vanishes.
+    if (tabs !== null && sent.tab !== null) {
+      const from = sent.tab;
+      setSavedTab(
+        (saved) => assistantGroupTabAfterSend(tabs, from, saved, sent.projectId) ?? saved,
+      );
+    }
+  };
+  const restore = (routing: GroupSendRouting) => {
+    setReplyPick(routing.reply);
+    setComposerPick(routing.projectPick);
+    setModelPick(routing.modelPick);
   };
 
   const body = () => {
@@ -1592,16 +1628,7 @@ export function AssistantGroupChat(props: {
           </div>
         ) : null}
         {tabs === null || tab === null ? null : (
-          <GroupTabs
-            tabs={tabs}
-            active={tab.key}
-            projects={projects}
-            onSelect={(key) => {
-              setSavedTab(key);
-              // An open reply would answer a request out of view; the draft itself stays.
-              setReplyTo(null);
-            }}
-          />
+          <GroupTabs tabs={tabs} active={tab.key} projects={projects} onSelect={setSavedTab} />
         )}
         {pending ? (
           <div className="min-h-0 flex-1" />
@@ -1651,7 +1678,11 @@ export function AssistantGroupChat(props: {
           }}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
+          routing={{ reply: replyPick, projectPick: composerPick, modelPick }}
+          onLanded={landed}
+          onRestore={restore}
           history={sentByUser}
+          messages={live?.messages}
           onSend={send}
         />
       </>

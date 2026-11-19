@@ -19,6 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { COMPUTER_USE_COPY } from "./computerUseCopy";
 
 const CAPABILITY_ICONS: Record<ComputerUseCapabilityKey, AppSymbolName> = {
   elements: "square.grid.2x2",
@@ -39,7 +40,13 @@ function HostEnvironment(props: {
   );
   const host = query.data?.host;
   return (
-    <ListSection title={props.title ? `This computer · ${props.title}` : "This computer"}>
+    <ListSection
+      title={
+        props.title
+          ? `${COMPUTER_USE_COPY.thisComputer} · ${props.title}`
+          : COMPUTER_USE_COPY.thisComputer
+      }
+    >
       {query.data === null ? (
         <ListRowLayout
           icon="arrow.clockwise"
@@ -49,7 +56,7 @@ function HostEnvironment(props: {
       ) : host === undefined ? (
         <ListRowLayout
           icon="info.circle"
-          label="Not reported"
+          label={COMPUTER_USE_COPY.notReported}
           description={COMPUTER_USE_HOST_NOT_REPORTED}
         />
       ) : (
@@ -88,8 +95,7 @@ export function SettingsComputerUseRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
-          What agents can do on the Windows or Linux computer that runs T3 Code, and where the
-          platform stops them. There are no permissions to grant there.
+          {COMPUTER_USE_COPY.intro}
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

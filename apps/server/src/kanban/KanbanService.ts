@@ -4,6 +4,7 @@ import {
   KanbanAutomations,
   KanbanCardAttachment,
   KanbanChecklistItem,
+  KanbanCardProblem,
   KanbanEstimate,
   KanbanError,
   KanbanLabelId,
@@ -134,6 +135,12 @@ export class KanbanService extends Context.Service<
     readonly cardComment: (input: KanbanCardCommentInput) => KanbanResult;
     readonly cardLinkThread: (input: KanbanCardThreadLinkInput) => KanbanResult;
     readonly cardUnlinkThread: (input: KanbanCardThreadLinkInput) => KanbanResult;
+    /** Server only: the problem detector keeps a filed card's problem state current. */
+    readonly cardSetProblem: (input: {
+      readonly commandId: CommandId;
+      readonly cardId: KanbanCardId;
+      readonly problem: KanbanCardProblem;
+    }) => KanbanResult;
     /** The card a thread is linked to, with its board, archived or not. */
     readonly cardForThread: (
       threadId: ThreadId,
@@ -168,6 +175,7 @@ const attachmentsJson = jsonColumn(Schema.Array(KanbanCardAttachment));
 const automationsJson = jsonColumn(KanbanAutomations);
 const payloadJson = jsonColumn(Schema.Json);
 const resultJson = jsonColumn(KanbanMutationResult);
+const problemJson = jsonColumn(KanbanCardProblem);
 
 /** A bad stored value degrades that field to `fallback` and is logged, so one row never fails a whole read. */
 const readJson = <T>(
@@ -253,6 +261,7 @@ interface CardRow {
   readonly parent_card_id: string | null;
   readonly attachments_json: string;
   readonly cover_attachment_id: string | null;
+  readonly problem_json?: string | null;
   readonly created_by: string;
   readonly created_at: string;
   readonly updated_at: string;
@@ -329,6 +338,10 @@ const toCard = Effect.fnUntraced(function* (
       `${context} attachments`,
     ),
     coverAttachmentId: row.cover_attachment_id,
+    problem:
+      row.problem_json == null
+        ? null
+        : yield* readJson(problemJson, row.problem_json, null, `${context} problem`),
     archivedAt: row.archived_at,
     createdBy: row.created_by as KanbanActor,
     createdAt: row.created_at,
@@ -1692,6 +1705,19 @@ export const layer = Layer.effect(
         }),
       );
 
+    const cardSetProblem: KanbanService["Service"]["cardSetProblem"] = (input) =>
+      mutate(
+        input.commandId,
+        Effect.gen(function* () {
+          const row = yield* findCardRow(input.cardId);
+          yield* sql`UPDATE kanban_cards SET problem_json = ${problemJson.stringify(input.problem)} WHERE card_id = ${row.card_id}`;
+          return {
+            result: { cardId: input.cardId, boardId: row.board_id as KanbanBoardId },
+            deltas: yield* cardDeltas([row.card_id]),
+          } satisfies Outcome;
+        }),
+      );
+
     const cardForThread: KanbanService["Service"]["cardForThread"] = Effect.fn(
       "KanbanService.cardForThread",
     )(function* (threadId) {
@@ -1734,6 +1760,7 @@ export const layer = Layer.effect(
       cardComment,
       cardLinkThread,
       cardUnlinkThread,
+      cardSetProblem,
       cardForThread,
       linkedThreadIds,
     });

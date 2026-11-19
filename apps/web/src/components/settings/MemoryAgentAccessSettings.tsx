@@ -6,6 +6,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection, SettingsRow } from "./settingsLayout";
 import { Switch } from "../ui/switch";
+import { searchableSetting } from "./settingsSearch";
 
 export function MemoryAgentAccessSettings({ environmentId }: { environmentId: EnvironmentId }) {
   const registry = useContext(RegistryContext);
@@ -26,10 +27,9 @@ export function MemoryAgentAccessSettings({ environmentId }: { environmentId: En
     };
   }, []);
   return (
-    <SettingsSection title="Agent access">
+    <SettingsSection {...searchableSetting("memory-agent-access")}>
       <SettingsRow
-        title="Allow agent memory access"
-        description="Allow agents on this device to use memory within their granted scope. This is separate from sharing memories between devices."
+        {...searchableSetting("memory-allow-agent-access")}
         control={
           <Switch
             aria-label="Allow agent memory access"

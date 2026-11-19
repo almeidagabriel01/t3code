@@ -52,12 +52,6 @@ export function selectChipEntries(
   ];
 }
 
-export function formatMemory(bytes: number): string {
-  const gb = bytes / 1024 ** 3;
-  if (gb >= 1) return `${gb.toFixed(2)} GB`;
-  return `${Math.round(bytes / 1024 ** 2)} MB`;
-}
-
 /** SVG polyline points for a series scaled to its own max; empty below two samples. */
 export function sparklinePoints(
   values: ReadonlyArray<number>,

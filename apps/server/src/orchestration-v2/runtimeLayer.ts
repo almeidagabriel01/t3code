@@ -3,6 +3,8 @@ import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as IntegrationDetector from "../integrations/IntegrationDetector.ts";
 import * as Layer from "effect/Layer";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -478,14 +480,26 @@ export const layerProduction = Layer.mergeAll(
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       const assistantConnectors = yield* AssistantConnectors.AssistantConnectors;
+      const directory = yield* AssistantDirectory.AssistantDirectory;
       const settings = yield* ServerSettings.ServerSettingsService;
+      const detector = yield* IntegrationDetector.IntegrationDetector;
+      yield* sessions.installLoadedServersSink(detector.recordClaudeSession);
       yield* sessions.installConnectors((threadId) =>
-        Effect.all([assistantConnectors.forThread(threadId), globalMcpConnectors(settings)]).pipe(
-          Effect.map(([assistant, global]) => [...assistant, ...global]),
-        ),
+        Effect.gen(function* () {
+          const found = yield* directory.forThread(threadId);
+          const session = yield* sessions.read(threadId);
+          const global = yield* globalMcpConnectors(settings, {
+            assistant: Option.getOrUndefined(found)?.assistant,
+            session,
+            ...(session === undefined
+              ? {}
+              : { native: yield* detector.nativeCatalogIds(session.providerInstanceId) }),
+          });
+          return [...(yield* assistantConnectors.forThread(threadId)), ...global];
+        }),
       );
     }),
-  ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
+  ).pipe(Layer.provide(Layer.merge(layerAssistantConnectorsProvided, AssistantDirectory.layer))),
   layerAssistantServiceProvided,
   layerAssistantGroupsProvided,
   layerProjectModelSelectionProvided,

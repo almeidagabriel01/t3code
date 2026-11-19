@@ -1,6 +1,7 @@
 export * from "./globalSkillsRpc.ts";
 export * from "./globalSkills.ts";
 export * from "./mcpServers.ts";
+export * from "./integrations.ts";
 export * from "./baseSchemas.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
@@ -84,6 +85,7 @@ export * from "./channels.ts";
 export * from "./imessageChannel.ts";
 export * from "./keepAwake.ts";
 export * from "./heavyQueue.ts";
+export * from "./heavyNotices.ts";
 export * from "./runner.ts";
 export * from "./telegramChannel.ts";
 export * from "./notes.ts";

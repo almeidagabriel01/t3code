@@ -15,6 +15,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     teams: [] as unknown[],
     selectedProjects: null as null | { id: string; environmentId: string }[],
     tasksByEnvironment: {} as Record<string, unknown[]>,
+    phase: "connected" as string,
+    noEnvironment: false,
   },
 }));
 vi.mock("react-native", () => ({
@@ -123,10 +125,13 @@ const hubAndLab = [
   { environmentId: "hub", label: "Hub", serverConfig: null },
   { environmentId: "lab", label: "Lab", serverConfig: null },
 ];
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: { connection: { phase: mocks.phase } } }),
+}));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    availableTargets: hubAndLab,
-    selectedTargets: hubAndLab,
+    availableTargets: mocks.noEnvironment ? [] : hubAndLab,
+    selectedTargets: mocks.noEnvironment ? [] : hubAndLab,
     selectedProjects: mocks.selectedProjects,
   }),
 }));
@@ -182,6 +187,7 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
 
+import { CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS } from "@t3tools/client-runtime/settings-empty-selection";
 import {
   SettingsScheduledTaskEditRouteScreen,
   SettingsScheduledTasksRouteScreen,
@@ -230,6 +236,8 @@ beforeEach(() => {
   mocks.assistant = null;
   mocks.selectedProjects = null;
   mocks.tasksByEnvironment = {};
+  mocks.phase = "connected";
+  mocks.noEnvironment = false;
   mocks.navigate.mockReset();
   mocks.upsert.mockReset().mockResolvedValue({ _tag: "Success" });
 });
@@ -256,6 +264,27 @@ describe("scheduled task bound to a conversation", () => {
     expect(find(/^Thread,/)).toBeDefined();
     await act(async () => find("Save changes")!.click());
     expect(mocks.upsert.mock.calls[0]?.[0].input.threadId).toBe("thread-1");
+  });
+});
+
+describe("scheduled task on an environment that is not connected", () => {
+  it.each([
+    // While the connection settles the screen says nothing; Save still waits for it.
+    ["connecting", false],
+    ["available", false],
+    ["reconnecting", true],
+    ["offline", true],
+  ])("%s: says it is disconnected %s", async (phase, warned) => {
+    mocks.phase = phase;
+    mocks.editor = {
+      environmentId: "solo",
+      environmentLabel: "Solo",
+      draft: editDraft(task(null)),
+    };
+    act(() => root.render(<SettingsScheduledTaskEditRouteScreen />));
+    expect(container.textContent?.includes("This environment is disconnected")).toBe(warned);
+    await act(async () => find("Save changes")!.click());
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -327,7 +356,7 @@ describe("scheduled task without a conversation", () => {
 });
 
 describe("scheduled tasks screen with several projects selected", () => {
-  it("lists the tasks of the union of the selected projects, on the environments that have one", () => {
+  it("lists the tasks of the union of the selected projects, on the environments that have one, or asks for one", () => {
     const titled = (id: string, projectId: string) => ({
       ...task(null),
       id,
@@ -349,5 +378,9 @@ describe("scheduled tasks screen with several projects selected", () => {
     expect(find("Edit Task three")).toBeUndefined();
     expect(container.querySelector('section[aria-label="Lab"]')).toBeNull();
     expect(find("Edit Task four")).toBeUndefined();
+
+    mocks.noEnvironment = true;
+    act(() => root.render(<SettingsScheduledTasksRouteScreen />));
+    expect(container.textContent).toContain(CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS);
   });
 });

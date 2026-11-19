@@ -42,6 +42,7 @@ import {
   deviceMicrophoneOrder,
   localVoiceTranscriberAtom,
 } from "../voice-input/VoiceInputProvider";
+import { MICROPHONE_COPY, VOICE_COPY } from "./voiceCopy";
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
@@ -81,38 +82,36 @@ const KINDS: Record<
   }
 > = {
   wired: {
-    label: "Wired",
-    row: "Other wired",
-    rowDescription: "Headsets and USB microphones not listed here",
+    label: MICROPHONE_COPY.wired.label,
+    row: MICROPHONE_COPY.wired.row,
+    rowDescription: MICROPHONE_COPY.wired.description,
     icon: "cable.connector",
   },
   bluetooth: {
-    label: "Bluetooth",
-    row: "Other Bluetooth",
+    label: MICROPHONE_COPY.bluetooth.label,
+    row: MICROPHONE_COPY.bluetooth.row,
     rowDescription:
       Platform.OS === "android"
-        ? "Earbuds, headsets, and cars, including Android Auto, not listed here"
-        : "AirPods, headsets, and cars not listed here",
+        ? MICROPHONE_COPY.bluetooth.androidDescription
+        : MICROPHONE_COPY.bluetooth.description,
     icon: "headphones",
   },
   builtIn: {
-    label: "Built-in",
-    row: "Built-in microphone",
-    rowDescription: "The microphone on this device",
+    label: MICROPHONE_COPY.builtIn.label,
+    row: MICROPHONE_COPY.builtIn.row,
+    rowDescription: MICROPHONE_COPY.builtIn.description,
     icon: "iphone",
   },
   carPlay: {
-    label: "CarPlay",
-    row: "CarPlay",
-    rowDescription: "The car’s microphone",
+    label: MICROPHONE_COPY.carPlay.label,
+    row: MICROPHONE_COPY.carPlay.row,
+    rowDescription: MICROPHONE_COPY.carPlay.description,
     icon: "car",
   },
 };
 
 const UNAVAILABLE_EXPLANATION =
-  Platform.OS === "android"
-    ? "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate."
-    : "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.";
+  VOICE_COPY.unavailableExplanation[Platform.OS === "android" ? "android" : "ios"];
 
 function saveDestination(id: EnvironmentId | null) {
   try {
@@ -145,10 +144,10 @@ function EnvironmentChoice({
       disabled={!usable}
       description={
         environment.connection.phase !== "connected"
-          ? "Not connected"
+          ? VOICE_COPY.transcribeOn.notConnected
           : !usable
-            ? "Transcription unavailable"
-            : (environment.displayUrl ?? "Send finished recordings to this environment.")
+            ? VOICE_COPY.transcribeOn.unavailable
+            : (environment.displayUrl ?? VOICE_COPY.transcribeOn.sendRecordings)
       }
       separated
       onPress={() => {
@@ -276,10 +275,10 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Transcribe on">
+        <SettingsSection title={VOICE_COPY.transcribeOn.title}>
           <ListChoiceRow
-            label="This device"
-            description="Audio stays on this device and is transcribed here."
+            label={VOICE_COPY.transcribeOn.thisDevice}
+            description={VOICE_COPY.transcribeOn.thisDeviceDescription}
             selected={!grant && !sheetEnvironment}
             onPress={() => {
               setCloudSheet(null);
@@ -301,8 +300,8 @@ export function SettingsVoiceRouteScreen() {
             ))}
           {isReady && grant && !grantEnvironment ? (
             <ListChoiceRow
-              label="Previously selected environment"
-              description="No longer paired"
+              label={VOICE_COPY.transcribeOn.previousEnvironment}
+              description={VOICE_COPY.transcribeOn.noLongerPaired}
               separated
               selected
               disabled
@@ -325,7 +324,7 @@ export function SettingsVoiceRouteScreen() {
         ) : null}
         {permission === "ask" || permission === "denied" ? (
           <>
-            <SettingsSection title="Microphone access">
+            <SettingsSection title={VOICE_COPY.microphoneAccess.title}>
               <SettingsActionRow
                 icon="mic"
                 label={permission === "ask" ? "Allow microphone access" : "Open Settings"}
@@ -336,12 +335,12 @@ export function SettingsVoiceRouteScreen() {
             </SettingsSection>
             <Text className="px-2 text-sm text-foreground-muted">
               {permission === "ask"
-                ? "Allow microphone access to record and to see your microphones."
-                : "Turn on microphone access for T3 Code in Settings to use voice input."}
+                ? VOICE_COPY.microphoneAccess.askFooter
+                : VOICE_COPY.microphoneAccess.deniedFooter}
             </Text>
           </>
         ) : null}
-        <SettingsSection title="Preferred order">
+        <SettingsSection title={VOICE_COPY.preferredOrder.title}>
           {entries.map((entry, index) => {
             const key = microphoneEntryKey(entry);
             const shift =
@@ -376,12 +375,8 @@ export function SettingsVoiceRouteScreen() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input uses the first connected microphone in this list. A wired or Bluetooth
-          microphone is added by name the first time you dictate with it connected; until then it
-          falls under Other. Swipe left on a named microphone to forget it.
-          {Platform.OS === "android"
-            ? " Android may still use a different microphone if the preferred one can’t be routed."
-            : null}
+          {VOICE_COPY.preferredOrder.footer}
+          {Platform.OS === "android" ? VOICE_COPY.preferredOrder.androidNote : null}
         </Text>
       </ScrollView>
     </SettingsScreen>

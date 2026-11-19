@@ -28,6 +28,8 @@ export interface ConnectionDiagnosis {
   readonly facts: ReadonlyArray<readonly [label: string, value: string]>;
   /** The troubleshooting guide section for this failure. Null for direct routes, except a pending T3 Connect sign-in. */
   readonly moreInfoUrl: string | null;
+  /** The host refused this device's saved direct credential; only pairing again with a new code fixes it. */
+  readonly pairAgain: boolean;
 }
 
 export interface ConnectionDiagnosisInput {
@@ -147,7 +149,7 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
         ? `This device can't reach ${host}'s tunnel`
         : `T3 Connect could not reach ${host}'s tunnel`;
     case "server":
-      return failure?.reason === "authentication" || failure?.reason === "permission"
+      return refusesDevice(failure)
         ? `T3 Code on ${host} did not accept this device`
         : `T3 Code on ${host} did not answer`;
   }
@@ -224,11 +226,20 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
           ]
         : [`Make sure ${host} is awake and online.`, checkHost];
     case "server":
-      return [
-        `Make sure T3 Code is running on ${host}.`,
-        "Retry. If it keeps failing, copy the diagnostics.",
-      ];
+      return refusesDevice(failure)
+        ? [
+            `Pair this device again with a new pairing code from ${host}.`,
+            `On ${host}, create the code in Settings > Sharing & access.`,
+          ]
+        : [
+            `Make sure T3 Code is running on ${host}.`,
+            "Retry. If it keeps failing, copy the diagnostics.",
+          ];
   }
+}
+
+function refusesDevice(failure: ConnectionAttemptError | null): boolean {
+  return failure?.reason === "authentication" || failure?.reason === "permission";
 }
 
 function helpSection(
@@ -278,7 +289,7 @@ function helpSection(
     case "tunnel":
       return onThisDevice ? "this-device-cant-reach-t3-connect" : "the-hosts-tunnel-is-offline";
     case "server":
-      return failure?.reason === "authentication" || failure?.reason === "permission"
+      return refusesDevice(failure)
         ? "sign-in-account-or-link-problems"
         : "the-tunnel-works-but-t3-code-does-not-answer";
   }
@@ -361,6 +372,7 @@ export function presentConnectionDiagnosis(
       relayPath || located.cause === "session_pending"
         ? t3ConnectTroubleshootingUrl(helpSection(located, failure))
         : null,
+    pairAgain: !relayPath && located.hop === "server" && refusesDevice(failure),
   };
 }
 

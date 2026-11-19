@@ -20,7 +20,7 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, untilSessionEnds } from "../auth/http.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
@@ -79,7 +79,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
   if (threadId.length === 0 || tabId.length === 0) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-  return yield* Effect.scoped(
+  const stream = Effect.scoped(
     Effect.gen(function* () {
       const attached = yield* browser
         .attachViewer({
@@ -209,6 +209,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
     }),
     Effect.orElseSucceed(() => HttpServerResponse.empty()),
   );
+  return yield* untilSessionEnds(Effect.succeed(session), stream);
 });
 
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>

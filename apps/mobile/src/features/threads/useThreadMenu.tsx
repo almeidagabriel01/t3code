@@ -41,6 +41,7 @@ import {
   canOpenThreadNotes,
   menuActionsToAppBarItems,
   resolveThreadMenuKind,
+  isAssistantSubagent,
   runThreadMenuEvent,
 } from "./thread-menu";
 import { getThreadListV2NewBranchMenuTitle } from "./thread-list-v2-row-appearance";
@@ -127,6 +128,7 @@ export function useThreadMenu(
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
     assistantTask: assistantTaskMenuState(assistantTask, thread),
+    outsideProjects: isAssistantSubagent(thread),
     assistant: assistantEntry
       ? {
           name: assistantEntry.assistant.name,

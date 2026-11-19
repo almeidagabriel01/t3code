@@ -29,6 +29,7 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -226,8 +227,7 @@ function ProviderCommandArguments({
 
   return (
     <SettingsRow
-      title="Arguments"
-      description="One literal argument per row, in launch order."
+      {...settingCopy("provider-arguments")}
       managed={managedReason}
       control={
         <Button

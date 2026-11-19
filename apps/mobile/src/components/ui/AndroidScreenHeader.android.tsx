@@ -52,6 +52,20 @@ export function AndroidScreenHeader(props: {
   const inFormSheet = use(RoutedFormSheetContext);
   const { paddingTop, paddingBottom } = useToolbarLayout(props.embedded || inFormSheet);
   const [headerWidth, setHeaderWidth] = useState(0);
+  const title = props.titleContent ? (
+    <RNHostView matchContents={{ vertical: true }}>
+      <View collapsable={false}>{props.titleContent}</View>
+    </RNHostView>
+  ) : (
+    <NativeText
+      color={colors["--color-header-foreground"]}
+      maxLines={1}
+      overflow="ellipsis"
+      style={titleTypography}
+    >
+      {props.title}
+    </NativeText>
+  );
   const { visibleActions, overflowActions } = splitAndroidHeaderActions(
     props.actions ?? [],
     headerWidth >= 600,
@@ -91,40 +105,20 @@ export function AndroidScreenHeader(props: {
           ) : undefined
         }
         title={
-          props.titleContent ? (
-            <RNHostView matchContents={{ vertical: true }}>
-              <View collapsable={false}>{props.titleContent}</View>
-            </RNHostView>
-          ) : !props.subtitle ? (
-            <NativeText
-              color={colors["--color-header-foreground"]}
-              maxLines={1}
-              overflow="ellipsis"
-              style={titleTypography}
-            >
-              {props.title}
-            </NativeText>
-          ) : (
+          props.subtitle ? (
             <Column>
+              {title}
               <NativeText
-                color={colors["--color-header-foreground"]}
+                color={colors["--color-foreground-muted"]}
                 maxLines={1}
                 overflow="ellipsis"
-                style={titleTypography}
+                style={subtitleTypography}
               >
-                {props.title}
+                {props.subtitle}
               </NativeText>
-              {props.subtitle ? (
-                <NativeText
-                  color={colors["--color-foreground-muted"]}
-                  maxLines={1}
-                  overflow="ellipsis"
-                  style={subtitleTypography}
-                >
-                  {props.subtitle}
-                </NativeText>
-              ) : null}
             </Column>
+          ) : (
+            title
           )
         }
         actions={

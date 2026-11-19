@@ -179,6 +179,22 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
   return closest;
 });
 
+/**
+ * The base and changed files, when the T3 Runner computed them on the Mac for a Linux copy that
+ * has no `.git`. Given, the check runs without calling git.
+ */
+export const givenInputs = Effect.gen(function* () {
+  const files = yield* Config.option(Config.String("CHECK_CHANGED_FILES"));
+  const base = yield* Config.option(Config.String("CHECK_CHANGED_BASE"));
+  if (Option.isNone(files) || Option.isNone(base)) return Option.none();
+  const ref = yield* Config.option(Config.String("CHECK_CHANGED_REF"));
+  return Option.some({
+    ref: Option.getOrElse(ref, () => base.value),
+    base: base.value,
+    files: [...new Set(files.value.split("\n").filter((file) => file !== ""))].sort(),
+  });
+});
+
 // CI's lint and knip also read Astro components' frontmatter.
 const CODE = /\.(?:[cm]?[jt]sx?|astro)$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
@@ -243,11 +259,14 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   const lines = (...args: Array<string>) => gitLines(root, args);
 
-  const { ref, base } = yield* comparisonBase(root, input.ref);
+  const given = yield* givenInputs;
+  const { ref, base } = Option.isSome(given) ? given.value : yield* comparisonBase(root, input.ref);
   // --no-renames lists a rename as its old and new path, as CI does.
   const changedFiles = lines("diff", "--name-only", "--no-renames", base, "--");
   const untrackedFiles = lines("ls-files", "--others", "--exclude-standard");
-  const files = [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
+  const files = Option.isSome(given)
+    ? given.value.files
+    : [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
 
   if (files.length === 0) {
     yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)} (${ref}).`);
@@ -304,13 +323,14 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     }
     return hash.digest("hex");
   });
-  const key = yield* inputKey;
+  // The key needs git's diff; a run handed its inputs is never cached.
+  const key = Option.isSome(given) ? null : yield* inputKey;
   const cachePath = inRoot("node_modules/.cache/check-changed.json");
   // A missing or unreadable cache is a miss, never a failure.
   const cached = yield* fs
     .readFileString(cachePath)
     .pipe(Effect.flatMap(decodeCacheEntry), Effect.option);
-  if (Option.isSome(cached) && cached.value.key === key) {
+  if (key !== null && Option.isSome(cached) && cached.value.key === key) {
     yield* Console.log("Nothing changed since the last passing run.\n");
     for (const line of cached.value.summary) yield* Console.log(line);
     return true;
@@ -571,6 +591,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   yield* Console.log(`\n${summary.join("\n")}`);
 
   if (results.some((result) => result.outcome !== "pass")) return false;
+  if (key === null) return true;
   if ((yield* inputKey) !== key) {
     yield* Console.log("  pass not cached: files changed during the run");
     return true;

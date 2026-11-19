@@ -84,6 +84,7 @@ it.each([true, false])("exposes one button per row (opensDetails %s)", (opensDet
         opensDetails={opensDetails}
         onToggle={vi.fn()}
         onReconnect={vi.fn()}
+        onPairAgain={vi.fn()}
         onRemove={vi.fn()}
         onSetEnabled={vi.fn()}
         onUpdate={vi.fn()}

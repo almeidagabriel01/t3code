@@ -1,6 +1,6 @@
 import { AssistantError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks } = vi.hoisted(() => ({ mocks: { query: vi.fn() } }));
@@ -14,6 +14,14 @@ vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentServerConfigsAtom: Atom.make(new Map()) };
 });
+vi.mock("./presentation", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentPresentations: { presentationsAtom: Atom.make(new Map()) } };
+});
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentThreadShells: { quietThreadShellsAtom: Atom.make([]) } };
+});
 vi.mock("./session", () => ({ environmentSession: {}, sessionHasScope: () => false }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("./query", () => ({ useEnvironmentQuery: mocks.query }));
@@ -24,11 +32,13 @@ import { ASSISTANT_GROUP_CHAT_IDLE } from "@t3tools/client-runtime/state/assista
 import { useAtomCommand } from "./use-atom-command";
 import {
   useAssistantGroupActions,
+  useAssistantLiveWork,
   useAssistantGroupChat,
   useAssistantSandbox,
   useAssistantSandboxActions,
   useAssistantSpend,
   useAssistantTask,
+  useAssistantTasksByAssistant,
   setAssistantTaskDismissed,
 } from "./assistants";
 
@@ -203,6 +213,20 @@ describe("group chat hooks", () => {
       ok: false,
       message: "gone",
     });
+  });
+});
+
+describe("useAssistantLiveWork", () => {
+  it("reads one shared atom, empty while no environment serves assistants", () => {
+    vi.mocked(useAtomValue).mockClear();
+    useAssistantLiveWork();
+    const atom = vi.mocked(useAtomValue).mock.calls[0]![0];
+    const work = AtomRegistry.make().get(atom) as ReturnType<typeof useAssistantLiveWork>;
+    expect([work.sites, [...work.subagents]]).toEqual([[], []]);
+    vi.mocked(useAtomValue).mockClear();
+    useAssistantTasksByAssistant();
+    const tasks = vi.mocked(useAtomValue).mock.calls[0]![0];
+    expect(AtomRegistry.make().get(tasks)).toEqual(new Map());
   });
 });
 

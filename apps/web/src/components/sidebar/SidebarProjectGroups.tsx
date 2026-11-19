@@ -5,15 +5,14 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
+import type { SidebarSortingStrategy } from "../Sidebar.drag";
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
-import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import { cn } from "~/lib/utils";
 import {
   resolveSidebarNotificationDotClass,
   resolveThreadLastVisitedAt,
-  resolveWorkingStartedAt,
   sidebarListItemId,
   type SidebarListItem,
   type SidebarSection,
@@ -22,7 +21,8 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { folderProjectKeysAtom } from "../../hooks/useSidebarProjectGroups";
 import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
-import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
+import { countLivePortsByProject } from "./sidebarDisplay.logic";
+import { SubagentRows } from "./SidebarSubagentRows";
 import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
@@ -32,13 +32,10 @@ import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
-import {
-  SIDEBAR_SORTABLE_DRAG_DISABLED,
-  SIDEBAR_SORTABLE_DRAG_ENABLED,
-  WorkingDuration,
-} from "./SidebarThreadRow";
+import { SIDEBAR_SORTABLE_DRAG_DISABLED, SIDEBAR_SORTABLE_DRAG_ENABLED } from "./SidebarThreadRow";
 import {
   SidebarDragBoundary,
+  SidebarDragReserve,
   SidebarSectionPlaceholder,
   SortableSidebarMarker,
 } from "./SidebarListMarkers";
@@ -72,86 +69,6 @@ function ProjectNotificationDot(props: { threads: readonly EnvironmentThreadShel
     return null;
   });
   return <SidebarNotificationDot dotClass={dotClass} />;
-}
-
-function subagentDotClass(thread: EnvironmentThreadShell): string {
-  const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval" || status === "input") return "bg-amber-500 dark:bg-amber-300/90";
-  if (status === "request") return "bg-guest";
-  return "bg-sky-500 dark:bg-sky-300/80";
-}
-
-function SubagentRow(props: {
-  thread: EnvironmentThreadShell;
-  onOpen: (threadRef: ScopedThreadRef) => void;
-}) {
-  const { thread } = props;
-  return (
-    <li className="relative list-none">
-      <span aria-hidden className="absolute inset-y-0 start-9 w-px bg-sidebar-border" />
-      <button
-        type="button"
-        data-testid="sidebar-subagent-row"
-        onClick={() => props.onOpen(scopeThreadRef(thread.environmentId, thread.id))}
-        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-12 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <span
-          aria-hidden
-          className={cn("size-1.5 shrink-0 rounded-full", subagentDotClass(thread))}
-        />
-        <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-        <span className="shrink-0 tabular-nums">
-          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-        </span>
-      </button>
-    </li>
-  );
-}
-
-function SubagentRows(props: {
-  children: readonly EnvironmentThreadShell[];
-  onOpen: (threadRef: ScopedThreadRef) => void;
-}) {
-  const show = useClientSettings((settings) => settings.sidebarShowSubagents);
-  const mode = useClientSettings((settings) => settings.sidebarAgentActivityDisplayMode);
-  const [expanded, setExpanded] = useState(false);
-  const display = resolveSubagentDisplay({
-    count: props.children.length,
-    show,
-    mode,
-    expanded,
-  });
-  if (display === "hidden") return null;
-  return (
-    <>
-      {display === "summary" || display === "summary-and-rows" ? (
-        <li className="list-none">
-          <button
-            type="button"
-            aria-expanded={expanded}
-            data-testid="sidebar-subagent-summary"
-            onClick={() => setExpanded((value) => !value)}
-            className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-12 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            <span
-              aria-hidden
-              className={cn("size-1.5 shrink-0 rounded-full", subagentDotClass(props.children[0]!))}
-            />
-            <span className="min-w-0 flex-1 truncate">{`${props.children.length} agents`}</span>
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3 shrink-0", !expanded && "-rotate-90")}
-            />
-          </button>
-        </li>
-      ) : null}
-      {display === "rows" || display === "summary-and-rows"
-        ? props.children.map((child) => (
-            <SubagentRow key={threadKeyOf(child)} thread={child} onOpen={props.onOpen} />
-          ))
-        : null}
-    </>
-  );
 }
 
 /**
@@ -191,7 +108,7 @@ type ProjectGroupProps = {
   portCounts: ReadonlyMap<string, number>;
   first: boolean;
   drag: SidebarProjectDrag | null;
-  dragSortingStrategy: SortingStrategy;
+  dragSortingStrategy: SidebarSortingStrategy;
   threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
   subagentChildrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
   renderThreadRow: (
@@ -235,6 +152,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
   const attachList = (node: HTMLUListElement) => onListAttach(scope, node);
   const drag = props.drag?.projectKey === scope ? props.drag : null;
   const from = drag?.from ?? null;
+  const itemIds = items.map(sidebarListItemId);
   const dragTargetSection = drag?.targetSection ?? null;
   const openCount = (section: SidebarSection) =>
     items.filter((item) => item.kind === "thread" && item.section === section).length;
@@ -459,7 +377,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         </span>
       </div>
       <StableSortableContext
-        items={items.map(sidebarListItemId)}
+        items={itemIds}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
         <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
@@ -473,6 +391,9 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             </li>
           ) : null}
         </ul>
+        {drag === null ? null : (
+          <SidebarDragReserve ids={itemIds} strategy={props.dragSortingStrategy} />
+        )}
       </StableSortableContext>
     </li>
   );

@@ -4,9 +4,16 @@ import { Atom } from "effect/reactivity";
 
 import { readAssistantEntries } from "../../state/assistants";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { ProjectAssistantAccess } from "./ProjectAssistantAccess";
+import { PROJECT_ASSISTANT_ACCESS_INTRO, ProjectAssistantAccess } from "./ProjectAssistantAccess";
 
 type Target = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
 
@@ -26,11 +33,12 @@ export function ProjectAssistantAccessHost() {
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Assistants with access</DialogTitle>
+          <DialogDescription>{PROJECT_ASSISTANT_ACCESS_INTRO}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <ProjectAssistantAccess
             environmentId={target.environmentId}
-            projectId={target.projectId}
+            projectIds={[target.projectId]}
           />
         </DialogPanel>
       </DialogPopup>

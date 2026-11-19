@@ -1,5 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
+/** Names the settings filter menu, so a page can leave it to the Settings list beside it. */
+export const SETTINGS_FILTER_MENU_TITLE = "Filter settings environments and projects";
+
 export function toggleSettingsEnvironment(
   selected: ReadonlySet<EnvironmentId> | null,
   available: readonly { readonly environmentId: EnvironmentId }[],

@@ -247,7 +247,12 @@ const fixtureConfig = {
   "user.email": "fixture@example.invalid",
 };
 const env = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  // A check:changed run on Linux hands its own CHECK_CHANGED_* inputs to these tests' environment.
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !name.startsWith("GIT_") && !name.startsWith("CHECK_CHANGED_"),
+    ),
+  ),
   GIT_CONFIG_GLOBAL: emptyConfig,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
@@ -412,11 +417,11 @@ function launcherFixture() {
     root,
     source,
     write,
-    run(failStep = "") {
+    run(failStep = "", extra: Record<string, string> = {}) {
       return NodeChildProcess.spawnSync(process.execPath, ["scripts/check-changed.ts", "HEAD"], {
         cwd: root,
         encoding: "utf8",
-        env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
+        env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep, ...extra },
       });
     },
     calls: (): Array<{ args: Array<string>; cwd: string }> =>
@@ -444,6 +449,31 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(calls.some(({ args }) => args[0] === "install")).toBe(false);
   expect(result.stdout).toContain("fixture stdout: lint");
   expect(result.stdout).toContain("fixture stderr: lint");
+});
+
+// The Runner's Linux copy has no `.git`: the Mac hands over the base and the files.
+it.each([
+  ["given inputs", true],
+  ["no inputs", false],
+])("without .git, %s decide whether the check runs", (_name, given) => {
+  using project = launcherFixture();
+  project.write(project.source, "export const value = 2;\n");
+  NodeFS.rmSync(NodePath.join(project.root, ".git"), { recursive: true, force: true });
+  const result = project.run(
+    "",
+    given
+      ? {
+          CHECK_CHANGED_BASE: "abc123",
+          CHECK_CHANGED_REF: "origin/main",
+          CHECK_CHANGED_FILES: `${project.source}\n`,
+        }
+      : {},
+  );
+  expect(result.status === 0, result.stdout + result.stderr).toBe(given);
+  expect(
+    project.calls().some(({ args }) => args[0] === "lint" && args.includes(project.source)),
+  ).toBe(given);
+  if (given) expect(result.stdout).toContain("1 files since abc123 (origin/main)");
 });
 
 it("lints an Astro component and runs knip when only it changed", () => {

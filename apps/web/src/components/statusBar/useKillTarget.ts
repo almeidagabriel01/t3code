@@ -9,6 +9,8 @@ import {
   type DeviceShutdownInput,
   type EnvironmentId,
   type HeavyCommand,
+  type HeavyQueueSetAdmissionLimitsInput,
+  type HeavyRunner,
   type ListeningPort,
   type TerminalCloseInput,
 } from "@t3tools/contracts";
@@ -86,6 +88,8 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
 export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const canRouteAll = useAtomValue(heavyQueueEnvironment.routeAll.permissionAtom(environmentId));
+  const routeAllCommand = useAtomCommand(heavyQueueEnvironment.routeAll, { reportFailure: false });
   const routeCommand = useAtomCommand(heavyQueueEnvironment.route, { reportFailure: false });
   const moveCommand = useAtomCommand(heavyQueueEnvironment.move, { reportFailure: false });
   const startNowCommand = useAtomCommand(heavyQueueEnvironment.startNow, { reportFailure: false });
@@ -94,6 +98,27 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const enabledCommand = useAtomCommand(heavyQueueEnvironment.setEnabled, { reportFailure: false });
   const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
   const maxCommand = useAtomCommand(heavyQueueEnvironment.setMaxRunning, { reportFailure: false });
+  const macMemoryFloorPercentCommand = useAtomCommand(
+    heavyQueueEnvironment.setMacMemoryFloorPercent,
+    {
+      reportFailure: false,
+    },
+  );
+  const macCpuCeilingPercentCommand = useAtomCommand(
+    heavyQueueEnvironment.setMacCpuCeilingPercent,
+    {
+      reportFailure: false,
+    },
+  );
+  const heavyOverLimitSecondsCommand = useAtomCommand(
+    heavyQueueEnvironment.setHeavyOverLimitSeconds,
+    {
+      reportFailure: false,
+    },
+  );
+  const admissionLimitsCommand = useAtomCommand(heavyQueueEnvironment.setAdmissionLimits, {
+    reportFailure: false,
+  });
   const priorityCommand = useAtomCommand(heavyQueueEnvironment.setPriority, {
     reportFailure: false,
   });
@@ -111,6 +136,9 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   return {
     canChange,
     canRoute,
+    canRouteAll,
+    moveAll: async (runner: HeavyRunner) =>
+      report("Could not move it", await routeAllCommand({ environmentId, input: { runner } })),
     route: async (id: string, action: Pick<RouteAction, "runner" | "confirm" | "force">) => {
       if (action.confirm !== null && !(await confirmKill(action.confirm))) return;
       report(
@@ -154,6 +182,26 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       report(
         "Could not change the limit",
         await maxCommand({ environmentId, input: { maxRunning } }),
+      ),
+    setMacMemoryFloorPercent: async (macMemoryFloorPercent: number) =>
+      report(
+        "Could not change the memory limit",
+        await macMemoryFloorPercentCommand({ environmentId, input: { macMemoryFloorPercent } }),
+      ),
+    setMacCpuCeilingPercent: async (macCpuCeilingPercent: number) =>
+      report(
+        "Could not change the CPU limit",
+        await macCpuCeilingPercentCommand({ environmentId, input: { macCpuCeilingPercent } }),
+      ),
+    setHeavyOverLimitSeconds: async (heavyOverLimitSeconds: number) =>
+      report(
+        "Could not change how long a limit must hold",
+        await heavyOverLimitSecondsCommand({ environmentId, input: { heavyOverLimitSeconds } }),
+      ),
+    setAdmissionLimits: async (input: HeavyQueueSetAdmissionLimitsInput) =>
+      report(
+        "Could not change how jobs are sized",
+        await admissionLimitsCommand({ environmentId, input }),
       ),
     setPriority: async (id: string, priority: "low" | "high") =>
       report(

@@ -30,6 +30,8 @@ export function selectThreadCreationDetail<Ref>(input: {
     Record<string, ReadonlyArray<QueuedThreadMessage> | undefined>
   >;
   readonly outcomes: Readonly<Record<string, PendingThreadCreationOutcome | undefined>>;
+  /** A side chat this client is still creating; its screen shows the message meanwhile. */
+  readonly startingSideChat?: boolean;
 }): { readonly pendingCreation: PendingThreadCreation | null; readonly detailRef: Ref | null } {
   const pendingCreation = ((): PendingThreadCreation | null => {
     if (input.threadKey === null) {
@@ -46,7 +48,8 @@ export function selectThreadCreationDetail<Ref>(input: {
   // before subscribing: an early not-found is cached as a deleted thread.
   // Every detail reader must use this ref, not the route id.
   const detailRef =
-    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
+    !input.startingSideChat &&
+    (pendingCreation === null || pendingCreation.outcome?.kind === "delivered")
       ? input.threadRef
       : null;
   return { pendingCreation, detailRef };

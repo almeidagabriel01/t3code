@@ -49,6 +49,7 @@ import {
 } from "../lib/modelOptions";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import type { SideChatMessageAttachments } from "../features/threads/useStartSideChat";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
 import {
@@ -178,11 +179,15 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState(input: {
-  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
+  /**
+   * Forks the thread into a side chat that gets `prompt` and its attachments; resolves false
+   * when it did not start.
+   */
   readonly startSideChat: (
     source: ScopedThreadRef,
     prompt: string,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+    message: SideChatMessageAttachments,
   ) => Promise<boolean>;
 }) {
   const {
@@ -556,24 +561,36 @@ export function useThreadComposerState(input: {
       );
       Dialog.alert(title, detail);
     };
+    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject
+    // indefinitely, and a side chat takes the same limits.
+    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      Dialog.alert(
+        "Too many attachments",
+        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      );
+      return null;
+    }
+
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
     if (sideChatCommand) {
       if (sideChatUnavailableReason !== null) {
         Dialog.alert("Side chat not started", sideChatUnavailableReason);
-      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
+      } else if (
+        draft.context?.records.some((record) => record.kind !== "image" && record.kind !== "file")
+      ) {
         Dialog.alert(
-          "Side chats take text only",
-          "Remove the attachments and context, then send it again.",
+          "Side chats take text, images and files",
+          "Remove the added context, then send it again.",
         );
-      } else if (sideChatCommand.prompt.length === 0) {
+      } else if (sideChatCommand.prompt.length === 0 && attachments.length === 0) {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
       } else if (modelUnavailable) {
         alertModelUnavailable();
       } else if (!startingSideChatRef.current) {
         startingSideChatRef.current = true;
         // The side chat's screen shows the message at once, so it leaves the composer at once.
-        clearComposerDraftContent(threadKey);
+        clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
         const started = await input
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
@@ -582,11 +599,14 @@ export function useThreadComposerState(input: {
               runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
               modelSelection,
             },
+            { attachments, context: draft.context },
           )
           .finally(() => {
             startingSideChatRef.current = false;
           });
-        if (!started) {
+        if (started) {
+          scheduleUnusedComposerAttachmentCleanup(attachments);
+        } else {
           // Not started: the text returns, after anything typed meanwhile.
           const typed = getComposerDraftSnapshot(threadKey).text;
           setComposerDraftText(
@@ -595,6 +615,15 @@ export function useThreadComposerState(input: {
               ? draft.text
               : `${typed.replace(/\s+$/, "")}\n\n${draft.text}`,
           );
+          // The attachments and their records return too; an overflow is left for the send to refuse.
+          if (attachments.length > 0) {
+            void mergeComposerDraftContent(threadKey, {
+              text: "",
+              context: draft.context,
+              attachments: [],
+            });
+            appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
+          }
           // Says why the text is back, also for someone who left the side chat's screen.
           setThreadComposerError(
             threadKey,
@@ -615,14 +644,6 @@ export function useThreadComposerState(input: {
     ) {
       setFreshSessionPending(threadKey, true);
       clearComposerDraftContent(threadKey);
-      return null;
-    }
-    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
-    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-      Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
-      );
       return null;
     }
 

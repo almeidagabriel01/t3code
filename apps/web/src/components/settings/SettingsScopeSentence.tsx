@@ -1,4 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { allEnvironmentsLabel } from "@t3tools/client-runtime/settings-empty-selection";
 import { useLocation } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, LayersIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
@@ -57,6 +58,14 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Access picks its environment on the page itself.
   "/settings/access",
   "/settings/about",
+]);
+
+/** Pages that act on one environment at a time, so the menu offers no "All environments". */
+export const SETTINGS_SINGLE_ENVIRONMENT_PATHS: ReadonlySet<string> = new Set([
+  "/settings/providers",
+  "/settings/secrets",
+  "/settings/memory",
+  "/settings/integrations",
 ]);
 
 interface SettingsScopeMenuProps {
@@ -312,9 +321,7 @@ export function EnvironmentScopeMenu({
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
-            : singleEnvironment
-              ? "No environments"
-              : "All environments"
+            : allEnvironmentsLabel(environments.length)
       }
       values={[environmentValue]}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}

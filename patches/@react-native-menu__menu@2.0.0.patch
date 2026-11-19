@@ -178,7 +178,7 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304a79e95f1 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..31b376e5409640a218450610f49783030592f615 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
 @@ -17,7 +17,7 @@ public class MenuViewImplementation: UIButton {
@@ -190,11 +190,12 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
              }
              self.setup()
          }
-@@ -60,17 +60,98 @@ public class MenuViewImplementation: UIButton {
+@@ -60,17 +60,103 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
 -        sendMenuOpen()
+-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
 +        // Flush updates deferred by the presented-guard before the action
 +        // provider snapshots self.menu (covers a stuck flag from an
 +        // interaction that never ended cleanly).
@@ -206,12 +207,16 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
 +        isMenuPresented = true
 +        didSelectAction = false
 +        sendMenuInteractionStart()
-         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
++        let configuration = UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
              guard let self = self else { return nil }
              return self.menu
          }
-     }
--    
++        // Keep the order React gives; UIKit otherwise reverses a menu that opens upward.
++        if #available(iOS 16.0, *) {
++            configuration.preferredMenuElementOrder = .fixed
++        }
++        return configuration
++    }
 +
 +    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
 +        // UIKit can request a configuration for a press that never opens a
@@ -219,7 +224,8 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
 +        // preserve UIButton's presentation behavior by calling super.
 +        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
 +        sendMenuOpen()
-+    }
+     }
+-    
 +
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
 +        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
@@ -232,8 +238,8 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
 +            pendingMenu = nil
 +            self.setup()
 +        }
-+    }
-+
+     }
+ 
 +    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
 +        return contentPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
 +    }
@@ -244,8 +250,8 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
 +        }
 +        // A selection usually re-renders the trigger, so fade instead of landing on its old look.
 +        return didSelectAction ? nil : preview
-     }
- 
++    }
++
 +    // The button is a transparent overlay: morph from the React content so UIKit hides and restores it.
 +    // iOS 26 only, and only for content with its own corner radius; otherwise keep UIButton's default.
 +    private func contentPreview() -> UITargetedPreview? {
@@ -291,7 +297,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +167,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +172,105 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -307,6 +313,9 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
 +        }
 +
          self.menu = menu
++        if #available(iOS 16.0, *) {
++            self.preferredMenuElementOrder = .fixed
++        }
          self.showsMenuAsPrimaryAction = !shouldOpenOnLongPress
 +        // In long-press mode the button must not intercept touches: as a
 +        // full-bounds contentView it sits IN FRONT of the React children of
@@ -394,7 +403,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..381aa8e2900aeb0d2453dba514360304
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +299,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +307,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }

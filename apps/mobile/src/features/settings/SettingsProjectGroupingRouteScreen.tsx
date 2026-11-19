@@ -1,6 +1,5 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,30 +10,9 @@ import {
 } from "../../state/project-grouping";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { GENERAL_COPY, GROUPING_OPTIONS } from "./projectGroupingCopy";
 import { SettingsSection } from "./components/SettingsSection";
 import { NewThreadSettingsSection, ThreadOrderSettings } from "./ThreadSettingsSections";
-
-const GROUPING_OPTIONS: ReadonlyArray<{
-  readonly mode: SidebarProjectGroupingMode;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    mode: "repository",
-    label: "Group by repository",
-    description: "Matching repositories appear as one project.",
-  },
-  {
-    mode: "repository_path",
-    label: "Group by repository path",
-    description: "Keep monorepo paths separate.",
-  },
-  {
-    mode: "separate",
-    label: "Keep separate",
-    description: "Show every workspace as its own project.",
-  },
-];
 
 export function SettingsProjectGroupingRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -54,7 +32,7 @@ export function SettingsProjectGroupingRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Project grouping">
+        <SettingsSection title={GENERAL_COPY.projectGrouping.title}>
           {GROUPING_OPTIONS.map((option, index) => (
             <SettingsChoiceRow
               key={option.mode}

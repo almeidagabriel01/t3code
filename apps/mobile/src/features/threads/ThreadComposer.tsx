@@ -30,6 +30,7 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
+import { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -487,6 +488,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
+    sendsToSideChat: props.offersSideChat === true && parseSideChatCommand(draftMessage) !== null,
   });
   const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;

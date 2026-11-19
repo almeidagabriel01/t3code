@@ -279,6 +279,7 @@ export function DevicePreviewScreen({
           {
             id: "devices",
             title: "Devices",
+            icon: "iphone",
             inline: true,
             items: previews.map((device) => ({
               id: device.key,

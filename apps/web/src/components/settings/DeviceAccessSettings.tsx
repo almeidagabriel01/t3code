@@ -22,6 +22,8 @@ import { deviceEnvironment } from "~/state/device";
 import { deviceConnectionLabel, ForgetWifiDeviceButton } from "../device/WifiPairingDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { CONNECTION_SETTINGS_COPY } from "./settingsSearchConnectionItems";
 
 const isPolicy = Schema.is(DeviceAccessPolicy);
 const POLICIES = ["allow", "ask", "deny"] as const;
@@ -41,7 +43,7 @@ export function DeviceAccessSettings(props: {
       Number(b.physical === true) - Number(a.physical === true) || a.name.localeCompare(b.name),
   );
   return (
-    <SettingsSection id="device-access" title="Device access">
+    <SettingsSection id="device-access" {...settingCopy("device-access")}>
       {devices.map((device) => {
         const policy = deviceAccessPolicy(access, device);
         const host = props.state.hosts.find((candidate) => candidate.id === device.hostId);
@@ -53,6 +55,7 @@ export function DeviceAccessSettings(props: {
         return (
           <SettingsRow
             key={`${device.hostId}:${device.id}`}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- one row per device, not a setting
             title={
               <span className="flex items-center gap-2">
                 <span className="truncate">{device.name}</span>
@@ -63,7 +66,7 @@ export function DeviceAccessSettings(props: {
                 ) : null}
               </span>
             }
-            description={`${host?.label ?? "Device host"} · ${device.version}${deviceConnectionLabel(device)}. ${DEVICE_ACCESS_POLICY_LABELS[policy].description}`}
+            description={`${host?.label ?? CONNECTION_SETTINGS_COPY.deviceHostFallback} · ${device.version}${deviceConnectionLabel(device)}. ${DEVICE_ACCESS_POLICY_LABELS[policy].description}`}
             resetAction={
               canEdit && storedDeviceAccessPolicy(access, device) !== undefined ? (
                 <SettingResetButton

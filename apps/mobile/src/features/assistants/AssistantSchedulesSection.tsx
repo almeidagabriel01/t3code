@@ -12,6 +12,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
+import { AssistantWorkUnavailable, useRefreshOnReconnect } from "./AssistantWorkUnavailable";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { startScheduledTaskEditor } from "../settings/scheduled-task-editor-state";
@@ -30,6 +31,7 @@ export function AssistantSchedulesSection(props: {
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
+  useRefreshOnReconnect(environmentId, [tasks]);
   const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
     reportFailure: true,
@@ -55,6 +57,9 @@ export function AssistantSchedulesSection(props: {
           Tasks that run in its current conversation. A reset keeps them attached.
         </Text>
       </View>
+      {tasks.error === null ? null : (
+        <AssistantWorkUnavailable what="its routines" onRetry={tasks.refresh} />
+      )}
       <ListSection>
         {bound.map((task) => (
           <View key={task.id} className="flex-row items-center bg-grouped-card">

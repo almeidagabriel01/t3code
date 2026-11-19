@@ -74,6 +74,13 @@ export class TaskEventNotices extends Context.Service<
   TaskEventNotices,
   {
     readonly send: (notice: TaskEventNotice) => Effect.Effect<NoticeOutcome>;
+    /**
+     * The id of the last notice when it already told the conversation everything `run` says (it
+     * is that run's notice, or the run is no news against it); none otherwise.
+     */
+    readonly told: (
+      input: Pick<TaskEventNotice, "threadId" | "run">,
+    ) => Effect.Effect<Option.Option<string>>;
     /** Drops all but the newest queued task event per thread; heals backlogs from before this door. */
     readonly foldQueued: (threadId: ThreadId) => Effect.Effect<void>;
   }
@@ -224,27 +231,45 @@ const make = Effect.gen(function* () {
         message_id = excluded.message_id, updated_at = excluded.updated_at`;
   });
 
+  /** Judges a run against the last notice; call under the lock. */
+  const judge = Effect.fn("TaskEventNotices.judge")(function* (
+    notice: Pick<TaskEventNotice, "threadId" | "run">,
+    facts: RunFacts,
+  ) {
+    const rows = yield* sql<NoticeRow>`
+      SELECT run_id, status, head_sha, message_id FROM assistant_task_notices
+      WHERE thread_id = ${notice.threadId} AND subject_thread_id = ${notice.run.threadId}`;
+    const previous = rows[0];
+    const mark =
+      previous === undefined
+        ? undefined
+        : { runId: previous.run_id, status: previous.status, headSha: previous.head_sha };
+    const window = yield* windowSince(notice.run, previous?.run_id ?? null);
+    const judged = {
+      ...facts,
+      asked: facts.asked || window.asked,
+      changedFiles: facts.changedFiles + window.changedFiles,
+    };
+    return { previous, news: isNews(mark, judged) };
+  });
+
+  const told: TaskEventNotices["Service"]["told"] = Effect.fn("TaskEventNotices.told")(
+    function* (input) {
+      const facts = yield* factsOf(input.run);
+      const { previous, news } = yield* lock.withPermits(1)(judge(input, facts));
+      return previous === undefined || news ? Option.none() : Option.some(previous.message_id);
+    },
+    (effect) => effect.pipe(Effect.orElseSucceed(() => Option.none())),
+  );
+
   const send: TaskEventNotices["Service"]["send"] = Effect.fn("TaskEventNotices.send")(
     function* (notice) {
       const facts = yield* factsOf(notice.run);
       return yield* lock
         .withPermits(1)(
           Effect.gen(function* () {
-            const rows = yield* sql<NoticeRow>`
-            SELECT run_id, status, head_sha, message_id FROM assistant_task_notices
-            WHERE thread_id = ${notice.threadId} AND subject_thread_id = ${notice.run.threadId}`;
-            const previous = rows[0];
-            const mark =
-              previous === undefined
-                ? undefined
-                : { runId: previous.run_id, status: previous.status, headSha: previous.head_sha };
-            const window = yield* windowSince(notice.run, previous?.run_id ?? null);
-            const judged = {
-              ...facts,
-              asked: facts.asked || window.asked,
-              changedFiles: facts.changedFiles + window.changedFiles,
-            };
-            if (!isNews(mark, judged)) return "unchanged" as const;
+            const { previous, news } = yield* judge(notice, facts);
+            if (!news) return "unchanged" as const;
             // The command id is the message id, so a send repeated after a crash lands once;
             // marking only after it succeeds never records an event nobody was told.
             const sent = yield* threads
@@ -315,7 +340,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  return { send, foldQueued } satisfies TaskEventNotices["Service"];
+  return { send, told, foldQueued } satisfies TaskEventNotices["Service"];
 });
 
 export const layer = Layer.effect(TaskEventNotices, make);

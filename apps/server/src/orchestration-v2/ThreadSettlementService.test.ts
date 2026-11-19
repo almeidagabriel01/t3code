@@ -1,4 +1,5 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { GitCommandError, GitManagerError, SourceControlProviderKind } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
@@ -33,9 +34,11 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
@@ -54,7 +57,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "subagentHandoff" | "assistantTaskDismissed"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -102,6 +108,8 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     snoozedUntil: null,
     snoozedAt: null,
     pinnedAt: null,
+    subagentHandoff: null,
+    assistantTaskDismissed: false,
     ...overrides,
   };
 }
@@ -555,6 +563,8 @@ interface HarnessOptions {
   readonly snapshot: SettlementSnapshot;
   readonly settings?: ContractServerSettings;
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
+  readonly gitStatus?: GitManager.GitManager["Service"]["status"];
+  readonly gitHead?: (cwd: string) => Effect.Effect<string, GitCommandError>;
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly unreadablePaths?: ReadonlyArray<string>;
@@ -669,7 +679,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           Effect.map((snapshot) =>
             threadId === undefined
               ? snapshot.threads
-              : snapshot.threads.filter((thread) => thread.id === threadId),
+              : snapshot.threads.filter(
+                  (thread) => thread.id === threadId || thread.lineage.parentThreadId === threadId,
+                ),
           ),
         ),
       getThread: (threadId) => {
@@ -696,7 +708,23 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     Layer.mock(GitManager.GitManager)({
       branchPullRequest,
+      status: (input) =>
+        options.gitStatus?.(input) ?? Effect.die(new Error(`Unexpected git status: ${input.cwd}`)),
       invalidateStatus: (cwd) => Ref.update(invalidatedCwds, (cwds) => [...cwds, cwd]),
+    }),
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      execute: (input) =>
+        input.args[0] === "rev-parse"
+          ? (options.gitHead?.(input.cwd) ?? Effect.succeed("head")).pipe(
+              Effect.map((stdout) => ({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout: `${stdout}\n`,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              })),
+            )
+          : Effect.die(new Error(`Unexpected git: ${input.args.join(" ")}`)),
     }),
     Layer.mock(PullRequestService.PullRequestService)({
       summary: pullRequestSummary,
@@ -1565,6 +1593,39 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
+  it.effect("leaves the settle script to the parent when a child shares its checkout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const parent = appThread("parent-thread", null, "/worktrees/parent");
+        const asChild = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread => ({
+          ...thread,
+          lineage: {
+            parentThreadId: parent.id,
+            relationshipToParent: "subagent",
+            rootThreadId: parent.id,
+          },
+        });
+        const shared = asChild(appThread("shared-child", "settled", "/worktrees/parent"));
+        const own = asChild(appThread("own-child", "settled", "/worktrees/child"));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [parent, shared, own],
+          existingWorktreePaths: ["/worktrees/parent", "/worktrees/child"],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(shared));
+          yield* fixture.publishEvent(settledEvent(own));
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, own.id);
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: shared.id });
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the settle script for a thread re-engaged while its shells close", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1700,4 +1761,544 @@ describe("isSnoozed", () => {
       }),
     ).toBeNull();
   });
+});
+
+function handoff(
+  overrides: Partial<ProjectionStore.ProjectionSubagentHandoff> = {},
+): ProjectionStore.ProjectionSubagentHandoff {
+  return {
+    origin: "provider_native",
+    status: "completed",
+    deliveryState: null,
+    parentSettled: false,
+    parentRunActive: false,
+    parentReadResult: true,
+    parentWorktreePath: "/worktrees/parent",
+    ...overrides,
+  };
+}
+
+function childThread(id: string, overrides: Partial<SettlementShell> = {}): SettlementShell {
+  return makeThread(id, {
+    // Finished minutes ago: this rule never waits on the inactivity window.
+    updatedAt: DateTime.makeUnsafe(Date.parse(NOW) - 60_000),
+    latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 10 * 60_000),
+    latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000),
+    lineage: {
+      rootThreadId: ThreadId.make("parent"),
+      parentThreadId: ThreadId.make("parent"),
+      relationshipToParent: "subagent",
+    },
+    subagentHandoff: handoff(),
+    ...overrides,
+  });
+}
+
+function vcsStatus(input: {
+  readonly dirty?: boolean;
+  readonly aheadOfDefault?: number;
+  readonly pr?: "open" | "merged" | "closed";
+}): GitManager.GitManager["Service"]["status"] {
+  return () =>
+    Effect.succeed({
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature",
+      hasWorkingTreeChanges: input.dirty ?? false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: input.aheadOfDefault ?? 0,
+      pr:
+        input.pr === undefined
+          ? null
+          : {
+              number: 42,
+              title: "Pull request",
+              url: "https://example.test/owner/repository/pull/42",
+              baseRef: "main",
+              headRef: "feature",
+              state: input.pr,
+            },
+    });
+}
+
+describe("finishedWorkSettlement", () => {
+  const nowMs = Date.parse(NOW);
+  const running = { activityRunStatus: "running" } as const;
+  it.each([
+    ["a native child its parent's turn already took back", {}, "now"],
+    [
+      "a native child whose parent's turn is still reading it",
+      { subagentHandoff: handoff({ parentRunActive: true }) },
+      null,
+    ],
+    [
+      "a native child that finished after its parent's last turn ended",
+      { subagentHandoff: handoff({ parentReadResult: false }) },
+      null,
+    ],
+    [
+      "a delegated child whose result reached the parent",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "delivered" }) },
+      "now",
+    ],
+    [
+      "a delegated child the parent acknowledged",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "acknowledged" }) },
+      "now",
+    ],
+    [
+      "a delegated child whose result is still on its way",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "pending" }) },
+      null,
+    ],
+    [
+      "a delegated child whose result the parent is reading",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "claimed" }) },
+      null,
+    ],
+    [
+      "a child whose subagent record is still running",
+      { subagentHandoff: handoff({ status: "running" }) },
+      null,
+    ],
+    ["a running child", running, null],
+    [
+      "a child waiting on the user",
+      {
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request"),
+          kind: "permission",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      },
+      null,
+    ],
+    [
+      "a running child of a settled parent",
+      { ...running, subagentHandoff: handoff({ status: "running", parentSettled: true }) },
+      null,
+    ],
+    [
+      "an idle child of a settled parent, delivered or not",
+      {
+        subagentHandoff: handoff({
+          origin: "app_owned",
+          deliveryState: "pending",
+          parentSettled: true,
+        }),
+      },
+      "now",
+    ],
+    ["a child the user unsettled", { settledOverride: "active" }, null],
+    [
+      "a child unsettled after its last run, before a new one ends",
+      { unsettledAt: DateTime.makeUnsafe(nowMs - 60_000) },
+      null,
+    ],
+    [
+      "a child unsettled before its last run ended",
+      { unsettledAt: DateTime.makeUnsafe(nowMs - 30 * 60_000) },
+      "now",
+    ],
+    ["a pinned child", { pinnedAt: DateTime.makeUnsafe(NOW) }, null],
+    ["a child in the project checkout", { worktreePath: null }, "now"],
+    // Whether that worktree is its parent's is a filesystem question (`sameDirectory`).
+    ["a child in a worktree", { worktreePath: "/worktrees/child" }, "own-pull-request"],
+    [
+      "a dismissed assistant task in its own worktree",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+        worktreePath: "/worktrees/task",
+      },
+      "own-work",
+    ],
+    [
+      "a dismissed assistant task in the project checkout",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+      },
+      "now",
+    ],
+    [
+      "a dismissed assistant task on its own branch in the project checkout",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+        branch: "task-branch",
+      },
+      "own-work",
+    ],
+    [
+      "an assistant task still in the list",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+      },
+      null,
+    ],
+  ] satisfies ReadonlyArray<
+    readonly [
+      string,
+      Partial<SettlementShell>,
+      ThreadSettlementService.FinishedWorkSettlement | null,
+    ]
+  >)("%s", (_name, overrides, expected) => {
+    expect(
+      ThreadSettlementService.finishedWorkSettlement(childThread("child", overrides), nowMs),
+    ).toBe(expected);
+  });
+});
+
+describe("sameDirectory", () => {
+  it.effect.each([
+    ["the same path", (dir: string) => [dir, dir], true],
+    ["a trailing slash", (dir: string) => [`${dir}/`, dir], true],
+    ["a `..` segment", (dir: string) => [`${dir}/sub/..`, dir], true],
+    ["a symlink to it", (dir: string) => [`${dir}-link`, dir], true],
+    ["another directory", (dir: string) => [`${dir}/sub`, dir], false],
+  ] satisfies ReadonlyArray<
+    readonly [string, (dir: string) => readonly [string, string], boolean]
+  >)("%s", ([_name, paths, expected]) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // macOS temp paths sit under the `/var` → `/private/var` symlink, like `/tmp`.
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-same-dir-" });
+      yield* fileSystem.makeDirectory(`${dir}/sub`);
+      yield* fileSystem.symlink(dir, `${dir}-link`);
+      yield* Effect.addFinalizer(() => fileSystem.remove(`${dir}-link`).pipe(Effect.ignore));
+      const [left, right] = paths(dir);
+      assert.strictEqual(yield* ThreadSettlementService.sameDirectory(left, right), expected);
+      assert.strictEqual(
+        yield* ThreadSettlementService.sameDirectory(left, yield* fileSystem.realPath(right)),
+        expected,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("ThreadSettlementServiceV2 finished work", () => {
+  const settlementOff = {
+    ...DEFAULT_SERVER_SETTINGS,
+    sidebarAutoSettleAfterDays: null,
+    sidebarAutoSettleOnMerge: false,
+  };
+  // Auto-settle on, with no inactivity timer to settle the threads this rule leaves.
+  const settlementOnMerge = {
+    ...DEFAULT_SERVER_SETTINGS,
+    sidebarAutoSettleAfterDays: null,
+    sidebarAutoSettleOnMerge: true,
+  };
+
+  it.effect("leaves finished work alone while auto-settle is off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            childThread("native-done"),
+            childThread("task-dismissed", {
+              lineage: {
+                rootThreadId: ThreadId.make("task-dismissed"),
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              subagentHandoff: null,
+              assistantTaskDismissed: true,
+            }),
+          ]),
+          settings: settlementOff,
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles finished children and dismissed tasks once settling on merge is on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const taskLineage = (id: string) => ({
+          rootThreadId: ThreadId.make(id),
+          parentThreadId: null,
+          relationshipToParent: null,
+        });
+        const threads = [
+          childThread("native-done"),
+          childThread("delegated-pending", {
+            subagentHandoff: handoff({ origin: "app_owned", deliveryState: "pending" }),
+          }),
+          childThread("own-worktree-open-pr", {
+            worktreePath: "/worktrees/open",
+            subagentHandoff: handoff(),
+          }),
+          childThread("own-worktree-merged-pr", {
+            worktreePath: "/worktrees/merged",
+            subagentHandoff: handoff(),
+          }),
+          // The parent's checkout, written another way: no git lookup, settled at once.
+          childThread("parent-checkout-trailing-slash", { worktreePath: "/worktrees/parent/" }),
+          childThread("parent-checkout-dot-dot", { worktreePath: "/worktrees/x/../parent" }),
+          childThread("own-worktree-lookup-failed", {
+            worktreePath: "/worktrees/lookup-failed",
+            subagentHandoff: handoff(),
+          }),
+          childThread("task-unshipped", {
+            lineage: taskLineage("task-unshipped"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/unshipped",
+          }),
+          childThread("task-dirty", {
+            lineage: taskLineage("task-dirty"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/dirty",
+          }),
+          childThread("task-branch-merged", {
+            lineage: taskLineage("task-branch-merged"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            branch: "merged-branch",
+          }),
+          childThread("task-branch-unmerged", {
+            lineage: taskLineage("task-branch-unmerged"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            branch: "unmerged-branch",
+          }),
+          childThread("task-shipped", {
+            lineage: taskLineage("task-shipped"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/shipped",
+          }),
+        ];
+        const statuses: Record<string, GitManager.GitManager["Service"]["status"]> = {
+          "/worktrees/open": vcsStatus({ pr: "open" }),
+          "/worktrees/merged": vcsStatus({ pr: "merged", aheadOfDefault: 2 }),
+          // GitManager.status reports a failed pull request lookup as no pull request.
+          "/worktrees/lookup-failed": vcsStatus({}),
+          "/worktrees/unshipped": vcsStatus({ aheadOfDefault: 1 }),
+          "/worktrees/dirty": vcsStatus({ dirty: true, pr: "merged" }),
+          "/worktrees/shipped": vcsStatus({ pr: "merged" }),
+          // The project checkout is on another branch than either task's.
+          "/workspace/project": vcsStatus({}),
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: settlementOnMerge,
+          existingWorktreePaths: [
+            ...Object.keys(statuses),
+            "/worktrees/parent/",
+            "/worktrees/x/../parent",
+          ],
+          gitStatus: (input) => statuses[input.cwd]!(input),
+          branchPullRequest: (input) => {
+            if (input.cwd === "/worktrees/lookup-failed") {
+              return Effect.fail(
+                new GitManagerError({ operation: "test", cwd: input.cwd, detail: "offline" }),
+              );
+            }
+            const states: Record<string, "open" | "merged"> = {
+              "/worktrees/open": "open",
+              "/worktrees/merged": "merged",
+            };
+            const state = states[input.cwd];
+            if (state !== undefined) return Effect.succeed(makeBranchPullRequest(state));
+            return Effect.succeed(
+              input.branch === "merged-branch" ? makeBranchPullRequest("merged") : null,
+            );
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+            new Set([
+              "native-done",
+              "parent-checkout-trailing-slash",
+              "parent-checkout-dot-dot",
+              "own-worktree-merged-pr",
+              "task-shipped",
+              "task-branch-merged",
+            ]),
+          );
+          // Settled when the work ended, so an old task never jumps to the top of the shelf.
+          const native = (yield* Ref.get(fixture.commands)).find(
+            (command) => command.threadId === "native-done",
+          );
+          assert.strictEqual(
+            native?.settledAt === undefined ? null : DateTime.formatIso(native.settledAt),
+            DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000)),
+          );
+          // A failed lookup counts as a check: the next sweep neither retries it nor settles.
+          const failedLookups = Effect.map(
+            Ref.get(fixture.branchCalls),
+            (calls) => calls.filter((call) => call.cwd === "/worktrees/lookup-failed").length,
+          );
+          assert.strictEqual(yield* failedLookups, 1);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.strictEqual(yield* failedLookups, 1);
+          assert.notInclude(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ThreadId.make("own-worktree-lookup-failed"),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a held branch's status once while its HEAD and activity stay the same", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const statusCalls = yield* Ref.make(0);
+        const head = yield* Ref.make("first");
+        const task = childThread("task-unshipped", {
+          lineage: {
+            rootThreadId: ThreadId.make("task-unshipped"),
+            parentThreadId: null,
+            relationshipToParent: null,
+          },
+          subagentHandoff: null,
+          assistantTaskDismissed: true,
+          worktreePath: "/worktrees/unshipped",
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            task,
+            // Its worktree is gone: the branch is read, and remembered, in the project checkout.
+            childThread("task-worktree-gone", {
+              lineage: {
+                rootThreadId: ThreadId.make("task-worktree-gone"),
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              subagentHandoff: null,
+              assistantTaskDismissed: true,
+              worktreePath: "/worktrees/gone",
+              branch: "unmerged-branch",
+            }),
+          ]),
+          settings: settlementOnMerge,
+          existingWorktreePaths: ["/worktrees/unshipped"],
+          gitStatus: (input) =>
+            Ref.update(statusCalls, (count) => count + 1).pipe(
+              Effect.andThen(vcsStatus({ aheadOfDefault: 1 })(input)),
+            ),
+          gitHead: (cwd) =>
+            cwd === "/worktrees/gone"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "test",
+                    command: "git rev-parse HEAD",
+                    cwd,
+                    detail: "not a directory",
+                  }),
+                )
+              : Ref.get(head),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const sweep = Effect.gen(function* () {
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.snapshotReads);
+            yield* service.drain;
+            return yield* Ref.get(statusCalls);
+          });
+          assert.strictEqual(yield* sweep, 2);
+          yield* Ref.set(head, "second");
+          assert.strictEqual(yield* sweep, 4);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles a parent's idle children when it settles, never a running one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const parent = makeThread("parent", { settledOverride: "settled" });
+        const waiting = handoff({ origin: "app_owned", deliveryState: "pending" });
+        const idle = childThread("idle-child", { subagentHandoff: waiting });
+        const busy = childThread("busy-child", {
+          activityRunStatus: "running",
+          subagentHandoff: { ...waiting, status: "running" },
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([idle, busy]),
+          settings: settlementOff,
+          currentThreads: [],
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          // The projection now reads the parent as settled.
+          const parentSettled = { ...waiting, parentSettled: true };
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([
+              { ...idle, subagentHandoff: parentSettled },
+              { ...busy, subagentHandoff: { ...parentSettled, status: "running" } },
+            ]),
+          );
+          yield* fixture.publishEvent({
+            type: "thread.settled",
+            id: EventId.make("event:parent-settled"),
+            threadId: parent.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              ...parent,
+              createdBy: "user",
+              creationSource: "web",
+              lastVisitedAt: null,
+              deletedAt: null,
+              settledAt: DateTime.makeUnsafe(NOW),
+            },
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [idle.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
 });

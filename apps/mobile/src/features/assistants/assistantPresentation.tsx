@@ -16,6 +16,10 @@ import {
   type AssistantFace,
   type AssistantMood,
 } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantClusterLayout,
+  type AssistantClusterCell,
+} from "@t3tools/client-runtime/assistantCluster";
 import { Image } from "expo-image";
 import { useState } from "react";
 import { View } from "react-native";
@@ -25,6 +29,7 @@ import { withUniwind } from "uniwind";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { useAssistantEntries } from "../../state/assistants";
 import { useAssetUrlState } from "../../state/assets";
+import { AppText as Text } from "../../components/ui/AppText";
 import { AssistantRobot } from "./AssistantRobot";
 
 export const WORKSPACE_OPTIONS: ReadonlyArray<{
@@ -91,8 +96,8 @@ export function assistantAdvancedSummary(draft: {
         : `$${amount} limit`
       : "no spending limit",
     draft.connectors.length === 0
-      ? "no connectors"
-      : `${draft.connectors.length} connector${draft.connectors.length === 1 ? "" : "s"}`,
+      ? "no custom servers"
+      : `${draft.connectors.length} custom server${draft.connectors.length === 1 ? "" : "s"}`,
     draft.askBeforeActing ? "asks before messaging other threads" : "messages other threads freely",
   ].join(" · ");
 }
@@ -232,4 +237,74 @@ export function budgetSpendLine(spend: AssistantSpend): string {
   const when = status ? PERIOD_WORDS[status.period] : "in the last 30 days";
   const prefix = spend.partial ? "At least " : "";
   return `${prefix}${usd.format(amount)} ${when} · estimated at API prices`;
+}
+
+/** A sender or member whose assistant was deleted: a robot derived from its id alone. */
+export const removedAssistantFace = (id: string): Pick<Assistant, "id" | "avatar" | "icon"> => ({
+  id: id as Assistant["id"],
+  avatar: null,
+  icon: null,
+});
+
+/**
+ * A group's faces in one square: one fills it, two sit side by side, three form a triangle, four
+ * a 2×2 grid; five or more show three faces and "+N".
+ */
+export function AssistantCluster(props: {
+  readonly faces: ReadonlyArray<{
+    readonly key: string;
+    readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+    readonly mood?: AssistantMood | AssistantFace;
+  }>;
+  readonly size: number;
+  readonly environmentId?: EnvironmentId | null;
+}) {
+  const layout = assistantClusterLayout(props.faces.length);
+  const px = (value: number) => (value / 100) * props.size;
+  const place = (cell: AssistantClusterCell) => ({
+    position: "absolute" as const,
+    left: px(cell.left),
+    top: px(cell.top),
+  });
+  return (
+    <View
+      testID="assistant-cluster"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ width: props.size, height: props.size }}
+    >
+      {layout.faces.map((cell, index) => {
+        const face = props.faces[index]!;
+        return (
+          <View key={face.key} style={place(cell)}>
+            <AssistantAvatar
+              assistant={face.assistant}
+              environmentId={props.environmentId ?? null}
+              size={px(cell.size)}
+              {...(face.mood === undefined ? {} : { mood: face.mood })}
+            />
+          </View>
+        );
+      })}
+      {layout.more ? (
+        <View
+          testID="assistant-cluster-more"
+          className="items-center justify-center bg-subtle"
+          style={{
+            ...place(layout.more.cell),
+            width: px(layout.more.cell.size),
+            height: px(layout.more.cell.size),
+            borderRadius: px(layout.more.cell.size) * 0.28,
+          }}
+        >
+          <Text
+            className="font-t3-bold text-foreground"
+            style={{ fontSize: Math.max(7, px(layout.more.cell.size) * 0.42) }}
+          >
+            +{layout.more.count}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
 }

@@ -31,6 +31,7 @@ const entry = (id: string, rank: 0 | 2, over: Record<string, unknown> = {}): Act
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       latestRun: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
       ...over,
     },
   }) as unknown as ActivityEntry;

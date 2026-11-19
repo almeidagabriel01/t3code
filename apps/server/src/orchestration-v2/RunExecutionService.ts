@@ -55,6 +55,7 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { endProcessBoundTurnItems, processBoundTurnItems } from "./processBoundWork.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
@@ -642,6 +643,8 @@ export const layer: Layer.Layer<
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
+        // Commands of the turn T3's own interrupt ended, as Stop ends them.
+        readonly abandonedTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
@@ -770,6 +773,14 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
+            ...(yield* endProcessBoundTurnItems({
+              items: input.abandonedTurnItems ?? [],
+              nodes: [],
+              status: "interrupted",
+              now: completedAt,
+              owner: { providerInstanceId: input.run.providerInstanceId },
+              allocateEventId,
+            })),
             ...(input.abandonedProviderTurn === undefined
               ? []
               : [
@@ -1340,6 +1351,7 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
+        const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         // Ends once the root turn and the children it drives settle. Background commands such
         // as a dev server keep this consumer alive afterwards and must not pin preview focus.
         const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
@@ -1582,6 +1594,11 @@ export const layer: Layer.Layer<
             yield* Ref.update(latestTurnItemOrdinal, (current) =>
               Math.max(current, event.turnItem.ordinal),
             );
+            if (processBoundTurnItems([event.turnItem]).length > 0) {
+              openRootTurnItems.set(event.turnItem.id, event.turnItem);
+            } else {
+              openRootTurnItems.delete(event.turnItem.id);
+            }
           }
           if (event.type === "turn.terminal") {
             yield* Ref.set(terminalEvent, event);
@@ -1694,7 +1711,12 @@ export const layer: Layer.Layer<
                     run: input.run,
                     rootNode: input.rootNode,
                     checkpointScope: input.checkpointScope,
-                    providerThread,
+                    // The restart took its background tasks with it, as a release does.
+                    providerThread:
+                      abandonedProviderTurn !== null &&
+                      input.session.backgroundTasksEndWithProcess === true
+                        ? { ...providerThread, pendingBackgroundTasks: [] }
+                        : providerThread,
                     attempt: input.attempt,
                     writeIfRunCurrent: {
                       activeAttemptId: input.attempt.id,
@@ -1702,6 +1724,9 @@ export const layer: Layer.Layer<
                     },
                     openRunOwnedSubagents: openSubagents,
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                    ...(abandonedProviderTurn === null
+                      ? {}
+                      : { abandonedTurnItems: [...openRootTurnItems.values()] }),
                     completedAt,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({

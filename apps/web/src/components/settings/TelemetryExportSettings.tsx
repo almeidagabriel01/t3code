@@ -11,6 +11,7 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings } from "./useScopedSettings";
 import { SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 
@@ -76,7 +77,7 @@ export function TelemetryExportSettings() {
   const { environment, scope } = useSettingsScope();
   if (scope.kind !== "environment" || !environment) {
     return (
-      <SettingsSection title="OpenTelemetry export" id="telemetry-export">
+      <SettingsSection {...searchableSetting("telemetry-export")}>
         <SettingsScopeNotice target="environment">
           Choose one environment to configure its telemetry exports.
         </SettingsScopeNotice>
@@ -147,7 +148,7 @@ function TelemetryExportForm() {
   }, [canCheck]);
 
   return (
-    <SettingsSection title="OpenTelemetry export" id="telemetry-export">
+    <SettingsSection {...searchableSetting("telemetry-export")}>
       <form
         className="grid gap-4 px-4 py-4 sm:px-5"
         onSubmit={async (event) => {

@@ -2,7 +2,6 @@ import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  formatMemory,
   portAddress,
   selectChipEntries,
   selectBarWindows,
@@ -21,13 +20,6 @@ describe("selectBarWindows", () => {
     const { primary, extra } = selectBarWindows([windows[1]!, windows[0]!, windows[2]!]);
     expect(primary.map((w) => w.id)).toEqual(["s", "opus"]);
     expect(extra.map((w) => w.id)).toEqual(["w"]);
-  });
-});
-
-describe("formatMemory", () => {
-  it("switches between MB and GB", () => {
-    expect(formatMemory(4.04 * 1024 ** 3)).toBe("4.04 GB");
-    expect(formatMemory(512 * 1024 ** 2)).toBe("512 MB");
   });
 });
 

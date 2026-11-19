@@ -19,12 +19,15 @@ address itself. Each server has its own switch.
 Servers apply to threads started after you add them. Agents see each one as
 `<name>_t3`.
 
-| Provider                         | stdio | HTTP |
-| -------------------------------- | ----- | ---- |
-| Codex, Claude, Cursor            | Yes   | Yes  |
-| Antigravity and registry agents  | Yes   | Yes  |
-| Grok, Kiro, FX                   | Yes   | No   |
-| OpenCode, Pi, Muse, cloud agents | No    | No   |
+| Provider                         | stdio | HTTP | [Integrations](./integrations.md) |
+| -------------------------------- | ----- | ---- | --------------------------------- |
+| Codex, Claude, Cursor            | Yes   | Yes  | Yes                               |
+| Antigravity and registry agents  | Yes   | Yes  | Yes                               |
+| Grok, Kiro, FX                   | Yes   | No   | Yes                               |
+| OpenCode, Pi, Muse, cloud agents | No    | No   | No                                |
+
+Integrations reach agents through T3 rather than as an address of their own,
+so they also work in Grok, Kiro and FX, which can't use other HTTP servers.
 
 Names ending in `_t3` are T3's, so avoid them in provider settings.
 

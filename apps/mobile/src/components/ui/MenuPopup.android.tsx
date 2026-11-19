@@ -11,6 +11,7 @@ import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/m
 import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
@@ -151,8 +152,18 @@ export function MenuPopupItems(
   );
 }
 
-export function MenuPopup(props: MenuPopupProps) {
+/** A menu shares its tone with the content under it, so its edge needs a border and a lift. */
+export function useMenuSurface() {
   const { themeVariables: colors } = useAppearancePreferences();
+  return {
+    color: colors["--color-card-alt"],
+    border: { width: 1, color: themeColorWithAlpha(colors["--color-foreground"], 0.16) },
+    shadowElevation: 8,
+  };
+}
+
+export function MenuPopup(props: MenuPopupProps) {
+  const surface = useMenuSurface();
   const items = <MenuPopupItems {...props} />;
   if (props.inline) {
     return (
@@ -176,7 +187,7 @@ export function MenuPopup(props: MenuPopupProps) {
         height: props.anchor.height,
       }}
     >
-      <DropdownMenu expanded onDismissRequest={props.onClose} color={colors["--color-card-alt"]}>
+      <DropdownMenu expanded onDismissRequest={props.onClose} {...surface}>
         <DropdownMenu.Trigger>
           <Box modifiers={[size(props.anchor.width, props.anchor.height)]} />
         </DropdownMenu.Trigger>

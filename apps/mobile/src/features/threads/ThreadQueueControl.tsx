@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -69,7 +70,7 @@ function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
 }) {
-  const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
+  const { attribution, scheduledTaskId, teammate } = resolveUserMessagePresentation(props.message);
   const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
   const senderShell = useQuietThreadShell(
     senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
@@ -89,7 +90,10 @@ function QueuedRunSender(props: {
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || "Agent",
+            label:
+              (teammate && teammateMessageSummary(teammate).names) ||
+              senderShell?.title.trim() ||
+              "Agent",
           }
         : attribution === "t3code"
           ? { icon: null, label: "Sent by T3 Code" }
@@ -241,8 +245,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
-          isGuestMessage: context?.guest !== undefined,
           text,
+          message,
         });
         const title = queuedRowTitle({
           message,
@@ -275,6 +279,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     {
                       id: "edit",
                       title: "Edit",
+                      ...(controls.editRefusal === null ? {} : { subtitle: controls.editRefusal }),
                       attributes: { disabled: !controls.canEdit },
                       image: "pencil",
                     },
@@ -282,11 +287,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       id: "remove",
                       title: "Remove",
                       attributes: { disabled: !controls.canDismiss, destructive: true },
+                      image: "trash",
                     },
                   ]}
-                  onPressAction={({ nativeEvent }) =>
-                    void act(run.id, nativeEvent.event as QueueAction)
-                  }
+                  onPressAction={({ nativeEvent }) => {
+                    if (nativeEvent.event === "edit" && !controls.canEdit) return;
+                    void act(run.id, nativeEvent.event as QueueAction);
+                  }}
                 >
                   <Pressable
                     accessibilityRole="button"
@@ -294,11 +301,16 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityHint={
                       controls.canEdit
                         ? "Opens this message in the composer for editing"
-                        : (editBlockedReason ?? undefined)
+                        : (controls.editRefusal ?? editBlockedReason ?? undefined)
                     }
-                    disabled={!controls.canEdit}
-                    onPress={() => void act(run.id, "edit")}
-                    className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
+                    // Not `disabled`: Android's long press, which opens this row's menu, needs it enabled.
+                    accessibilityState={{ disabled: !controls.canEdit }}
+                    onPress={controls.canEdit ? () => void act(run.id, "edit") : undefined}
+                    className={
+                      controls.canEdit
+                        ? "min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
+                        : "min-h-14 flex-row items-center gap-2.5 py-2.5"
+                    }
                   >
                     <QueueAttachmentThumbnails
                       environmentId={target.environmentId}

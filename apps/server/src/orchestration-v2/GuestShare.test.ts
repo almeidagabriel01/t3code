@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -111,7 +112,14 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       guestMessageId,
       text: "Why not keep the old cache?",
     });
-    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
+    // The shell stream sends these: one changed thread reads `getThreadShell`, a batch the snapshot.
+    const submittedAt = (yield* projections.getThreadProjection(threadId)).thread.guestShare
+      ?.messages[0]?.submittedAt;
+    const waiting = yield* projections.getThreadShell(threadId);
+    assert.equal(waiting?.pendingGuestMessageCount, 1);
+    assert.equal(waiting?.oldestPendingGuestMessageAt, submittedAt);
+    const [streamed] = (yield* projections.getShellSnapshot({ threadIds: [threadId] })).threads;
+    assert.equal(streamed?.oldestPendingGuestMessageAt, submittedAt);
 
     yield* sendGuestMessage(orchestrator, "send-1");
     const projection = yield* projections.getThreadProjection(threadId);
@@ -131,7 +139,9 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       shareId,
     });
     assert.lengthOf(projection.runs, 1);
-    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 0);
+    const resolved = yield* projections.getThreadShell(threadId);
+    assert.equal(resolved?.pendingGuestMessageCount, 0);
+    assert.isNull(resolved?.oldestPendingGuestMessageAt);
 
     // A second owner device clicking Send must not start another turn.
     assert.isTrue(Exit.isFailure(yield* Effect.exit(sendGuestMessage(orchestrator, "send-2"))));
@@ -183,6 +193,100 @@ it.effect("drops guest attribution that a client sends on its own message", () =
       (message) => message.id === MessageId.make("owner-message"),
     );
     assert.isUndefined(sent?.context?.guest);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps teammate attribution only on an agent's send, which no edit rewrites", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* setup;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sentText = "<t3_reply>…</t3_reply>\nStatus: done";
+    const teammate = {
+      entries: [
+        {
+          kind: "reply" as const,
+          name: "Ada",
+          handle: "ada",
+          threadId: ThreadId.make("assistant:ada:1"),
+          requestId: "message:ask",
+          status: "done" as const,
+          files: [],
+          bodyStart: sentText.indexOf("Status: done"),
+          bodyEnd: sentText.length,
+        },
+      ],
+    };
+    const send = (id: string, createdBy: "user" | "agent", queued: boolean, fromTeammate = true) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: sentText,
+        context: { version: 1, records: [], ...(fromTeammate ? { teammate } : {}) },
+        attachments: [],
+        dispatchMode: { type: queued ? "queue_after_active" : "defer_start" },
+        createdBy,
+        creationSource: createdBy === "user" ? "web" : "mcp",
+      });
+    yield* send("forged", "user", false);
+    yield* send("from-ada", "agent", true);
+    yield* send("mine", "user", true);
+    // A scheduled task's or another agent's prompt is nobody's words but the owner's to change.
+    yield* send("from-schedule", "agent", true, false);
+    const contextOf = (id: string) =>
+      projections
+        .getThreadProjection(threadId)
+        .pipe(
+          Effect.map(
+            (projection) =>
+              projection.messages.find((message) => message.id === MessageId.make(id))?.context,
+          ),
+        );
+    assert.isUndefined((yield* contextOf("forged"))?.teammate);
+    assert.deepEqual((yield* contextOf("from-ada"))?.teammate, teammate);
+
+    const queuedRunOf = (id: string) =>
+      projections
+        .getThreadProjection(threadId)
+        .pipe(
+          Effect.map((projection) =>
+            projection.runs.find(
+              (run) => run.status === "queued" && run.userMessageId === MessageId.make(id),
+            ),
+          ),
+        );
+    const edit = (id: string, runId: RunId) =>
+      orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`edit-${id}`),
+        threadId,
+        runId,
+        text: "My own words",
+        context: { version: 1, records: [], teammate },
+      });
+    // Rewriting a teammate's words would put new words under their name: cancel it instead.
+    const fromAda = yield* queuedRunOf("from-ada");
+    assert.isDefined(fromAda);
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(edit("from-ada", fromAda.id))));
+    assert.deepEqual((yield* contextOf("from-ada"))?.teammate, teammate);
+    // An edit cannot attach a teammate to the owner's own words either.
+    const mine = yield* queuedRunOf("mine");
+    assert.isDefined(mine);
+    yield* edit("mine", mine.id);
+    assert.isUndefined((yield* contextOf("mine"))?.teammate);
+    const fromSchedule = yield* queuedRunOf("from-schedule");
+    assert.isDefined(fromSchedule);
+    yield* edit("from-schedule", fromSchedule.id);
+    const edited = yield* projections
+      .getThreadProjection(threadId)
+      .pipe(
+        Effect.map((projection) =>
+          projection.messages.find((message) => message.id === MessageId.make("from-schedule")),
+        ),
+      );
+    assert.equal(edited?.text, "My own words");
+    assert.isUndefined(edited?.context?.teammate);
   }).pipe(Effect.provide(layerTest)),
 );
 

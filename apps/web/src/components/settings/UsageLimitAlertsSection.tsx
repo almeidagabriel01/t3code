@@ -78,7 +78,6 @@ export function UsageLimitAlertsSection({
   return (
     <SettingsSection
       {...searchableSetting("usage-limit-alerts")}
-      description="Your assistant messages you once when this much is left."
       inert={locked}
       aria-disabled={locked || undefined}
       className={locked ? "opacity-50 select-none" : undefined}

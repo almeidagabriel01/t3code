@@ -19,6 +19,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     startSandbox: vi.fn(),
     startTurn: vi.fn(),
     alert: vi.fn(),
+    live: { mood: "idle", detail: "Idle", since: null, reading: false, queued: 0 } as unknown,
+    phase: "connected" as string | null,
   },
 }));
 vi.mock("react-native", () => ({ View: Children }));
@@ -78,6 +80,12 @@ vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.assistants }),
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantSandboxActions: () => ({ start: mocks.startSandbox }),
+  useAssistantStatus: () => ({ of: () => mocks.live }),
+}));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({
+    presentation: mocks.phase === null ? null : { connection: { phase: mocks.phase } },
+  }),
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
@@ -152,6 +160,8 @@ beforeEach(() => {
   mocks.shell = shell();
   mocks.sandbox = null;
   mocks.autonomy = { enabled: true };
+  mocks.live = { mood: "idle", detail: "Idle", since: null, reading: false, queued: 0 };
+  mocks.phase = "connected";
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -163,6 +173,28 @@ describe("AssistantWorkRouteScreen", () => {
     expect(container.textContent).toContain("memory");
     expect(container.textContent).toContain("library");
     expect(container.textContent).not.toContain("Retry");
+  });
+
+  it("never says ready while it needs you, and says what it asked", () => {
+    mocks.live = { mood: "needs", detail: "Asked you a question", since: null, reading: false };
+    render();
+    expect(container.textContent).not.toContain("Ready to work");
+    expect(container.textContent).toContain("Needs you");
+    expect(container.textContent).toContain("Asked you a question");
+  });
+
+  it.each([
+    ["reconnecting", true],
+    ["offline", true],
+    // Until the first attempt settles nothing is known, so the screen shows its sections.
+    ["connecting", false],
+    [null, false],
+  ] as const)("a %s environment shows as disconnected: %s", (phase, disconnected) => {
+    mocks.phase = phase;
+    render();
+    expect(container.textContent?.includes("This environment is disconnected")).toBe(disconnected);
+    expect(container.textContent).toContain("library");
+    expect(container.textContent?.includes("Ready to work")).toBe(!disconnected);
   });
 
   it("says when the assistant is not available", () => {

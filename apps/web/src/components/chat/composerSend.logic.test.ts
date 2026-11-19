@@ -9,6 +9,7 @@ import {
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
+  sideChatContextBlock,
 } from "./composerSend.logic";
 
 const local = EnvironmentId.make("local");
@@ -122,5 +123,34 @@ describe("approvalRedirectNotice", () => {
   it("stays quiet when the decline failed or the user left the thread", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
+  });
+});
+
+describe("sideChatContextBlock", () => {
+  const none = {
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    threadContexts: [],
+    environmentContexts: [],
+  };
+  const refused = {
+    title: "Side chats take text, images and files",
+    description: "Remove the added context, then send it again.",
+  };
+  it.each([
+    { name: "only text and attachments", context: {}, block: null },
+    {
+      name: "a terminal context that lost its text",
+      context: { terminalContexts: [{ text: "" }] },
+      block: null,
+    },
+    { name: "a terminal context", context: { terminalContexts: [{ text: "ls" }] }, block: refused },
+    { name: "a preview annotation", context: { previewAnnotations: [{}] }, block: refused },
+    { name: "a review comment", context: { reviewComments: [{}] }, block: refused },
+    { name: "an attached thread", context: { threadContexts: [localThread] }, block: refused },
+    { name: "a machine", context: { environmentContexts: [{}] }, block: refused },
+  ])("a side chat with $name: $block.title", ({ context, block }) => {
+    expect(sideChatContextBlock({ ...none, ...context })).toEqual(block);
   });
 });

@@ -60,6 +60,7 @@ import { Switch } from "../ui/switch";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { searchableSetting } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const decodeTextGenerator = Schema.decodeUnknownOption(TextGeneratorConfig);
@@ -104,7 +105,9 @@ export function TextGeneratorsSettings({
       >
         {generators.length === 0 ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No text generators yet"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="Add a model API to write thread titles, commit messages, and other short text without starting a coding agent."
           />
         ) : null}
@@ -126,7 +129,7 @@ export function TextGeneratorsSettings({
               description={
                 // Indented past the icon so it lines up with the name.
                 <span className="block truncate ps-7.5">
-                  {config.enabled ? "" : "Off · "}
+                  {config.enabled ? "" : PROVIDER_SETTINGS_COPY.textGeneratorOff}
                   {config.baseUrl.replace(/^https?:\/\//, "")}
                 </span>
               }

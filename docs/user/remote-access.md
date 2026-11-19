@@ -119,6 +119,11 @@ that machine does not have yet; add that address with **Add route** instead.
 Pairing again over an address the machine already has still works. A new route
 is placed by speed, in that order, and you can reorder routes at any time.
 
+If a saved machine stops accepting this device, for example after its T3 Code
+data was restored, the machine shows **Pair again** and **Remove**. **Pair
+again** asks for a new pairing code from that machine and replaces the refused
+credential, at the same address or a new one.
+
 While connected through T3 Connect or a paired address, T3 Code also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
 pairing once through T3 Connect is enough to use the LAN at home. When the

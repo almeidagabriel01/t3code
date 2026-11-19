@@ -59,6 +59,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as MemorySnapshot from "../memory/MemorySnapshot.ts";
 import { runMemoryPrepareInput } from "./MemoryPrepareInput.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { endProcessBoundTurnItems, processBoundTurnItems } from "./processBoundWork.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -713,6 +714,9 @@ export const layer: Layer.Layer<
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
+        // The restart below takes its background tasks with it, as a release does.
+        const restartEndsRoster =
+          Option.isSome(liveSession) && liveSession.value.backgroundTasksEndWithProcess === true;
         if (Option.isSome(liveSession)) {
           // Older versions could fail the run without stopping its provider.
           // Recover that exact turn before reusing its native conversation.
@@ -734,25 +738,68 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const abandonedTurnIds = new Set(abandonedTurns.map(({ turn }) => turn.id));
+        // Ending the turn ends its commands, as Stop does; no later provider event can.
+        const abandonedRecords = yield* projectionStore.getThreadRecords(
+          projection.thread.id,
+          ["turnItems", "providerThreads"],
+          {
+            turnItemRunIds: abandonedTurns.map(({ run: failedRun }) => failedRun.id),
+            turnItemTypes: ["command_execution", "dynamic_tool"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
+        );
+        const deadItems = processBoundTurnItems(abandonedRecords.turnItems).filter(
+          (item) => item.providerTurnId !== null && abandonedTurnIds.has(item.providerTurnId),
+        );
+        const staleRoster = restartEndsRoster
+          ? abandonedRecords.providerThreads.find(
+              (candidate) =>
+                candidate.id === providerThread.id &&
+                (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+            )
+          : undefined;
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: failedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: failedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: [
+            ...(yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
+              Effect.gen(function* () {
+                return {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "provider-turn.updated" as const,
+                  threadId: projection.thread.id,
+                  runId: failedRun.id,
+                  nodeId: turn.nodeId,
+                  providerInstanceId: failedRun.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: { ...turn, status: "interrupted" as const, completedAt },
+                };
+              }),
+            )),
+            ...(yield* endProcessBoundTurnItems({
+              items: deadItems,
+              nodes: projection.nodes,
+              status: "interrupted",
+              now: completedAt,
+              owner: { providerInstanceId: run.providerInstanceId },
+              allocateEventId: () => idAllocator.allocate.event({ threadId: projection.thread.id }),
+            })),
+            ...(staleRoster === undefined
+              ? []
+              : [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                    type: "provider-thread.updated" as const,
+                    threadId: projection.thread.id,
+                    driver: staleRoster.driver,
+                    occurredAt: completedAt,
+                    payload: { ...staleRoster, pendingBackgroundTasks: [], updatedAt: completedAt },
+                  },
+                ]),
+          ],
         });
         if (!repaired.committed) return;
       }

@@ -2,6 +2,7 @@ import {
   GUEST_PENDING_ATTACHMENT_BYTES_LIMIT,
   GUEST_PENDING_MESSAGE_LIMIT,
   GUEST_RESOLVED_MESSAGE_LIMIT,
+  pendingGuestMessageCount,
   type GuestMessageAttribution,
   type GuestMessageId,
   type OrchestrationMessageContext,
@@ -140,10 +141,7 @@ export function decideGuestShareCommand(input: {
       ) {
         return Result.fail(GUEST_FAILURE.inactive);
       }
-      if (
-        share.messages.filter((message) => message.status === "pending").length >=
-        GUEST_PENDING_MESSAGE_LIMIT
-      ) {
+      if (pendingGuestMessageCount(share) >= GUEST_PENDING_MESSAGE_LIMIT) {
         return Result.fail(GUEST_FAILURE.busy);
       }
       const attachments = command.attachments ?? [];

@@ -87,6 +87,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import { formatTimestamp } from "../../timestampFormat";
 import { SettingsPageContainer, SettingsSection, SettingsRow } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MEMORY_SETTINGS_COPY } from "./settingsSearchMemoryItems";
 import {
   isMemoryEnvironmentAvailable,
   memoryForgetIntent,
@@ -101,9 +103,14 @@ export function MemorySettings({ target }: { target: MemorySettingsSearch }) {
   if (!target.environmentId)
     return (
       <SettingsPageContainer>
-        <SettingsSection title="Memory">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Memory"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- device chooser state, not a setting
             title="Choose a device"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- device chooser state, not a setting
             description="Select the device whose memory you want to manage."
           />
           {environments
@@ -137,9 +144,14 @@ export function MemorySettings({ target }: { target: MemorySettingsSearch }) {
   if (!isMemoryEnvironmentAvailable(environment?.serverConfig?.environment.capabilities))
     return (
       <SettingsPageContainer>
-        <SettingsSection title="Memory">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Memory"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Memory unavailable"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Update or reconnect the selected environment to use Memory."
           />
         </SettingsSection>
@@ -172,9 +184,14 @@ function MemoryDestination({
   return (
     <SettingsPageContainer>
       {connection === null ? (
-        <SettingsSection title="Memory">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Memory"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
             title="Device disconnected"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
             description="Reconnect this environment to continue."
           />
         </SettingsSection>
@@ -289,20 +306,36 @@ function MemoryDestinationContent({
           sync={sync}
         />
       ) : scopeAccessShowsBanner(adminAccess) ? (
-        <SettingsSection title="Sharing">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Sharing"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Sharing unavailable"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Settings write permission is required to manage sharing."
           />
         </SettingsSection>
       ) : adminAccess === "unavailable" ? (
-        <SettingsSection title="Sharing">
-          <SettingsRow title="Sharing unavailable" description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Sharing"
+        >
+          <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+            title="Sharing unavailable"
+            description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+          />
         </SettingsSection>
       ) : null}
       {syncError ? (
-        <SettingsSection title="Memory status">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
+          title="Memory status"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
             title="Could not load memory status"
             description={<span role="alert">{syncError}</span>}
             control={
@@ -321,8 +354,13 @@ function MemoryDestinationContent({
         />
       ) : null}
       {!memorySpaceId ? (
-        <SettingsSection title="Memories" id="memory-records">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
+          title="Memories"
+          id="memory-records"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
             title={
               sync?.state === "disabled"
                 ? "Turn on memory to see and save memories."
@@ -344,15 +382,24 @@ function MemoryDestinationContent({
           }
         />
       ) : scopeAccessShowsBanner(readAccess) ? (
-        <SettingsSection title="Memories">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
+          title="Memories"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
             title="Memory read permission required"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
             description="Memory read permission is required to view records. Write permission does not grant read access."
           />
         </SettingsSection>
       ) : readAccess === "unavailable" ? (
-        <SettingsSection title="Memories">
+        <SettingsSection
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
+          title="Memories"
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Memories unavailable"
             description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
           />
@@ -436,9 +483,10 @@ function MemoryRecords({
   }
   return (
     <>
-      <SettingsSection title="Memory scope" id="memory-browse-scope">
+      <SettingsSection {...searchableSetting("memory-browse-scope")}>
         <SettingsRow
-          title="Scope"
+          {...searchableSetting("memory-scope")}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and permission states, not a setting
           description={
             error ? (
               <span role="alert">{error}</span>
@@ -563,13 +611,13 @@ function ScopedMemoryRecords({
         canWrite={canWrite}
         {...ruleQueries}
       />
-      <SettingsSection title="Memories" id="memory-records">
+      <SettingsSection {...searchableSetting("memory-records")}>
         <SettingsRow
-          title="Save a memory"
+          {...searchableSetting("memory-save")}
           description={
             memoryEnabled
-              ? "Add something you want this device to remember."
-              : "Saved memories stay. Turn on memory to save new memories."
+              ? settingCopy("memory-save").description
+              : MEMORY_SETTINGS_COPY.saveDisabledDescription
           }
           control={
             <Button
@@ -583,7 +631,10 @@ function ScopedMemoryRecords({
           }
         />
         {adding && canWrite ? (
-          <SettingsRow title="New memory">
+          <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- editor state, not a setting
+            title="New memory"
+          >
             <MemoryEditor
               scope={scope}
               scopeLabel={scopeLabel ?? memoryScopeLabel(scope)}
@@ -597,7 +648,7 @@ function ScopedMemoryRecords({
           </SettingsRow>
         ) : null}
         <SettingsRow
-          title="Search memories"
+          {...searchableSetting("memory-search")}
           control={
             <form
               className="flex flex-wrap gap-2"
@@ -634,8 +685,7 @@ function ScopedMemoryRecords({
           }
         />
         <SettingsRow
-          title="Quarantined memories"
-          description="Review memories that need attention."
+          {...searchableSetting("memory-quarantined")}
           control={
             <Switch
               aria-label="Include quarantined memories"
@@ -649,6 +699,7 @@ function ScopedMemoryRecords({
         />
         {page.error ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
             title="Could not load memories"
             description={<span role="alert">{page.error}</span>}
             control={
@@ -664,12 +715,15 @@ function ScopedMemoryRecords({
         {notice ? <SettingsRow title={<span role="status">{notice}</span>} /> : null}
         {!value && !page.error ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
             title="Loading memories"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
             description="Reconnect this device if records do not appear."
           />
         ) : !value ? null : items.length === 0 ? (
           <SettingsRow
             title={presentMemoryPage({ ...value, items }, Boolean(query))}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description={
               coverage?.status === "unavailable"
                 ? coverage.label
@@ -704,6 +758,7 @@ function ScopedMemoryRecords({
             }}
             renderItem={({ item }) => (
               <SettingsRow
+                // oxlint-disable-next-line t3code/require-searchable-settings-copy -- memory record, not a setting
                 title={
                   item.status === "active" ? (
                     memoryPreview(item.payload.text)
@@ -713,6 +768,7 @@ function ScopedMemoryRecords({
                     presentMemoryItem(item).label
                   )
                 }
+                // oxlint-disable-next-line t3code/require-searchable-settings-copy -- memory record, not a setting
                 description={
                   item.status === "forgotten"
                     ? `Forgotten ${formatTimestamp(item.tombstone.deletedAtUtc, "locale")}. Content has been removed.`
@@ -729,6 +785,7 @@ function ScopedMemoryRecords({
         )}
         {cursor || value?.nextCursor ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- pager state, not a setting
             title="Browse memories"
             control={
               <div className="flex gap-2">
@@ -834,10 +891,9 @@ function MemoryRules({
   const ruleLabel = (rule: MemoryRuleItem) =>
     rule.scope.kind === "project" ? scopeLabel : memoryRuleScopeLabel(rule.scope);
   return (
-    <SettingsSection title="Rules" id="memory-rules">
+    <SettingsSection {...searchableSetting("memory-rules")}>
       <SettingsRow
-        title="Rules agents follow"
-        description="Learned when you say what agents must always or never do. Only what you type becomes a rule."
+        {...searchableSetting("memory-rules-agents-follow")}
         control={
           <Button
             size="sm"
@@ -850,7 +906,10 @@ function MemoryRules({
         }
       />
       {editing === "new" && canEdit ? (
-        <SettingsRow title="New rule">
+        <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- editor state, not a setting
+          title="New rule"
+        >
           <div className="space-y-3">
             {scope.kind === "project" ? (
               <RadioGroup
@@ -888,7 +947,9 @@ function MemoryRules({
       {notice ? <SettingsRow title={<span role="status">{notice}</span>} /> : null}
       {rules.length === 0 ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty and loading state, not a setting
           title={loaded ? "No rules yet" : "Loading rules"}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
           description={
             loaded ? "Say what agents must always or never do and it is learned here." : undefined
           }
@@ -998,8 +1059,13 @@ function MemoryDetails({
     detailsRef.current?.focus({ preventScroll: true });
   }, []);
   return (
-    <SettingsSection title="Memory details" id="memory-details">
+    <SettingsSection
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- record details view, not a setting
+      title="Memory details"
+      id="memory-details"
+    >
       <SettingsRow
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- record details view, not a setting
         title={item?.status === "forgotten" ? "Forgotten memory" : "Memory"}
         control={
           <div className="flex items-center justify-end gap-2">
@@ -1831,16 +1897,22 @@ function MemoryStatusRows({ sync }: { sync: MemorySyncStatus }) {
     processing.admissionLabel,
   ].filter(Boolean);
   return (
-    <SettingsSection title="Memory status">
-      <SettingsRow title="Hub" description={presentMemorySync(sync).label} />
+    <SettingsSection {...searchableSetting("memory-status")}>
       <SettingsRow
-        title="Storage"
+        {...searchableSetting("memory-status-hub")}
+        description={presentMemorySync(sync).label}
+      />
+      <SettingsRow
+        {...searchableSetting("memory-status-storage")}
         description={[storage.label, storage.searchLabel, ...storage.reasons].join(". ")}
       />
-      <SettingsRow title="Coverage" description={processing.coverage.label} />
       <SettingsRow
-        title="Processing"
-        description={labels.join(". ") || "No pending processing reported"}
+        {...searchableSetting("memory-status-coverage")}
+        description={processing.coverage.label}
+      />
+      <SettingsRow
+        {...searchableSetting("memory-status-processing")}
+        description={labels.join(". ") || MEMORY_SETTINGS_COPY.noPendingProcessing}
       />
     </SettingsSection>
   );

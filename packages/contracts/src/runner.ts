@@ -3,26 +3,34 @@
  * setting; the ones in `RUNNER_PROJECT_KEYS` also take a per-project override.
  */
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
-export const RunnerWhere = Schema.Literals(["mac", "linux", "automatic"]);
+/** `automatic` is Hybrid; `macFirst` fills this Mac up to `runnerMacFirstAfter` jobs first. */
+export const RunnerWhere = Schema.Literals(["mac", "linux", "automatic", "macFirst"]);
 export type RunnerWhere = typeof RunnerWhere.Type;
 
-/** What a job bound for Linux does when Linux is offline, or dropped it mid-run. */
+/** What a job bound for Linux does when Linux is offline. */
 export const RunnerUnavailablePolicy = Schema.Literals(["ask", "mac", "wait"]);
 export type RunnerUnavailablePolicy = typeof RunnerUnavailablePolicy.Type;
+
+/** What a job does when Linux couldn't run it; `agent` hands the failure back without a rerun. */
+export const RunnerFailedPolicy = Schema.Literals(["agent", "ask", "mac", "wait"]);
+export type RunnerFailedPolicy = typeof RunnerFailedPolicy.Type;
 
 /** What an unanswered question does once its deadline passes. */
 export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
 export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
 
 export const RUNNER_LIMITS = {
-  runnerOverflow: { min: 0, max: 20, unit: "jobs" },
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
+  runnerMacFirstAfter: { min: 1, max: 32, unit: "jobs" },
   runnerLinuxSlots: { min: 1, max: 16, unit: "jobs" },
   runnerHeartbeatSeconds: { min: 5, max: 600, unit: "seconds" },
-  runnerOfflineAfterFailures: { min: 1, max: 10, unit: "failures" },
+  runnerOfflineAfterFailures: { min: 2, max: 10, unit: "failures" },
   runnerSshTimeoutSeconds: { min: 1, max: 30, unit: "seconds" },
   runnerStopWaitSeconds: { min: 1, max: 60, unit: "seconds" },
+  runnerLinuxMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
+  runnerLinuxCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
 } as const;
 export type RunnerNumberKey = keyof typeof RUNNER_LIMITS;
 
@@ -32,11 +40,13 @@ export const RUNNER_PATTERN_CHARS = 200;
 export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
   runnerWhere: "mac" as RunnerWhere,
-  runnerOverflow: 3,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
-  runnerDropped: "ask" as RunnerUnavailablePolicy,
+  runnerDropped: "agent" as RunnerFailedPolicy,
+  runnerMacFirstAfter: 4,
+  runnerLinuxEverything: false,
+  runnerBringBack: false,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -54,6 +64,8 @@ export const RUNNER_DEFAULTS = {
     "test",
     "vitest",
     "jest",
+    "mocha",
+    "pytest",
     "e2e",
     "playwright",
     "coverage",
@@ -61,8 +73,11 @@ export const RUNNER_DEFAULTS = {
     "oxlint",
     "eslint",
     "check",
+    "clippy",
     "typecheck",
     "tsc",
+    "tsgo",
+    "effect-tsgo",
     "knip",
   ] as ReadonlyArray<string>,
   runnerHost: "remoto",
@@ -71,19 +86,24 @@ export const RUNNER_DEFAULTS = {
   runnerOfflineAfterFailures: 2,
   runnerSshTimeoutSeconds: 3,
   runnerStopWaitSeconds: 5,
+  // A Linux job starts only while the PC keeps this much memory free and stays under this CPU use.
+  runnerLinuxMemoryFloorPercent: 20,
+  runnerLinuxCpuCeilingPercent: 70,
 } as const;
 
 /** Settings a project can override; the rest belong to the machine. */
 export const RUNNER_PROJECT_KEYS = [
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
   "runnerDropped",
   "runnerMacOnly",
   "runnerLinuxCommands",
+  "runnerMacFirstAfter",
+  "runnerLinuxEverything",
+  "runnerBringBack",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -92,7 +112,12 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerOfflineAfterFailures",
   "runnerSshTimeoutSeconds",
   "runnerStopWaitSeconds",
+  "runnerLinuxMemoryFloorPercent",
+  "runnerLinuxCpuCeilingPercent",
+  "heavySlowAgentJobs",
 ] as const;
+/** Agents' running jobs drop to background CPU priority while this Mac stays over its CPU ceiling. */
+export const HEAVY_SLOW_AGENT_JOBS_DEFAULT = true;
 export type RunnerKey = keyof typeof RUNNER_DEFAULTS;
 
 /** Why `value` is not a valid `key`, for people; null when it is. */
@@ -127,13 +152,25 @@ export const runnerPatternsError = (values: ReadonlyArray<string>): string | nul
 const between = (key: RunnerNumberKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => runnerNumberError(key, value) ?? true));
 
-export const RunnerOverflow = between("runnerOverflow");
 export const RunnerAskMinutes = between("runnerAskMinutes");
+export const RunnerMacFirstAfter = between("runnerMacFirstAfter");
 export const RunnerLinuxSlots = between("runnerLinuxSlots");
 export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
-export const RunnerOfflineAfterFailures = between("runnerOfflineAfterFailures");
+/** One failure never takes Linux offline, so a 1 saved before the minimum rose reads as 2. */
+export const RunnerOfflineAfterFailures = Schema.Int.pipe(
+  Schema.decodeTo(
+    between("runnerOfflineAfterFailures"),
+    SchemaTransformation.transform({
+      decode: (value: number) =>
+        value === 1 ? RUNNER_LIMITS.runnerOfflineAfterFailures.min : value,
+      encode: (value: number) => value,
+    }),
+  ),
+);
 export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
+export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
+export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -145,13 +182,16 @@ export const RunnerPatterns = Schema.Array(Schema.String).check(
 export const RunnerProjectConfig = Schema.Struct({
   runnerEnabled: Schema.Boolean,
   runnerWhere: RunnerWhere,
-  runnerOverflow: Schema.Int,
   runnerUnavailable: RunnerUnavailablePolicy,
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,
-  runnerDropped: RunnerUnavailablePolicy,
+  runnerDropped: RunnerFailedPolicy,
   runnerMacOnly: Schema.Array(Schema.String),
   runnerLinuxCommands: Schema.Array(Schema.String),
+  runnerMacFirstAfter: Schema.Int,
+  /** Can run on Linux is Everything: every work job may leave, except what must stay here. */
+  runnerLinuxEverything: Schema.Boolean,
+  runnerBringBack: Schema.Boolean,
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;
 
@@ -162,5 +202,8 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerOfflineAfterFailures: Schema.Int,
   runnerSshTimeoutSeconds: Schema.Int,
   runnerStopWaitSeconds: Schema.Int,
+  runnerLinuxMemoryFloorPercent: Schema.Int,
+  runnerLinuxCpuCeilingPercent: Schema.Int,
+  heavySlowAgentJobs: Schema.Boolean,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

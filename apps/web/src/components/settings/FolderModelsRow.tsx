@@ -12,6 +12,7 @@ import { Label } from "../ui/label";
 import { toastManager } from "../ui/toast";
 import { IconAction, modelPickerProps, type PickerProps } from "./FallbackModelsRow";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import type { useUpdateScopedSettings } from "./useScopedSettings";
 
 /** Projects inside a folder start new threads with that folder's model. */
@@ -48,9 +49,7 @@ export function FolderModelsRow(
       serverScoped
       settingKeys={["folderModelDefaults"]}
       mixed={mixed}
-      id="folder-models"
-      title="Model by folder"
-      description="Projects inside a folder start new threads with its model; a project's own setting still wins."
+      {...searchableSetting("folder-models")}
       resetAction={
         mixed || list.length > 0 ? (
           <SettingResetButton

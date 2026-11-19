@@ -9,6 +9,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
+import type { AssistantPresence } from "./assistantRobot.ts";
+import { ENVIRONMENT_DISCONNECTED_LABEL } from "./sidebarZones.ts";
 import type { EnvironmentThreadShell } from "./state/models.ts";
 
 /** Where a status card's button goes; each client maps it to its own navigation. */
@@ -121,6 +123,40 @@ export function assistantWorkStatus(input: AssistantWorkStatusInput): AssistantW
     };
   }
   return { ok: true };
+}
+
+export interface AssistantWorkHeadline {
+  readonly kind: "offline" | "needs" | "blocked" | "limited" | "working" | "failed" | "ready";
+  readonly title: string;
+  readonly detail: string | null;
+}
+
+/**
+ * The Work card's one line, from the same `assistantStatus` every other screen shows: a
+ * disconnected environment, then a wait on the user, then what stops it, then what it is doing.
+ * "Ready to work" only when nothing is pending.
+ */
+export function assistantWorkHeadline(
+  status: AssistantWorkStatus,
+  live: AssistantPresence,
+  reachable: boolean | null,
+): AssistantWorkHeadline {
+  const other = (detail: string, title: string) => (detail === title ? null : detail);
+  if (reachable === false) {
+    return { kind: "offline", title: ENVIRONMENT_DISCONNECTED_LABEL, detail: null };
+  }
+  if (live.mood === "needs") {
+    return { kind: "needs", title: "Needs you", detail: other(live.detail, "Needs you") };
+  }
+  if (!status.ok && status.severity === "blocked") {
+    return { kind: "blocked", title: status.title, detail: status.detail };
+  }
+  if (live.mood === "working") {
+    return { kind: "working", title: "Working", detail: other(live.detail, "Working") };
+  }
+  if (live.mood === "failed") return { kind: "failed", title: live.detail, detail: null };
+  if (!status.ok) return { kind: "limited", title: status.title, detail: status.detail };
+  return { kind: "ready", title: "Ready to work", detail: "Nothing is in its way." };
 }
 
 /** What Retry sends for the assistant's latest run, or null when that run needs no retry. */

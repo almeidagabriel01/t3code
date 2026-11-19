@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import {
+  connectEnvironmentToSee,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   usageLimitAlertLabel,
@@ -29,23 +33,25 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { PROVIDER_ACCOUNTS_COPY } from "./providerAccountsCopy";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   usageAlertMenuActions,
   usageAlertPatch,
   usageAlertSections,
 } from "./SettingsUsageAlertsRouteScreen.logic";
+import { USAGE_ALERTS_COPY } from "./usageAlertsCopy";
 
 export function SettingsUsageAlertsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const supported = (target: SettingsTarget) =>
     target.serverConfig.environment.capabilities.usageLimitAlerts === true;
   const targets = selectedTargets.filter(supported);
   const outdated = selectedTargets.filter((target) => !supported(target));
   const insets = useSafeAreaInsets();
   return (
-    <SettingsScreen title="Limit alerts" menus={[environmentMenu]}>
+    <SettingsScreen title={USAGE_ALERTS_COPY.title} menus={[environmentMenu]}>
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -53,16 +59,21 @@ export function SettingsUsageAlertsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            {emptyEnvironmentSelectionText(
+              connectEnvironmentToSee("limits"),
+              availableTargets.length > 0,
+            )}
+          </Text>
         ) : targets.length === 0 ? (
           <EmptyState
             variant="plain"
             title={outdated.length === 1 ? "Update this server" : "Update these servers"}
-            detail="Limit alerts need a newer T3 Code server."
+            detail={USAGE_ALERTS_COPY.needsNewerServer}
           />
         ) : (
           <Text textRole="footnote" className="px-2 text-foreground-muted">
-            Your assistant messages you once when this much is left.
+            {USAGE_ALERTS_COPY.intro}
           </Text>
         )}
         {targets.map((environment) => (
@@ -113,7 +124,7 @@ function EnvironmentAlerts(props: {
         <View className="overflow-hidden rounded-2xl bg-grouped-card">
           <ListRowLayout
             icon={{ ios: "lock", android: "lock" }}
-            label="Limited permissions"
+            label={PROVIDER_ACCOUNTS_COPY.limitedPermissions}
             description={`This session can view ${props.environment.label}'s providers but can't change their settings.`}
           />
         </View>
@@ -126,14 +137,14 @@ function EnvironmentAlerts(props: {
         <View className="overflow-hidden rounded-2xl">
           <ListRow
             icon="bell.badge"
-            label="Alerts are paused"
-            description="Assistant notifications are off, so limit alerts wait. Change it in Assistants."
+            label={USAGE_ALERTS_COPY.paused.label}
+            description={USAGE_ALERTS_COPY.paused.description}
             onPress={() => navigation.navigate("SettingsAssistants")}
           />
         </View>
       ) : null}
       {sections.length === 0 ? (
-        <Text className="text-foreground-muted">{`No subscription limits reported yet.${suffix}`}</Text>
+        <Text className="text-foreground-muted">{`${USAGE_ALERTS_COPY.noLimits}${suffix}`}</Text>
       ) : (
         sections.map((section) => (
           <SettingsSection key={section.instanceId} title={`${section.title}${suffix}`}>

@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_KEYBINDINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useEnvironmentScope } from "../../state/session";
 import {
   useEnvironmentsWithScope,
@@ -18,6 +19,7 @@ import {
 import { useLocation } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
   type RefObject,
   useReducer,
@@ -76,7 +78,12 @@ import {
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 import { SettingsGroup } from "./SettingsGroup";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -119,10 +126,12 @@ function KeybindingsSearchInput({
   query,
   onChange,
   inputRef,
+  disabled,
 }: {
   query: string;
   onChange: (next: string) => void;
   inputRef: RefObject<HTMLInputElement | null>;
+  disabled: boolean;
 }) {
   return (
     <InputGroup className="min-w-0 basis-full **:[input]:h-9 sm:basis-0 sm:flex-1 sm:**:[input]:h-8">
@@ -143,6 +152,7 @@ function KeybindingsSearchInput({
         placeholder="Search keybindings"
         aria-label="Search keybindings"
         size="sm"
+        disabled={disabled}
       />
     </InputGroup>
   );
@@ -1228,7 +1238,9 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   return (
     <SettingsRow
       className="bg-muted/15"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- draft form for a new keybinding, not a setting
       title="New keybinding"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- draft form labels for a new keybinding, not a setting
       description={
         <span className="flex h-6 items-center gap-1.5">
           <span className="text-xs leading-none text-muted-foreground/70">When</span>
@@ -1318,7 +1330,11 @@ function useKeybindingCatalog() {
 }
 
 export function KeybindingsSettingsPanel() {
-  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
+  const {
+    environment: primaryEnvironment,
+    environments,
+    connectedEnvironments,
+  } = useSettingsScope();
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -1332,8 +1348,13 @@ export function KeybindingsSettingsPanel() {
     writeAccess.get(target.environmentId),
   );
   const accessSettled = !canWriteSettings && !writeAccesses.includes("unknown");
-  const showsPermissionNote =
-    connectedEnvironments.length === 0 || (accessSettled && writeAccesses.includes("missing"));
+  const disconnectedReason =
+    environments.length === 0
+      ? CONNECT_ENVIRONMENT_FOR_KEYBINDINGS
+      : connectedEnvironments.length === 0
+        ? "Reconnect the selected environment to change keybindings."
+        : null;
+  const showsPermissionNote = accessSettled && writeAccesses.includes("missing");
   const showsUnavailableNote =
     accessSettled && !writeAccesses.includes("missing") && writeAccesses.includes("unavailable");
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
@@ -1487,16 +1508,28 @@ export function KeybindingsSettingsPanel() {
         headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}
       >
         <div className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4">
-          <KeybindingsSearchInput query={query} onChange={setQuery} inputRef={searchInputRef} />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isAddingBinding || !canWriteSettings}
-            onClick={() => setIsAddingBinding(true)}
+          <DisconnectedTooltip
+            reason={disconnectedReason}
+            className="min-w-0 basis-full sm:basis-0 sm:flex-1"
           >
-            <PlusIcon aria-hidden className="size-4" />
-            Add keybinding
-          </Button>
+            <KeybindingsSearchInput
+              query={query}
+              onChange={setQuery}
+              inputRef={searchInputRef}
+              disabled={disconnectedReason !== null}
+            />
+          </DisconnectedTooltip>
+          <DisconnectedTooltip reason={disconnectedReason}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isAddingBinding || !canWriteSettings}
+              onClick={() => setIsAddingBinding(true)}
+            >
+              <PlusIcon aria-hidden className="size-4" />
+              Add keybinding
+            </Button>
+          </DisconnectedTooltip>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1519,42 +1552,79 @@ export function KeybindingsSettingsPanel() {
 
       {showsPermissionNote ? (
         <p className="text-xs text-muted-foreground">
-          {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
-            : "This connection can view keybindings but cannot change them."}
+          This connection can view keybindings but cannot change them.
         </p>
       ) : showsUnavailableNote ? (
         <p className="text-xs text-muted-foreground">{SCOPE_ACCESS_UNAVAILABLE_MESSAGE}</p>
       ) : null}
-      <div inert={!canWriteSettings} className="flex flex-col gap-8">
-        {isAddingBinding ? (
-          <SettingsGroup>
-            <NewKeybindingSettingsRow
-              commandOptions={commandOptions}
-              allRows={allRows}
-              variables={whenVariables}
-              isSaving={savingCommand !== null}
-              onSave={saveKeybinding}
-              onCancel={cancelAdd}
-            />
-          </SettingsGroup>
-        ) : null}
+      {environments.length === 0 ? (
+        <SettingsServerEnvironmentNotice>
+          {CONNECT_ENVIRONMENT_FOR_KEYBINDINGS}
+        </SettingsServerEnvironmentNotice>
+      ) : (
+        <div
+          inert={!canWriteSettings}
+          className={cn("flex flex-col gap-8", disconnectedReason !== null && "opacity-50")}
+        >
+          {isAddingBinding ? (
+            <SettingsGroup>
+              <NewKeybindingSettingsRow
+                commandOptions={commandOptions}
+                allRows={allRows}
+                variables={whenVariables}
+                isSaving={savingCommand !== null}
+                onSave={saveKeybinding}
+                onCancel={cancelAdd}
+              />
+            </SettingsGroup>
+          ) : null}
 
-        {groups.length > 0 ? (
-          <KeybindingsGroups
-            groups={groups}
-            anchorIds={anchorIds}
-            savingCommand={savingCommand}
-            {...rowActions}
-          />
-        ) : (
-          <SettingsGroup>
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No keybindings match your search.
-            </div>
-          </SettingsGroup>
-        )}
-      </div>
+          {groups.length > 0 ? (
+            <KeybindingsGroups
+              groups={groups}
+              anchorIds={anchorIds}
+              savingCommand={savingCommand}
+              {...rowActions}
+            />
+          ) : (
+            <SettingsGroup>
+              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                No keybindings match your search.
+              </div>
+            </SettingsGroup>
+          )}
+        </div>
+      )}
     </SettingsPageContainer>
+  );
+}
+
+function DisconnectedTooltip({
+  reason,
+  className,
+  children,
+}: {
+  reason: string | null;
+  className?: string;
+  children: ReactElement;
+}) {
+  if (reason === null) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            className={cn(
+              "flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              className,
+            )}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{reason}</TooltipPopup>
+    </Tooltip>
   );
 }

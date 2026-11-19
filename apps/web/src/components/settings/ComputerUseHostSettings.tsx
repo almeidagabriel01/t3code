@@ -13,7 +13,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { Badge } from "../ui/badge";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 const STATE_VARIANTS = {
   available: "success",
@@ -40,12 +40,15 @@ function HostSection(props: {
       {query.data === null ? (
         <SettingsRow
           {...anchor}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           title={query.error === null ? "Checking..." : "Could not read this computer"}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           description={query.error ?? "Reading what agents can do on this computer."}
         />
       ) : host === undefined ? (
         <SettingsRow
           {...anchor}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           title="Not reported"
           description={COMPUTER_USE_HOST_NOT_REPORTED}
         />
@@ -90,10 +93,12 @@ export function ComputerUseHostSettingsPanel() {
   return (
     <SettingsPageContainer>
       {hosts.length === 0 ? (
-        <SettingsSection title="Computer use">
+        <SettingsSection title={settingCopy("computer-use").title}>
           <SettingsRow
             {...searchableSetting("computer-use")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="This page reports what agents can do on a connected Windows or Linux computer. A Mac has its own Mac permissions page."
           />
         </SettingsSection>
@@ -102,7 +107,11 @@ export function ComputerUseHostSettingsPanel() {
           <HostSection
             key={environment.environmentId}
             environmentId={environment.environmentId}
-            title={hosts.length > 1 ? `Computer use · ${environment.label}` : "Computer use"}
+            title={
+              hosts.length > 1
+                ? `${settingCopy("computer-use").title} · ${environment.label}`
+                : settingCopy("computer-use").title
+            }
             searchable={index === 0}
           />
         ))

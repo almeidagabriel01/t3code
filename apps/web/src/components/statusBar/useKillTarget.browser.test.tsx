@@ -20,12 +20,16 @@ vi.mock("../../state/heavyQueue", async () => {
     heavyQueueEnvironment: {
       move: { permissionAtom: () => allowed, name: "move" },
       route: { permissionAtom: () => allowed, name: "route" },
+      routeAll: { permissionAtom: () => allowed, name: "routeAll" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
       stopCommand: { permissionAtom: () => allowed, name: "stopCommand" },
       setPaused: { permissionAtom: () => allowed, name: "setPaused" },
       setEnabled: { permissionAtom: () => allowed, name: "setEnabled" },
       setRule: { permissionAtom: () => allowed, name: "setRule" },
       setMaxRunning: { permissionAtom: () => allowed, name: "setMaxRunning" },
+      setMacMemoryFloorPercent: { name: "setMacMemoryFloorPercent" },
+      setMacCpuCeilingPercent: { name: "setMacCpuCeilingPercent" },
+      setHeavyOverLimitSeconds: { name: "setHeavyOverLimitSeconds" },
     },
   };
 });
@@ -70,12 +74,16 @@ function Probe() {
       >
         rerun
       </button>
+      <button onClick={() => void actions.moveAll("linux")}>move all</button>
       <button onClick={() => void actions.cancel("b", false)}>cancel</button>
       <button onClick={() => void actions.cancel("c", true)}>stop</button>
       <button onClick={() => void actions.setPaused(true)}>pause</button>
       <button onClick={() => void actions.setEnabled(false)}>off</button>
       <button onClick={() => void actions.setRule("/p", "first")}>rule</button>
       <button onClick={() => void actions.setMaxRunning(2)}>max</button>
+      <button onClick={() => void actions.setMacMemoryFloorPercent(25)}>floor</button>
+      <button onClick={() => void actions.setMacCpuCeilingPercent(80)}>ceiling</button>
+      <button onClick={() => void actions.setHeavyOverLimitSeconds(30)}>window</button>
       <StopProbe />
     </>
   );
@@ -123,7 +131,18 @@ describe("useHeavyQueueActions", () => {
   it("sends each change straight away, and removes or stops only after confirmation", async () => {
     await using screen = await setup();
     await expect.element(screen.getByRole("status")).toHaveTextContent("true");
-    for (const name of ["move", "pause", "off", "rule", "max", "cancel", "stop"]) {
+    for (const name of [
+      "move",
+      "pause",
+      "off",
+      "rule",
+      "max",
+      "floor",
+      "ceiling",
+      "window",
+      "cancel",
+      "stop",
+    ]) {
       await userEvent.click(screen.getByRole("button", { name }));
     }
     expect(mocks.calls.mock.calls).toEqual([
@@ -132,6 +151,9 @@ describe("useHeavyQueueActions", () => {
       ["setEnabled", { environmentId, input: { enabled: false } }],
       ["setRule", { environmentId, input: { root: "/p", priority: "first" } }],
       ["setMaxRunning", { environmentId, input: { maxRunning: 2 } }],
+      ["setMacMemoryFloorPercent", { environmentId, input: { macMemoryFloorPercent: 25 } }],
+      ["setMacCpuCeilingPercent", { environmentId, input: { macCpuCeilingPercent: 80 } }],
+      ["setHeavyOverLimitSeconds", { environmentId, input: { heavyOverLimitSeconds: 30 } }],
       ["cancel", { environmentId, input: { id: "b" } }],
       ["cancel", { environmentId, input: { id: "c" } }],
     ]);
@@ -177,6 +199,14 @@ describe("useHeavyQueueActions", () => {
       ["route", { environmentId, input: { id: "w", runner: "mac", force: true } }],
     ]);
     expect(mocks.confirm.mock.calls.map(([message]) => message)).toEqual(["Run it twice?"]);
+  });
+
+  it("moves every waiting job to a machine with one command", async () => {
+    await using screen = await setup();
+    await userEvent.click(screen.getByRole("button", { name: "move all" }));
+    expect(mocks.calls.mock.calls).toEqual([
+      ["routeAll", { environmentId, input: { runner: "linux" } }],
+    ]);
   });
 
   it("does not move when the confirmation is declined", async () => {

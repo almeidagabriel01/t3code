@@ -20,6 +20,7 @@
 - [Devices](./user/devices.md)
 - [Assistants](./user/assistants.md)
 - [Memory](./user/memory.md)
+- [Integrations](./user/integrations.md)
 - [MCP servers and skills](./user/global-mcp-and-skills.md)
 - [Notes](./user/notes.md)
 - [Usage and limits](./user/usage.md)

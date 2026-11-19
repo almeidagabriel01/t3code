@@ -2,20 +2,29 @@ import {
   KANBAN_COLORS,
   KANBAN_PRIORITY_LABELS,
   kanbanColor,
+  problemBadge,
 } from "@t3tools/client-runtime/state/kanbanLogic";
-import type { KanbanLabel, KanbanPriority, KanbanTemplate } from "@t3tools/contracts";
+import type {
+  KanbanCardProblem,
+  KanbanLabel,
+  KanbanPriority,
+  KanbanTemplate,
+} from "@t3tools/contracts";
 import {
+  BellOffIcon,
   BrushCleaningIcon,
   BugIcon,
   CircleAlertIcon,
   LightbulbIcon,
   TagIcon,
+  TriangleAlertIcon,
   WrenchIcon,
 } from "lucide-react";
 import type { ComponentProps, ComponentType, CSSProperties, ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const KANBAN_COLOR_NAMES = Object.keys(KANBAN_COLORS);
 
@@ -69,6 +78,29 @@ export function PriorityIcon({ priority }: { readonly priority: KanbanPriority }
         />
       ))}
     </svg>
+  );
+}
+
+export function ProblemBadge({ problem }: { readonly problem: KanbanCardProblem | null }) {
+  const badge = problemBadge(problem);
+  if (badge === null) return null;
+  const Icon = badge.ignored ? BellOffIcon : TriangleAlertIcon;
+  const chip = (
+    <Badge variant="secondary" size="sm" data-testid="kanban-problem-badge">
+      <Icon
+        role={badge.iconLabel === null ? undefined : "img"}
+        aria-label={badge.iconLabel ?? undefined}
+      />
+      {badge.text}
+    </Badge>
+  );
+  if (!badge.ignored) return chip;
+  // Above the card's full-size open button, so hovering the chip reaches its tooltip.
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="relative z-10 flex" />}>{chip}</TooltipTrigger>
+      <TooltipPopup side="top">{badge.iconLabel}</TooltipPopup>
+    </Tooltip>
   );
 }
 

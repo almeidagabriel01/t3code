@@ -399,7 +399,7 @@ export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
 /**
  * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
  * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
- * brings it back.
+ * brings it back, unless a failed send of that tab does (`assistantGroupFailedSendRouting`).
  */
 export function assistantGroupTabPick<T>(
   pick: AssistantGroupTabPick<T> | null,
@@ -653,7 +653,8 @@ export function assistantGroupHeldAttachments(
 
 /**
  * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
- * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed. It holds
+ * whatever the failure was: a resend that never left may follow an unconfirmed post the server has.
  */
 export function assistantGroupSendRequestId(
   failed: { readonly requestId: string; readonly sendKey: string } | null,
@@ -662,6 +663,100 @@ export function assistantGroupSendRequestId(
 ) {
   const sendKey = JSON.stringify(carries);
   return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
+/** What a group send went with besides its text and files: the open reply and its tab's picks. */
+export interface AssistantGroupSendRouting<Reply> {
+  readonly reply: Reply | null;
+  readonly projectPick: AssistantGroupProjectPick | null;
+  readonly modelPick: AssistantGroupTabPick<ModelSelection> | null;
+}
+
+/**
+ * A reply or pick once its send landed, by the post's reply or by the chat showing the post: it
+ * goes, unless the user changed it since the send.
+ */
+export function assistantGroupLandedPick<T>(current: T | null, sent: T | null): T | null {
+  return current === sent ? null : current;
+}
+
+const sameRouting = <Reply>(
+  left: AssistantGroupSendRouting<Reply>,
+  right: AssistantGroupSendRouting<Reply>,
+) =>
+  left.reply === right.reply &&
+  left.projectPick === right.projectPick &&
+  left.modelPick === right.modelPick;
+
+/**
+ * As the open tab's send comes into view, on its way or failed, the chat takes its routing back
+ * (`restore`), or a resend would go under a new id; while it shows, the user's changes become it
+ * (`keep`), so a cancelled reply stays cancelled. `seen`: the request id the tab showed last.
+ */
+export function assistantGroupFailedSendRouting<
+  Reply,
+  T extends AssistantGroupOutgoing & {
+    readonly requestId: string;
+    readonly routing: AssistantGroupSendRouting<Reply> | null;
+  },
+>(
+  seen: string | null,
+  shown: T | null,
+  tab: AssistantGroupTabKey | null,
+  current: AssistantGroupSendRouting<Reply>,
+): {
+  readonly seen: string | null;
+  readonly restore: AssistantGroupSendRouting<Reply> | null;
+  readonly keep: AssistantGroupSendRouting<Reply> | null;
+} {
+  const own = shown !== null && shown.tab === tab ? shown : null;
+  const next = own?.requestId ?? null;
+  const held = own?.routing ?? null;
+  if (held === null) return { seen: next, restore: null, keep: null };
+  if (next !== seen) return { seen: next, restore: held, keep: null };
+  return { seen: next, restore: null, keep: sameRouting(held, current) ? null : current };
+}
+
+const NO_FILES: ReadonlyArray<never> = [];
+
+/**
+ * Each group composer's files, outside any one mount, so the files a send took come back with
+ * it when the chat opens again and its resend carries them under the same id. Leaving the chat
+ * keeps only those; the rest were never sent and go.
+ */
+export function createAssistantGroupFileStore<T extends { readonly id: string }>() {
+  const groups = new Map<string, ReadonlyArray<T>>();
+  const listeners = new Set<() => void>();
+  const set = (group: string, files: ReadonlyArray<T>) => {
+    if (files.length === 0) groups.delete(group);
+    else groups.set(group, files);
+    for (const listener of listeners) listener();
+  };
+  const get = (group: string): ReadonlyArray<T> => groups.get(group) ?? NO_FILES;
+  return {
+    /** The same array until the group's files change, as `useSyncExternalStore` needs. */
+    get,
+    update: (group: string, change: (files: ReadonlyArray<T>) => ReadonlyArray<T>) =>
+      set(group, change(get(group))),
+    /** Leaving the chat: drops the files no pending send holds and returns them to release. */
+    leave: (group: string, pending: ReadonlySet<string>): ReadonlyArray<T> => {
+      const files = get(group);
+      const gone = files.filter((file) => !pending.has(file.id));
+      if (gone.length > 0)
+        set(
+          group,
+          files.filter((file) => pending.has(file.id)),
+        );
+      return gone;
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear: () => groups.clear(),
+  };
 }
 
 const NO_OUTGOING: ReadonlyArray<never> = [];
@@ -1460,12 +1555,16 @@ export function assistantGroupFinishedInView(
   return open === null || open === "all" || open === finished;
 }
 
-/** "N running" count for the header: tasks being worked right now. */
-export function assistantGroupRunningCount(state: AssistantGroupChatState): number {
-  let count = 0;
-  for (const task of state.tasks.values()) if (task.status === "running") count += 1;
-  return count;
-}
+/** The group's running tasks, oldest first: its Working now rows and its "N running". */
+export const assistantGroupRunningTasks = (
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupTask> =>
+  [...state.tasks.values()]
+    .filter((task) => task.status === "running")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+export const assistantGroupRunningCount = (state: AssistantGroupChatState): number =>
+  assistantGroupRunningTasks(state).length;
 
 /** The divider's wording, for a boundary message's `new` or `compact` text. */
 export function assistantGroupBoundaryLabel(message: Pick<AssistantGroupMessage, "text">): string {

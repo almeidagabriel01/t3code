@@ -2,6 +2,7 @@ import { requestUrl } from "../requestUrl.ts";
 // Loopback-only hubs expose shell execution or unauthenticated actions.
 // Proxy with environment read scope for streams and operate scope for input and tuning.
 import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,7 +18,8 @@ import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { authenticateMediaRequest, untilSessionEnds } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -289,17 +291,21 @@ const handler = Effect.gen(function* () {
   }
   const devices = yield* DeviceService.DeviceService;
   const hostId = url.value.searchParams.get("hostId") ?? undefined;
-  return yield* proxyHubRequest({
-    request,
-    url: url.value,
-    hubPath: url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/",
-    hostId,
-    authorize: (controlsDevice) =>
-      authenticateMediaRequest(
-        controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
-      ),
-    onUserInput: (deviceId) => devices.holdOnInput(hostId, deviceId),
-  });
+  const authorized = yield* Deferred.make<EnvironmentAuth.AuthenticatedSession>();
+  return yield* untilSessionEnds(
+    Deferred.await(authorized),
+    proxyHubRequest({
+      request,
+      url: url.value,
+      hubPath: url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/",
+      hostId,
+      authorize: (controlsDevice) =>
+        authenticateMediaRequest(
+          controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+        ).pipe(Effect.flatMap((session) => Deferred.succeed(authorized, session))),
+      onUserInput: (deviceId) => devices.holdOnInput(hostId, deviceId),
+    }),
+  );
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

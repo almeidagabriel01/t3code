@@ -34,6 +34,7 @@ import {
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { assistantHomeModel } from "@t3tools/shared/modelSelectionPrecedence";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -80,6 +81,7 @@ import {
   encodeAutonomy,
   encodeAvatar,
   encodeBudget,
+  encodeIntegrations,
   encodeMcpServers,
   toAssistant,
   encodeProjectIds,
@@ -115,12 +117,24 @@ export interface AssistantTaskList {
 
 const TASK_LIST_CAP = 50;
 
-const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
+/** The run a task's result comes from: its newest one that was not rolled back. */
+export const deliveredRunOf = <Run extends { readonly status: string; readonly ordinal: number }>(
+  runs: ReadonlyArray<Run>,
+): Run | undefined =>
+  runs
+    .filter((run) => run.status !== "rolled_back")
+    .reduce<Run | undefined>(
+      (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+      undefined,
+    );
+
+/** The task chip the clients show, read from the task thread's shell. */
+export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
   const parked =
     backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
   const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
   return assistantTaskStatusOf({
-    needsUser: shell.pendingRuntimeRequest !== null || (shell.pendingGuestMessageCount ?? 0) > 0,
+    needsUser: shell.pendingRuntimeRequest !== null || guestWaitsOnUser(shell),
     runtimeStatus: status === "idle" && !parked ? null : status,
   });
 };
@@ -346,7 +360,13 @@ const make = Effect.gen(function* () {
     const id = yield* random.uuidV4().pipe(Effect.orDie);
     yield* threads
       .dispatch(command(CommandId.make(`assistant-cmd:${id}`)))
-      .pipe(Effect.catch(threadFailure("Could not update the assistant's conversation.")));
+      .pipe(
+        Effect.catch((cause) =>
+          cause._tag === "OrchestratorProviderSelectionBusyError"
+            ? Effect.fail(assistantError("invalid", cause.message))
+            : threadFailure("Could not update the assistant's conversation.")(cause),
+        ),
+      );
   });
 
   /** A muted line in the conversation; a failure to write it never fails the change it reports. */
@@ -560,7 +580,15 @@ const make = Effect.gen(function* () {
         return yield* invalid("A running task cannot be dismissed. Stop it first.");
       }
     }
-    const stored = yield* tasks.setDismissed(threadId, dismissed ? yield* nowIso : null);
+    if (!dismissed) {
+      // The restore covers the result already delivered; only a newer run dismisses it again.
+      const { runs } = yield* threads
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(Effect.orElseSucceed(() => ({ runs: [] })));
+      const stored = yield* tasks.setDismissed(threadId, null, deliveredRunOf(runs)?.id ?? null);
+      return Option.getOrElse(stored, () => current.value);
+    }
+    const stored = yield* tasks.setDismissed(threadId, yield* nowIso);
     return Option.getOrElse(stored, () => current.value);
   });
 
@@ -658,7 +686,7 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, ask_before_acting,
-              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json,
+              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, integrations_json,
               default_model_selection, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${home}, ${input.instructions},
@@ -667,6 +695,7 @@ const make = Effect.gen(function* () {
               ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
               ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope}, ${projectIdsJson},
               ${saved === undefined ? null : encodeMcpServers(saved.servers)},
+              ${input.integrations === undefined ? null : encodeIntegrations(input.integrations)},
               ${input.modelSelection === undefined ? null : encodeModelSelectionJson(input.modelSelection)},
               ${now}, ${now}
             )`;
@@ -765,6 +794,10 @@ const make = Effect.gen(function* () {
                   : encodeAvatar(input.avatar),
             scope: resolved?.scope ?? row.scope,
             projectIdsJson: resolved?.json ?? row.project_ids_json ?? null,
+            integrationsJson:
+              input.integrations === undefined
+                ? (row.integrations_json ?? null)
+                : encodeIntegrations(input.integrations),
             defaultModelSelectionJson:
               input.defaultModelSelection === undefined
                 ? (row.default_model_selection ?? null)
@@ -806,7 +839,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -818,13 +851,29 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
               previous !== undefined &&
               previous.deletedAt === null
             ) {
+              // First, so a later refusal cannot leave the row and the thread on different access.
+              if (next.toolAccess !== row.tool_access) {
+                yield* dispatchThread((commandId) => ({
+                  type: "thread.runtime-mode.set",
+                  commandId,
+                  threadId: previousThreadId,
+                  runtimeMode: runtimeModeForToolAccess(next.toolAccess),
+                })).pipe(
+                  // A busy thread keeps its mode, so the row keeps the access it still runs with.
+                  Effect.tapError(
+                    () =>
+                      sql`UPDATE assistants SET tool_access = ${row.tool_access}
+                        WHERE assistant_id = ${row.assistant_id}`,
+                  ),
+                );
+              }
               if (next.name !== row.name) {
                 yield* dispatchThread((commandId) => ({
                   type: "thread.metadata.update",
@@ -841,14 +890,6 @@ const make = Effect.gen(function* () {
                   commandId,
                   threadId: previousThreadId,
                   modelSelection,
-                }));
-              }
-              if (next.toolAccess !== row.tool_access) {
-                yield* dispatchThread((commandId) => ({
-                  type: "thread.runtime-mode.set",
-                  commandId,
-                  threadId: previousThreadId,
-                  runtimeMode: runtimeModeForToolAccess(next.toolAccess),
                 }));
               }
               if (archivedAt !== null && row.archived_at === null) {

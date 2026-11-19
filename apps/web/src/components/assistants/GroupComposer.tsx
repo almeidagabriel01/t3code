@@ -11,17 +11,23 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
+  assistantGroupFailedSendRouting,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendRouting,
+  type AssistantGroupTabPick,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
   type ChatAttachment,
   type EnvironmentId,
   type ModelSelection,
@@ -30,6 +36,7 @@ import {
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
 import {
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -88,7 +95,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { GroupAttachmentChips } from "./GroupAttachments";
 import { GroupMentionChip } from "./GroupMentionChip";
 import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
-import { useGroupAttachments } from "./useGroupAttachments";
+import { clearGroupAttachments, useGroupAttachments } from "./useGroupAttachments";
 
 export type GroupSendResult =
   | { readonly ok: true }
@@ -112,6 +119,24 @@ export interface GroupReplyQuote {
   readonly projectLabel: string | null;
 }
 
+/** A reply being written: the message it answers, quoted on top of the composer. */
+export interface GroupReplyTarget {
+  readonly id: AssistantGroupMessageId;
+  readonly projectId: ProjectId | null;
+  readonly quote: GroupReplyQuote;
+}
+
+export type GroupSendRouting = AssistantGroupSendRouting<AssistantGroupTabPick<GroupReplyTarget>>;
+
+/** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
+export interface GroupLandedSend {
+  readonly tab: AssistantGroupTabKey | null;
+  /** The project it runs in; null lets the lead decide. */
+  readonly projectId: ProjectId | null;
+  /** What it went with; null once a landing let go of it. */
+  readonly routing: GroupSendRouting | null;
+}
+
 const LEAD_DECIDES = "lead";
 const NO_CONTEXT_RECORDS = new Map();
 const NO_SKILLS: never[] = [];
@@ -123,6 +148,7 @@ const drafts = new Map<string, string>();
 export const clearGroupDrafts = () => {
   drafts.clear();
   outgoings.clear();
+  clearGroupAttachments();
 };
 
 function MentionOptionLabel(props: {
@@ -264,13 +290,15 @@ function ReplyQuote(props: {
 type PromptState = { readonly value: string; readonly cursor: number; readonly expanded: number };
 
 /** A sent message the composer holds apart from the draft, with what its tab showed. */
-interface Outgoing extends AssistantGroupOutgoing {
+interface Outgoing extends AssistantGroupOutgoing, GroupLandedSend {
   readonly prompt: PromptState;
   readonly projectLabel: string;
   readonly error: string | null;
   /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
   readonly requestId: string;
   readonly sendKey: string;
+  /** The text it sent, trimmed; `prompt` is what the composer shows now. */
+  readonly text: string;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
@@ -336,12 +364,19 @@ export function GroupComposer(props: {
   /** The model the next message runs on, picked here only for it. */
   readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
+  /** The reply and picks the next send goes with, so a failed one keeps them for its resend. */
+  readonly routing: GroupSendRouting;
+  readonly onLanded: (sent: GroupLandedSend) => void;
+  /** A failed send came back into view: the chat takes back what it went with. */
+  readonly onRestore: (routing: GroupSendRouting) => void;
   /** The chat the recipients line reads what routes the draft from. */
   readonly chat: AssistantGroupChatRef;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
   readonly history: ReadonlyArray<{ readonly id: string; readonly text: string }>;
+  /** The chat as loaded: a failed send whose post shows here landed. */
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -425,9 +460,11 @@ export function GroupComposer(props: {
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
   const attached = useGroupAttachments(
+    props.draftKey,
     props.environmentId,
     props.disabled,
     assistantGroupHeldAttachments(outgoing, shown),
+    new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
   );
 
   const replace = (value: string, caret: number) => {
@@ -504,6 +541,39 @@ export function GroupComposer(props: {
     replace(next.text, next.caret);
   };
 
+  /** A post the server took: only its text and files go, so what was written meanwhile stays. */
+  const settle = (sent: Outgoing) => {
+    setOutgoing(sent.tab, null);
+    recalled.current = null;
+    attached.clear(sent.attachmentIds);
+    props.onLanded(sent);
+  };
+  const seenSend = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send trades its routing with the chat's; the outgoing store is outside React
+  useLayoutEffect(() => {
+    const routing = assistantGroupFailedSendRouting(
+      seenSend.current,
+      shown,
+      props.tab,
+      props.routing,
+    );
+    seenSend.current = routing.seen;
+    if (routing.restore !== null) props.onRestore(routing.restore);
+    else if (shown !== null && routing.keep !== null) {
+      setOutgoing(shown.tab, { ...shown, routing: routing.keep });
+    }
+    if (props.messages === undefined) return;
+    for (const entry of outgoing) {
+      const landed = assistantGroupLandedSend(entry, entry.prompt.value, props.messages.values());
+      if (landed === "settle") settle(entry);
+      else if (landed === "clear-warning") {
+        // The post landed: what it went with goes, and the user's edit is a new message.
+        setOutgoing(entry.tab, { ...entry, error: null, routing: null });
+        props.onLanded(entry);
+      }
+    }
+  });
+
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
     const attachmentIds = attached.items.map((item) => item.id);
@@ -528,18 +598,23 @@ export function GroupComposer(props: {
         ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
       error: null,
       requestId,
+      text: value.trim(),
       sendKey,
+      projectId: props.replyingTo?.projectId ?? props.projectId,
+      routing: props.routing,
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);
     setError(null);
     const result = await props.onSend(value.trim(), attached.ready, requestId);
-    if (result.ok) {
-      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      setOutgoing(sent.tab, null);
-      recalled.current = null;
-      attached.clear(sent.attachmentIds);
-    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    if (result.ok) settle(sent);
+    else {
+      // What the user changed while it was on its way is what its resend goes with.
+      const latest = outgoings
+        .get(props.draftKey)
+        .find((entry) => entry.requestId === sent.requestId);
+      setOutgoing(sent.tab, { ...(latest ?? sent), failed: true, error: result.message });
+    }
     // The editor is read-only while its text is on its way; the user types on once it settles.
     window.requestAnimationFrame(() => {
       if (document.activeElement === document.body) editorRef.current?.focusAtEnd();

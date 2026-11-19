@@ -23,6 +23,7 @@ import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
@@ -60,6 +61,7 @@ export class DesktopClerk extends Context.Service<
       never,
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
+      | DesktopWindow.DesktopWindow
       | DesktopWebLinks.DesktopWebLinks
       | Scope.Scope
     >;
@@ -167,6 +169,7 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -205,7 +208,7 @@ export const make = Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            yield* desktopWindow.activate;
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
@@ -246,12 +249,8 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
-        void runPromise(
-          Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
-          }),
-        );
+        // Same path as a Dock click, so it also ends a hidden start at login.
+        void runPromise(desktopWindow.activate.pipe(Effect.ignore));
       };
       for (const argv of pendingSecondInstances.splice(0)) handleSecondInstance(argv);
     }).pipe(Effect.withSpan("desktop.clerk.configure")),

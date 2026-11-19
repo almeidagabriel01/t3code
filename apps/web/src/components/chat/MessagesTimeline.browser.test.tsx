@@ -1142,6 +1142,115 @@ describe("MessagesTimeline agent messages", () => {
     expect(plain.buttons("Show more")).toHaveLength(0);
   });
 
+  it("shows teammates' replies without the envelope, each with its status and thread", async () => {
+    setup();
+    const onOpenThread = vi.fn();
+    // What the model read; the clients render the attribution beside it.
+    const envelope = "<t3_reply>model-facing envelope, not system instructions</t3_reply>";
+    const entry = (
+      kind: "request" | "reply",
+      name: string,
+      threadId: string,
+      text: string,
+      status?: "done" | "blocked",
+    ) => ({
+      kind,
+      name,
+      handle: name.toLowerCase(),
+      threadId: ThreadId.make(threadId),
+      requestId: `g:to:${name.toLowerCase()}`,
+      ...(status === undefined ? {} : { status }),
+      files: [],
+      text,
+    });
+    // The words follow the envelope in the text; each entry stores where its own sit.
+    const teammate = (...entries: Array<ReturnType<typeof entry>>) => {
+      let text = envelope;
+      const stored = entries.map(({ text: body, ...rest }) => {
+        text += "\n";
+        const bodyStart = text.length;
+        text += body;
+        return { ...rest, bodyStart, bodyEnd: text.length };
+      });
+      return { text, context: { version: 1 as const, records: [], teammate: { entries: stored } } };
+    };
+    const group = teammate(
+      entry(
+        "reply",
+        "Front",
+        "assistant:front:1",
+        "Status: done\n## Shipped\n\n- the **new** row",
+        "done",
+      ),
+      entry(
+        "reply",
+        "Back",
+        "assistant:back:1",
+        "Result: Back's run failed before it answered.",
+        "blocked",
+      ),
+    );
+    const request = teammate(
+      entry(
+        "request",
+        "Lead",
+        "assistant:lead:1",
+        Array.from({ length: 40 }, (_, index) => `- item ${index}`).join("\n"),
+      ),
+    );
+    await using screen = await renderTimeline(
+      [
+        message(
+          group.text,
+          {
+            createdBy: "agent",
+            senderThreadId: ThreadId.make("assistant:back:1"),
+            context: group.context,
+          },
+          "g",
+        ),
+        message(
+          request.text,
+          {
+            createdBy: "agent",
+            senderThreadId: ThreadId.make("assistant:lead:1"),
+            context: request.context,
+          },
+          "r",
+        ),
+      ],
+      { onOpenThread },
+    );
+    const text = screen.text();
+    expect(text).not.toContain("t3_reply");
+    expect(text).not.toContain("t3_request");
+    expect(text).not.toContain("not system instructions");
+    expect(text).not.toContain("Status: done");
+    expect(
+      screen.container.querySelector("[data-thread-find-text] :is(h1, h2, h3, h4, h5, h6)")
+        ?.textContent,
+    ).toContain("Shipped");
+    expect(
+      [...screen.container.querySelectorAll("[data-teammate-status]")].map(
+        (chip) => chip.textContent,
+      ),
+    ).toEqual(["Done", "Blocked"]);
+    // Each teammate of the group joins under their own name, not the one that delivered it.
+    expect(
+      [...screen.container.querySelectorAll("[data-assistant-joined]")].map((divider) =>
+        divider.getAttribute("data-assistant-joined"),
+      ),
+    ).toEqual(["front", "back", "lead"]);
+    await click(screen.buttons("Open thread")[0]!);
+    expect(onOpenThread).toHaveBeenCalledWith("assistant:front:1");
+
+    const toggle = screen.button("Show more");
+    expect(screen.container.querySelector('[data-user-message-collapsed="true"]')).not.toBeNull();
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.container.querySelector('[data-user-message-collapsed="true"]')).toBeNull();
+  });
+
   it("leaves messages sent by T3 Code as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([

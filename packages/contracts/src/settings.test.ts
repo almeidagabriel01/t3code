@@ -18,12 +18,14 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   requiredScopesForServerSettingsPatch,
+  pickWorktreeCleanupRules,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
   withIdleCompaction,
+  WorktreeCleanupRules,
 } from "./settings.ts";
 
 const decodeMemoryHubSettings = Schema.decodeSync(MemoryHubSettings);
@@ -72,6 +74,17 @@ describe("autonomy settings", () => {
       maxUserMessagesPerDay: 20,
     });
   });
+
+  it("detects problems by default, and a project may turn detection off for itself", () => {
+    expect(decodeServerSettings({}).detectProblems).toBe(true);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("detectProblems");
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { [projectId]: { detectProblems: false } },
+    });
+    expect(settings.projectSettingsOverrides[projectId]?.detectProblems).toBe(false);
+    expect(decodeServerSettingsPatch({ detectProblems: false }).detectProblems).toBe(false);
+  });
 });
 
 describe("retention and idle timeout settings", () => {
@@ -114,14 +127,15 @@ describe("channel language setting", () => {
 });
 
 describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
+  it("deletes merged worktrees right away and keeps the other rules off by default", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
-      worktreeOnMerge: false,
       worktreeOnDelete: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "right-away",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
@@ -150,9 +164,7 @@ describe("storage cleanup settings", () => {
               mode: "custom",
               rules: {
                 worktreeAfterDays: null,
-                worktreeOnMerge: false,
                 worktreeOnDelete: false,
-                worktreeUnchanged: false,
               },
             },
           },
@@ -170,9 +182,7 @@ describe("storage cleanup settings", () => {
         mode: "custom",
         rules: {
           worktreeAfterDays: 8,
-          worktreeOnMerge: false,
           worktreeOnDelete: false,
-          worktreeUnchanged: false,
         },
       },
     });
@@ -185,6 +195,57 @@ describe("storage cleanup settings", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
     ).toThrow();
+  });
+});
+
+describe("merged worktree cleanup", () => {
+  it.each([
+    ["no legacy switches", {}, "right-away"],
+    ["delete merged worktrees on", { worktreeOnMerge: true }, "right-away"],
+    ["delete unchanged worktrees on", { worktreeUnchanged: true }, "right-away"],
+    [
+      "both legacy switches off",
+      { worktreeOnMerge: false, worktreeUnchanged: false },
+      "right-away",
+    ],
+    ["an explicit choice", { worktreeOnMerge: true, worktreeMerged: "off" }, "off"],
+  ] as const)("reads %s", (_name, stored, expected) => {
+    const settings = decodeServerSettings({
+      storageCleanup: stored,
+      worktreeCleanup: {
+        mode: "custom",
+        rules: { worktreeAfterDays: 8, worktreeOnDelete: false, ...stored },
+      },
+    });
+    expect(settings.storageCleanup.worktreeMerged).toBe(expected);
+    expect(settings.worktreeCleanup).toMatchObject({ rules: { worktreeMerged: expected } });
+    expect(Object.keys(settings.storageCleanup)).not.toContain("worktreeOnMerge");
+  });
+
+  it("validates the days field", () => {
+    for (const days of [1, 365])
+      expect(
+        decodeServerSettingsPatch({ storageCleanup: { worktreeMergedAfterDays: days } }),
+      ).toEqual({ storageCleanup: { worktreeMergedAfterDays: days } });
+    for (const days of [0, 366, 1.5])
+      expect(() =>
+        decodeServerSettingsPatch({ storageCleanup: { worktreeMergedAfterDays: days } }),
+      ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeMerged: "sometimes" } }),
+    ).toThrow();
+  });
+
+  it("copies only worktree rules from the machine's storage settings", () => {
+    const { storageCleanup } = decodeServerSettings({
+      storageCleanup: { worktreeMerged: "after-days", worktreeMergedAfterDays: 4 },
+    });
+    const rules = pickWorktreeCleanupRules(storageCleanup);
+    expect(rules).toMatchObject({ worktreeMerged: "after-days", worktreeMergedAfterDays: 4 });
+    expect(Object.keys(rules).toSorted()).toEqual(
+      Object.keys(WorktreeCleanupRules.fields).toSorted(),
+    );
+    expect(Object.keys(storageCleanup).length).toBeGreaterThan(Object.keys(rules).length);
   });
 });
 
@@ -480,6 +541,21 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings removed keys", () => {
+  it("decodes settings saved with the removed Agents section keys", () => {
+    const stored = {
+      sidebarShowAgentsSection: false,
+      sidebarAgentsCollapsed: true,
+      sidebarAgentsDoneCollapsed: false,
+      sidebarShowAssistantsSection: false,
+    };
+    const settings = decodeClientSettings(stored);
+    expect(settings.sidebarShowAssistantsSection).toBe(false);
+    expect(settings).not.toHaveProperty("sidebarShowAgentsSection");
+    expect(decodeClientSettingsPatch(stored)).toEqual({ sidebarShowAssistantsSection: false });
+  });
+});
+
 describe("ClientSettings appearance", () => {
   it("defaults the appearance style and backdrop for new and older settings", () => {
     for (const payload of [{}, { glassOpacity: 60 }]) {
@@ -658,6 +734,59 @@ describe("ServerSettings project overrides across versions", () => {
       defaultAutoPull: false,
       addedByNewerServer: { mode: "kept" },
     });
+  });
+
+  it("still reads settings saved with the removed Runner overflow", () => {
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      runnerWhere: "automatic",
+      runnerOverflow: 3,
+      projectSettingsOverrides: { [projectId]: { runnerWhere: "linux", runnerOverflow: 5 } },
+    });
+    expect(settings.runnerWhere).toBe("automatic");
+    expect(settings.projectSettingsOverrides[projectId]?.runnerWhere).toBe("linux");
+    expect(decodeServerSettingsPatch({ runnerOverflow: 3 })).toEqual({});
+  });
+
+  const RUNNER_MODE_KEYS = [
+    "runnerWhere",
+    "runnerDropped",
+    "runnerMacFirstAfter",
+    "runnerLinuxEverything",
+    "runnerBringBack",
+  ] as const;
+  it.each([
+    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false]],
+    [
+      "a stored Ask me stays Ask me",
+      { runnerWhere: "automatic", runnerDropped: "ask" },
+      ["automatic", "ask", 4, false, false],
+    ],
+    [
+      "the new values",
+      {
+        runnerWhere: "macFirst",
+        runnerDropped: "agent",
+        runnerMacFirstAfter: 32,
+        runnerLinuxEverything: true,
+        runnerBringBack: true,
+      },
+      ["macFirst", "agent", 32, true, true],
+    ],
+  ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      ...stored,
+      projectSettingsOverrides: { [projectId]: stored },
+    });
+    expect(RUNNER_MODE_KEYS.map((key) => settings[key])).toEqual(read);
+    const project = settings.projectSettingsOverrides[projectId] ?? {};
+    expect(RUNNER_MODE_KEYS.map((key) => project[key] ?? settings[key])).toEqual(read);
+    expect(decodeServerSettingsPatch(stored)).toEqual(stored);
+  });
+
+  it.each([0, 33, 2.5])("Send to Linux after refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerMacFirstAfter: value })).toThrow();
   });
 });
 

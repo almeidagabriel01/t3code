@@ -68,12 +68,16 @@ export function LinkedEnvironmentsSettings({
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
         <SettingsRow title="Could not load linked environments" description={links.error} />
       ) : !links.data ? (
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
         <SettingsRow title="Loading linked environments…" role="status" />
       ) : links.data.links.length === 0 ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
           title="No linked environments"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
           description="Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there."
         />
       ) : (

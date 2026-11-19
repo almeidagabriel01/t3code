@@ -13,6 +13,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type ProjectId,
 } from "@t3tools/contracts";
+import { decisionWaitsOnUser, requestWaitsOnUser } from "@t3tools/shared/needsUser";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -84,13 +85,6 @@ export interface UserWaitChange {
   readonly wait: UserWait;
 }
 
-const isMachineKind = (kind: string) =>
-  (MACHINE_REQUEST_KINDS as ReadonlyArray<string>).includes(kind);
-
-/** Notices only inform, and a request's mirror is told about through the request itself. */
-const decisionWaitsOnUser = (decision: Decision) =>
-  decision.notice !== true && decision.approvalRequestId === undefined;
-
 const requestWait = (input: {
   readonly threadId: ThreadId;
   readonly requestId: RuntimeRequestId;
@@ -107,7 +101,8 @@ const decisionWait = (decision: Decision): UserWait => ({
 });
 
 export function requestWaitChange(event: OrchestrationV2DomainEvent): UserWaitChange | null {
-  if (event.type !== "runtime-request.updated" || isMachineKind(event.payload.kind)) return null;
+  if (event.type !== "runtime-request.updated" || !requestWaitsOnUser(event.payload.kind))
+    return null;
   const request = event.payload;
   return {
     type: request.status === "pending" ? "opened" : "resolved",

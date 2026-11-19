@@ -266,6 +266,29 @@ it.effect("replays a command id without applying it twice", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("sets a card's problem state, streams it, and replays the same command id once", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const created = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Env" });
+    assert.equal((yield* snapshotBoard(kanban, boardId)).cards[0]!.problem, null);
+    const problem = {
+      kind: "environment",
+      count: 2,
+      ownerName: "Jarvis",
+      previousCardNumber: null,
+      ignored: false,
+    } as const;
+    const commandId = cmd();
+    yield* kanban.cardSetProblem({ commandId, cardId: created.cardId!, problem });
+    yield* kanban.cardSetProblem({
+      commandId,
+      cardId: created.cardId!,
+      problem: { ...problem, count: 9 },
+    });
+    assert.deepEqual((yield* snapshotBoard(kanban, boardId)).cards[0]!.problem, problem);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("keeps blocks and blockedBy symmetric", () =>
   Effect.gen(function* () {
     const { kanban, boardId } = yield* setup;
@@ -368,12 +391,13 @@ it.effect("a corrupted row degrades its own fields instead of failing the snapsh
     const bad = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Bad" });
     yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Good" });
     yield* sql`UPDATE kanban_cards SET label_ids_json = '{oops', checklist_json = '[{"nope":1}]',
-      attachments_json = 'not json' WHERE card_id = ${bad.cardId!}`;
+      attachments_json = 'not json', problem_json = '{"kind":"nope"}' WHERE card_id = ${bad.cardId!}`;
     yield* sql`UPDATE kanban_boards SET automations_json = '[]' WHERE board_id = ${boardId}`;
 
     const board = yield* snapshotBoard(kanban, boardId);
     const card = board.cards.find((candidate) => candidate.id === bad.cardId)!;
     assert.deepEqual([card.labelIds, card.checklist, card.attachments], [[], [], []]);
+    assert.equal(card.problem, null);
     assert.deepEqual(board.cards.map((candidate) => candidate.title).toSorted(), ["Bad", "Good"]);
     assert.equal(board.automations.definitionOfDone, true);
   }).pipe(Effect.provide(TestLayer)),

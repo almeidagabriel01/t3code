@@ -1,6 +1,5 @@
 import {
   memoryBrowseInput,
-  memoryPreview,
   memoryRuleText,
   memorySearchInput,
 } from "@t3tools/client-runtime/memory-browsing";
@@ -290,9 +289,14 @@ function MemoryRow(props: { readonly environmentId: EnvironmentId; readonly item
       ) : (
         <>
           <div className="grid min-w-0 flex-1 gap-0.5">
-            <p className="line-clamp-3 text-xs font-medium break-words text-foreground/90">
-              {memoryPreview(text)}
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={<p className="truncate text-xs font-medium text-foreground/90" />}
+              >
+                {text}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{text}</TooltipPopup>
+            </Tooltip>
             <span className="flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground">
               {rule ? (
                 <Badge size="sm" variant="info">

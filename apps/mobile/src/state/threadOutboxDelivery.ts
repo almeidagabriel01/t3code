@@ -821,10 +821,11 @@ export function createThreadOutboxDelivery(): {
           createdAt: queuedMessage.createdAt,
         },
       });
-      if (AsyncResult.isFailure(runtimeResult)) {
-        reportCommandFailure(queuedMessage, runtimeResult, "settings-sync");
-        return false;
+      const runtimeFailure = reportCommandFailure(queuedMessage, runtimeResult, "settings-sync");
+      if (runtimeFailure?.action === "restore") {
+        return restoreQueuedMessage(queuedMessage, runtimeFailure.message);
       }
+      if (runtimeFailure !== null) return false;
     }
 
     if (settings.interactionMode !== thread.interactionMode) {

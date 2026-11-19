@@ -56,6 +56,7 @@ import { AssistantAvatarPicker } from "./AssistantAvatarPicker";
 import { uploadAvatarImage } from "./assistantAvatarUpload";
 import { ChoiceRow, FieldHeader, MenuField, SwitchRow, TextField } from "./AssistantFormFields";
 import { AssistantConnectorsSection } from "./AssistantConnectorsSection";
+import { AssistantIntegrationsSection } from "./AssistantIntegrationsSection";
 import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
 import { AssistantWatchesSection } from "./AssistantWatchesSection";
@@ -692,8 +693,16 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                   />
                 </ListSection>
               </View>
+              <AssistantIntegrationsSection
+                environmentId={environmentId}
+                instanceId={modelSelection?.instanceId ?? null}
+                workspace={current.workspace}
+                value={current.integrations}
+                onChange={(integrations) => updateAssistantDraft({ integrations })}
+              />
               <AssistantConnectorsSection
                 value={current.connectors}
+                saved={assistant?.mcpServers ?? []}
                 onChange={(connectors) => updateAssistantDraft({ connectors })}
               />
               <AssistantNotificationsSection

@@ -31,6 +31,9 @@ import {
   assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
   assistantGroupSendRequestId,
+  assistantGroupFailedSendRouting,
+  createAssistantGroupFileStore,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -68,6 +71,7 @@ import {
   assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
+  assistantGroupRunningTasks,
   assistantGroupSendContext,
   assistantGroupSendContextEqual,
   insertAssistantGroupMention,
@@ -137,6 +141,24 @@ describe("group chat state", () => {
     state = applyAssistantGroupsEvent(state, { type: "task", task: task("k", 1) })!;
     assert.strictEqual(state.tasks.get("k" as never)!.status, "completed");
     assert.strictEqual(assistantGroupRunningCount(state), 0);
+  });
+
+  it("counts exactly the running tasks it lists, oldest first", () => {
+    const state = start(
+      snapshot(
+        [message(1)],
+        [
+          task("late", 3),
+          task("done", 1, { status: "completed" }),
+          task("early", 2),
+          task("queued", 4, { status: "queued" }),
+        ],
+        false,
+      ),
+    );
+    const running = assistantGroupRunningTasks(state).map((entry) => entry.id);
+    assert.deepStrictEqual(running, ["early", "late"]);
+    assert.strictEqual(assistantGroupRunningCount(state), running.length);
   });
 
   it("merges an older page without duplicating or overwriting, and tracks what is left", () => {
@@ -453,6 +475,7 @@ describe("group feed", () => {
     ["paused", null, "Paused"],
     ["failed", "outside_project", "Owner cannot work in this request's project"],
     ["failed", "thread_unavailable", "Could not open the owner's conversation"],
+    ["failed", "could_not_start", "Could not start the owner's turn"],
     ["failed", "failed", null],
     ["failed", null, null],
     ["running", "stopped", null],
@@ -1156,6 +1179,9 @@ describe("read position", () => {
       unreadCount: 1,
       working,
       preview,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
     });
     const busy = { name: "Ops", chat: chatOf(true, null) };
     const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };
@@ -1211,6 +1237,9 @@ describe("read position", () => {
       working: open.length > 0,
       preview: "Fixed it.",
       previewProjectId: previewProjectId as ProjectId | null,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
       scopes: open.map(([projectId, openTasks]) => ({
         projectId: projectId as ProjectId | null,
         unreadCount: 0,
@@ -1800,6 +1829,8 @@ describe("assistant group tabs", () => {
   it.each([
     ["a first send", null, sent, "fresh"],
     ["a failed message sent again unchanged", sent, sent, "first"],
+    // The id is picked as the send goes, so edits that end on the sent text keep it.
+    ["typed and deleted back to the same text", sent, [...sent], "first"],
     ["changed text", sent, ["hi!", ["f1"], "p1", { model: "opus" }, null], "fresh"],
     ["another file", sent, ["hi", ["f1", "f2"], "p1", { model: "opus" }, null], "fresh"],
     ["another project", sent, ["hi", ["f1"], "p2", { model: "opus" }, null], "fresh"],
@@ -1810,6 +1841,104 @@ describe("assistant group tabs", () => {
       before === null ? null : assistantGroupSendRequestId(null, before, () => "first");
     const next = assistantGroupSendRequestId(failed, now, () => "fresh");
     assert.strictEqual(next.requestId, expected);
+  });
+
+  it("keeps an unconfirmed post's id through a resend that never left", () => {
+    const unconfirmed = assistantGroupSendRequestId(null, sent, () => "A");
+    const notSent = assistantGroupSendRequestId(unconfirmed, sent, () => "B");
+    const again = assistantGroupSendRequestId(notSent, sent, () => "C");
+    assert.deepStrictEqual([notSent.requestId, again.requestId], ["A", "A"]);
+  });
+
+  const reply = { id: "m1" };
+  const sentWith = { reply, projectPick: null, modelPick: null };
+  const cancelled = { ...sentWith, reply: null as typeof reply | null };
+  const opus = {
+    ...sentWith,
+    modelPick: {
+      tab: "project:p1" as const,
+      value: { instanceId: "claude", model: "opus" } as ModelSelection,
+    },
+  };
+  const held = (
+    requestId: string,
+    failed: boolean,
+    routing: typeof sentWith | typeof cancelled | null = sentWith,
+  ) => ({ ...out("project:p1", failed), requestId, routing });
+  it.each([
+    [
+      "comes into view: opening the chat or its tab",
+      null,
+      held("A", true),
+      cancelled,
+      sentWith,
+      null,
+    ],
+    ["coming back after another tab", "B", held("A", true), cancelled, sentWith, null],
+    ["failed in view, as it went", "A", held("A", true), { ...sentWith }, null, null],
+    ["failed in view, its reply cancelled", "A", held("A", true), cancelled, null, cancelled],
+    ["failed in view, another model picked", "A", held("A", true), opus, null, opus],
+    [
+      "coming back after a cancel kept",
+      "B",
+      held("A", true, cancelled),
+      cancelled,
+      cancelled,
+      null,
+    ],
+    ["on its way, coming into view", null, held("A", false), cancelled, sentWith, null],
+    ["on its way, its reply cancelled", "A", held("A", false), cancelled, null, cancelled],
+    ["landed and kept for its edits", "A", held("A", true, null), cancelled, null, null],
+  ] as const)("a failed send's routing: %s", (_name, seen, shown, current, restore, keep) => {
+    assert.deepStrictEqual(assistantGroupFailedSendRouting(seen, shown, "project:p1", current), {
+      seen: "A",
+      restore,
+      keep,
+    });
+  });
+
+  it.each([
+    ["nothing shown", null],
+    ["another tab's send, in All", { ...sendingP2, requestId: "A", routing: sentWith }],
+  ] as const)("a failed send's routing: %s", (_name, shown) => {
+    assert.deepStrictEqual(assistantGroupFailedSendRouting("A", shown, "all", cancelled), {
+      seen: null,
+      restore: null,
+      keep: null,
+    });
+  });
+
+  it("keeps a group's files a pending send holds when the chat closes, and drops the rest", () => {
+    const store = createAssistantGroupFileStore<{ readonly id: string }>();
+    let calls = 0;
+    const stop = store.subscribe(() => calls++);
+    const [sent, draft, other] = [{ id: "f1" }, { id: "f2" }, { id: "f3" }];
+    store.update("g1", () => [sent, draft]);
+    store.update("g2", () => [other]);
+    const before = store.get("g1");
+    assert.deepStrictEqual(
+      [store.leave("g1", new Set(["f1"])), store.get("g1"), before === store.get("g1")],
+      [[draft], [sent], false],
+    );
+    // Nothing to drop changes nothing, so a remount reads the same array.
+    const kept = store.get("g1");
+    assert.deepStrictEqual(
+      [store.leave("g1", new Set(["f1"])), store.get("g1") === kept],
+      [[], true],
+    );
+    assert.deepStrictEqual([store.leave("g2", new Set()), store.get("g2")], [[other], []]);
+    stop();
+    store.update("g1", () => []);
+    assert.deepStrictEqual([calls, store.get("g1")], [4, []]);
+  });
+
+  it.each([
+    ["the one it sent goes", reply, reply, null],
+    ["one picked since stays", { id: "m2" }, reply, "m2"],
+    ["one picked after a send with none stays", reply, null, "m1"],
+    ["none stays none", null, reply, null],
+  ] as const)("a landed send's reply or pick: %s", (_name, current, sent, expected) => {
+    assert.strictEqual(assistantGroupLandedPick(current, sent)?.id ?? null, expected);
   });
 
   it("keeps each tab's outgoing message until that tab replaces or clears it", () => {

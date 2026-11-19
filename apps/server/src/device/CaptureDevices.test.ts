@@ -187,6 +187,13 @@ describe("CaptureDevices.list", () => {
     }),
   );
 
+  it.effect("names the desktop from the service's host, not the machine running the list", () =>
+    Effect.gen(function* () {
+      const [desktop] = yield* (yield* CaptureDevices).list;
+      expect(desktop?.name).toBe("ana-mac (desktop)");
+    }).pipe(Effect.provide(harness({ platform: "win32" }).layer)),
+  );
+
   it.effect.each([
     [
       "Screen Recording denied, an old macOS",

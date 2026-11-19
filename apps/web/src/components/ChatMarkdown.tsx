@@ -94,8 +94,10 @@ import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { parseSettingsLinkHref } from "@t3tools/shared/settingsLinks";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { MarkdownSettingsLink } from "./chat/MarkdownSettingsLink";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
 import remarkMath from "remark-math";
@@ -404,6 +406,7 @@ function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
   if (parseComposerContextHref(href)) return href;
   if (parseThreadLinkHref(href)) return href;
+  if (parseSettingsLinkHref(href)) return href;
   if (parseAttachmentImageSrc(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
@@ -1122,6 +1125,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label ?? "Thread"}</span>
       );
     }
+    const settingsLink = href ? parseSettingsLinkHref(href) : null;
+    if (settingsLink)
+      return (
+        <MarkdownSettingsLink {...props} link={settingsLink} environmentId={environmentId}>
+          {children}
+        </MarkdownSettingsLink>
+      );
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;

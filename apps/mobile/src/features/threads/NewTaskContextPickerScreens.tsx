@@ -64,6 +64,7 @@ function EnvironmentPickerRow(props: {
   const { presentation } = useEnvironmentPresentation(props.environmentId);
   const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
   const { onReconnectEnvironment } = useRemoteConnections();
+  const navigation = useNavigation();
   const connection = presentation?.connection;
   const status =
     diagnosis?.headline ??
@@ -125,7 +126,18 @@ function EnvironmentPickerRow(props: {
               Next reconnect at {new Date(state.retryAt).toLocaleTimeString()}
             </Text>
           ) : null}
-          {connection?.phase !== "connected" ? (
+          {diagnosis?.pairAgain ? (
+            <Button
+              label="Pair again"
+              icon="qrcode.viewfinder"
+              onPress={() =>
+                navigation.navigate("ConnectionsNew", {
+                  routeFor: props.environmentId,
+                  pairAgain: true,
+                })
+              }
+            />
+          ) : connection?.phase !== "connected" ? (
             <Button
               label="Reconnect now"
               onPress={() => onReconnectEnvironment(props.environmentId)}

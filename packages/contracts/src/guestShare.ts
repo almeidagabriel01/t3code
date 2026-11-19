@@ -55,6 +55,20 @@ export type ThreadGuestShare = typeof ThreadGuestShare.Type;
 export const pendingGuestMessageCount = (share: ThreadGuestShare | null | undefined): number =>
   share?.messages.filter((message) => message.status === "pending").length ?? 0;
 
+/** When the oldest message still waiting on the owner arrived; null when none waits. */
+export const oldestPendingGuestMessageAt = (
+  share: ThreadGuestShare | null | undefined,
+): string | null =>
+  (share?.messages ?? [])
+    .filter((message) => message.status === "pending")
+    .reduce<string | null>(
+      (oldest, message) =>
+        oldest === null || Date.parse(message.submittedAt) < Date.parse(oldest)
+          ? message.submittedAt
+          : oldest,
+      null,
+    );
+
 export const GuestShareCreateInput = Schema.Struct({ threadId: ThreadId });
 export type GuestShareCreateInput = typeof GuestShareCreateInput.Type;
 

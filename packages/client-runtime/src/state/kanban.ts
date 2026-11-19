@@ -204,7 +204,8 @@ export function createKanbanEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.kanbanCardDelete
       | typeof WS_METHODS.kanbanCardComment
       | typeof WS_METHODS.kanbanCardLinkThread
-      | typeof WS_METHODS.kanbanCardUnlinkThread,
+      | typeof WS_METHODS.kanbanCardUnlinkThread
+      | typeof WS_METHODS.kanbanCardSetProblemIgnored,
   >(
     tag: TTag,
     name: string,
@@ -250,5 +251,9 @@ export function createKanbanEnvironmentAtoms<R, E>(
     commentOnCard: command(WS_METHODS.kanbanCardComment, "card-comment"),
     linkCardThread: command(WS_METHODS.kanbanCardLinkThread, "card-link-thread"),
     unlinkCardThread: command(WS_METHODS.kanbanCardUnlinkThread, "card-unlink-thread"),
+    setCardProblemIgnored: command(
+      WS_METHODS.kanbanCardSetProblemIgnored,
+      "card-set-problem-ignored",
+    ),
   };
 }

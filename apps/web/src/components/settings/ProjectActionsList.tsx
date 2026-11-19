@@ -29,6 +29,7 @@ export function ProjectActionsList({
       <SettingsRow
         key={script.id}
         className="group py-2"
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- one row per user-defined action, not a setting
         title={
           <span className="flex min-w-0 items-center gap-2">
             <ScriptIcon icon={script.icon} className="size-4 shrink-0 text-muted-foreground" />

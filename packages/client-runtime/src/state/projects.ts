@@ -136,14 +136,25 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
   });
 }
 
-/** Records from older servers carry no role, so they fall back to the live config's Scratch root. */
+/**
+ * Records from older servers carry no role, so they fall back to the live config's Scratch root;
+ * with no config either (offline), to the title and folder the server gives Scratch.
+ */
 export function isScratchProject(
-  project: { readonly workspaceRoot: string; readonly managedRole?: ProjectManagedRole },
+  project: {
+    readonly workspaceRoot: string;
+    readonly managedRole?: ProjectManagedRole;
+    readonly title?: string;
+  },
   scratchWorkspaceRoot: string | null | undefined,
 ): boolean {
   if (project.managedRole !== undefined) return project.managedRole === "scratch";
+  if (scratchWorkspaceRoot != null) {
+    return findProjectByPath([project], scratchWorkspaceRoot) !== undefined;
+  }
   return (
-    scratchWorkspaceRoot != null && findProjectByPath([project], scratchWorkspaceRoot) !== undefined
+    project.title === "No project" &&
+    /[\\/]scratch$/.test(normalizeProjectPathForComparison(project.workspaceRoot))
   );
 }
 

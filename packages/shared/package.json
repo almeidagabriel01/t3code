@@ -319,6 +319,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./settingsLinks": {
+      "types": "./src/settingsLinks.ts",
+      "import": "./src/settingsLinks.ts"
+    },
     "./assistantTaskEvents": {
       "types": "./src/assistantTaskEvents.ts",
       "import": "./src/assistantTaskEvents.ts"
@@ -494,6 +498,10 @@
     "./assistantTaskStatus": {
       "types": "./src/assistantTaskStatus.ts",
       "import": "./src/assistantTaskStatus.ts"
+    },
+    "./needsUser": {
+      "types": "./src/needsUser.ts",
+      "import": "./src/needsUser.ts"
     },
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",

@@ -10,6 +10,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
 const INVOLVEMENT = { all: "All PRs", reviewing: "Your review", authored: "By you" } as const;
@@ -224,16 +225,19 @@ export function usePullRequestListFilters(props: {
     {
       id: "drafts",
       title: value.filters.draft ? DRAFTS[value.filters.draft] : "Drafts",
+      image: "square.and.pencil",
       subactions: choices("draft", DRAFTS, value.filters.draft ?? "all"),
     },
     {
       id: "reviews",
       title: value.filters.review ? REVIEWS[value.filters.review] : "Reviews",
+      image: "eye",
       subactions: choices("review", REVIEWS, value.filters.review ?? "all"),
     },
     {
       id: "checks",
       title: value.filters.checks ? `${CHECKS[value.filters.checks]} checks` : "Checks",
+      image: "checkmark.circle",
       subactions: choices("checks", CHECKS, value.filters.checks ?? "all"),
     },
     {
@@ -243,6 +247,7 @@ export function usePullRequestListFilters(props: {
           (project) =>
             project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
         )?.title ?? "Project",
+      image: "folder",
       subactions: choices(
         "project",
         Object.fromEntries([
@@ -255,11 +260,17 @@ export function usePullRequestListFilters(props: {
         value.projectId ? JSON.stringify([value.projectEnvironmentId, value.projectId]) : "",
       ),
     },
-    { id: "sort", title: SORTS[value.sort], subactions: choices("sort", SORTS, value.sort) },
+    {
+      id: "sort",
+      title: SORTS[value.sort],
+      image: "arrow.up.arrow.down",
+      subactions: choices("sort", SORTS, value.sort),
+    },
   ];
   const reset = (withEnvironment: boolean): MenuProps["actions"][number] => ({
     id: id("reset", withEnvironment ? "environment" : ""),
     title: "Reset filters",
+    image: "arrow.counterclockwise",
     attributes: {
       disabled:
         count === 0 &&
@@ -312,11 +323,31 @@ export function usePullRequestListFilters(props: {
     Platform.OS === "android"
       ? {
           actions: [
-            { id: "environment", title: "Environment", subactions: environmentActions },
-            { id: "state", title: "State", subactions: stateActions },
-            { id: "involvement", title: "Involvement", subactions: involvementActions },
-            { id: "labels", title: "Labels", subactions: labelActions },
-            { id: "author", title: "Author", subactions: authorActions },
+            {
+              id: "environment",
+              title: "Environment",
+              image: "server.rack",
+              subactions: environmentActions,
+            },
+            {
+              id: "state",
+              title: "State",
+              image: PullRequestGlyph.pullRequest,
+              subactions: stateActions,
+            },
+            {
+              id: "involvement",
+              title: "Involvement",
+              image: "person.2",
+              subactions: involvementActions,
+            },
+            { id: "labels", title: "Labels", image: "tag", subactions: labelActions },
+            {
+              id: "author",
+              title: "Author",
+              image: "person.crop.circle",
+              subactions: authorActions,
+            },
             ...more,
             reset(true),
           ],

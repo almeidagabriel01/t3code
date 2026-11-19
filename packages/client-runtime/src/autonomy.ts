@@ -7,6 +7,7 @@ import {
   type AutonomyWatch,
   type AutonomyWatchEvent,
   type AutonomyWatchUpsertInput,
+  type ProblemLevel,
   type ProjectId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
@@ -17,6 +18,34 @@ export const AUTONOMY_MINUTES_BOUNDS = { min: 1, max: 24 * 60 } as const;
 export const AUTONOMY_WAKES_BOUNDS = { min: 1, max: 1000 } as const;
 export const AUTONOMY_NOTIFY_AFTER_BOUNDS = { min: 0, max: 60 } as const;
 export const AUTONOMY_USER_MESSAGES_BOUNDS = { min: 1, max: 1000 } as const;
+
+export const DETECT_PROBLEMS_LABEL = "Detect problems";
+export const DETECT_PROBLEMS_DESCRIPTION =
+  "Assistants watch every project for failures and file one card per cause.";
+export const DETECT_PROBLEMS_IN_PROJECT_LABEL = "Detect problems in this project";
+
+export const PROBLEM_LEVEL_LEGEND = "When it finds a problem";
+
+export const PROBLEM_LEVEL_OPTIONS: ReadonlyArray<{
+  readonly level: ProblemLevel;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { level: "tell", label: "Tell me", description: "Sends you a notice. Starts nothing." },
+  {
+    level: "offer",
+    label: "Offer to fix",
+    description: "Sends a notice with a proposed fix and starts after you agree.",
+  },
+  {
+    level: "fix-small",
+    label: "Fix small things",
+    description: "Starts small fixes on its own and tells you. Asks before anything bigger.",
+  },
+];
+
+export const problemLevelLabel = (level: ProblemLevel): string =>
+  PROBLEM_LEVEL_OPTIONS.find((option) => option.level === level)?.label ?? level;
 
 export const AUTONOMY_RULE_OPTIONS: ReadonlyArray<{
   readonly rule: AutonomyRule;
@@ -244,6 +273,7 @@ export function sameAssistantAutonomy(a: AssistantAutonomy, b: AssistantAutonomy
     x === null || y === null ? x === y : x.length === y.length && x.every((v) => y.includes(v));
   return (
     a.mode === b.mode &&
+    a.onProblem === b.onProblem &&
     same(a.rules, b.rules) &&
     same(a.projectIds, b.projectIds) &&
     same(a.channels, b.channels)

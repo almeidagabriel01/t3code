@@ -14,6 +14,7 @@ describe("managed project classification", () => {
     readonly name: string;
     readonly workspaceRoot: string;
     readonly managedRole?: ProjectManagedRole;
+    readonly title?: string;
     readonly scratchRoot: string | null;
     readonly scratch: boolean;
     readonly home: boolean;
@@ -52,6 +53,31 @@ describe("managed project classification", () => {
     {
       name: "legacy record with no config",
       workspaceRoot: "/t3/scratch",
+      title: "No project",
+      scratchRoot: null,
+      scratch: true,
+      home: true,
+    },
+    {
+      name: "legacy Windows record with no config",
+      workspaceRoot: "C:\\Users\\me\\.t3\\Scratch",
+      title: "No project",
+      scratchRoot: null,
+      scratch: true,
+      home: true,
+    },
+    {
+      name: "legacy folder named scratch with no config",
+      workspaceRoot: "/work/scratch",
+      title: "scratch",
+      scratchRoot: null,
+      scratch: false,
+      home: false,
+    },
+    {
+      name: "legacy project titled No project outside Scratch",
+      workspaceRoot: "/repo",
+      title: "No project",
       scratchRoot: null,
       scratch: false,
       home: false,
@@ -65,8 +91,12 @@ describe("managed project classification", () => {
     },
   ];
 
-  it.each(cases)("$name", ({ workspaceRoot, managedRole, scratchRoot, scratch, home }) => {
-    const project = { workspaceRoot, ...(managedRole ? { managedRole } : {}) };
+  it.each(cases)("$name", ({ workspaceRoot, managedRole, title, scratchRoot, scratch, home }) => {
+    const project = {
+      workspaceRoot,
+      ...(title ? { title } : {}),
+      ...(managedRole ? { managedRole } : {}),
+    };
     const isScratch = isScratchProject(project, scratchRoot);
     expect(isScratch).toBe(scratch);
     expect(

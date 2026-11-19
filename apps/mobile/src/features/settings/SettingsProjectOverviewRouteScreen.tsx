@@ -31,10 +31,11 @@ import {
 import {
   readEnvironmentScope,
   useEnvironmentScope,
+  useEnvironmentsScopeAccess,
   useEnvironmentsWithScope,
 } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ProjectAssistantAccessSection } from "../assistants/ProjectAssistantAccessSection";
+import { ProjectAssistantAccessSections } from "../assistants/ProjectAssistantAccessSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -42,6 +43,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import { leaveSettingsPage } from "./settings-navigation";
+import { PROJECT_OVERVIEW_COPY } from "./projectOverviewCopy";
 import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
 import { DEFAULT_SETTINGS_PAGE } from "../layout/workspace/workspace-tab-navigation";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
@@ -88,7 +90,7 @@ export function SettingsProjectOverviewRouteScreen() {
       .filter((project) => selectedEnvironmentIds.has(project.environmentId)) ?? [];
 
   return (
-    <SettingsScreen title="Projects" menus={[environmentMenu]}>
+    <SettingsScreen title={PROJECT_OVERVIEW_COPY.title} menus={[environmentMenu]}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -152,6 +154,15 @@ function ProjectOverviewContent(props: {
   const canRemoveGroup = props.members.every((member) =>
     removableEnvironments.has(member.environmentId),
   );
+  const removeAccess = useEnvironmentsScopeAccess(props.members, AuthOrchestrationOperateScope);
+  const removeAccesses = props.members.map((member) => removeAccess.get(member.environmentId));
+  // Only a settled refusal is shown; "unknown" means the session is still loading.
+  const removeBlockedReason =
+    canRemoveGroup || removeAccesses.includes("unknown")
+      ? null
+      : removeAccesses.includes("missing")
+        ? PROJECT_OVERVIEW_COPY.danger.noPermission
+        : PROJECT_OVERVIEW_COPY.organize.offline;
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project name update",
@@ -167,17 +178,25 @@ function ProjectOverviewContent(props: {
   );
   const offline = memberTargets.some((target) => target === undefined);
   // Older servers drop pin and archive, so their projects do not offer them.
-  // Offline members are checked when the write runs, so their reason can show.
-  const canOrganize =
-    allMembers.every(
-      (member, index) =>
-        memberTargets[index] === undefined || removableEnvironments.has(member.environmentId),
-    ) &&
-    memberTargets.every(
-      (target) =>
-        target === undefined ||
-        target.serverConfig.environment.capabilities.projectOrganization === true,
-    );
+  const organizeSupported = memberTargets.every(
+    (target) =>
+      target === undefined ||
+      target.serverConfig.environment.capabilities.projectOrganization === true,
+  );
+  const organizeAccess = useEnvironmentsScopeAccess(allMembers, AuthOrchestrationOperateScope);
+  // Offline members are checked when the write runs; "unknown" disables without a reason.
+  const onlineAccesses = allMembers.flatMap((member, index) =>
+    memberTargets[index] === undefined ? [] : [organizeAccess.get(member.environmentId)],
+  );
+  const organizeBlockedReason = onlineAccesses.includes("missing")
+    ? PROJECT_OVERVIEW_COPY.organize.noPermission
+    : offline
+      ? PROJECT_OVERVIEW_COPY.organize.offline
+      : null;
+  const organizeDisabled =
+    isOrganizing ||
+    organizeBlockedReason !== null ||
+    onlineAccesses.some((access) => access !== "granted");
   // One machine at a time, stopping at the first failure, as web does.
   const organize = async (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
     setIsOrganizing(true);
@@ -324,9 +343,11 @@ function ProjectOverviewContent(props: {
         </View>
       </View>
 
-      <SettingsSection title="Project">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.project.title}>
         <View className="gap-3 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">
+            {PROJECT_OVERVIEW_COPY.project.name}
+          </Text>
           <View className="flex-row items-center gap-3">
             <AppTextInput
               accessibilityLabel="Project name"
@@ -349,49 +370,46 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
-      {canOrganize ? (
-        <SettingsSection title="Organize">
+      {organizeSupported ? (
+        <SettingsSection title={PROJECT_OVERVIEW_COPY.organize.title}>
           <SettingsSwitchRow
             icon="pin"
-            label="Pin"
-            subtitle={
-              offline
-                ? "Connect every machine with this project to change this."
-                : "Pinned projects come first in project pickers."
-            }
+            label={PROJECT_OVERVIEW_COPY.organize.pin.title}
+            subtitle={organizeBlockedReason ?? PROJECT_OVERVIEW_COPY.organize.pin.description}
             value={props.group.pinned}
-            disabled={isOrganizing || offline}
+            disabled={organizeDisabled}
             onValueChange={(pinned) => void organize({ pinned })}
           />
           <SettingsActionRow
             icon="archivebox"
-            label={props.group.archived ? "Unarchive project" : "Archive project"}
-            description={
+            label={
               props.group.archived
-                ? "Hidden from project pickers. Threads and files are kept."
-                : "Hides the project from project pickers. Threads and files are kept."
+                ? PROJECT_OVERVIEW_COPY.organize.unarchive.title
+                : PROJECT_OVERVIEW_COPY.organize.archive.title
             }
-            disabled={isOrganizing || offline}
+            description={
+              organizeBlockedReason ??
+              (props.group.archived
+                ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
+                : PROJECT_OVERVIEW_COPY.organize.archive.description)
+            }
+            disabled={organizeDisabled}
             onPress={() => void organize({ archived: !props.group.archived })}
           />
         </SettingsSection>
       ) : null}
 
-      {props.members.map((member) => (
-        <ProjectAssistantAccessSection
-          key={`${member.environmentId}:${member.id}`}
-          environmentId={member.environmentId}
-          projectId={member.id}
-          environmentLabel={
-            props.members.length > 1
-              ? props.environments.find((entry) => entry.environmentId === member.environmentId)
-                  ?.label
-              : undefined
-          }
-        />
-      ))}
+      <ProjectAssistantAccessSections
+        members={props.members}
+        environmentLabel={(environmentId) =>
+          props.environments.find((entry) => entry.environmentId === environmentId)?.label
+        }
+        environmentAddress={(environmentId) =>
+          props.environments.find((entry) => entry.environmentId === environmentId)?.displayUrl
+        }
+      />
 
-      <SettingsSection title="Checkouts">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.checkouts.title}>
         {props.members.map((member, index) => {
           const environment = props.environments.find(
             (entry) => entry.environmentId === member.environmentId,
@@ -415,7 +433,12 @@ function ProjectOverviewContent(props: {
                   {environment.displayUrl}
                 </Text>
               ) : null}
-              <Text className="text-sm leading-normal text-foreground-muted" selectable>
+              <Text
+                className="text-sm leading-normal text-foreground-muted"
+                numberOfLines={1}
+                ellipsizeMode="head"
+                selectable
+              >
                 {member.workspaceRoot}
               </Text>
               {props.members.length > 1 || props.hasOtherMembers ? (
@@ -429,22 +452,23 @@ function ProjectOverviewContent(props: {
           );
         })}
       </SettingsSection>
-      <SettingsSection title="Danger">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.danger.title}>
         <SettingsActionRow
           icon="trash"
           label={
             props.hasOtherMembers
-              ? "Remove checkout"
+              ? PROJECT_OVERVIEW_COPY.danger.removeCheckout.title
               : props.members.length > 1
-                ? "Remove this project everywhere"
-                : "Remove project"
+                ? PROJECT_OVERVIEW_COPY.danger.removeEverywhere.title
+                : PROJECT_OVERVIEW_COPY.danger.remove.title
           }
           description={
-            props.hasOtherMembers
-              ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+            removeBlockedReason ??
+            (props.hasOtherMembers
+              ? PROJECT_OVERVIEW_COPY.danger.removeCheckout.description
               : props.members.length > 1
                 ? `Deletes all ${props.members.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                : PROJECT_OVERVIEW_COPY.danger.remove.description)
           }
           tone="danger"
           disabled={!canRemoveGroup || isRemoving}
@@ -470,7 +494,9 @@ function RemoveCheckoutAction(props: {
       onPress={props.onPress}
       className="self-start rounded-full border border-border bg-card px-3 py-1.5 disabled:opacity-40"
     >
-      <Text className="font-t3-medium text-xs text-danger-foreground">Remove checkout</Text>
+      <Text className="font-t3-medium text-xs text-danger-foreground">
+        {PROJECT_OVERVIEW_COPY.danger.removeCheckout.title}
+      </Text>
     </Pressable>
   );
 }

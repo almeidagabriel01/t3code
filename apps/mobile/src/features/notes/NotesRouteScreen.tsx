@@ -28,6 +28,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { notesEnvironment, useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { NOTES_COPY } from "./notesCopy";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NoteProjectPicker } from "./NoteProjectPicker";
@@ -63,7 +64,7 @@ export function NotesRouteScreen({ route }: StaticScreenProps<NotesRouteParams>)
     environments.find((entry) => entry.environmentId === id)?.environmentLabel ?? "Environment";
   if (environmentId === null) {
     return (
-      <SettingsScreen title="Notes">
+      <SettingsScreen title={NOTES_COPY.title}>
         <EmptyState
           variant="plain"
           title="No notes here"
@@ -161,7 +162,7 @@ function EnvironmentNotes(props: {
 
   return (
     <SettingsScreen
-      title="Notes"
+      title={NOTES_COPY.title}
       actions={
         canEdit
           ? [{ accessibilityLabel: "New note", icon: "square.and.pencil", onPress: create }]
@@ -177,7 +178,7 @@ function EnvironmentNotes(props: {
         <NoteProjectPicker
           environmentId={environmentId}
           value={project}
-          noneLabel="All projects"
+          noneLabel={NOTES_COPY.allProjects}
           accessibilityLabel="Filter by project"
           onChange={setProject}
         />

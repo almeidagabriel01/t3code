@@ -107,6 +107,7 @@ const make = Effect.fn("HeavyCommands.make")(function* (options: {
     const classification = classifyHeavyCommands({
       processes: snapshot.processes,
       owners: yield* owners.list,
+      serverPid: process.pid,
       entries: yield* Effect.sync(() => QueueFile.read(options.dir)).pipe(
         Effect.orElseSucceed(() => []),
       ),

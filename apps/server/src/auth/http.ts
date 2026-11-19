@@ -29,7 +29,8 @@ import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpBody, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -185,6 +186,40 @@ export const authenticateMediaRequest =
     }
     return session;
   });
+
+/**
+ * Serves a long-lived response (a socket, or a streamed body) only while the session that opened
+ * it stays valid: revoking or expiring it ends the response, and so does a failed session check.
+ */
+export const untilSessionEnds = Effect.fn("auth.untilSessionEnds")(function* <E, R, E2>(
+  session: Effect.Effect<
+    Pick<EnvironmentAuth.AuthenticatedSession, "sessionId" | "proofKeyThumbprint">,
+    E2
+  >,
+  response: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) {
+  const sessions = yield* SessionStore.SessionStore;
+  const ended = session.pipe(
+    Effect.flatMap((current) =>
+      sessions.awaitInvalidation(current.sessionId, current.proofKeyThumbprint),
+    ),
+    Effect.ignore({ log: true }),
+  );
+  const served = yield* Effect.raceFirst(
+    response,
+    ended.pipe(Effect.as(HttpServerResponse.empty())),
+  );
+  return served.body._tag === "Stream"
+    ? HttpServerResponse.setBody(
+        served,
+        HttpBody.stream(
+          Stream.interruptWhen(served.body.stream, ended),
+          served.body.contentType,
+          served.body.contentLength,
+        ),
+      )
+    : served;
+});
 
 export const failEnvironmentInternal =
   /* Request instrumentation already owns the span; keep this helper in that context. */

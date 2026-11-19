@@ -1479,6 +1479,8 @@ function codexThreadRuntimeParams(input: {
                 ...(Object.keys(connector.headers).length === 0
                   ? {}
                   : { http_headers: connector.headers }),
+                // T3's proxy gate already decided; Codex must not ask a second time.
+                ...(connector.proxy?.preApproved ? { default_tools_approval_mode: "approve" } : {}),
               }
             : {
                 command: connector.command ?? "",

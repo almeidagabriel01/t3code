@@ -4,6 +4,7 @@ import {
   MIN_BASE_FONT_SIZE,
 } from "../../../../lib/appearancePreferences";
 import { SettingsSection } from "../../components/SettingsSection";
+import { APPEARANCE_COPY } from "../appearanceCopy";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import {
   AppearancePreviewSeparator,
@@ -17,13 +18,13 @@ export function TextAppearanceSection() {
     useAppearancePreferences();
 
   return (
-    <SettingsSection title="Text">
+    <SettingsSection title={APPEARANCE_COPY.text.title}>
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label="Text size"
+        label={APPEARANCE_COPY.text.textSize}
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}
@@ -34,7 +35,7 @@ export function TextAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="plusminus"
-        label="Render math"
+        label={APPEARANCE_COPY.text.renderMath}
         value={mathRenderingEnabled}
         onValueChange={setMathRenderingEnabled}
       />

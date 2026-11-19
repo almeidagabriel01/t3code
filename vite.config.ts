@@ -507,6 +507,11 @@ export default defineConfig({
         rules: { "t3code/max-settings-description-length": "error" },
       },
       {
+        files: ["apps/web/src/**"],
+        excludeFiles: ["**/*.{test,spec}.{ts,tsx}"],
+        rules: { "t3code/require-searchable-settings-copy": "error" },
+      },
+      {
         files: ["apps/*/src/**", "packages/*/src/**"],
         excludeFiles: [
           "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",

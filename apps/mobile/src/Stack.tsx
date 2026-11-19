@@ -136,6 +136,10 @@ import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadR
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGroupChatRouteScreen";
+import {
+  AssistantGroupInfoRouteScreen,
+  AssistantInfoRouteScreen,
+} from "./features/assistants/AssistantInfoRouteScreen";
 import { GroupMessageModelPickerRouteScreen } from "./features/assistants/GroupMessageModelPickerRouteScreen";
 import {
   AssistantGroupSettingsRouteScreen,
@@ -147,7 +151,10 @@ import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRou
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
+import { IntegrationRouteScreen } from "./features/integrations/IntegrationRouteScreen";
+import { SettingsIntegrationsRouteScreen } from "./features/integrations/SettingsIntegrationsRouteScreen";
 import { SettingsDevicesRouteScreen } from "./features/settings/SettingsDevicesRouteScreen";
+import { ResourceManagerRouteScreen } from "./features/resources/ResourceManagerRouteScreen";
 import { SettingsComputerUseRouteScreen } from "./features/settings/SettingsComputerUseRouteScreen";
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
@@ -257,6 +264,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsEnvironmentMaintenanceRouteScreen,
     linking: "settings/maintenance",
     options: settingsPage("Maintenance"),
+  }),
+  SettingsResourceManager: createNativeStackScreen({
+    screen: ResourceManagerRouteScreen,
+    linking: "settings/resources",
+    options: settingsPage("Resource Manager"),
   }),
   SettingsNotifications: createNativeStackScreen({
     screen: SettingsNotificationsRouteScreen,
@@ -385,6 +397,15 @@ const SETTINGS_SCREENS = {
     screen: SettingsAssistantsRouteScreen,
     linking: "settings/assistants",
     options: settingsPage("Assistants"),
+  }),
+  SettingsIntegrations: createNativeStackScreen({
+    screen: SettingsIntegrationsRouteScreen,
+    linking: "settings/integrations",
+    options: settingsPage("Integrations"),
+  }),
+  SettingsIntegration: createNativeStackScreen({
+    screen: IntegrationRouteScreen,
+    options: settingsPage("Integrations"),
   }),
   SettingsAssistantDescribe: createNativeStackScreen({
     screen: DescribeAssistantRouteScreen,
@@ -738,6 +759,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     AssistantGroupChat: createNativeStackScreen({
       screen: AssistantGroupChatRouteScreen,
       linking: "assistant-groups/:environmentId/:teamId",
+      options: pageRoute(),
+    }),
+    AssistantInfo: createNativeStackScreen({
+      screen: AssistantInfoRouteScreen,
+      linking: "assistants/:environmentId/:assistantId/info",
+      options: pageRoute(),
+    }),
+    AssistantGroupInfo: createNativeStackScreen({
+      screen: AssistantGroupInfoRouteScreen,
+      linking: "assistant-groups/:environmentId/:teamId/info",
       options: pageRoute(),
     }),
     NewTaskProject: createNativeStackScreen({

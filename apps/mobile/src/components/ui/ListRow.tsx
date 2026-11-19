@@ -51,13 +51,15 @@ export function ListRow(
                 ) : null}
               </View>
             )}
-            <SymbolView
-              name="chevron.right"
-              size={16}
-              tintColorClassName="accent-chevron"
-              type="monochrome"
-              weight="semibold"
-            />
+            {props.disabled ? null : (
+              <SymbolView
+                name="chevron.right"
+                size={16}
+                tintColorClassName="accent-chevron"
+                type="monochrome"
+                weight="semibold"
+              />
+            )}
           </View>
         }
       />
