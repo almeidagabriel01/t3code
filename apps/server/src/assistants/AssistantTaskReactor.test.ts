@@ -358,8 +358,9 @@ it.effect(
       const text = String(sent?.text);
       assert.include(text, "finished");
       assert.include(text, "Done: retry added");
-      assert.include(text, "t3_thread_send");
-      assert.include(text, "NO_REPLY");
+      // The instruction travels apart, so the door can close a merged notice with it once.
+      assert.include(String(sent?.instruction), "t3_thread_send");
+      assert.include(String(sent?.instruction), "NO_REPLY");
     }).pipe(Effect.provide(layer));
   },
 );
@@ -814,6 +815,43 @@ it.effect.each([
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("the assistant's turn that read a merged notice dismisses every task it told", () => {
+  const merged = "assistant-task:merged:abc";
+  const second = ThreadId.make("thread-task-2");
+  const { layer } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [{ ...ownerRun("completed"), userMessageId: merged }],
+    shell: doneShell,
+    told: merged,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* (yield* Tasks.AssistantTasks).link({
+      threadId: second,
+      assistantId: "jarvis" as AssistantId,
+      projectId: ProjectId.make("p1"),
+      title: "Add tests",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    const sql = yield* SqlClient.SqlClient;
+    for (const subject of [taskThread, second]) {
+      yield* sql`
+        INSERT INTO assistant_task_notices
+          (thread_id, subject_thread_id, run_id, status, head_sha, message_id, updated_at)
+        VALUES ('assistant:jarvis:1', ${subject}, 'run-completed', 'completed', NULL, ${merged},
+          '2026-01-02T00:00:00.000Z')`;
+    }
+    yield* (yield* Reactor.AssistantTaskReactor).handle({
+      type: "run.updated",
+      payload: { ...ownerRun("completed"), userMessageId: merged },
+    } as never);
+    const tasks = yield* Tasks.AssistantTasks;
+    for (const subject of [taskThread, second]) {
+      assert.isNotNull(Option.getOrThrow(yield* tasks.forThread(subject)).dismissedAt);
+    }
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("a task whose result was read before its run event leaves the list on that event", () => {
   const { layer } = harness({

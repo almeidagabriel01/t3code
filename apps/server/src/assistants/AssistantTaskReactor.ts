@@ -52,17 +52,27 @@ const LAST_MESSAGE_CHARS = 1_500;
 /** Approvals a policy or the agent itself settles within seconds never reach an assistant. */
 export const REQUEST_WAKE_GRACE = Duration.seconds(10);
 
-export function taskWakeText(input: {
+/** What closes a task notice, once even when it tells several tasks. */
+export const TASK_WAKE_INSTRUCTION = `If this tells the user nothing new, reply with exactly ${QUIET_REPLY} and stop. Otherwise check its diff and run the tests, send any fixes to the task with t3_thread_send (never edit files here), then tell the user what changed in at most 3 short plain lines with the task's link. Add a "Waiting on you" line only if the user must act now; if you are only waiting on the task, leave it out.`;
+
+interface TaskWake {
   readonly title: string;
   readonly threadId: ThreadId;
   readonly status: TaskEventStatus;
   readonly lastMessage: string | null;
-}): string {
+}
+
+/** One task's part of a notice: how its run ended and its last message. */
+function taskWakeSection(input: TaskWake): string {
   const last =
     input.lastMessage === null
       ? ""
       : `\n\nIts last message:\n${input.lastMessage.slice(0, LAST_MESSAGE_CHARS)}`;
-  return `${taskEventHeadline(input)}${last}\n\nIf this tells the user nothing new, reply with exactly ${QUIET_REPLY} and stop. Otherwise check its diff and run the tests, send any fixes to the task with t3_thread_send (never edit files here), then tell the user what changed in at most 3 short plain lines with the task's link. Add a "Waiting on you" line only if the user must act now; if you are only waiting on the task, leave it out.`;
+  return `${taskEventHeadline(input)}${last}`;
+}
+
+export function taskWakeText(input: TaskWake): string {
+  return `${taskWakeSection(input)}\n\n${TASK_WAKE_INSTRUCTION}`;
 }
 
 export function waitWakeText(input: {
@@ -155,16 +165,16 @@ const make = Effect.gen(function* () {
     Effect.catchCause((cause) => Effect.logWarning("assistant task dismissal skipped", { cause })),
   );
 
-  /** The task an assistant's run read the notice of, when that notice is still the latest. */
-  const noticedTask = Effect.fn("AssistantTaskReactor.noticedTask")(function* (run: {
+  /** The tasks an assistant's run read the notice of, while that notice is still their latest. */
+  const noticedTasks = Effect.fn("AssistantTaskReactor.noticedTasks")(function* (run: {
     readonly threadId: ThreadId;
     readonly userMessageId: string;
   }) {
-    if (!run.userMessageId.startsWith(TASK_EVENT_MESSAGE_PREFIX)) return Option.none<ThreadId>();
+    if (!run.userMessageId.startsWith(TASK_EVENT_MESSAGE_PREFIX)) return [];
     const rows = yield* sql<{ readonly subject_thread_id: string }>`
       SELECT subject_thread_id FROM assistant_task_notices
       WHERE thread_id = ${run.threadId} AND message_id = ${run.userMessageId}`;
-    return Option.fromNullishOr(rows[0]?.subject_thread_id as ThreadId | undefined);
+    return rows.map((row) => row.subject_thread_id as ThreadId);
   });
 
   const handle: AssistantTaskReactor["Service"]["handle"] = Effect.fn(
@@ -194,8 +204,7 @@ const make = Effect.gen(function* () {
       const run = event.payload;
       if (!TERMINAL.has(run.status)) return;
       if (run.status === "completed") {
-        const noticed = yield* noticedTask(run);
-        if (Option.isSome(noticed)) yield* dismissIfDelivered(noticed.value);
+        for (const noticed of yield* noticedTasks(run)) yield* dismissIfDelivered(noticed);
       }
       const task = yield* tasks.forThread(run.threadId);
       if (Option.isNone(task)) return;
@@ -230,12 +239,13 @@ const make = Effect.gen(function* () {
         projectId: owner.value.projectId,
         run,
         messageId: `${TASK_EVENT_MESSAGE_PREFIX}${run.id}`,
-        text: taskWakeText({
+        text: taskWakeSection({
           title: shell?.title ?? task.value.title,
           threadId: run.threadId,
           status: run.status as TaskEventStatus,
           lastMessage,
         }),
+        instruction: TASK_WAKE_INSTRUCTION,
         createdBy: "agent",
         senderThreadId: run.threadId,
       });

@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -20,10 +21,15 @@ const otherTask = ThreadId.make("mcp:launch:other");
 interface QueuedEvent {
   readonly runId: string;
   readonly ordinal: number;
-  readonly message: { readonly id: string; readonly senderThreadId?: ThreadId };
+  readonly message: {
+    readonly id: string;
+    readonly text?: string;
+    readonly senderThreadId?: ThreadId;
+  };
 }
 
-const harness = () => {
+/** `busy`: the assistant is in a turn, so every notice sent waits in its queue. */
+const harness = (options: { readonly busy?: boolean } = {}) => {
   const state = {
     head: "sha-1" as string | null,
     /** The message that started each run, by message id. */
@@ -87,6 +93,19 @@ const harness = () => {
                 ? Effect.fail(new Error("send failed") as never)
                 : Effect.sync(() => {
                     sends.push({ messageId: input.messageId, text: input.text });
+                    if (options.busy === true) {
+                      state.queued.push({
+                        runId: `queued:${input.messageId}`,
+                        ordinal: state.queued.length + 1,
+                        message: {
+                          id: input.messageId,
+                          text: input.text,
+                          ...(input.senderThreadId === undefined
+                            ? {}
+                            : { senderThreadId: input.senderThreadId }),
+                        },
+                      });
+                    }
                     return {} as never;
                   }),
         }),
@@ -420,4 +439,94 @@ it.effect("a send that fails keeps the window open, so the next run end still te
     h.state.failSend = false;
     assert.strictEqual(yield* notices.send(notice(run("r3"))), "sent");
   }).pipe(Effect.provide(h.layer));
+});
+
+const INSTRUCTION = "If this tells the user nothing new, reply with exactly NO_REPLY and stop.";
+
+/** A task notice as the task reactor sends it: a headline linking the task, then the instruction. */
+const taskNotice = (subject: Run): TaskEventNotice => ({
+  ...notice(subject),
+  text: `Task ${formatThreadLink({ environmentId: null, threadId: subject.threadId }, subject.id)} finished.`,
+  instruction: INSTRUCTION,
+});
+
+/** Agent-started runs, so each one is news. */
+const asked = (h: ReturnType<typeof harness>, id: string, threadId: ThreadId) => {
+  h.state.started.set(`ask:${id}`, { id: `ask:${id}`, senderThreadId: assistantThread });
+  return run(id, { threadId, startedBy: `ask:${id}` });
+};
+
+const marks = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly subject_thread_id: string; readonly message_id: string }>`
+    SELECT subject_thread_id, message_id FROM assistant_task_notices ORDER BY subject_thread_id`;
+});
+
+const queuedTexts = (h: ReturnType<typeof harness>) =>
+  h.state.queued.map((entry) => entry.message.text ?? "");
+
+it.effect("tasks that end while the assistant is busy wait as one notice, each one marked", () => {
+  const h = harness({ busy: true });
+  return Effect.gen(function* () {
+    const notices = yield* TaskEventNotices;
+    assert.strictEqual(yield* notices.send(taskNotice(asked(h, "a1", taskThread))), "sent");
+    assert.strictEqual(yield* notices.send(taskNotice(asked(h, "b1", otherTask))), "sent");
+    // The first one is folded into the second: one queued turn tells both, newest first.
+    assert.deepStrictEqual(h.cancelled, ["queued:assistant-task:a1"]);
+    const [text = ""] = queuedTexts(h);
+    assert.lengthOf(h.state.queued, 1);
+    assert.match(text, /^Task \[b1\][\s\S]*Task \[a1\]/);
+    assert.strictEqual(text.split(INSTRUCTION).length, 2);
+    assert.isTrue(text.endsWith(INSTRUCTION));
+    const merged = h.state.queued[0]!.message.id;
+    assert.match(merged, /^assistant-task:merged:/);
+    assert.deepStrictEqual(yield* marks, [
+      { subject_thread_id: otherTask, message_id: merged },
+      { subject_thread_id: taskThread, message_id: merged },
+    ]);
+    // A third task joins the same turn, under an id that names all three runs.
+    const third = ThreadId.make("mcp:launch:third");
+    yield* notices.send(taskNotice(asked(h, "c1", third)));
+    assert.lengthOf(h.state.queued, 1);
+    assert.notStrictEqual(h.state.queued[0]!.message.id, merged);
+    assert.match(queuedTexts(h)[0]!, /^Task \[c1\][\s\S]*Task \[b1\][\s\S]*Task \[a1\]/);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a task told again replaces its own section, and a run with no news opens no turn",
+  () => {
+    const h = harness({ busy: true });
+    return Effect.gen(function* () {
+      const notices = yield* TaskEventNotices;
+      yield* notices.send(taskNotice(asked(h, "a1", taskThread)));
+      yield* notices.send(taskNotice(asked(h, "b1", otherTask)));
+      yield* notices.send(taskNotice(asked(h, "a2", taskThread)));
+      const [text = ""] = queuedTexts(h);
+      assert.lengthOf(h.state.queued, 1);
+      assert.match(text, /^Task \[a2\][\s\S]*Task \[b1\]/);
+      assert.notInclude(text, "Task [a1]");
+      // The same run again is no news: nothing is sent and the queued turn stays as it is.
+      const sent = h.sends.length;
+      assert.strictEqual(yield* notices.send(taskNotice(run("a2"))), "unchanged");
+      assert.strictEqual(h.sends.length, sent);
+      assert.lengthOf(h.state.queued, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("one task alone keeps its own id, and a replay of a merge lands on the same id", () => {
+  const first = harness({ busy: true });
+  const second = harness({ busy: true });
+  const mergedOf = (h: ReturnType<typeof harness>) =>
+    Effect.gen(function* () {
+      const notices = yield* TaskEventNotices;
+      yield* notices.send(taskNotice(asked(h, "a1", taskThread)));
+      assert.strictEqual(h.state.queued[0]?.message.id, "assistant-task:a1");
+      yield* notices.send(taskNotice(asked(h, "b1", otherTask)));
+      return h.state.queued[0]!.message.id;
+    }).pipe(Effect.provide(h.layer));
+  return Effect.gen(function* () {
+    assert.strictEqual(yield* mergedOf(first), yield* mergedOf(second));
+  });
 });

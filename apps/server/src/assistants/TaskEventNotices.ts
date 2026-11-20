@@ -5,7 +5,11 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- stable server-owned hash.
+import * as NodeCrypto from "node:crypto";
+
 import { TASK_EVENT_MESSAGE_PREFIX } from "@t3tools/shared/assistantTaskEvents";
+import { threadLinkHref } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -61,9 +65,30 @@ export interface TaskEventNotice {
   >;
   readonly messageId: string;
   readonly text: string;
+  /**
+   * Closes the message after `text`. Notices sharing it merge: one still queued in the
+   * conversation takes this one's section, so a burst of task ends is one turn.
+   */
+  readonly instruction?: string;
   readonly createdBy: "agent" | "user";
   readonly senderThreadId?: ThreadId;
 }
+
+const SECTION_BREAK = "\n\n---\n\n";
+
+/** A merged notice's id derives from the runs it tells, so a replay lands on the same message. */
+const mergedMessageId = (runIds: ReadonlyArray<string>) =>
+  `${TASK_EVENT_MESSAGE_PREFIX}merged:${NodeCrypto.createHash("sha256")
+    .update(runIds.toSorted().join("\n"))
+    .digest("hex")
+    .slice(0, 32)}`;
+
+/** The section of a merged notice about `subject`, found by the link its headline opens with. */
+const isSectionAbout = (section: string, subject: ThreadId) => {
+  const href = threadLinkHref({ environmentId: null, threadId: subject });
+  const headline = section.split("\n", 1)[0] ?? "";
+  return headline.includes(`(${href})`) || headline.includes(`<${href}>`);
+};
 
 /**
  * The one door task events take into an agent's conversation: the assistant task reactor and
@@ -91,6 +116,15 @@ export class TaskEventNotices extends Context.Service<
  * held for work that resumes them, quiet, or a send that failed; a few in practice.
  */
 const WINDOW_RUNS = 50;
+
+interface QueuedMessage {
+  readonly runId: string;
+  readonly message: {
+    readonly id: string;
+    readonly text: string;
+    readonly senderThreadId?: ThreadId | undefined;
+  };
+}
 
 interface NoticeRow {
   readonly run_id: string;
@@ -174,16 +208,8 @@ const make = Effect.gen(function* () {
     readonly senderThreadId?: ThreadId | undefined;
   }) => message.id.startsWith(TASK_EVENT_MESSAGE_PREFIX) && message.senderThreadId !== undefined;
 
-  /** Cancels the queued runs `pick` names, oldest first; best effort, never fails. */
-  const dropQueued = Effect.fn("TaskEventNotices.dropQueued")(function* (
-    threadId: ThreadId,
-    pick: (
-      queued: ReadonlyArray<{
-        readonly runId: string;
-        readonly message: { readonly id: string; readonly senderThreadId?: ThreadId | undefined };
-      }>,
-    ) => ReadonlyArray<string>,
-  ) {
+  /** The conversation's runs not started yet, oldest first, with the message each will read. */
+  const queuedOf = Effect.fn("TaskEventNotices.queuedOf")(function* (threadId: ThreadId) {
     const records = yield* threads
       .getThreadRecords(threadId, ["runs", "messages"], {
         runStatuses: ["queued"],
@@ -191,13 +217,57 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => ({ runs: [], messages: [] })));
     const byId = new Map(records.messages.map((message) => [message.id, message]));
-    const queued = records.runs
+    return records.runs
       .toSorted((a, b) => a.ordinal - b.ordinal)
-      .flatMap((run) => {
+      .flatMap((run): ReadonlyArray<QueuedMessage> => {
         const message = byId.get(run.userMessageId);
         return message === undefined ? [] : [{ runId: run.id, message }];
       });
-    for (const runId of pick(queued)) {
+  });
+
+  /**
+   * Folds the queued notices that close with `notice`'s instruction into it: its section first,
+   * then theirs minus any older section about the same task.
+   */
+  const mergeQueued = Effect.fn("TaskEventNotices.mergeQueued")(function* (
+    notice: TaskEventNotice,
+    runId: string,
+  ) {
+    const alone = { messageId: notice.messageId, text: notice.text, queued: [] };
+    const { instruction } = notice;
+    if (instruction === undefined) return alone;
+    const closing = `\n\n${instruction}`;
+    const queued = (yield* queuedOf(notice.threadId)).filter(
+      ({ message }) =>
+        message.id !== notice.messageId && isTaskEvent(message) && message.text.endsWith(closing),
+    );
+    if (queued.length === 0) return alone;
+    const ids = queued.map(({ message }) => message.id);
+    const marks = yield* sql<{ readonly subject_thread_id: string; readonly run_id: string }>`
+      SELECT subject_thread_id, run_id FROM assistant_task_notices
+      WHERE thread_id = ${notice.threadId} AND message_id IN ${sql.in(ids)}`;
+    const others = queued
+      .flatMap(({ message }) => message.text.slice(0, -closing.length).split(SECTION_BREAK))
+      .filter((section) => !isSectionAbout(section, notice.run.threadId));
+    const runIds = [
+      runId,
+      ...marks
+        .filter((mark) => mark.subject_thread_id !== notice.run.threadId)
+        .map((m) => m.run_id),
+    ];
+    return {
+      messageId: others.length === 0 ? notice.messageId : mergedMessageId(runIds),
+      text: [notice.text, ...others].join(SECTION_BREAK),
+      queued,
+    };
+  });
+
+  /** Cancels the queued runs `pick` names, oldest first; best effort, never fails. */
+  const dropQueued = Effect.fn("TaskEventNotices.dropQueued")(function* (
+    threadId: ThreadId,
+    pick: (queued: ReadonlyArray<QueuedMessage>) => ReadonlyArray<string>,
+  ) {
+    for (const runId of pick(yield* queuedOf(threadId))) {
       yield* engine
         .dispatch({
           type: "queued-run.cancel",
@@ -270,18 +340,20 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const { previous, news } = yield* judge(notice, facts);
             if (!news) return "unchanged" as const;
+            const merged = yield* mergeQueued(notice, facts.runId);
+            const { messageId, text: body } = merged;
             // The command id is the message id, so a send repeated after a crash lands once;
             // marking only after it succeeds never records an event nobody was told.
             const sent = yield* threads
               .sendToThread({
                 projectId: notice.projectId,
-                commandId: CommandId.make(notice.messageId),
-                messageId: MessageId.make(notice.messageId),
+                commandId: CommandId.make(messageId),
+                messageId: MessageId.make(messageId),
                 threadId: notice.threadId,
                 ...(notice.senderThreadId === undefined
                   ? {}
                   : { senderThreadId: notice.senderThreadId }),
-                text: notice.text,
+                text: notice.instruction === undefined ? body : `${body}\n\n${notice.instruction}`,
                 attachments: [],
                 mode: "queue",
                 createdBy: notice.createdBy,
@@ -300,14 +372,22 @@ const make = Effect.gen(function* () {
               run_id: facts.runId,
               status: facts.status,
               head_sha: facts.headSha,
-              message_id: notice.messageId,
+              message_id: messageId,
             });
+            // The tasks a merged message took over are told by it now.
+            const mergedIds = merged.queued.map(({ message }) => message.id);
+            if (mergedIds.length > 0) {
+              yield* sql`
+                UPDATE assistant_task_notices SET message_id = ${messageId}
+                WHERE thread_id = ${notice.threadId} AND message_id IN ${sql.in(mergedIds)}`;
+            }
             yield* dropQueued(notice.threadId, (queued) =>
               queued
                 .filter(
                   ({ message }) =>
-                    message.id !== notice.messageId &&
-                    (message.id === previous?.message_id ||
+                    message.id !== messageId &&
+                    (mergedIds.includes(message.id) ||
+                      message.id === previous?.message_id ||
                       (isTaskEvent(message) && message.senderThreadId === notice.run.threadId)),
                 )
                 .map(({ runId }) => runId),
