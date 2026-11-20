@@ -62,6 +62,11 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
           runtime: { status: ref.threadId === "working" ? "running" : "idle" },
         }) as never,
 }));
+// The working set is `workingItems`' (tested in client-runtime); here it holds the "working" thread.
+vi.mock(import("../../state/assistants"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useThreadWorking: ((_: string, threadId: string) => threadId === "working") as never,
+}));
 vi.mock(import("../../hooks/useScratchProject"), () => ({
   useScratchProject: (() => ({ openScratchProject: state.openScratch })) as never,
 }));

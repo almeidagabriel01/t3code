@@ -1,4 +1,4 @@
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { useThreadWorking } from "../../state/assistants";
 import { selectKanbanColumns, type KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import {
   checklistProgress,
@@ -265,7 +265,7 @@ function LinkedThreadDot(props: {
 }) {
   const state = kanbanPanelThreadState(
     useQuietThreadShell({ environmentId: props.environmentId, threadId: props.threadId }),
-    threadRuntimeIsActive,
+    useThreadWorking(props.environmentId, props.threadId),
   );
   if (state === null) return null;
   return (

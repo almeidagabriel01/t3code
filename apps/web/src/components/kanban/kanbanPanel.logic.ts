@@ -8,11 +8,12 @@ export function kanbanPanelThreadState(
     EnvironmentThreadShell,
     "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "runtime"
   > | null,
-  isActive: (runtime: EnvironmentThreadShell["runtime"]) => boolean,
+  /** In the working set every surface counts (`useThreadWorking`). */
+  working: boolean,
 ): KanbanPanelThreadState | null {
   if (shell === null) return null;
   if (shell.hasPendingApprovals || shell.hasPendingUserInput || shell.pendingSubagentRequest) {
     return "attention";
   }
-  return isActive(shell.runtime) ? "running" : "idle";
+  return working ? "running" : "idle";
 }

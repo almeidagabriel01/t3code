@@ -1,4 +1,4 @@
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { useThreadWorking } from "../../state/assistants";
 import type {
   EnvironmentId,
   KanbanCard,
@@ -55,8 +55,8 @@ const LinkedAgent = memo(function LinkedAgent(props: {
     threadId: props.threadId,
   });
   const entry = useProviderEntry(props.environmentId, shell?.providerInstanceId ?? "");
+  const working = useThreadWorking(props.environmentId, props.threadId);
   if (shell === null) return null;
-  const working = threadRuntimeIsActive(shell.runtime);
   return (
     <span className="inline-flex items-center gap-1">
       {working ? <Spinner className="size-3" aria-label="Agent working" /> : null}

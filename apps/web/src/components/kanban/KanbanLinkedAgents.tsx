@@ -1,5 +1,5 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { useThreadWorking } from "../../state/assistants";
 import type { EnvironmentId, KanbanCard, KanbanLinkedThread, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon, ExternalLinkIcon, LinkIcon, PlusIcon, UnlinkIcon } from "lucide-react";
@@ -30,7 +30,7 @@ function AgentRow(props: {
   const entry = useProviderEntry(props.environmentId, shell?.providerInstanceId ?? "");
   const title = shell?.title ?? props.derived?.title ?? "Thread no longer available";
   const status = shell?.runtime?.status ?? props.derived?.status ?? null;
-  const working = shell !== null && threadRuntimeIsActive(shell.runtime);
+  const working = useThreadWorking(props.environmentId, props.threadId) && shell !== null;
   return (
     <li className="group grid gap-1 rounded-md border border-border bg-card p-2">
       <div className="flex items-center gap-2">

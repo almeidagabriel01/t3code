@@ -353,6 +353,17 @@ export function useWorkingThreadKeys(): ReadonlySet<string> {
   return useAtomValue(workingThreadKeysAtom);
 }
 
+const threadWorkingAtom = Atom.family((key: string) =>
+  Atom.make((get) => get(workingThreadKeysAtom).has(key)).pipe(
+    Atom.withLabel(`web-thread-working:${key}`),
+  ),
+);
+
+/** Whether this thread is in the working set; re-renders only when that answer changes. */
+export function useThreadWorking(environmentId: EnvironmentId, threadId: ThreadId): boolean {
+  return useAtomValue(threadWorkingAtom(`${environmentId}:${threadId}`));
+}
+
 /** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */
 export function useAssistantEntries() {
   return useAtomValue(assistantEntriesAtom(environmentIdsKey(useAssistantsEnvironmentIds())));
