@@ -371,6 +371,14 @@ assistant sent from its own folder, and files others sent to one of its threads.
 would lose it at compaction, native resume or a provider switch, and an edit to the instructions
 would not reach a running conversation. Slash commands skip it so they stay at the start of the prompt.
 
+The fixed conversation (`assistant:<id>:<n>`, never a `g-` thread) drops its native session when a
+new request arrives after a quiet gap, or past a context ceiling (`assistantSessionCut` in
+`assistantRequestContext.ts`). New requests are an allowlist of message ids: client UUIDs,
+`channel:`, `scheduled-task-message:`, `message:mcp:`. Every other id is an answer or wake for open
+work and keeps the session, so a new internal message kind continues by default. The cut reuses the
+resume-fallback path in `ProviderTurnStartService` with a short `full_thread_summary` handoff, so it
+behaves the same on every adapter, and it never cuts under another active run or background work.
+
 ## Connectors (per-assistant MCP servers)
 
 An assistant row carries `mcp_servers_json`: names, transport, URL or command, and header or env
