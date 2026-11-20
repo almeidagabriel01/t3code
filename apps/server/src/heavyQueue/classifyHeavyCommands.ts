@@ -1,12 +1,18 @@
-import type { HeavyCommand, HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type HeavyCommand,
+  type HeavyQueueEntry,
+  type ResourceTelemetryProcess,
+} from "@t3tools/contracts";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import type { ProcessOwner } from "@t3tools/shared/ProcessOwners";
 import * as DateTime from "effect/DateTime";
 
+import { costOf } from "./costClass.ts";
 import { readLine } from "./heavyHook.ts";
 
 /** Summed over the tree: half a core, or 1 GiB resident, as the Resource Manager flags a process. */
-const HEAVY_CORES = 0.5;
+export const HEAVY_CORES = 0.5;
 export const HEAVY_MEMORY_BYTES = 1024 ** 3;
 /** Younger roots are quick tools (rg, git) caught mid-spike, not work worth a row. */
 const MIN_RUN_MS = 3_000;
@@ -131,7 +137,7 @@ const tenth = (value: number) => Math.round(value * 10) / 10;
 const TENTH_GIB = HEAVY_MEMORY_BYTES / 10;
 const MIB = 1024 ** 2;
 /** The precision surfaces show (MB below a GiB, tenths above); a running command never reads 0 MB. */
-const roundMemory = (bytes: number) => {
+export const roundMemory = (bytes: number) => {
   const step = bytes < HEAVY_MEMORY_BYTES ? MIB : TENTH_GIB;
   return bytes > 0 ? Math.max(MIB, Math.round(bytes / step) * step) : 0;
 };
@@ -229,6 +235,9 @@ export function classifyHeavyCommands(input: {
       startTimeMs: root.identity.startTimeMs,
       label,
       name: heavyEntryName({ label, cwd: "" }),
+      ...(costOf({ label }, null, HEAVY_QUEUE_DEFAULTS.quickSeconds).class === "service"
+        ? { keepsRunning: true }
+        : {}),
       startedAt: DateTime.formatIso(DateTime.makeUnsafe(root.identity.startTimeMs)),
       cpu: tenth(usage.cpu),
       memory: roundMemory(usage.memoryBytes),

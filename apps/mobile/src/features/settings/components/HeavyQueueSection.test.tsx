@@ -159,7 +159,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   };
 };
 
-const RUNNER_OFF: RunnerMode = { enabled: false, where: "mac", everything: false };
+const RUNNER_OFF: RunnerMode = { enabled: false, where: "mac" };
 const slowAgentJobs = { value: true, disabled: false, onChange: vi.fn() };
 async function mount(runner = RUNNER_OFF, machine?: string) {
   const host = document.createElement("div");
@@ -191,7 +191,7 @@ afterEach(() => {
 describe("HeavyQueueSection", () => {
   it("groups this Mac's slots and limits under This Mac; the over-the-limit time is shared", async () => {
     setup();
-    const view = await mount({ enabled: true, where: "automatic", everything: false });
+    const view = await mount({ enabled: true, where: "automatic" });
     const mac = view.host.querySelector('section[aria-label="This Mac"]')!;
     expect(mac.textContent).toContain("Run up to 3 at once on this Mac");
     for (const name of ["CPU limit", "Keep memory free"]) {
@@ -208,7 +208,7 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
     // Queue off with Linux only: nothing of this Mac's applies, so the section goes.
     setup({ enabled: false });
-    const linux = await mount({ enabled: true, where: "linux", everything: false }, "Studio");
+    const linux = await mount({ enabled: true, where: "linux" }, "Studio");
     expect(linux.host.querySelector('section[aria-label="This Mac · Studio"]')).toBeNull();
     expect(
       linux.host.querySelector('section[aria-label="Heavy work queue · Studio"]'),
@@ -299,12 +299,12 @@ describe("HeavyQueueSection", () => {
     await off.unmount();
 
     // Hybrid without the queue still routes on the Mac limits.
-    const hybrid = await mount({ enabled: true, where: "automatic", everything: false });
+    const hybrid = await mount({ enabled: true, where: "automatic" });
     for (const name of ["CPU limit", "Keep memory free", "Over the limit for"]) {
       expect(hybrid.toggle(name)).not.toBeNull();
     }
     await hybrid.unmount();
-    const linux = await mount({ enabled: true, where: "linux", everything: false });
+    const linux = await mount({ enabled: true, where: "linux" });
     expect(linux.toggle("CPU limit")).toBeNull();
     expect(linux.toggle("Over the limit for")).not.toBeNull();
     await linux.unmount();
@@ -344,7 +344,7 @@ describe("HeavyQueueSection", () => {
     setup({ lightJobMegabytes: 256 });
     const view = await mount();
     const sizing = view.host.querySelector('section[aria-label="Job sizing"]')!;
-    expect(sizing.querySelectorAll("input")).toHaveLength(5);
+    expect(sizing.querySelectorAll("input")).toHaveLength(9);
     expect(view.host.textContent).toContain("unless it usually uses under 256 MB.");
     const resets = [...sizing.querySelectorAll("button")].filter((b) =>
       b.textContent?.startsWith("Use the default"),
@@ -367,6 +367,15 @@ describe("HeavyQueueSection", () => {
     ["Memory guess for a new medium job", "unseenMediumMegabytes", "setAdmissionLimits", 1024],
     ["Commands remembered", "historyCommands", "setAdmissionLimits", 200],
     ["Let smaller jobs pass for", "headPatienceMinutes", "setAdmissionLimits", 10],
+    ["Quick job length", "quickSeconds", "setAdmissionLimits", 45],
+    ["Quick jobs at once", "quickSlots", "setAdmissionLimits", 3],
+    [
+      "Idle job counts as running in the background after",
+      "serviceIdleMinutes",
+      "setAdmissionLimits",
+      20,
+    ],
+    ["Keep a stopped agent's place for", "reclaimMinutes", "setAdmissionLimits", 15],
   ] as const)("sets this Mac's %s within its limits", async (label, key, command, next) => {
     setup({ [key]: next - 1 });
     const view = await mount();
@@ -419,7 +428,7 @@ describe("HeavyQueueSection", () => {
     const off = await mount();
     expect(off.host.textContent).toContain("Heavy jobs wait their turn on this Mac.");
     await off.unmount();
-    const auto = await mount({ enabled: true, where: "automatic", everything: false });
+    const auto = await mount({ enabled: true, where: "automatic" });
     expect(auto.host.textContent).toContain(
       "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     );

@@ -2,6 +2,7 @@ import {
   linkedMachineRow,
   machineBar,
   type MachineBarRow,
+  type MachineStatusChip,
   type MachineGauge as MachineGaugeModel,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
@@ -10,7 +11,7 @@ import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { LaptopIcon, ServerIcon } from "lucide-react";
+import { LaptopIcon, ServerIcon, ZapIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
@@ -35,6 +36,8 @@ const TRACE_HEIGHT = 12;
 const MAX_PIPS = 6;
 
 const clampShare = (share: number) => Math.min(1, Math.max(0, share));
+/** Below this width the name would be cut; the bars go and the numbers stay. */
+const WIDE_ONLY = "@max-[26rem]/machines:hidden";
 
 /** A reading with its exact words in a tooltip, reachable by keyboard. */
 function Reading({
@@ -75,7 +78,10 @@ function Reading({
 /** A thin bar for a share of a whole; its fill slides on change instead of repainting. */
 function Meter({ share, warn }: { readonly share: number | null; readonly warn: boolean }) {
   return (
-    <span aria-hidden className="relative h-1 w-9 overflow-hidden rounded-full bg-foreground/12">
+    <span
+      aria-hidden
+      className={cn("relative h-1 w-9 overflow-hidden rounded-full bg-foreground/12", WIDE_ONLY)}
+    >
       {share === null ? null : (
         <span
           data-warn={warn ? "" : undefined}
@@ -98,14 +104,14 @@ function Trace({
   readonly values: ReadonlyArray<number>;
 }) {
   return values.length < 2 ? (
-    <span aria-hidden className="w-9" />
+    <span aria-hidden className={cn("w-9", WIDE_ONLY)} />
   ) : (
     <svg
       role="img"
       aria-label={label}
       width={TRACE_WIDTH}
       height={TRACE_HEIGHT}
-      className="shrink-0 text-muted-foreground/80"
+      className={cn("shrink-0 text-muted-foreground/80", WIDE_ONLY)}
     >
       <polyline
         points={sparklinePoints(values, TRACE_WIDTH, TRACE_HEIGHT)}
@@ -119,7 +125,8 @@ function Trace({
 }
 
 const VALUE = "w-11 text-right text-2xs tabular-nums";
-const UNIT = "w-6 text-3xs text-muted-foreground";
+// Narrower still, the unit goes too; each gauge's tooltip still says "free of".
+const UNIT = "w-6 text-3xs text-muted-foreground @max-sm/machines:hidden";
 
 function Gauge({
   share,
@@ -145,18 +152,29 @@ function Gauge({
   );
 }
 
-/** Running jobs against slots, as pips while they fit and always as "1/3". */
+/** Running jobs against slots, as pips while they fit and always as "1/3"; quick jobs apart. */
 function Slots({
   running,
   slots,
   hint,
+  quick,
 }: {
   readonly running: number;
   readonly slots: number;
   readonly hint: string;
+  readonly quick: MachineBarRow["quick"];
 }) {
   return (
-    <Reading hint={hint} className="justify-end gap-1">
+    <Reading hint={quick === null ? hint : `${hint} · ${quick.hint}`} className="justify-end gap-1">
+      {quick === null ? null : (
+        <span
+          aria-label={quick.hint}
+          className="flex items-center text-2xs tabular-nums text-muted-foreground"
+        >
+          <ZapIcon aria-hidden className="size-3" />
+          {quick.running}/{quick.slots}
+        </span>
+      )}
       {slots > MAX_PIPS ? null : (
         <span aria-hidden className="flex gap-0.5">
           {Array.from({ length: slots }, (_, index) => (
@@ -219,7 +237,11 @@ function MachineGauge({
   );
 }
 
-function MachineSlots({ row }: { readonly row: Pick<MachineBarRow, "slots" | "queueOff"> }) {
+function MachineSlots({
+  row,
+}: {
+  readonly row: Pick<MachineBarRow, "slots" | "quick" | "queueOff">;
+}) {
   return row.slots === null && row.queueOff === null ? (
     <span />
   ) : row.slots === null ? (
@@ -227,16 +249,21 @@ function MachineSlots({ row }: { readonly row: Pick<MachineBarRow, "slots" | "qu
       <span className="text-2xs text-muted-foreground">Off</span>
     </Reading>
   ) : (
-    <Slots running={row.slots.running} slots={row.slots.slots} hint={row.slots.hint} />
+    <Slots
+      running={row.slots.running}
+      slots={row.slots.slots}
+      hint={row.slots.hint}
+      quick={row.quick}
+    />
   );
 }
 
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-muted-foreground/60" }
-    : online
-      ? { text: "online", dot: "bg-success" }
-      : { text: "offline", dot: "bg-destructive" };
+const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
+  muted: "bg-muted-foreground/60",
+  ok: "bg-success",
+  warn: "bg-warning",
+  danger: "bg-destructive",
+};
 
 /** Linux or a linked environment: live gauges, or why there are none. */
 function RemoteMachine({
@@ -253,7 +280,15 @@ function RemoteMachine({
       <MachineName
         Icon={ServerIcon}
         name={name}
-        status={{ ...LINUX_STATUS(row.online), hint: row.statusHint ?? "" }}
+        {...(row.chip === null
+          ? {}
+          : {
+              status: {
+                text: row.chip.text,
+                dot: CHIP_DOT[row.chip.tone],
+                hint: row.statusHint ?? "",
+              },
+            })}
       />
       {row.offline === null ? (
         <>
@@ -331,44 +366,53 @@ export function MachineBar({
   const linked = (linkedData ?? []).map((entry) => linkedMachineRow(entry, now));
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
-    <div
-      role="group"
-      aria-label="Machines"
-      className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
-    >
-      <MachineName Icon={LaptopIcon} name="This Mac" />
-      <MachineGauge gauge={mac.cpu} />
-      <MachineGauge gauge={mac.memory} unit="free" />
-      <MachineSlots row={mac} />
+    <div className="@container/machines">
+      <div
+        role="group"
+        aria-label="Machines"
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
+      >
+        <MachineName Icon={LaptopIcon} name="This Mac" />
+        <MachineGauge gauge={mac.cpu} />
+        <MachineGauge gauge={mac.memory} unit="free" />
+        <MachineSlots row={mac} />
 
-      {t3 === null ? null : (
-        <>
-          <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
-            <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
-          </Reading>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>
-              {formatCpu(
-                macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
-              )}
+        {t3 === null ? null : (
+          <>
+            <Reading hint="T3 Code and the agents, terminals and devices it runs. Lines show the last 5 minutes.">
+              <span className="truncate pl-6 text-2xs text-muted-foreground">T3 total</span>
+            </Reading>
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatCpu(
+                  macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
+                )}
+              </span>
+              <span className={UNIT} />
             </span>
-            <span className={UNIT} />
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
-            <span className={cn(VALUE, "text-muted-foreground")}>{formatMemory(t3.rssBytes)}</span>
-            <span className={UNIT} />
-          </span>
-          <span />
-        </>
-      )}
+            <span className="flex items-center gap-1.5">
+              <Trace label="T3 memory, last 5 minutes" values={buckets.map((b) => b.maxRssBytes)} />
+              <span className={cn(VALUE, "text-muted-foreground")}>
+                {formatMemory(t3.rssBytes)}
+              </span>
+              <span className={UNIT} />
+            </span>
+            <span />
+          </>
+        )}
 
-      {linux === null ? null : <RemoteMachine name="Linux" row={linux} />}
+        {linux === null ? null : <RemoteMachine name="Linux" row={linux} />}
 
-      {linked.map((row) => (
-        <RemoteMachine key={row.environmentId} name={row.name} row={row} activity={row.activity} />
-      ))}
+        {linked.map((row) => (
+          <RemoteMachine
+            key={row.environmentId}
+            name={row.name}
+            row={row}
+            activity={row.activity}
+          />
+        ))}
+      </div>
     </div>
   );
 }

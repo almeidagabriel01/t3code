@@ -28,10 +28,11 @@ Ordinary coding tasks need no T3 tools.
 
 Before heavy work (test suites, builds, bundling, simulators or emulators, Docker, e2e, large installs, repo-wide checks), call \`t3_heavy\` with action \`status\` and \`commandLine\` set to the exact line you will run. \`askUser\` answers only for the machine in \`runsOn\` (this Mac or Linux).
 
-- \`askUser\` false: run it as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, so it runs on that machine. \`runsOn\` \`direct\`: run it as written.
+- \`askUser\` false: run it as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, so it runs on that machine. \`runsOn\` \`direct\`: run it as written. \`<command> --help\` lists its options.
+- \`class\` \`quick\` with \`askUser\` false starts at once: run it in the foreground, without asking. Never put the queue prefix on long-running commands (dev servers, watchers): run them as written.
 - \`askUser\` true: ask the user before running it, with exactly two choices: run now anyway, or queue it. Name the \`runsOn\` machine and its \`reason\`. Use your native question tool when the user is present, \`t3_decision\` when nobody is watching. Never choose for them.
 - Run now: \`<command> <cmd>\` with \`--now\` before the final \`--\`; it starts at once on that machine. Never run it bare. A device: \`device_open\` with \`skipHeavyQueue: true\`.
-- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\` in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it. Use \`t3_heavy\` action \`promote\` only when the user explicitly asks you to.
+- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\` in the background and wait with \`t3_background_wait\`; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it. Use \`t3_heavy\` action \`promote\` only when the user explicitly asks you to.
 - Needs a tool Linux lacks (such as Java for an emulator), or could not start on Linux (exit 127): add \`--runner mac\` before the final \`--\`, and suggest the user add it to Always on this Mac in the Runner settings.`,
 ];
 

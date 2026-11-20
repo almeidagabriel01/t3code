@@ -84,10 +84,10 @@ export type HeavyEvent =
       readonly kind: "displaced";
       readonly cause: "unavailable" | "dropped" | "deadline";
     }
-  /** Hybrid placed it on Linux: planned, shown only for every machine change. */
-  | { readonly kind: "hybrid" }
+  /** Automatic placed it on Linux: planned, shown only for every machine change. */
+  | { readonly kind: "hybrid"; readonly why?: string }
   /** Linux couldn't run it for a reason of T3's or the PC's own; the problem detector files it and tells. */
-  | ({ readonly kind: "t3-fault" } & Fault);
+  | ({ readonly kind: "t3-fault"; readonly count?: number } & Fault);
 
 /** Each reason has an approved card label in the problem detector; a new one needs its label approved first. */
 export type FaultReason =
@@ -480,16 +480,25 @@ export const meaningfulLines = (text: string) =>
     .filter((line) => !RULE.test(line));
 
 const FAILURE = /\bFAIL\b|\bERR_[A-Z0-9_]+|\bERR!|[A-Za-z]*Error\b|\berror TS\d+/;
+const WARNING = /^(?:(?:npm|pnpm|yarn|node)\s+)?warn(?:ing)?\b|^\(node:\d+\)\s|^[\w.-]*Warning:/i;
+/** A warning that still reports a failure, such as cargo's `warning: build failed`. */
+const FAILED =
+  /\b(?:fail(?:s|ed|ure)?|fatal|errors?|abort(?:ing|ed)?|refus(?:e|ed|ing)|cannot|can't|unable|denied|exit(?:ing)? with code)\b/i;
+
+/** A line that is only a warning: it never names what failed, whatever the exit code says. */
+const warningOnly = (line: string) =>
+  WARNING.test(line) && !FAILURE.test(line) && !FAILED.test(line);
 
 /**
  * The lines of a chunk of output worth quoting on a card: the first one that names a failure, and
- * the last meaningful one, both without ANSI codes, rules, or T3's own notes.
+ * the last meaningful one that is not only a warning, both without ANSI codes, rules, or T3's own
+ * notes.
  */
 export const errorLineOf = (text: string) => {
   const lines = meaningfulLines(text).filter((line) => !line.startsWith("[t3 heavy]"));
   return {
     failure: lines.find((line) => FAILURE.test(line)) ?? null,
-    last: lines.at(-1) ?? null,
+    last: lines.findLast((line) => !warningOnly(line)) ?? null,
   };
 };
 
@@ -602,8 +611,12 @@ export const startRecord = (
   intent: RunnerWhere,
   runner: HeavyRunner,
   now: number,
+  /** The plan's reason for the machine it starts on. */
+  why?: string,
 ): HeavyEventRecord | null => {
-  if (intent === "automatic" && runner === "linux") return recordOf(entry, { kind: "hybrid" }, now);
+  if (intent === "automatic" && runner === "mac") {
+    return recordOf(entry, { kind: "hybrid", ...(why === undefined ? {} : { why }) }, now);
+  }
   if (intent !== "linux" || runner !== "mac") return null;
   const cause =
     entry.dropped === true
@@ -669,7 +682,10 @@ export const stuckJobs = (input: {
   readonly now: number;
 }): ReadonlyArray<StuckJob> =>
   input.entries.flatMap((entry) => {
-    if (entry.startedAt !== null || entry.ask !== undefined) return [];
+    // An orphan waits for its agent, not for the machine.
+    if (entry.startedAt !== null || entry.ask !== undefined || entry.orphanedAt !== undefined) {
+      return [];
+    }
     const runner = input.routes[entry.id] ?? "mac";
     const why =
       runner === "mac"
@@ -896,13 +912,14 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
       return null;
     case "hybrid":
       return notice({
-        group: "hybrid",
+        // Linux full, unavailable, past its limits or the queue paused: each says its own why.
+        group: `hybrid:${record.why ?? ""}`,
         category: "planned",
         tone: "info",
-        machine: "linux",
-        one: `${name} went to Linux`,
-        many: (n) => `${jobs(n)} went to Linux`,
-        description: "Each job goes to the machine with the shorter queue.",
+        machine: "mac",
+        one: `${name} went to this Mac`,
+        many: (n) => `${jobs(n)} went to this Mac`,
+        description: record.why ?? "Automatic sent it to this Mac.",
       });
   }
 };

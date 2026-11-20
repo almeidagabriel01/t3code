@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { parseLine } from "./shellLine.ts";
+import { parseLine, withHome } from "./shellLine.ts";
 
 /** Each command as its word values, in the order the parser finishes them. */
 const read = (source: string) => {
@@ -47,6 +47,28 @@ describe("parseLine", () => {
     ]);
     expect(items("for f in a; do :; done; for f in b; do :; done")).toEqual([["f", null]]);
     expect(items("for f; do :; done")).toEqual([["f", null]]);
+  });
+
+  // The one rule for `~`: unquoted at a word's start, and in a `NAME=` word after `=` and each `:`.
+  it.each([
+    ["~/a", "/h/a"],
+    ["~", "/h"],
+    ["T=~/a", "T=/h/a"],
+    ["PATH=/x:~/a:~", "PATH=/x:/h/a:/h"],
+    ["T+=~/a", "T+=/h/a"],
+    ["--root=~/a", "--root=~/a"],
+    ["a:~/a", "a:~/a"],
+    ["a~/a", "a~/a"],
+    ["~other/a", "~other/a"],
+    ["T=~other:~x", "T=~other:~x"],
+    ["'~'/a", "~/a"],
+    ["\\~/a", "~/a"],
+    ['T="~/a"', "T=~/a"],
+    ['T="a:"~/b', "T=a:~/b"],
+    ["T=a\\:~/b", "T=a:~/b"],
+  ])("expands %s to %s", (source, expanded) => {
+    const [word] = parseLine(`echo ${source}`).commands[0]!.words.slice(1);
+    expect(withHome(word!, "/h")).toBe(expanded);
   });
 
   it('names the variables a word expands, with "" for substitutions', () => {

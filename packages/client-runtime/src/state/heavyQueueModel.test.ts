@@ -12,10 +12,13 @@ import {
   dropTarget,
   formatDuration,
   formatFreeMemory,
+  jobCost,
+  orphanLine,
   heavyCommandKey,
   heavyWork,
   jobPriority,
   linkedMachineRow,
+  linuxChip,
   macNoteGauge,
   machineBar,
   macReading,
@@ -49,6 +52,8 @@ describe("jobPriority", () => {
     ["waiting agent job", { priority: "low" }, false, null, ["high-now"]],
     ["waiting user job", { priority: "normal" }, false, null, ["high-now"]],
     ["waiter already released", { priority: "high" }, false, null, []],
+    // The server refuses it: a stopped agent's place keeps its priority until the agent asks again.
+    ["orphaned waiter", { priority: "low", orphanedAt: 1 }, false, null, []],
     ["running agent job at normal QoS", { priority: "low", qos: "normal" }, true, null, ["lower"]],
     [
       "running job lowered",
@@ -99,6 +104,13 @@ describe("moveTarget and dropTarget", () => {
     ["zzz", "up", undefined],
   ] as const)("%s %s -> %s", (id, action, expected) => {
     expect(moveTarget(entries, id, action)).toBe(expected);
+  });
+
+  it("leaves an orphan out of the line: it never moves, and nothing lands next to it", () => {
+    const withOrphan = [...entries, { ...e("o"), orphanedAt: 0 }];
+    expect(moveTarget(withOrphan, "o", "next")).toBeUndefined();
+    expect(moveTarget(withOrphan, "d", "end")).toBeUndefined();
+    expect(dropTarget(withOrphan, "a", "o")).toBeUndefined();
   });
 
   it.each([
@@ -242,6 +254,23 @@ describe("summary and formatting", () => {
           : "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare",
     };
     expect(mac({ paused: hold === "paused", machine: reading, hold, reasons }).note).toBe(text);
+  });
+
+  // The plan's head skips these, so the hold and its reason belong to the waiter after them.
+  it.each([
+    ["an orphaned place", { orphanedAt: 1 }, {}],
+    ["a released waiter", { forced: true }, {}],
+    ["a service", {}, { costs: { top: { class: "service" as const, why: "dev server" } } }],
+  ] as const)("reads the next job's reason past %s at the top", (_name, top, over) => {
+    const text = "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare";
+    const note = mac({
+      entries: [e("r", true), { ...e("top"), ...top }, e("a")],
+      machine,
+      hold: "job-memory",
+      reasons: { a: text },
+      ...over,
+    }).note;
+    expect(note).toBe(`waiting: ${text}`);
   });
 
   it("names a limit without claiming anything waits when nothing does", () => {
@@ -498,6 +527,12 @@ describe("heavyWork", () => {
       expected: { mac: [], linux: ["l"], detached: [] },
     },
     {
+      name: "an orphan sits after every waiter, so their places stay as the queue counts them",
+      entries: [job("o", { orphanedAt: 1 }), job("w1"), job("w2")],
+      commands: [],
+      expected: { mac: ["w1", "w2", "o"], linux: [], detached: [] },
+    },
+    {
       name: "a queue command whose entry already finished shows nothing",
       entries: [],
       commands: [cmd({ source: "queue", entryId: "gone", pid: 32 })],
@@ -581,6 +616,39 @@ describe("macNoteGauge", () => {
   });
 });
 
+describe("jobCost and orphanLine", () => {
+  it.each([
+    ["quick", "staged files", "Quick"],
+    ["standard", "first run", "Job"],
+    ["service", "dev server", "Keeps running"],
+  ] as const)("names the %s class %s", (cls, why, label) => {
+    expect(jobCost({ costs: { a: { class: cls, why } } }, e("a"))).toEqual({
+      class: cls,
+      label,
+      why,
+    });
+  });
+
+  it("says nothing for a row the state has no class for", () => {
+    expect(jobCost({}, e("a"))).toBeNull();
+    expect(jobCost({ costs: {} }, e("a"))).toBeNull();
+  });
+
+  it.each([
+    { name: "a fresh orphan has the whole window", at: 0, expected: "10 min left" },
+    { name: "a part minute counts as one", at: 9 * 60_000 + 1, expected: "1 min left" },
+    { name: "a late read never says zero", at: 11 * 60_000, expected: "1 min left" },
+  ])("$name", ({ at, expected }) => {
+    expect(orphanLine({ ...e("o"), orphanedAt: 0 }, 10, at)).toBe(
+      `Waiting for the agent to ask again · ${expected}`,
+    );
+  });
+
+  it("leaves any other row alone", () => {
+    expect(orphanLine(e("w"), 10, 0)).toBeNull();
+  });
+});
+
 describe("machineBar", () => {
   const GiB = 1024 ** 3;
   const LINUX = {
@@ -640,6 +708,30 @@ describe("machineBar", () => {
     );
     expect(bar.mac.slots).toEqual({ running: 1, slots: 3, hint: "1 of 3 running on this Mac" });
     expect(bar.linux?.slots).toEqual({ running: 2, slots: 2, hint: "2 of 2 running on Linux" });
+  });
+
+  it("counts quick jobs apart from the job slots, and only while one runs", () => {
+    const costs = {
+      q: { class: "quick" as const, why: "usually 4 s" },
+      s: { class: "service" as const, why: "dev server" },
+      // A hooked commit runs in its own slot, not a quick one.
+      c: { class: "quick" as const, why: "staged files", commit: true },
+      cs: { class: "standard" as const, why: "staged files", commit: true },
+    };
+    const busy = state({
+      entries: [e("q", true), e("s", true), e("j", true), e("c", true), e("cs", true)],
+      costs,
+    });
+    const bar = machineBar(busy, null).mac;
+    expect(bar.slots).toMatchObject({ running: 1, slots: 3 });
+    // The section header's "Mac n/m" reads the same count.
+    expect(machineSummaries(busy).mac.running).toBe(1);
+    expect(bar.quick).toEqual({
+      running: 1,
+      slots: 2,
+      hint: "1 of 2 quick jobs running on this Mac",
+    });
+    expect(machineBar(state({ entries: [e("j", true)], costs }), null).mac.quick).toBeNull();
   });
 
   it("reads the Mac from the queue's sample, and the host only without one", () => {
@@ -729,10 +821,10 @@ describe("machineBar", () => {
     [true, null, "remoto · online"],
     [
       false,
-      { text: "Offline", hint: "Linux offline: ssh timed out" },
-      "Linux offline: ssh timed out",
+      { text: "Offline", hint: "remoto · offline · ssh timed out" },
+      "remoto · offline · ssh timed out",
     ],
-    [null, { text: "Checking…", hint: "Checking Linux (remoto)…" }, "Checking Linux (remoto)…"],
+    [null, { text: "Checking…", hint: "remoto · checking" }, "remoto · checking"],
   ] as const)("Linux online=%s shows gauges only while online", (online, offline, statusHint) => {
     const { linux } = machineBar(
       state({ linux: { ...LINUX, online, error: "ssh timed out" }, paused: true }),
@@ -741,6 +833,110 @@ describe("machineBar", () => {
     expect(linux).toMatchObject({ online, offline, statusHint });
     expect(linux!.cpu === null).toBe(online !== true);
     expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
+  it.each([
+    // One timed-out check while still online already hides gauges that would be stale.
+    [true, "unresponsive", "remoto · not responding · ssh timed out"],
+    [false, "unresponsive", "remoto · not responding · ssh timed out"],
+    [false, "offline", "remoto · offline · ssh timed out"],
+  ] as const)("Linux online=%s %s says so as host · state · reason", (online, status, hint) => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, online, status, error: "ssh timed out" }, paused: true }),
+      null,
+    );
+    expect(linux).toMatchObject({ statusHint: hint, offline: { hint } });
+    expect(linux!.cpu).toBeNull();
+    expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
+  const MIB = 1024 ** 2;
+  const FLOOR = { limit: "memory", value: 819 * MIB, threshold: 10 } as const;
+  const CPU = { limit: "cpu", value: 92, threshold: 70 } as const;
+  const SATURATED = { limit: "cpu-pressure", value: 95, threshold: 90 } as const;
+  const STALLED = { limit: "memory-pressure", value: 57, threshold: 10 } as const;
+  const SWAP = { limit: "swap", value: 0.2 * GiB, threshold: 10, total: 4 * GiB } as const;
+  const DISK = { limit: "io-pressure", value: 40, threshold: 30 } as const;
+  // The gauges carry the readings, unchanged by any limit; the status hint explains the limits.
+  const SHORT = { ...LINUX, cpuPercent: 92, availableMemoryBytes: 819 * MIB };
+  it.each([
+    ["free memory", [FLOOR], false, true, "keeping 10% of memory free"],
+    ["CPU in use", [CPU], true, false, "CPU over its 70% limit"],
+    ["CPU saturation", [SATURATED], true, false, "CPU saturated: work waited 95% of the time"],
+    // No gauge of their own: the status hint names them with their reading.
+    ["memory stalls", [STALLED], false, false, "memory stalled 57% of the time (limit 10%)"],
+    ["swap", [SWAP], false, false, "swap nearly full: 205 MB of 4.0 GB free"],
+    ["disk stalls", [DISK], false, false, "disk stalled 40% of the time (limit 30%)"],
+    [
+      "free memory and CPU at once",
+      [FLOOR, CPU],
+      true,
+      true,
+      "keeping 10% of memory free; CPU over its 70% limit",
+    ],
+  ] as const)(
+    "Linux over its %s limit warns on that gauge, worded once",
+    (_name, overLimits, cpu, memory, reason) => {
+      const { linux } = machineBar(
+        state({
+          linux: { ...SHORT, status: "over-limit", overLimitBy: "set by the server", overLimits },
+        }),
+        null,
+      );
+      expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([cpu, memory]);
+      expect(linux!.statusHint).toBe(`remoto · over limits · ${reason}`);
+      expect(linux!.memory).toMatchObject({ value: "819 MB", hint: "819 MB free of 16.0 GB" });
+      expect(linux!.cpu).toMatchObject({
+        value: "92%",
+        hint: "92% CPU in use · load 3.0 on 6 cores",
+      });
+    },
+  );
+
+  it.each([
+    // An older server names the reason only; a status alone (easing back) still says over limits.
+    [
+      { overLimitBy: "memory stalled 57% of the time (limit 10%)" },
+      " · memory stalled 57% of the time (limit 10%)",
+    ],
+    [{}, ""],
+  ] as const)("Linux over limits without the limits listed warns on no gauge", (extra, reason) => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, status: "over-limit", ...extra } }),
+      null,
+    );
+    expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([false, false]);
+    expect(linux!.statusHint).toBe(`remoto · over limits${reason}`);
+  });
+
+  it("an online Linux warns on no gauge even with stale limits", () => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, status: "online", overLimits: [FLOOR, CPU] } }),
+      null,
+    );
+    expect([linux!.cpu!.warn, linux!.memory!.warn]).toEqual([false, false]);
+    expect(linux!.statusHint).toBe("remoto · online");
+  });
+
+  it.each([
+    // Green only while it takes work; a slow or saturated Linux is amber, never a green dot.
+    [true, "online", { text: "online", tone: "ok" }],
+    [true, "over-limit", { text: "over limits", tone: "warn" }],
+    [true, "unresponsive", { text: "not responding", tone: "warn" }],
+    [false, "unresponsive", { text: "not responding", tone: "warn" }],
+    [false, "offline", { text: "offline", tone: "danger" }],
+    [null, undefined, { text: "checking", tone: "muted" }],
+    // An older server sends no status: its connection alone.
+    [true, undefined, { text: "online", tone: "ok" }],
+    [false, undefined, { text: "offline", tone: "danger" }],
+  ] as const)("Linux online=%s status=%s shows the %o chip", (online, status, chip) => {
+    const linux = { ...LINUX, online, ...(status === undefined ? {} : { status }) };
+    expect(linuxChip(linux)).toEqual(chip);
+    expect(machineBar(state({ linux }), null).linux!.chip).toEqual(chip);
+  });
+
+  it("gives the Mac no chip", () => {
+    expect(machineBar(state(), null).mac.chip).toBeNull();
   });
 
   it("reads Linux's CPU in use like the Mac's, its load only a hint", () => {
@@ -849,6 +1045,10 @@ describe("linkedMachineRow", () => {
   ])("%s", (_name, result, online, text, hint) => {
     expect(result.online).toBe(online);
     expect(result.offline).toEqual({ text, hint });
+    // host · state · reason, as Linux reads, so a screen reader still hears the state.
+    expect(result.statusHint).toBe(
+      [`VPS · ${online === false ? "offline" : "checking"}`, hint].filter(Boolean).join(" · "),
+    );
     expect(result.cpu).toBeNull();
     expect(result.memory).toBeNull();
     expect(result.slots).toBeNull();

@@ -13,13 +13,32 @@ export interface Word {
   readonly value: string;
   /** Variables it expands by name; "" for a command substitution or arithmetic. */
   readonly vars: ReadonlyArray<string>;
-  /** Starts with an unquoted `~`. */
-  readonly tilde: boolean;
+  /**
+   * Where in `value` a `~` stands that the shell expands to the home: unquoted at the start, and in
+   * a `NAME=` word right after the `=` and after each unquoted `:`. Ascending.
+   */
+  readonly tildes: ReadonlyArray<number>;
 }
+
+/** `value` with each `~` the shell expands replaced by `home`. */
+export const withHome = (word: Pick<Word, "value" | "tildes">, home: string) =>
+  word.tildes.reduceRight(
+    (value, at) => value.slice(0, at) + home + value.slice(at + 1),
+    word.value,
+  );
+
+/** The word from offset `from` of its value on, e.g. a `NAME=` word's value. */
+export const wordFrom = (word: Word, from: number): Word => ({
+  ...word,
+  value: word.value.slice(from),
+  tildes: word.tildes.filter((at) => at >= from).map((at) => at - from),
+});
 
 export interface Redirect {
   readonly op: string;
   readonly target: Word | null;
+  /** A heredoc's text, once its delimiter closed it. */
+  readonly body?: string;
 }
 
 export interface Command {
@@ -74,19 +93,27 @@ export const parseLine = (source: string): ParsedLine => {
   };
   let at = 0;
   let scopes = 0;
-  const heredocs: Array<{ readonly delimiter: string; readonly strip: boolean }> = [];
+  const heredocs: Array<{
+    readonly delimiter: string;
+    readonly strip: boolean;
+    readonly redirect: { op: string; target: Word | null; body?: string };
+  }> = [];
 
   /** A heredoc's body is text a program reads, never commands. */
   const skipHeredocBodies = () => {
-    for (const { delimiter, strip } of heredocs.splice(0)) {
+    for (const { delimiter, strip, redirect } of heredocs.splice(0)) {
       let found = false;
+      const lines: string[] = [];
       while (!found && at < source.length) {
         const newline = source.indexOf("\n", at);
-        const text = source.slice(at, newline < 0 ? source.length : newline);
+        const raw = source.slice(at, newline < 0 ? source.length : newline);
+        const text = strip ? raw.replace(/^\t+/, "") : raw;
         at = newline < 0 ? source.length : newline + 1;
-        found = (strip ? text.replace(/^\t+/, "") : text) === delimiter;
+        found = text === delimiter;
+        if (!found) lines.push(text);
       }
-      if (!found) flag("unterminated heredoc");
+      if (found) redirect.body = lines.map((text) => `${text}\n`).join("");
+      else flag("unterminated heredoc");
     }
   };
 
@@ -157,11 +184,15 @@ export const parseLine = (source: string): ParsedLine => {
 
   const readWord = (context: Context): Word => {
     const start = at;
-    const tilde = source[at] === "~";
+    const assignAt = /^[A-Za-z_]\w*\+?=/.exec(source.slice(at, at + 256))?.[0].length ?? -1;
+    const tildes: number[] = [];
+    let afterColon = false;
     const vars: string[] = [];
     let value = "";
     while (at < source.length) {
       const c = source[at]!;
+      const colon = afterColon;
+      afterColon = false;
       if (META.has(c)) break;
       if (c === "`") {
         if (context.until === "`") break;
@@ -210,11 +241,17 @@ export const parseLine = (source: string): ParsedLine => {
         vars.push("");
         value += source.slice(start + value.length, at);
       } else {
+        const next = source[at + 1];
+        const homeEnds =
+          next === undefined || next === "/" || META.has(next) || (assignAt >= 0 && next === ":");
+        const prefix = value.length === 0 || value.length === assignAt || colon;
+        if (c === "~" && prefix && homeEnds) tildes.push(value.length);
+        afterColon = c === ":" && assignAt >= 0 && value.length >= assignAt;
         value += c;
         at++;
       }
     }
-    return { start, end: Math.min(at, source.length), value, vars, tilde };
+    return { start, end: Math.min(at, source.length), value, vars, tildes };
   };
 
   const parseList = (context: Context): void => {
@@ -301,11 +338,15 @@ export const parseLine = (source: string): ParsedLine => {
         at += text.length;
         while (source[at] === " " || source[at] === "\t") at++;
         const target = at < source.length && !META.has(source[at]!) ? readWord(context) : null;
+        const redirect: { op: string; target: Word | null; body?: string } = {
+          op: `${fd}${op}`,
+          target,
+        };
         if (op === "<<" || op === "<<-") {
           if (target === null) flag("heredoc");
-          else heredocs.push({ delimiter: target.value, strip: op === "<<-" });
+          else heredocs.push({ delimiter: target.value, strip: op === "<<-", redirect });
         }
-        redirects.push({ op: `${fd}${op}`, target });
+        redirects.push(redirect);
         mark(from);
       } else if (c === "(") {
         if (words.length > 0 || assigns.length > 0) flag("function or array");

@@ -8,7 +8,10 @@ import {
   heavyItemsInProject,
   heavyWork,
   heavyWorkItems,
+  commandCostLabel,
+  jobCost,
   jobPriority,
+  orphanLine,
   machineSummaries,
   moveTarget,
   ordinal,
@@ -468,6 +471,10 @@ function QueueRow(props: {
   const routes = routeActions(entry, state);
   const priority = jobPriority(entry);
   const reason = state.reasons[entry.id];
+  const cost = jobCost(state, entry);
+  const order = running ? undefined : state.order?.[entry.id]?.text;
+  const orphan = running ? null : orphanLine(entry, state.reclaimMinutes, now);
+  const classLabel = cost === null ? "" : `${cost.label} · `;
   const phase = entry.phase === undefined ? null : RUNNER_PHASE_LABEL[entry.phase];
   const machine = onLinux
     ? `Linux${state.linux === null ? "" : ` (${state.linux.host})`}`
@@ -495,7 +502,9 @@ function QueueRow(props: {
       : [{ label: "Run folder", value: `~/runs/${entry.remote.id}`, mono: true }]),
     running
       ? { label: "Running", value: ran }
-      : { label: "Waiting", value: `${ordinal(position ?? 0)} in line · ${waited}` },
+      : { label: "Waiting", value: orphan ?? `${ordinal(position ?? 0)} in line · ${waited}` },
+    ...(cost === null ? [] : [{ label: "Class", value: `${cost.label} · ${cost.why}` }]),
+    ...(order === undefined ? [] : [{ label: "Order", value: order }]),
     {
       label: "Priority",
       value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, priority.label]
@@ -505,7 +514,9 @@ function QueueRow(props: {
     ...(onLinux && running
       ? []
       : [{ label: "Usage", value: usageLine(entry, state) ?? "Unknown" }]),
-    ...(reason === undefined ? [] : [{ label: "Why waiting", value: reason }]),
+    ...(reason === undefined
+      ? []
+      : [{ label: running ? "Why here" : "Why waiting", value: reason }]),
     ...(entry.note === undefined ? [] : [{ label: "Note", value: entry.note }]),
     ...(entry.unconfirmed === true
       ? [{ label: "Earlier run", value: RUNNER_UNCONFIRMED_NOTE }]
@@ -515,7 +526,7 @@ function QueueRow(props: {
   const can = (action: MoveAction) =>
     actions.canChange && moveTarget(line, entry.id, action) !== undefined;
   const menu: MenuAction[] = [
-    ...(entry.ask === undefined
+    ...(entry.ask === undefined && orphan === null
       ? routes.map((route) =>
           menuItem(
             `route:${route.runner}`,
@@ -525,7 +536,7 @@ function QueueRow(props: {
           ),
         )
       : []),
-    ...(running
+    ...(running || orphan !== null
       ? []
       : [
           menuItem("next", "Run next", "arrow.up.circle", !can("next")),
@@ -553,7 +564,11 @@ function QueueRow(props: {
       ? []
       : [
           {
-            ...menuItem("cancel", running ? "Stop" : "Remove", running ? "xmark" : "trash"),
+            ...menuItem(
+              "cancel",
+              running || orphan !== null ? "Stop" : "Remove",
+              running || orphan !== null ? "xmark" : "trash",
+            ),
             attributes: { disabled: !actions.canChange, destructive: true },
           },
         ]),
@@ -599,15 +614,31 @@ function QueueRow(props: {
         running
           ? onLinux && phase !== null && entry.phase !== "running"
             ? phase
-            : ran
-          : `${ordinal(position ?? 0)} · ${waited}`
+            : `${classLabel}${ran}`
+          : `${classLabel}${orphan === null ? `${ordinal(position ?? 0)} · ` : ""}${waited}`
       }
-      secondLine={running ? undefined : reason}
+      secondLine={running || orphan !== null ? undefined : reason}
       facts={facts}
       menu={<RowMenuButton label={`Actions for ${name}`} actions={menu} onAction={run} />}
     >
       {entry.ask === undefined ? null : (
         <RunnerAskRows entry={entry} ask={entry.ask} state={state} actions={actions} />
+      )}
+      {orphan === null ? null : (
+        <>
+          <ListRowLayout
+            icon="person.badge.clock"
+            label="Stopped agent's place"
+            description={orphan}
+          />
+          <SettingsActionRow
+            icon="stop.fill"
+            label="Stop"
+            tone="danger"
+            disabled={!actions.canChange}
+            onPress={() => actions.cancel(entry)}
+          />
+        </>
       )}
     </HeavyRow>
   );
@@ -671,7 +702,7 @@ function HeavyCommandRow(props: {
       project={
         inScope ? undefined : (project?.title ?? command.cwd?.split(/[\\/]/).findLast(Boolean))
       }
-      state={ran}
+      state={commandCostLabel(command) === null ? ran : `${commandCostLabel(command)} · ${ran}`}
       facts={facts}
       menu={
         menu.length === 0 ? null : (
@@ -811,13 +842,14 @@ function HeavyWorkList(props: {
 
 /** "Mac 1/3 · Linux 2/2": each machine's running jobs against its slots, as the rows count them. */
 function heavyWorkCounts(state: HeavyQueueState, work: ReturnType<typeof heavyWork>) {
-  const linuxSlots = machineSummaries(state).linux?.slots ?? null;
+  const summaries = machineSummaries(state);
+  const linuxSlots = summaries.linux?.slots ?? null;
   const showLinux =
     linuxSlots !== null || work.linux.running.length + work.linux.waiting.length > 0;
   const count = (name: string, running: number, slots: number | null) =>
     `${name} ${running}${slots === null ? "" : `/${slots}`}`;
   return [
-    count("Mac", work.mac.running.length, state.enabled ? state.maxRunning : null),
+    count("Mac", summaries.mac.running, state.enabled ? state.maxRunning : null),
     ...(showLinux ? [count("Linux", work.linux.running.length, linuxSlots)] : []),
   ].join(" · ");
 }

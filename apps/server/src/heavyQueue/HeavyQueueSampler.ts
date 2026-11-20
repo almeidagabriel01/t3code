@@ -4,7 +4,11 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
-import type { HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
+import {
+  HeavyQueueError,
+  type HeavyQueueEntry,
+  type ResourceTelemetryProcess,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -14,9 +18,17 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
-import { adoptedRoots, attributeDaemons, readClues, unseenJavaPeers } from "./daemons.ts";
+import {
+  adoptedRoots,
+  anyBuildDaemon,
+  attributeDaemons,
+  isBuildDaemon,
+  readClues,
+  unseenJavaPeers,
+} from "./daemons.ts";
 import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
+import { whenLockFree } from "./whenLockFree.ts";
 import { applySlowdown, isNoop, slowdownStep } from "./slowdown.ts";
 
 const SAMPLE_INTERVAL = "2 seconds";
@@ -39,13 +51,19 @@ export const peaksOf = (
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   footprints: Readonly<Record<string, number>> = {},
   daemons: Readonly<Record<string, ReadonlyArray<number>>> = {},
+  treeFootprints: Readonly<Record<string, number>> = {},
 ) => {
   const children = childrenByParent(processes);
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
   const peaks: Record<
     string,
     // Null when the monitor did not see the job's root: unknown, never idle.
-    { cpu: number | null; memoryBytes: number; daemons?: ReadonlyArray<number> }
+    {
+      cpu: number | null;
+      memoryBytes: number;
+      treeMemoryBytes?: number;
+      daemons?: ReadonlyArray<number>;
+    }
   > = {};
   for (const entry of entries) {
     // A Linux job's local tree is only `remoto`'s wrapper.
@@ -63,7 +81,16 @@ export const peaksOf = (
       memoryBytes:
         footprint ??
         helpers.reduce((sum, process) => sum + process.residentBytes, tree.memoryBytes),
-      ...(helpers.length === 0 ? {} : { daemons: helpers.map((process) => process.identity.pid) }),
+      ...(helpers.length === 0
+        ? {}
+        : {
+            daemons: helpers.map((process) => process.identity.pid),
+            ...(footprint === undefined
+              ? { treeMemoryBytes: tree.memoryBytes }
+              : treeFootprints[entry.id] === undefined
+                ? {}
+                : { treeMemoryBytes: treeFootprints[entry.id]! }),
+          }),
     };
   }
   return peaks;
@@ -87,8 +114,10 @@ export const deviceReserve = (
 
 const NO_FOOTPRINTS: {
   readonly jobs: Readonly<Record<string, number>>;
+  /** Each job's own tree alone, without the daemons `jobs` adds. */
+  readonly trees: Readonly<Record<string, number>>;
   readonly byPid: ReadonlyMap<number, number>;
-} = { jobs: {}, byPid: new Map() };
+} = { jobs: {}, trees: {}, byPid: new Map() };
 
 /**
  * macOS physical footprint of each running `t3 heavy` job's tree and its `daemons` (`jobs`, by
@@ -114,9 +143,8 @@ export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
       return NO_FOOTPRINTS;
     }
     const ps = jobs.length === 0 ? "" : yield* output("/bin/ps", ["-axo", "pid=,ppid="]);
-    const trees = jobs.map(
-      (entry) => [entry.id, [...treePids(ps, entry.pid), ...(daemons[entry.id] ?? [])]] as const,
-    );
+    const own = jobs.map((entry) => [entry.id, treePids(ps, entry.pid)] as const);
+    const trees = own.map(([id, pids]) => [id, [...pids, ...(daemons[id] ?? [])]] as const);
     const byPid = parseFootprint(
       yield* output("/usr/bin/footprint", [
         "-f",
@@ -125,10 +153,11 @@ export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
         ...new Set([...trees.flatMap(([, pids]) => pids), ...devicePids].map(String)),
       ]),
     );
-    const jobFootprints: Record<string, number> = Object.fromEntries(
-      trees.map(([id, pids]) => [id, pids.reduce((sum, pid) => sum + (byPid.get(pid) ?? 0), 0)]),
-    );
-    return { jobs: jobFootprints, byPid };
+    const sumOf = (pids: ReadonlyArray<number>) =>
+      pids.reduce((sum, pid) => sum + (byPid.get(pid) ?? 0), 0);
+    const total = (list: ReadonlyArray<readonly [string, ReadonlyArray<number>]>) =>
+      Object.fromEntries(list.map(([id, pids]) => [id, sumOf(pids)])) as Record<string, number>;
+    return { jobs: total(trees), trees: total(own), byPid };
   },
   Effect.orElseSucceed(() => NO_FOOTPRINTS),
 );
@@ -218,6 +247,8 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
       const host = yield* HostResources;
       const telemetry = yield* ResourceTelemetry;
       const platform = yield* HostProcess.Platform;
+      // A whole-table `ps` while jobs wait; daemons live for minutes, so one look per 30 s is enough.
+      const daemonsAnywhere = yield* Effect.cachedWithTTL(anyBuildDaemon(), "30 seconds");
       const tick = Effect.gen(function* () {
         const { entries, slowedDaemons } = QueueFile.readDoc(dir);
         // Daemons left lowered after their job ended are restored even with the queue empty.
@@ -246,31 +277,47 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           daemons,
         );
         const at = yield* Clock.currentTimeMillis;
-        const doc = QueueFile.recordSample(
-          dir,
-          {
-            at,
-            // The host reading's short-window utilisation tracks load now; the load average lags a minute.
-            busyCores:
-              reading.cpuUtilization === null
-                ? (NodeOS.loadavg()[0] ?? 0)
-                : reading.cpuUtilization * reading.cpuCount,
-            cpuCount: reading.cpuCount,
-            availableMemoryBytes: Math.max(
-              0,
-              reading.availableMemoryBytes - deviceReserve(devices, footprints.byPid),
+        const buildDaemonsAlive =
+          processes.some(isBuildDaemon) ||
+          (entries.some((entry) => entry.startedAt === null) && (yield* daemonsAnywhere));
+        // A lock held past the server's wait fails this reading only: the next tick writes again.
+        const written = yield* whenLockFree(
+          () =>
+            QueueFile.recordSample(
+              dir,
+              {
+                at,
+                // The host reading's short-window utilisation tracks load now; the load average lags a minute.
+                busyCores:
+                  reading.cpuUtilization === null
+                    ? (NodeOS.loadavg()[0] ?? 0)
+                    : reading.cpuUtilization * reading.cpuCount,
+                cpuCount: reading.cpuCount,
+                availableMemoryBytes: Math.max(
+                  0,
+                  reading.availableMemoryBytes - deviceReserve(devices, footprints.byPid),
+                ),
+                totalMemoryBytes: reading.totalMemoryBytes,
+                pressureLevel: reading.memoryPressureLevel ?? null,
+                swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
+                buildDaemonsAlive: buildDaemonsAlive,
+              },
+              running
+                ? peaksOf(entries, processes, footprints.jobs, daemons, footprints.trees)
+                : {},
             ),
-            totalMemoryBytes: reading.totalMemoryBytes,
-            pressureLevel: reading.memoryPressureLevel ?? null,
-            swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
-          },
-          running ? peaksOf(entries, processes, footprints.jobs, daemons) : {},
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
         );
-        if (platform !== "darwin") return;
+        // Only the primary writer slows jobs down, so two servers never fight over one job's QoS.
+        if (platform !== "darwin" || written === null || !written.primary) return;
+        const { doc } = written;
         const step = slowdownStep(doc, processes, at);
         if (isNoop(step, doc.slowedDaemons)) return;
         yield* applySlowdown(step);
-        QueueFile.recordSlowdown(dir, step);
+        yield* whenLockFree(
+          () => QueueFile.recordSlowdown(dir, step),
+          (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+        );
       }).pipe(Effect.ignore);
       yield* tick.pipe(
         Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),

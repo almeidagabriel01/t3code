@@ -1,4 +1,10 @@
 import type { ReactNode } from "react";
+import {
+  RUNNER_LINUX_FULL_DESCRIPTION,
+  RUNNER_LINUX_FULL_LABEL,
+  RUNNER_WHERE_DESCRIPTION,
+  type RunnerSettingKey,
+} from "@t3tools/client-runtime/state/runnerModel";
 import { RUNNER_DEFAULTS, type HeavyQueueState, type ServerSettings } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -6,7 +12,11 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import "../../index.css";
 
-type Settings = Pick<ServerSettings, keyof typeof RUNNER_DEFAULTS>;
+// The two retired keys stay so a test can load what an older client saved.
+type Settings = Pick<
+  ServerSettings,
+  RunnerSettingKey | "runnerLinuxEverything" | "runnerLinuxCommands"
+>;
 
 const mocks = vi.hoisted(() => ({
   scope: { kind: "environment", environmentIds: ["env"] } as {
@@ -102,7 +112,7 @@ const patches = () => mocks.update.mock.calls.map(([patch]) => patch);
 const ON = { runnerEnabled: true } as const;
 
 it("writes each Runner control to its own setting", async () => {
-  await using screen = await setup(ON);
+  await using screen = await setup({ ...ON, runnerWhere: "mac" });
   await userEvent.click(screen.getByRole("switch", { name: "Use the Runner" }));
   const where = screen.getByRole("group", { name: "Where heavy work runs" });
   await expect
@@ -133,7 +143,7 @@ it("writes each Runner control to its own setting", async () => {
   ]);
 });
 
-it("saves the Mac first, Everything, failure and bring-back choices", async () => {
+it("saves the Mac first, Linux full, failure and bring-back choices", async () => {
   await using screen = await setup({ ...ON, runnerWhere: "macFirst" });
   const where = screen.getByRole("group", { name: "Where heavy work runs" });
   await expect
@@ -156,12 +166,24 @@ it("saves the Mac first, Everything, failure and bring-back choices", async () =
   ]);
   await expect.element(screen.getByText("jobs", { exact: true }).first()).toBeVisible();
 
-  await using linux = await setup({ ...ON, runnerWhere: "linux", runnerLinuxEverything: true });
+  await using linux = await setup({ ...ON, runnerWhere: "linux" });
   expect(linux.container.textContent).not.toContain("Send to Linux after");
-  const everything = linux.getByRole("switch", { name: "Everything" });
-  await expect.element(everything).toBeChecked();
-  await userEvent.click(everything);
-  expect(patches()).toEqual([{ runnerLinuxEverything: false }]);
+  const full = linux.getByRole("group", { name: "When Linux is full" });
+  expect(
+    full
+      .getByRole("button")
+      .elements()
+      .map((button) => button.textContent),
+  ).toEqual(Object.values(RUNNER_LINUX_FULL_LABEL));
+  await expect
+    .element(full.getByRole("button", { name: RUNNER_LINUX_FULL_LABEL.wait }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect.element(linux.getByText(RUNNER_LINUX_FULL_DESCRIPTION.wait)).toBeVisible();
+  await userEvent.click(full.getByRole("button", { name: RUNNER_LINUX_FULL_LABEL.mac }));
+  expect(patches()).toEqual([{ runnerLinuxFull: "mac" }]);
+
+  await using balance = await setup({ ...ON, runnerWhere: "linux", runnerLinuxFull: "balance" });
+  await expect.element(balance.getByText(RUNNER_LINUX_FULL_DESCRIPTION.balance)).toBeVisible();
 });
 
 it("clamps numbers to their range and rejects a bad host inline", async () => {
@@ -182,19 +204,19 @@ it("clamps numbers to their range and rejects a bad host inline", async () => {
 });
 
 it("edits a command list as chips: remove, add on Enter, skip repeats, cap the length", async () => {
-  await using screen = await setup({ ...ON, runnerWhere: "linux" });
+  await using screen = await setup({ ...ON, runnerMacOnly: ["xcodebuild", "gradle"] });
   await userEvent.click(
-    screen.getByRole("button", { name: "Remove vitest from Can run on Linux" }),
+    screen.getByRole("button", { name: "Remove gradle from Always on this Mac" }),
   );
-  const add = screen.getByLabelText("Add a command to Can run on Linux");
-  await add.fill(" rspec ");
+  const add = screen.getByLabelText("Add a command to Always on this Mac");
+  await add.fill(" adb ");
   await userEvent.keyboard("{Enter}");
-  await add.fill("lint");
-  await userEvent.click(screen.getByRole("button", { name: "Add to Can run on Linux" }));
+  await add.fill("xcodebuild");
+  await userEvent.click(screen.getByRole("button", { name: "Add to Always on this Mac" }));
   await expect.element(add).toHaveValue("");
   expect(patches()).toEqual([
-    { runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands.filter((c) => c !== "vitest") },
-    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "rspec"] },
+    { runnerMacOnly: ["xcodebuild"] },
+    { runnerMacOnly: ["xcodebuild", "gradle", "adb"] },
   ]);
 
   await using full = await setup({
@@ -214,8 +236,13 @@ it("shows only the fields the current choices use", async () => {
   expect(off.container.textContent).not.toContain("Where heavy work runs");
   expect(off.container.textContent).not.toContain("Linux host");
 
-  await using mac = await setup({ ...ON, runnerUnavailable: "mac", runnerDropped: "wait" });
-  for (const hidden of ["Can run on Linux", "Wait for an answer", "If nobody answers"]) {
+  await using mac = await setup({
+    ...ON,
+    runnerWhere: "mac",
+    runnerUnavailable: "mac",
+    runnerDropped: "wait",
+  });
+  for (const hidden of ["Wait for an answer", "If nobody answers"]) {
     expect(mac.container.textContent).not.toContain(hidden);
   }
   await expect.element(mac.getByText("Always on this Mac")).toBeVisible();
@@ -223,44 +250,48 @@ it("shows only the fields the current choices use", async () => {
   for (const where of ["mac", "automatic"] as const) {
     await using other = await setup({ ...ON, runnerWhere: where });
     expect(other.container.textContent).not.toContain("Send to Linux after");
-    expect(other.container.querySelector('[aria-label="Everything"]')).toBeNull();
+    expect(other.container.textContent).not.toContain("When Linux is full");
   }
 
   await using hybrid = await setup({ ...ON, runnerWhere: "automatic", runnerDropped: "ask" });
-  await expect.element(hybrid.getByText("Can run on Linux")).toBeVisible();
   await expect.element(hybrid.getByText("Wait for an answer")).toBeVisible();
 
-  // Everything sends every command, so the list goes and the Where line says it once.
-  const EVERYTHING = "Every heavy command goes to Linux, except what has to stay on this Mac.";
-  await using everything = await setup({
+  // The server ignores the retired Everything switch and Linux list, so values an older client
+  // saved show no row: Linux mode sends all it can, and Always on this Mac keeps the rest.
+  await using linux = await setup({
     ...ON,
     runnerWhere: "linux",
     runnerLinuxEverything: true,
+    runnerLinuxCommands: ["vitest"],
   });
-  await expect.element(everything.getByText(EVERYTHING)).toBeVisible();
-  expect(everything.container.textContent!.split(EVERYTHING)).toHaveLength(2);
-  expect(everything.container.textContent).not.toContain("Can run on Linux");
-  expect(everything.container.textContent).not.toContain("Listed commands always run on Linux");
-  await using listed = await setup({ ...ON, runnerWhere: "linux", runnerLinuxEverything: false });
-  await expect.element(listed.getByText("Can run on Linux")).toBeVisible();
-  await expect
-    .element(
-      listed.getByText("Listed commands always run on Linux. Everything else stays on this Mac."),
-    )
-    .toBeVisible();
-  await expect.element(listed.getByText(EVERYTHING)).toBeVisible();
+  await expect.element(linux.getByText(RUNNER_WHERE_DESCRIPTION.linux)).toBeVisible();
+  await expect.element(linux.getByText("Always on this Mac")).toBeVisible();
+  expect(linux.container.querySelector('[aria-label="Everything"]')).toBeNull();
+  expect(linux.container.querySelector('[aria-label="Can run on Linux"]')).toBeNull();
+  expect(
+    linux.container.querySelector('[aria-label="Add a command to Can run on Linux"]'),
+  ).toBeNull();
 });
 
 it("shows a hidden field a search lands on, with why it does nothing now", async () => {
-  await using screen = await setup({ runnerEnabled: false }, { target: "runner-linux-commands" });
-  await expect.element(screen.getByText("Can run on Linux")).toBeVisible();
+  await using screen = await setup({ runnerEnabled: false }, { target: "runner-mac-only" });
+  await expect.element(screen.getByText("Always on this Mac")).toBeVisible();
   await expect
     .element(screen.getByText("Only applies while the Runner is on.").first())
     .toBeVisible();
   expect(screen.container.textContent).not.toContain("Linux host");
 
-  await using everything = await setup(ON, { target: "runner-linux-everything" });
-  await expect.element(everything.getByRole("switch", { name: "Everything" })).toBeVisible();
+  await using full = await setup(ON, { target: "runner-linux-full" });
+  await expect.element(full.getByRole("group", { name: "When Linux is full" })).toBeVisible();
+  await expect.element(full.getByText("Only applies when Where jobs run is Linux.")).toBeVisible();
+  // Off, the Runner's own reason wins, and the group still opens for the row.
+  await using fullOff = await setup({ runnerEnabled: false }, { target: "runner-linux-full" });
+  await expect.element(fullOff.getByRole("group", { name: "When Linux is full" })).toBeVisible();
+  const offRow = fullOff
+    .getByRole("heading", { name: "When Linux is full" })
+    .element().parentElement!;
+  expect(offRow.textContent).toContain("Only applies while the Runner is on.");
+  expect(offRow.textContent).not.toContain("Where jobs run is Linux");
 
   await using folded = await setup(ON, { target: "runner-ssh-timeout" });
   await expect.element(folded.getByLabelText("SSH timeout")).toBeVisible();
@@ -285,10 +316,20 @@ it("says how Linux is doing in the header and on the host row", async () => {
 });
 
 it("resets to the built-in value, but leaves machine rows alone in a project", async () => {
-  await using env = await setup({ ...ON, runnerWhere: "linux", runnerLinuxSlots: 4 });
+  await using env = await setup({
+    ...ON,
+    runnerWhere: "linux",
+    runnerLinuxFull: "balance",
+    runnerLinuxSlots: 4,
+  });
   await userEvent.click(env.getByRole("button", { name: "Reset Where heavy work runs" }));
+  await userEvent.click(env.getByRole("button", { name: "Reset When Linux is full" }));
   await userEvent.click(env.getByRole("button", { name: "Reset Jobs at once on Linux" }));
-  expect(patches()).toEqual([{ runnerWhere: "mac" }, { runnerLinuxSlots: 2 }]);
+  expect(patches()).toEqual([
+    { runnerWhere: "automatic" },
+    { runnerLinuxFull: "wait" },
+    { runnerLinuxSlots: 2 },
+  ]);
 
   await using project = await setup(
     { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },

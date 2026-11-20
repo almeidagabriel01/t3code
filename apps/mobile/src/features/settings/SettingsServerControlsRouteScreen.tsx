@@ -9,8 +9,8 @@ import {
   type ServerSettings,
   type ServerSettingsPatch,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
-  type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
+  type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
@@ -621,7 +621,6 @@ function ServerSettingsDetail(props: {
                           runner={{
                             enabled: target.settings.runnerEnabled,
                             where: target.settings.runnerWhere,
-                            everything: target.settings.runnerLinuxEverything,
                           }}
                           slowAgentJobs={{
                             value: target.settings.heavySlowAgentJobs,

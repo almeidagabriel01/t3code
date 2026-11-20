@@ -364,8 +364,14 @@ describe("HeavyWorkSection", () => {
       ],
       {
         rules: [{ root: "/work/app", priority: "first" }],
-        reasons: { b: "letting the last one ramp up" },
+        // A running job's reason says why it runs here, a waiter's why it waits.
+        reasons: { a: "Pinned to this Mac: --runner mac", b: "letting the last one ramp up" },
         estimates: { c: { cpu: 2, memoryBytes: GIB, durationMs: 60_000 } },
+        // A running row has no place in line, so its stale order never shows.
+        order: {
+          a: { code: "light", text: "light: ahead" },
+          b: { code: "pinned", text: "kept where it was moved" },
+        },
       },
     );
     const view = await mount();
@@ -388,11 +394,12 @@ describe("HeavyWorkSection", () => {
         "Running1m",
         "PriorityProject: Always first · Low priority",
         "UsageUnknown",
+        "Why herePinned to this Mac: --runner mac",
         "Processpid 1",
       ].join(""),
     );
     expect(await expand(view.host, "cmd b")).toContain(
-      "Waiting1st in line · 1mPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
+      "Waiting1st in line · 1mOrderkept where it was movedPriorityProject: Always firstUsageUnknownWhy waitingletting the last one ramp upNoteMoved by the user",
     );
     expect(await expand(view.host, "cmd c")).toContain(
       "Waits forThis MacRun folder~/runs/r9Waiting2nd in line · 1m",
@@ -758,6 +765,40 @@ describe("HeavyWorkSection", () => {
     });
     await view.unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("labels rows with their class and keeps a stopped agent's place with Stop", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) + 3 * 60_000 });
+    setup(
+      [entry("r", { startedAt: NOW }), entry("w"), entry("o", { orphanedAt: Date.parse(NOW) })],
+      {
+        reasons: { w: "all 3 slots busy" },
+        costs: {
+          r: { class: "quick", why: "usually 4 s" },
+          w: { class: "standard", why: "first run" },
+          o: { class: "service", why: "dev server" },
+        },
+      },
+    );
+    const view = await mount();
+    const text = view.host.textContent ?? "";
+    expect(text).toMatch(/Quick · .*Job · 1st · .*all 3 slots busy.*Keeps running · /s);
+    expect(text).toContain("Waiting for the agent to ask again · 7 min left");
+    // Only the waiter in line can start now; the orphan holds no place.
+    expect(view.host.textContent?.match(/Start now/g)).toHaveLength(1);
+    // Stops in order: the running row's menu, the orphan's menu, then the orphan's own Stop row.
+    const stops = [...view.host.querySelectorAll("button")].filter((b) => b.textContent === "Stop");
+    expect(stops).toHaveLength(3);
+    for (const [press, stop] of [1, 2].entries()) {
+      await act(async () => view.button("Stop", stop).click());
+      alertButtons(press).find((b) => b.text === "Remove")!.onPress!();
+    }
+    expect(mocks.commands.cancel).toHaveBeenCalledTimes(2);
+    expect(mocks.commands.cancel).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "o" },
+    });
+    await view.unmount();
   });
 
   // Built from askAnswers, as on the web: only where it may run, never a rerun before Linux confirms.
@@ -1237,13 +1278,15 @@ describe("ResourceManagerRouteScreen", () => {
     const view = await screen();
     const vps = view.host.querySelector<HTMLElement>('[aria-label^="VPS"]')!;
     expect(vps.getAttribute("aria-label")).toBe(
-      "VPS, online, CPU 40%, 2.0 GB free, 1 of 2 running",
+      "VPS, VPS · online for 1h 0m, CPU 40%, 2.0 GB free, 1 of 2 running",
     );
     expect(vps.textContent).toContain("2 running");
     await act(async () => vps.click());
     expect(vps.textContent).toContain("VPS · online for 1h 0m");
     const box = view.host.querySelector<HTMLElement>('[aria-label^="Box"]')!;
-    expect(box.getAttribute("aria-label")).toBe("Box, offline");
+    expect(box.getAttribute("aria-label")).toBe(
+      "Box, Box · offline · Not answering right now. · CPU 40% · 2.0 GB free of 8.0 GB · 5m ago",
+    );
     expect(box.textContent).toContain("Offline · 5m ago");
     expect(box.textContent).not.toContain("40%");
     await act(async () => box.click());
@@ -1257,20 +1300,49 @@ describe("ResourceManagerRouteScreen", () => {
     mocks.environments = [
       { environmentId: "env", label: "Studio", connection: { phase: "connected" } },
     ];
-    setup([entry("a", { startedAt: NOW, runner: "linux" })], { linux: { ...LINUX, running: 0 } });
+    setup([entry("a", { startedAt: NOW, runner: "linux" })], {
+      linux: { ...LINUX, running: 0, cpuPercent: 20 },
+    });
     const view = await screen();
     expect(view.host.querySelector('[aria-label^="Linux"]')!.getAttribute("aria-label")).toBe(
-      "Linux, online, CPU 20%, 8.0 GB free, 1 of 2 running",
+      "Linux, remoto · online, CPU 20%, 8.0 GB free, 1 of 2 running",
     );
     await view.unmount();
 
     setup([], { linux: { ...LINUX, online: false, error: "ssh timed out" } });
     const offline = await screen();
     const linux = offline.host.querySelector<HTMLElement>('[aria-label^="Linux"]')!;
-    expect(linux.getAttribute("aria-label")).toBe("Linux, offline, 0 of 2 running");
+    expect(linux.getAttribute("aria-label")).toBe(
+      "Linux, remoto · offline · ssh timed out, 0 of 2 running",
+    );
     expect(linux.textContent).toContain("Offline");
     await act(async () => linux.click());
-    expect(linux.textContent).toContain("Linux offline: ssh timed out");
+    expect(linux.textContent).toContain("remoto · offline · ssh timed out");
     await offline.unmount();
+
+    setup([], {
+      linux: {
+        ...LINUX,
+        cpuPercent: 20,
+        status: "over-limit",
+        overLimits: [
+          { limit: "memory", value: 8 * 1024 ** 3, threshold: 10 },
+          { limit: "swap", value: 0.2 * 1024 ** 3, threshold: 10, total: 4 * 1024 ** 3 },
+        ],
+      },
+    });
+    const over = await screen();
+    const busy = over.host.querySelector<HTMLElement>('[aria-label^="Linux"]')!;
+    expect(busy.getAttribute("aria-label")).toBe(
+      "Linux, remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free, CPU 20%, 8.0 GB free, 0 of 2 running, warning",
+    );
+    expect(
+      [...busy.querySelectorAll(".text-warning-foreground")].map((el) => el.textContent),
+    ).toEqual(["8.0 GB free"]);
+    await act(async () => busy.click());
+    expect(busy.textContent).toContain(
+      "remoto · over limits · keeping 10% of memory free; swap nearly full: 205 MB of 4.0 GB free",
+    );
+    await over.unmount();
   });
 });

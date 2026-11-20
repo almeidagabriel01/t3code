@@ -315,6 +315,62 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  // A live owner's lock: never stale, so only its release lets anyone in.
+  const holdLock = (dir: string) => {
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    return () => NodeFS.rmSync(lock, { recursive: true });
+  };
+
+  it.effect("withSlot waits out a busy lock past the server's bound, then queues and runs", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const release = holdLock(dir);
+        const ran = yield* Deferred.make<string>();
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot("Open iPhone", null, Deferred.succeed(ran, "ran")),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["tests"]);
+        release();
+        Queue.remove(dir, holder.id);
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(fiber);
+        expect(yield* Deferred.await(ran)).toBe("ran");
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("withSlot retries leaving the queue while the lock is busy", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        Queue.remove(dir, holder.id);
+        let release = () => {};
+        const fiber = yield* Effect.forkChild(
+          queue.withSlot(
+            "a",
+            null,
+            Effect.sync(() => {
+              release = holdLock(dir);
+            }),
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        expect(Queue.read(dir).map((e) => e.label)).toEqual(["a"]);
+        release();
+        yield* TestClock.adjust("50 millis");
+        yield* Fiber.join(fiber);
+        expect(Queue.read(dir)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("promote and cancel fail for the running entry and for unknown ids", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -364,7 +420,20 @@ describe("HeavyQueue", () => {
         // As a version that sampled the wrapper left it in the file.
         const file = NodePath.join(dir, "queue.json");
         const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
-        doc.entries[0] = { ...doc.entries[0], cpu: 0.1, memory: 9, peakCpu: 0.2, peakMemory: 9 };
+        doc.entries[0] = {
+          ...doc.entries[0],
+          cpu: 0.1,
+          memory: 9,
+          peakCpu: 0.2,
+          peakMemory: 9,
+          scripts: { "a.ts": "source" },
+        };
+        // A minute-long run: a standard job, which waits for its worktree on Linux, not a quick one.
+        doc.history = Object.fromEntries(
+          Object.entries(doc.history as Record<string, ReadonlyArray<object>>).map(
+            ([key, runs]) => [key, runs.map((run) => ({ ...run, durationMs: 60_000 }))],
+          ),
+        );
         NodeFS.writeFileSync(file, JSON.stringify(doc));
         Queue.enqueue(dir, job("macWaiter", "/"));
         Queue.enqueue(dir, job("linuxWaiter"));
@@ -372,7 +441,8 @@ describe("HeavyQueue", () => {
         expect(state.routes).toMatchObject({ macWaiter: "mac", linuxWaiter: "linux" });
         expect(Object.keys(state.estimates ?? {})).toEqual(["macWaiter"]);
         const running = state.entries.find((entry) => entry.id === "linuxRun");
-        for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+        // The texts of the files it runs stay in the queue file, off every client and agent.
+        for (const key of ["cpu", "memory", "peakCpu", "peakMemory", "scripts"]) {
           expect(running).not.toHaveProperty(key);
         }
         // Move all to this Mac takes the Linux waiter and leaves the running job.
@@ -443,11 +513,12 @@ describe("HeavyQueue", () => {
           Queue.enqueue(dir, {
             ...holder,
             id,
-            label: "vp test run src/a.test.ts",
+            label: "vp run typecheck",
             createdAt: ago(1000),
           });
         }
         // Headroom has held for eight seconds of unbroken readings: 28% of 16 GB free, CPU quiet.
+        // That leaves 1.3 GB above the floor: two never-seen typechecks (0.5 GB each) fit.
         Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
         const started = () => Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
         const step = (at: number, sample: Partial<typeof MAC_28> = {}) => {
@@ -457,13 +528,14 @@ describe("HeavyQueue", () => {
           for (const id of ["a", "b", "c", "d"]) Queue.tryStart(dir, id, at);
         };
         step(LATER);
-        expect(started()).toEqual(["a"]);
-        // One start per settle window, each judged on a fresh reading.
+        expect(started()).toEqual(["a", "b"]);
+        // Once those starts show in the reading, the room is back for the third.
         step(LATER + 16_000);
-        step(LATER + 32_000);
         expect(started()).toEqual(["a", "b", "c"]);
-        yield* TestClock.setTime(LATER + 32_000);
+        yield* TestClock.setTime(LATER + 16_000);
         expect((yield* queue.state).reasons).toEqual({ d: "all 3 slots busy" });
+        // Each row's class, as admission sees it: a typecheck never run here is a standard job.
+        expect((yield* queue.state).costs?.d).toEqual({ class: "standard", why: "first run" });
 
         Queue.remove(dir, "b");
         Queue.remove(dir, "c");
@@ -512,25 +584,27 @@ describe("HeavyQueue", () => {
           const started = () =>
             Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
           for (const id of ["big", "small", "small2"]) Queue.tryStart(dir, id, LATER);
-          expect(started()).toEqual(["holder", "small"]);
-          // Once the start settles, the head says what it needs.
+          expect(started()).toEqual(["holder", "small", "small2"]);
+          // Once the starts settle and a slot frees, the head says what it needs.
+          Queue.remove(dir, "small2");
           Queue.recordSample(dir, { ...MAC_28, at: LATER + 8_000 }, {});
           Queue.recordSample(dir, { ...MAC_28, at: LATER + 16_000 }, {});
           yield* TestClock.setTime(LATER + 16_000);
           expect((yield* queue.state).reasons["big"]).toBe(
-            "needs ~1.5 GB; 4.5 GB free, 3.2 GB kept spare",
+            "memory floor: 1.3 GB room, needs 1.5 GB",
           );
 
           // Past its patience the head lets nothing by, and starts once the Mac frees up.
           const patient = LATER + 5 * 60_000;
           yield* TestClock.setTime(patient);
           Queue.remove(dir, "small");
+          Queue.enqueue(dir, job("late", "vp run typecheck"));
           Queue.recordSample(dir, { ...MAC_28, at: patient - 8_000 }, {});
           Queue.recordSample(dir, { ...MAC_28, at: patient }, {});
-          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          for (const id of ["big", "late"]) Queue.tryStart(dir, id, patient);
           expect(started()).toEqual(["holder"]);
           Queue.remove(dir, holder.id);
-          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          for (const id of ["big", "late"]) Queue.tryStart(dir, id, patient);
           expect(started()).toEqual(["big"]);
         }),
       ),
@@ -696,13 +770,110 @@ describe("Linux as clients see it", () => {
       availableMemoryBytes: null,
       totalMemoryBytes: null,
       error: "refused",
+      status: "offline",
     });
     Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("1.234 1 1 1/1 1\n6\n") });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
       online: true,
       load1: 1.2,
       cpuCount: 6,
+      status: "online",
     });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
+  });
+
+  it("lists work outside the queue while Linux answers, never a running job's own copy", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const container = {
+      cgroup: "/system.slice/docker-1.scope",
+      pid: 9,
+      cpu: 5.8,
+      memoryBytes: 8 * 1024 ** 3,
+      command: "yes",
+      container: { id: "0123456789ab", name: "erp-ci", image: "alpine" },
+      threadId: "teste",
+    };
+    // Still syncing: its copy has no session yet, so the heartbeat cannot tell it is the queue's.
+    const syncing = { ...container, cgroup: "/s.scope", runId: "app-0123abcd" };
+    // An ssh job's session, tagged by the job id its ssh sent: the job's, with its memory.
+    const session = { cgroup: "/u/session-12.scope", pid: 7, cpu: 2, memoryBytes: 3 * 1024 ** 3 };
+    Queue.enqueue(dir, {
+      ...holder,
+      id: "ssh-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      phase: "running",
+      ssh: true,
+    });
+    Queue.enqueue(dir, {
+      ...holder,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      runner: "linux",
+      remote: { id: "app-0123abcd" },
+    });
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const tagged = { ...session, command: "", jobId: "ssh-1" };
+    const reading = {
+      ...parseHeartbeat("1 1 1 1/1 1\n6\n"),
+      outside: [container, syncing, tagged],
+    };
+    Queue.recordHealth(dir, { ok: true, reading }, at);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))?.outside).toEqual([container]);
+    expect(Queue.read(dir).find((entry) => entry.id === "ssh-1")).toMatchObject({
+      memory: 3 * 1024 ** 3,
+      peakMemory: 3 * 1024 ** 3,
+    });
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("outside");
+  });
+
+  it("words free memory as its gauge does: 819 MB, never 0.8 GB", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    const short = ["0.40 0.30 0.20 1/900 4321", "6", "MemTotal:       12582912 kB"];
+    const reading = parseHeartbeat([...short, "MemAvailable:     838656 kB"].join("\n"));
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      availableMemoryBytes: 819 * 1024 ** 2,
+      overLimitBy: "819 MB free, keeping 20%",
+    });
+  });
+
+  it("names the limit Linux is over, and tells not answering from offline", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    Queue.publishRunner(dir, block(true));
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    // Load 206 over an idle CPU, memory stalled 57%: held for memory, never for the load.
+    const thrashing = [
+      "206.00 180.00 120.00 9/900 4321",
+      "6",
+      "MemTotal:       12582912 kB",
+      "MemAvailable:    5242880 kB",
+      "psi memory full avg10=57.00 avg60=55.00 avg300=57.00 total=3",
+    ].join("\n");
+    for (const beat of [0, 20_000, 40_000]) {
+      Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat(thrashing) }, at + beat);
+    }
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      status: "over-limit",
+      overLimitBy: "memory stalled 57% of the time (limit 10%)",
+      overLimits: [{ limit: "memory-pressure", value: 57, threshold: 10 }],
+    });
+    const timedOut = { ok: false as const, error: "Connection timed out during banner exchange" };
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 60_000);
+    Queue.recordHealth(dir, { ...timedOut, unresponsive: true }, at + 120_000);
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      online: false,
+      status: "unresponsive",
+      error: "Connection timed out during banner exchange",
+    });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimitBy");
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("overLimits");
   });
 });

@@ -1609,6 +1609,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue head of line patience wait backfill pass skip minutes"],
   },
   {
+    id: "heavy-work-quick-seconds",
+    title: HEAVY_LIMIT_COPY.quickSeconds.title,
+    description: HEAVY_LIMIT_COPY.quickSeconds.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue quick job short fast lane seconds length"],
+  },
+  {
+    id: "heavy-work-quick-slots",
+    title: HEAVY_LIMIT_COPY.quickSlots.title,
+    description: HEAVY_LIMIT_COPY.quickSlots.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue quick jobs at once slots lane parallel"],
+  },
+  {
+    id: "heavy-work-service-idle",
+    title: HEAVY_LIMIT_COPY.serviceIdleMinutes.title,
+    description: HEAVY_LIMIT_COPY.serviceIdleMinutes.description,
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue keeps running dev server watcher service idle background minutes",
+    ],
+  },
+  {
+    id: "heavy-work-reclaim",
+    title: HEAVY_LIMIT_COPY.reclaimMinutes.title,
+    description: HEAVY_LIMIT_COPY.reclaimMinutes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue stopped agent orphan keep place reclaim minutes"],
+  },
+  {
     id: "heavy-work-claude-hook",
     title: "Claude Code hook for the heavy work queue",
     description:
@@ -1657,11 +1687,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["runner mac first jobs running waiting threshold overflow linux"],
   },
   {
-    id: "runner-linux-everything",
-    title: RUNNER_SETTING_COPY.runnerLinuxEverything.title,
-    description: RUNNER_SETTING_COPY.runnerLinuxEverything.description,
+    id: "runner-linux-full",
+    title: RUNNER_SETTING_COPY.runnerLinuxFull.title,
+    description: RUNNER_SETTING_COPY.runnerLinuxFull.description,
     to: "/settings/maintenance",
-    searchTerms: ["runner linux all every heavy command except stay on mac"],
+    searchTerms: ["runner linux full busy slots taken limits wait use this mac balance load"],
   },
   {
     id: "runner-bring-back",
@@ -1671,18 +1701,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["runner linux copy files created changed back results output sync"],
   },
   {
-    id: "runner-linux-commands",
-    title: RUNNER_SETTING_COPY.runnerLinuxCommands.title,
-    description: RUNNER_SETTING_COPY.runnerLinuxCommands.description,
-    to: "/settings/maintenance",
-    searchTerms: ["runner linux patterns tests lint typecheck allow list"],
-  },
-  {
     id: "runner-mac-only",
     title: RUNNER_SETTING_COPY.runnerMacOnly.title,
     description: RUNNER_SETTING_COPY.runnerMacOnly.description,
     to: "/settings/maintenance",
-    searchTerms: ["runner mac only patterns simulator xcodebuild gradle"],
+    searchTerms: [
+      "runner mac only patterns simulator xcodebuild gradle keep here what goes to linux commands list",
+    ],
   },
   {
     id: "runner-unavailable",

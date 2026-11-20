@@ -2,9 +2,22 @@
  * Who may start now. Pure: the queue file feeds it the document, a clock reading and the latest
  * machine sample, so every waiter (CLI or server) reaches the same answer under the file lock.
  */
-import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
+import {
+  fillsStandardSlot,
+  formatBytes,
+  HEAVY_QUEUE_DEFAULTS,
+  heavyHoldText,
+  heavyOrderText,
+  type HeavyQueueCost,
+  type HeavyQueueEntry,
+  type HeavyQueueHold,
+  type HeavyQueueOrder,
+  type HeavyQueueOrderCode,
+} from "@t3tools/contracts";
 
-import { heavyRoute, heavySegment } from "./heavyHook.ts";
+import { kindOf, runTarget } from "./commandShapes.ts";
+import { costOf, filesOf, workPartsOf, type Cost as JobCost } from "./costClass.ts";
+import { heavyRoute, localGitOnly } from "./heavyHook.ts";
 
 export interface Sample {
   readonly at: number;
@@ -18,6 +31,8 @@ export interface Sample {
   /** macOS memory pressure level (2 warning, 4 critical); absent from older readers. */
   readonly pressureLevel?: number | null;
   readonly swapInBytesPerSecond?: number | null;
+  /** A Gradle or Kotlin daemon is up: its memory is in this reading, not in a new job's cost. */
+  readonly buildDaemonsAlive?: boolean;
   /** Routing's view of the limits; absent from older files, which read as room. */
   readonly overLimit?: boolean;
   readonly overLimitSince?: number | null;
@@ -43,9 +58,12 @@ export interface Sustained {
   readonly underLimitSince: number | null;
 }
 
-/** Folds one reading in; `previous` null after a gap in readings, which starts from "has room". */
+/**
+ * Folds one reading in; `previous` null after a gap in readings, which starts from "has room". An
+ * older build's sample has only `headroomSince`: the run of readings under the limit goes on from it.
+ */
 export const sustain = (
-  previous: Partial<Sustained> | null,
+  previous: (Partial<Sustained> & { readonly headroomSince?: number | null }) | null,
   over: boolean,
   at: number,
   windowMs: number,
@@ -59,14 +77,17 @@ export const sustain = (
       underLimitSince: null,
     };
   }
-  const since = previous?.underLimitSince ?? at;
+  const since = previous?.underLimitSince ?? previous?.headroomSince ?? at;
   return { overLimit: was && at - since < windowMs, overLimitSince: null, underLimitSince: since };
 };
 
 export interface Run {
   /** Absent when no sample read the job's processes. */
   readonly cpu?: number;
-  readonly memoryBytes: number;
+  /** Absent when the run ended before any sample read it. */
+  readonly memoryBytes?: number;
+  /** Its own tree alone, when build daemons outside it were counted in `memoryBytes`. */
+  readonly treeMemoryBytes?: number;
   readonly durationMs: number;
 }
 
@@ -95,8 +116,10 @@ export const workersFor = (cpuCount: number, busyCores: number | null): number =
   Math.max(2, Math.min(cpuCount - 1, Math.floor(cpuCount - (busyCores ?? 0))));
 
 export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
-/** Linux runs by command: only their time, since their usage is measured on the PC, not here. */
-export type LinuxHistory = Readonly<Record<string, ReadonlyArray<{ readonly durationMs: number }>>>;
+/** Linux runs by command: their time, and their session's peak memory once a heartbeat read it. */
+export type LinuxHistory = Readonly<
+  Record<string, ReadonlyArray<{ readonly durationMs: number; readonly memoryBytes?: number }>>
+>;
 
 const median = (values: ReadonlyArray<number>) =>
   values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)] ?? null;
@@ -122,7 +145,6 @@ const MEMORY_REOPEN_POINTS = 5;
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
 const MIB = 1024 ** 2;
-const GIB = 1024 ** 3;
 
 /** How admission sizes jobs, kept in the queue file beside the Mac's limits. */
 export interface SizingLimits {
@@ -134,56 +156,58 @@ export interface SizingLimits {
   /** A head waiting this long stops anything from passing it. */
   readonly headPatienceMinutes: number;
 }
-type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes">;
-
-type Kind = "exclusive" | "heavy" | "medium";
-
-const EXCLUSIVE = /simulator|emulator|simctl|\bavd\b|expo run|dev:desktop|dev app/i;
-const HEAVY = /\b(build|bundle|e2e|playwright|browser|docker|cargo|gradle|xcodebuild|compile)\b/i;
-const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i;
-const FILE_ARG = /\S+\.(test|spec)\.\w+|\S+\.(ts|tsx|js|jsx|mjs)\b/;
-
-/** Server-held entries are device opens; unknown commands count as heavy. */
-/** Judged from the full command line: the label is cut short for the row. */
-export const kindOf = (
-  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
-): Kind => {
-  const line = entry.line ?? entry.label;
-  if (entry.server === true || EXCLUSIVE.test(line)) return "exclusive";
-  if (HEAVY.test(line)) return "heavy";
-  if (MEDIUM.test(line) || (/\btest\b/.test(line) && FILE_ARG.test(line))) {
-    return "medium";
-  }
-  return "heavy";
+type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes"> & {
+  readonly quickSeconds?: number;
 };
+/** What a command that always ended before a sample read it is taken to need. */
+const UNSAMPLED_QUICK_MEGABYTES = 64;
 
-const REDIRECT = /^\d*[<>]/;
 const TEST_RUN = /^(test|vitest|jest|playwright|pytest)$/;
+const COMMAND_WORD = /^[a-z@][\w:.@+-]*$/i;
+
+/** One work part's key: its program (past `exec`/`dlx`), subcommand words and file scope. */
+const partSignature = (part: ReturnType<typeof workPartsOf>[number]) => {
+  const { program, words } = runTarget(part.program, part.words);
+  const command: string[] = [program];
+  for (const word of words) {
+    if (command.length > (program === "git" ? 1 : 3) || !COMMAND_WORD.test(word)) break;
+    if (/\.\w{1,5}$/.test(word)) break;
+    command.push(word);
+  }
+  const files = filesOf(part);
+  const path = command.some((word) => TEST_RUN.test(word))
+    ? files?.find((file) => file !== "")
+    : undefined;
+  // A test run keeps its target's last two segments, so one file never shares the suite's runs.
+  const scope =
+    path !== undefined
+      ? path.split(/[\\/]/).filter(Boolean).slice(-2).join("/")
+      : files === null
+        ? null
+        : "files";
+  return [...command, ...(scope === null ? [] : [scope])].join(" ");
+};
 
 /**
- * The command's first words, plus the file or folder a test run names (its last two segments, so
- * any worktree and `cd` share it): one test file never shares the suite's runs. Flags and
- * redirections never count, and other paths (a commit's files) would only split one command.
+ * A command's history key, from its parsed work: program, `exec` target, subcommand words and a
+ * `files` scope. Redirections, variables, quoted arguments and commit messages never count, so
+ * any worktree, `cd` or message shares one key.
  */
-export const signatureOf = (label: string): string => {
-  const all = (heavySegment(label) ?? label).split(/\s+/).filter((word) => word !== "");
-  const words = all.filter(
-    (word, at) =>
-      !word.startsWith("-") && !REDIRECT.test(word) && !/^\d*[<>]+&?$/.test(all[at - 1] ?? ""),
-  );
-  const isPath = (word: string) => /[\\/]|\.\w{1,5}$/.test(word);
-  const command = words.filter((word) => !isPath(word)).slice(0, 4);
-  const path = command.some((word) => TEST_RUN.test(word)) ? words.find(isPath) : undefined;
-  const target = path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/");
-  return [...command, ...(target === undefined ? [] : [target])].join(" ").toLowerCase();
+export const signatureOf = (line: string): string => {
+  const parts = workPartsOf(line);
+  const key =
+    parts.length > 0
+      ? parts.map(partSignature).join(" && ")
+      : line.trim().split(/\s+/).slice(0, 4).join(" ");
+  return key.toLowerCase();
 };
 
-/** A command's recorded runs. Own keys only: a label such as `constructor` names no runs. */
+/** A command's recorded runs, keyed by its whole line. Own keys only: `constructor` names none. */
 export const runsOf = <A>(
   book: Readonly<Record<string, ReadonlyArray<A>>>,
-  entry: Pick<HeavyQueueEntry, "label">,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
 ): ReadonlyArray<A> => {
-  const signature = signatureOf(entry.label);
+  const signature = signatureOf(entry.line ?? entry.label);
   return Object.hasOwn(book, signature) ? book[signature]! : [];
 };
 
@@ -198,7 +222,10 @@ interface Cost {
  * The most CPU a command's finished runs used; undefined when none was read. Older files hold 0
  * for runs whose processes the monitor never saw, so only a positive reading counts.
  */
-export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label">) => {
+export const learnedCpu = (
+  history: History,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
+) => {
   const cpus = runsOf(history, entry).flatMap((run) =>
     typeof run.cpu === "number" && run.cpu > 0 ? [run.cpu] : [],
   );
@@ -207,21 +234,37 @@ export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label
 
 export const estimate = (
   history: History,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
   cpuCount: number,
   guesses: Guesses,
+  buildDaemonsAlive = false,
 ): Cost => {
   const runs = runsOf(history, entry);
   const medium = kindOf(entry) === "medium";
   const guessCpu = Math.min(medium ? 2 : 4, Math.max(1, cpuCount));
   // The usual run, not the worst: admission starts one job per settle window, so a run that
   // outgrows it shows in the next reading before anything else starts.
-  const memoryBytes = median(runs.map((run) => run.memoryBytes));
+  const memoryBytes = median(
+    runs.flatMap((run) => {
+      const bytes = buildDaemonsAlive ? (run.treeMemoryBytes ?? run.memoryBytes) : run.memoryBytes;
+      return bytes === undefined ? [] : [bytes];
+    }),
+  );
   if (memoryBytes !== null) {
     return {
       cpu: learnedCpu(history, entry) ?? guessCpu,
       memoryBytes,
       durationMs: medianDuration(runs),
+    };
+  }
+  // Runs too short for any sample to read: a quick command, never the unseen heavy guess.
+  const durationMs = medianDuration(runs);
+  const quickMs = (guesses.quickSeconds ?? HEAVY_QUEUE_DEFAULTS.quickSeconds) * 1000;
+  if (durationMs !== null && durationMs <= quickMs) {
+    return {
+      cpu: learnedCpu(history, entry) ?? 1,
+      memoryBytes: UNSAMPLED_QUICK_MEGABYTES * MIB,
+      durationMs,
     };
   }
   return {
@@ -231,10 +274,30 @@ export const estimate = (
   };
 };
 
+/**
+ * The memory a Linux run of `entry` is taken to reach: its command's worst run there, not the
+ * usual one, since Linux re-reads only once a minute and its OOM killer takes whatever is
+ * running; a command never measured there gets the unseen guess.
+ */
+export const linuxEstimate = (
+  history: LinuxHistory,
+  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  guesses: Guesses,
+) => {
+  const peaks = runsOf(history, entry).flatMap((run) =>
+    typeof run.memoryBytes === "number" && run.memoryBytes > 0 ? [run.memoryBytes] : [],
+  );
+  if (peaks.length > 0) return Math.max(...peaks);
+  return (
+    (kindOf(entry) === "medium" ? guesses.unseenMediumMegabytes : guesses.unseenHeavyMegabytes) *
+    MIB
+  );
+};
+
 /** Learned to stay small; a command never seen is not light. */
 const isLight = (
   input: Pick<PlanInput, "history" | keyof SizingLimits>,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
 ) =>
   runsOf(input.history, entry).length > 0 &&
   estimate(input.history, entry, 1, input).memoryBytes < input.lightJobMegabytes * MIB;
@@ -246,16 +309,25 @@ export interface PlanInput extends MacLimits, SizingLimits {
   readonly enabled: boolean;
   readonly paused: boolean;
   readonly history: History;
+  /** Runs on Linux, for the cost class of a job that goes there. */
+  readonly linuxHistory?: LinuxHistory;
   readonly sample: Sample | null;
+  /** Written for older builds, which wait one settle window after it; this one counts load instead. */
   readonly lastStartAt: number | null;
   /** Pressure or swapping held admission last time, so memory must reach the higher reopen level. */
   readonly holding: boolean;
   readonly now: number;
+  /** A command that usually ends within this many seconds is quick. */
+  readonly quickSeconds?: number;
+  /** Quick jobs that may run beside the standard slots. */
+  readonly quickSlots?: number;
+  /** A job that ran this long and then sat idle counts as a service. */
+  readonly serviceIdleMinutes?: number;
 }
 
 export interface Plan {
-  /** The one waiter that may start now. */
-  readonly admit: string | null;
+  /** Every waiter that may start now, in queue order. */
+  readonly admits: ReadonlyArray<string>;
   /** Why each other waiter is not starting. */
   readonly reasons: Readonly<Record<string, string>>;
   /** False while pressure or the pause is what keeps waiters back. */
@@ -265,30 +337,92 @@ export interface Plan {
   readonly hold: HeavyQueueHold | null;
 }
 
-const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 /** Rounded as the summary shows it, so a row and the summary never disagree. */
 const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sample.cpuCount)) * 100);
 
+/** What this Mac can still take: memory above the floor and cores under the ceiling. */
+export interface Budget {
+  readonly memoryBytes: number;
+  readonly cpu: number;
+}
+
+type BudgetInput = Pick<PlanInput, "history" | "holding" | "now" | keyof MacLimits | keyof Guesses>;
+
 /**
- * Whether `entry` fits on this Mac on top of what runs now, from what its command used before:
- * `plan`'s check for the head, which Hybrid routing asks too.
+ * Room left on `sample` once the jobs started in the last `SETTLE_MS` count their estimates: a
+ * reading taken right after a start does not show its load yet.
+ */
+const floorBytes = (
+  input: Pick<BudgetInput, "holding" | "macMemoryFloorPercent">,
+  sample: Sample,
+) =>
+  ((input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0)) / 100) *
+  sample.totalMemoryBytes;
+
+/** The kernel says memory is short: pressure or swapping holds every job, light or not. */
+const memoryStrained = (sample: Reading) =>
+  (sample.pressureLevel ?? 0) >= 2 || (sample.swapInBytesPerSecond ?? 0) > SWAP_IN_LIMIT;
+
+/** What a light job may use past the floor, which short memory alone lets it pass. */
+const lightAllowance = (
+  input: Pick<PlanInput, "history" | "holding" | "macMemoryFloorPercent" | keyof SizingLimits>,
+  sample: Sample,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
+) => (!memoryStrained(sample) && isLight(input, entry) ? floorBytes(input, sample) : 0);
+
+export const budgetOf = (
+  input: BudgetInput,
+  sample: Sample,
+  running: ReadonlyArray<HeavyQueueEntry>,
+): Budget => {
+  const fresh = running.filter(
+    (entry) => entry.startedAt !== null && input.now - Date.parse(entry.startedAt) < SETTLE_MS,
+  );
+  const committed = fresh.map((entry) =>
+    estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive),
+  );
+  return {
+    memoryBytes:
+      sample.availableMemoryBytes -
+      floorBytes(input, sample) -
+      committed.reduce((sum, cost) => sum + cost.memoryBytes, 0),
+    cpu:
+      sample.cpuCount * (input.macCpuCeilingPercent / 100) -
+      sample.busyCores -
+      committed.reduce((sum, cost) => sum + cost.cpu, 0),
+  };
+};
+
+const spend = (budget: Budget, cost: Pick<Cost, "cpu" | "memoryBytes">): Budget => ({
+  memoryBytes: budget.memoryBytes - cost.memoryBytes,
+  cpu: budget.cpu - cost.cpu,
+});
+
+/**
+ * Whether `entry` fits in `budget` (this Mac's room after what started and was admitted, built
+ * with the same `holding`), from what its command used before: `plan`'s check, which Hybrid
+ * routing asks too. A light job may also use the floor, unless `allowance` says otherwise.
  */
 export const jobVerdict = (
-  input: Pick<PlanInput, "history" | "holding" | keyof MacLimits | keyof Guesses>,
+  input: Pick<
+    PlanInput,
+    "history" | "holding" | "macCpuCeilingPercent" | "macMemoryFloorPercent" | keyof SizingLimits
+  >,
   sample: Sample,
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
+  budget: Budget,
+  allowance = lightAllowance(input, sample, entry),
 ) => {
-  const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
-  const floor = (floorPercent / 100) * sample.totalMemoryBytes;
-  const cost = estimate(input.history, entry, sample.cpuCount, input);
-  if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
+  const cost = estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive);
+  const room = budget.memoryBytes + allowance;
+  if (cost.memoryBytes > room) {
     return {
       cost,
       hold: "job-memory" as const,
-      why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
+      why: `memory floor: ${formatBytes(room)} room, needs ${formatBytes(cost.memoryBytes)}`,
     };
   }
-  if (cost.cpu > sample.cpuCount * (input.macCpuCeilingPercent / 100) - sample.busyCores) {
+  if (cost.cpu > budget.cpu) {
     return {
       cost,
       hold: "job-cpu" as const,
@@ -298,89 +432,458 @@ export const jobVerdict = (
   return { cost, hold: null, why: "" };
 };
 
+const HELD_ROOM = new Set<HeavyQueueHold | null>([
+  null,
+  "slots",
+  "committed",
+  "quick-slots",
+  "commit-slot",
+]);
+
+/** How a queue entry is admitted: its cost class, with a hooked commit in its own slot. */
+export type Lane = "standard" | "quick" | "commit" | "service";
+
+type CostInput = Pick<
+  PlanInput,
+  "history" | "linuxHistory" | "quickSeconds" | "serviceIdleMinutes"
+> & {
+  readonly now?: number;
+};
+type CostEntry = Pick<HeavyQueueEntry, "label" | "server"> & {
+  readonly runner?: HeavyQueueEntry["runner"];
+  readonly line?: string;
+  readonly startedAt?: string | null;
+  readonly idleSince?: number;
+};
+
 /**
- * Pure: decides for one machine from its own sample and the entries it runs, so a second runner
- * plans by calling this with its own reading and its own entries.
+ * The runs of the machine `entry` goes to. A Linux job without Linux runs reads this Mac's, never
+ * the reverse: Linux timings would let a Mac first run skip the Mac's slots as quick.
+ */
+const usualRuns = (input: CostInput, entry: CostEntry) => {
+  const linuxRuns = entry.runner === "linux" ? runsOf(input.linuxHistory ?? {}, entry) : [];
+  return linuxRuns.length > 0 ? linuxRuns : runsOf(input.history, entry);
+};
+
+/** The cost class admission uses for `entry`, with its why; the one the Resource Manager shows. */
+export const costFor = (input: CostInput, entry: CostEntry): JobCost => {
+  const runs = usualRuns(input, entry);
+  // A server-held slot (a device open) is never idle work: its CPU is T3's own.
+  const now = entry.server === true ? undefined : input.now;
+  const cost = costOf(
+    entry,
+    medianDuration(runs),
+    input.quickSeconds ?? HEAVY_QUEUE_DEFAULTS.quickSeconds,
+    now,
+    input.serviceIdleMinutes ?? HEAVY_QUEUE_DEFAULTS.serviceIdleMinutes,
+  );
+  // A device open or a job that runs alone is never quick, however short it usually is.
+  return cost.class === "quick" && kindOf(entry) === "exclusive"
+    ? { class: "standard", why: "runs alone" }
+    : cost;
+};
+
+/** `costFor` with a hooked commit flagged, as the state publishes it. */
+const queueCostOf = (input: CostInput, entry: CostEntry): HeavyQueueCost => {
+  const cost = costFor(input, entry);
+  return localGitOnly(entry.line ?? entry.label) ? { ...cost, commit: true } : cost;
+};
+
+const laneFrom = (cost: HeavyQueueCost): Lane => (cost.commit === true ? "commit" : cost.class);
+
+export const laneOf = (input: CostInput, entry: CostEntry): Lane =>
+  laneFrom(queueCostOf(input, entry));
+
+const ORDER_BAND: Readonly<Record<Exclude<HeavyQueueOrderCode, "other" | "first">, number>> = {
+  forced: 0,
+  pinned: 0,
+  aged: 0,
+  light: 1,
+  shorter: 2,
+  "first-run": 3,
+  "runs-alone": 4,
+};
+
+export interface AdmissionOrder {
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+  readonly order: Readonly<Record<string, HeavyQueueOrder>>;
+}
+
+/**
+ * Waiters in the order admission tries them, derived per plan and never written back (other
+ * builds read the file). Pinned ones keep their place; the user's own and "first" jobs lead, and
+ * "last" jobs trail until they waited twice the patience.
+ */
+export const admissionOrder = (
+  input: CostInput & Pick<PlanInput, "headPatienceMinutes" | "now">,
+  waiting: ReadonlyArray<HeavyQueueEntry>,
+  lane: (entry: HeavyQueueEntry) => "first" | "normal" | "last" = () => "normal",
+): AdmissionOrder => {
+  const patience = input.headPatienceMinutes * 60_000;
+  const waited = (entry: HeavyQueueEntry) => input.now - Date.parse(entry.createdAt);
+  // Judged on the machine it already goes to, so ordering never waits on routing.
+  const bound = (entry: HeavyQueueEntry): CostEntry => {
+    const runner = entry.route ?? (entry.where === "linux" ? "linux" : undefined);
+    return runner === undefined ? entry : { ...entry, runner };
+  };
+  const ranked = waiting.map((entry, index) => {
+    const slot = laneOf(input, bound(entry));
+    const light = slot === "quick" || slot === "commit";
+    const rank = lane(entry);
+    const late = rank === "last";
+    const aged = !light && waited(entry) >= (late ? 2 : 1) * patience;
+    const usual = medianDuration(usualRuns(input, bound(entry)));
+    const cost: Exclude<HeavyQueueOrderCode, "other" | "first"> = aged
+      ? "aged"
+      : light
+        ? "light"
+        : kindOf(entry) === "exclusive"
+          ? "runs-alone"
+          : usual === null
+            ? "first-run"
+            : "shorter";
+    const key = [
+      rank === "first" ? 0 : late && !aged ? 2 : 1,
+      ORDER_BAND[cost],
+      cost === "shorter" ? usual! : 0,
+      Date.parse(entry.createdAt),
+      index,
+    ];
+    // Aged and light already say why it leads; otherwise the user's or project's rule does.
+    const code: Exclude<HeavyQueueOrderCode, "other"> =
+      rank === "first" && !aged && !light ? "first" : cost;
+    return { entry, code, key };
+  });
+  const before = (a: ReadonlyArray<number>, b: ReadonlyArray<number>) => {
+    for (let at = 0; at < a.length; at += 1) if (a[at] !== b[at]) return a[at]! - b[at]!;
+    return 0;
+  };
+  const free = ranked
+    .filter(({ entry }) => entry.forced !== true && entry.pinned !== true)
+    .toSorted((a, b) => before(a.key, b.key));
+  let next = 0;
+  const placed = ranked
+    .filter(({ entry }) => entry.forced !== true)
+    .map((each) =>
+      each.entry.pinned === true ? { ...each, code: "pinned" as const } : free[next++]!,
+    );
+  const forced = ranked
+    .filter(({ entry }) => entry.forced === true)
+    .map((each) => ({ ...each, code: "forced" as const }));
+  const all = [...forced, ...placed];
+  return {
+    waiting: all.map(({ entry }) => entry),
+    order: Object.fromEntries(
+      all.map(({ entry, code }) => [entry.id, { code, text: heavyOrderText(code, waited(entry)) }]),
+    ),
+  };
+};
+
+/**
+ * Pure, for one machine's own sample and entries. Standard waiters that fit start in queue order,
+ * an aged head reserving its room; quick jobs and a hooked commit then start in their own slots,
+ * and a service is neither a slot nor a reason to wait.
  */
 export const plan = (input: PlanInput): Plan => {
   const { entries, now } = input;
-  const running = entries.filter((entry) => entry.startedAt !== null);
+  const costs = new Map(entries.map((entry) => [entry.id, queueCostOf(input, entry)]));
+  const lane = (entry: HeavyQueueEntry) => laneFrom(costs.get(entry.id)!);
+  const fillsSlot = (entry: HeavyQueueEntry) => fillsStandardSlot(costs.get(entry.id));
+  // A service that just started still loads the Mac before the reading shows it.
+  const loaded = entries.filter((entry) => entry.startedAt !== null);
+  const running = loaded.filter((entry) => lane(entry) !== "service");
   const waiting = entries.filter((entry) => entry.startedAt === null);
-  const head = waiting[0];
-  if (head === undefined || heavyRoute(input) === "direct") {
-    return { admit: head?.id ?? null, reasons: {}, room: true, holding: false, hold: null };
+  if (waiting.length === 0 || heavyRoute(input) === "direct") {
+    return {
+      admits: waiting.map((entry) => entry.id),
+      reasons: {},
+      room: true,
+      holding: false,
+      hold: null,
+    };
   }
 
-  const finish = (
-    admit: string | null,
-    hold: HeavyQueueHold | null,
-    room: boolean,
-    holding: boolean,
-    headReason?: string,
-    /** Waiters behind the head that were tried and did not fit, with their own reason. */
-    tried: Readonly<Record<string, string>> = {},
-  ): Plan => {
-    const why =
-      headReason ??
-      (hold === null || hold === "job-memory" || hold === "job-cpu"
-        ? "next in line"
-        : heavyHoldText(hold, input.sample, input.maxRunning));
-    const reasons: Record<string, string> = {};
-    for (const waiter of waiting) {
-      if (waiter.id === admit) continue;
-      reasons[waiter.id] = waiter.id === head.id ? why : (tried[waiter.id] ?? "waiting its turn");
-    }
-    return { admit, reasons, room, holding, hold: admit === head.id ? null : hold };
+  // The user released these, and a service holds no slot: they start whatever holds the rest.
+  const admits = waiting
+    .filter((entry) => entry.forced === true || lane(entry) === "service")
+    .map((entry) => entry.id);
+  const rest = waiting.filter((entry) => !admits.includes(entry.id));
+  const head = rest[0];
+  const reasons: Record<string, string> = {};
+  const quickSlots = input.quickSlots ?? HEAVY_QUEUE_DEFAULTS.quickSlots;
+  const holdText = (hold: HeavyQueueHold) =>
+    hold === "job-memory" || hold === "job-cpu"
+      ? "next in line"
+      : heavyHoldText(hold, input.sample, input.maxRunning, quickSlots);
+  const tried: Record<string, string> = {};
+  let headHold: HeavyQueueHold | null = null;
+  const hold = (entry: HeavyQueueEntry, reason: HeavyQueueHold, why?: string) => {
+    if (entry.id === head?.id) headHold = reason;
+    tried[entry.id] = why ?? holdText(reason);
   };
+  const finish = (holding: boolean): Plan => {
+    const held = head === undefined || admits.includes(head.id) ? null : headHold;
+    for (const waiter of rest) {
+      if (admits.includes(waiter.id)) continue;
+      reasons[waiter.id] = tried[waiter.id] ?? "waiting its turn";
+    }
+    return { admits, reasons, room: HELD_ROOM.has(held), holding, hold: held };
+  };
+  if (head === undefined) return finish(input.holding);
+  if (input.paused) {
+    hold(head, "paused");
+    return finish(input.holding);
+  }
 
-  const forced = waiting.find((entry) => entry.forced === true);
-  if (forced !== undefined) return finish(forced.id, null, true, input.holding);
-  if (input.paused) return finish(null, "paused", false, input.holding);
-  if (running.some((entry) => kindOf(entry) === "exclusive")) {
-    return finish(null, "exclusive", false, input.holding);
-  }
-  // One job always runs: holding the only one back on pressure from elsewhere would starve agents.
-  if (running.length === 0) return finish(head.id, null, true, false);
-  if (kindOf(head) === "exclusive") return finish(null, "runs-alone", false, input.holding);
-  if (running.length >= Math.max(1, input.maxRunning)) {
-    return finish(null, "slots", true, input.holding);
-  }
-  if (input.lastStartAt !== null && now - input.lastStartAt < SETTLE_MS) {
-    return finish(null, "settling", true, input.holding);
-  }
   const { sample } = input;
+  const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+  const critical = fresh && (sample.pressureLevel ?? 0) >= 4;
+  const machineLimit = fresh ? machineHold(sample, input) : null;
+  const holding = machineLimit === "pressure" || machineLimit === "swap-in" ? true : input.holding;
+  const estimateOf = (entry: HeavyQueueEntry) =>
+    estimate(input.history, entry, sample?.cpuCount ?? 1, input, sample?.buildDaemonsAlive);
+  /** What this pass started, which the reading does not show yet. */
+  let spent = 0;
+  /** Started only on a light job's allowance: memory is still short of the reopen level. */
+  const onFloor = new Set<string>();
+  const admit = (entry: HeavyQueueEntry) => {
+    admits.push(entry.id);
+    spent += estimateOf(entry).memoryBytes;
+  };
+  for (const id of admits)
+    spent += estimateOf(waiting.find((entry) => entry.id === id)!).memoryBytes;
+
+  // One job always runs, quick and commit included: holding the only one back on pressure from
+  // elsewhere would starve agents. Critical pressure still holds a quick job or a commit.
+  if (running.length === 0 && admits.length === 0 && !(critical && !fillsSlot(head))) {
+    admit(head);
+  }
+
+  const standard = standardPass(input, {
+    head,
+    waiters: rest.filter(fillsSlot),
+    running,
+    loaded,
+    standardRunning: running.filter(fillsSlot).length,
+    admitted: admits.flatMap((id) => {
+      const entry = waiting.find((waiter) => waiter.id === id)!;
+      return fillsSlot(entry) ? [entry] : [];
+    }),
+    spent,
+    holding,
+    hold,
+    admit,
+    onFloor,
+  });
+  const aged = (entry: HeavyQueueEntry, times: number) =>
+    now - Date.parse(entry.createdAt) >= times * input.headPatienceMinutes * 60_000;
+
+  // A quick job passes everything that holds standard jobs back but the pause, critical pressure,
+  // its own memory and the quick slots; the head's reservation only once the head waited twice its
+  // patience.
+  const reservationBinds = () => standard.reservedFor !== null && aged(standard.reservedFor, 2);
+  const quickRoom = () =>
+    fresh
+      ? budgetOf({ ...input, holding: false }, sample, loaded).memoryBytes -
+        spent -
+        (reservationBinds() ? standard.reserved : 0)
+      : Infinity;
+  const isLightLane = (entry: HeavyQueueEntry) => {
+    const kind = lane(entry);
+    return kind === "quick" || kind === "commit";
+  };
+  let quickRunning = running.filter((entry) => lane(entry) === "quick").length;
+  let commitRunning = running.filter((entry) => lane(entry) === "commit").length;
+  for (const id of admits) {
+    const kind = lane(waiting.find((entry) => entry.id === id)!);
+    if (kind === "quick") quickRunning += 1;
+    if (kind === "commit") commitRunning += 1;
+  }
+  // Short memory (pressure, swapping or under the floor) still lets a small quick job or commit
+  // start while half the floor stays free, one per settle window so a bad estimate shows first.
+  const unheld = { ...input, holding: false };
+  const strained =
+    fresh && (memoryStrained(sample) || sample.availableMemoryBytes < floorBytes(unheld, sample));
+  let lightStarts =
+    loaded.filter((entry) => isLightLane(entry) && now - Date.parse(entry.startedAt!) < SETTLE_MS)
+      .length +
+    admits.filter((id) => isLightLane(waiting.find((entry) => entry.id === id)!)).length;
+  for (const entry of rest) {
+    const kind = lane(entry);
+    if (admits.includes(entry.id) || (kind !== "quick" && kind !== "commit")) continue;
+    if (critical) {
+      hold(entry, "pressure");
+      continue;
+    }
+    if (kind === "commit" && commitRunning >= 1) {
+      hold(entry, "commit-slot");
+      continue;
+    }
+    if (kind === "quick" && quickRunning >= quickSlots) {
+      hold(entry, "quick-slots");
+      continue;
+    }
+    // Quick jobs pass a job that runs alone until it waited twice its patience, then let it drain.
+    if (kind === "quick" && standard.drainingFor !== null && aged(standard.drainingFor, 2)) {
+      hold(entry, "draining");
+      continue;
+    }
+    const need = estimateOf(entry).memoryBytes;
+    if (strained) {
+      if (lightStarts > 0) {
+        hold(entry, "settling");
+        continue;
+      }
+      const room = quickRoom() + floorBytes(unheld, sample) / 2;
+      if (need > input.lightJobMegabytes * MIB || need > room) {
+        hold(
+          entry,
+          "job-memory",
+          need > input.lightJobMegabytes * MIB
+            ? `memory short: only jobs under ${input.lightJobMegabytes} MB start, needs ${formatBytes(need)}`
+            : `memory short: ${formatBytes(room)} room keeping half the floor, needs ${formatBytes(need)}`,
+        );
+        continue;
+      }
+      onFloor.add(entry.id);
+    } else if (kind === "quick") {
+      const room =
+        quickRoom() + (fresh && !reservationBinds() ? lightAllowance(unheld, sample, entry) : 0);
+      if (need > room) {
+        hold(
+          entry,
+          standard.reserved > 0 && need <= room + standard.reserved ? "reserved" : "job-memory",
+          standard.reserved > 0 && need <= room + standard.reserved
+            ? undefined
+            : `memory floor: ${formatBytes(room)} room, needs ${formatBytes(need)}`,
+        );
+        continue;
+      }
+      if (need > quickRoom()) onFloor.add(entry.id);
+    }
+    admit(entry);
+    lightStarts += 1;
+    if (kind === "quick") quickRunning += 1;
+    else commitRunning += 1;
+  }
+  return finish(admits.includes(head.id) && !onFloor.has(head.id) ? false : standard.holding);
+};
+
+/**
+ * The standard waiters' pass: the machine's own limits, the slots, the job's fit and the aged
+ * head's reservation, in queue order. Returns the reservation for the quick pass to respect.
+ */
+const standardPass = (
+  input: PlanInput,
+  pass: {
+    readonly head: HeavyQueueEntry;
+    readonly waiters: ReadonlyArray<HeavyQueueEntry>;
+    readonly running: ReadonlyArray<HeavyQueueEntry>;
+    readonly loaded: ReadonlyArray<HeavyQueueEntry>;
+    readonly standardRunning: number;
+    readonly admitted: ReadonlyArray<HeavyQueueEntry>;
+    readonly spent: number;
+    readonly holding: boolean;
+    readonly hold: (entry: HeavyQueueEntry, reason: HeavyQueueHold, why?: string) => void;
+    readonly admit: (entry: HeavyQueueEntry) => void;
+    readonly onFloor: Set<string>;
+  },
+): {
+  readonly holding: boolean;
+  readonly reserved: number;
+  readonly reservedFor: HeavyQueueEntry | null;
+  /** The aged head that runs alone, draining what runs before it. */
+  readonly drainingFor: HeavyQueueEntry | null;
+} => {
+  const { now, sample } = input;
+  const { running, hold } = pass;
+  const none = { holding: pass.holding, reserved: 0, reservedFor: null, drainingFor: null };
+  const waiters = pass.waiters.filter((entry) => !pass.admitted.includes(entry));
+  const head = waiters[0];
+  if (head === undefined) return none;
+  if (
+    running.some((entry) => kindOf(entry) === "exclusive") ||
+    pass.admitted.some((entry) => kindOf(entry) === "exclusive")
+  ) {
+    hold(head, "exclusive");
+    return none;
+  }
   if (sample === null || now - sample.at > SAMPLE_FRESH_MS) {
-    return finish(null, "no-reading", false, input.holding);
+    hold(head, "no-reading");
+    return none;
   }
   const limit = machineHold(sample, input);
   const steady = sample.headroomSince !== null && now - sample.headroomSince >= HEADROOM_MS;
   const machine = limit ?? (steady ? null : ("steadying" as const));
-  const holding = limit === "pressure" || limit === "swap-in" ? true : input.holding;
+  // Short memory, or memory settling after it, holds back only what would add to it; a busy CPU,
+  // pressure or swapping, everyone.
+  const passesMachine = (entry: HeavyQueueEntry) =>
+    machine === null ||
+    ((machine === "memory-floor" || machine === "steadying") && isLight(input, entry));
 
-  // Short memory holds back only what would add to it; a busy CPU or critical pressure, everyone.
-  const critical = (sample.pressureLevel ?? 0) >= 4;
-  const verdict = (entry: HeavyQueueEntry): { hold: HeavyQueueHold | null; why: string } => {
-    const job = jobVerdict(input, sample, entry);
-    if (machine === null) return job;
-    if (machine !== "cpu" && !critical && isLight(input, entry) && job.hold !== "job-cpu") {
-      return { hold: null, why: "" };
+  const plain = { ...input, holding: pass.holding };
+  const cost = (entry: HeavyQueueEntry) =>
+    estimate(input.history, entry, sample.cpuCount, input, sample.buildDaemonsAlive);
+  /** Room after the recent starts only, to tell "a job just started" from a full machine. */
+  const settled = budgetOf({ ...plain, now: Infinity }, sample, pass.loaded);
+  let budget = spend(budgetOf(plain, sample, pass.loaded), {
+    cpu: pass.admitted.reduce((sum, entry) => sum + cost(entry).cpu, 0),
+    memoryBytes: pass.spent,
+  });
+  let slots = Math.max(1, input.maxRunning) - pass.standardRunning - pass.admitted.length;
+  const aged = (entry: HeavyQueueEntry) =>
+    now - Date.parse(entry.createdAt) >= input.headPatienceMinutes * 60_000;
+  let reserved = 0;
+  let reservedFor: HeavyQueueEntry | null = null;
+  let drainingFor: HeavyQueueEntry | null = null;
+
+  for (const entry of waiters) {
+    const isHead = entry.id === head.id;
+    if (kindOf(entry) === "exclusive") {
+      // It starts once nothing runs; aged at the head, nothing new joins what runs before it.
+      if (isHead && aged(entry)) drainingFor = entry;
+      if (isHead) hold(entry, "runs-alone");
+      continue;
     }
-    return { hold: machine, why: heavyHoldText(machine, sample, input.maxRunning) };
-  };
-  const headVerdict = verdict(head);
-  if (headVerdict.hold === null) return finish(head.id, null, true, false);
-
-  // A later job that fits passes a head that does not, until the head has waited its patience.
-  const tried: Record<string, string> = {};
-  if (now - Date.parse(head.createdAt) < input.headPatienceMinutes * 60_000) {
-    for (const waiter of waiting.slice(1)) {
-      if (kindOf(waiter) === "exclusive") continue;
-      const fit = verdict(waiter);
-      if (fit.hold === null) {
-        return finish(waiter.id, headVerdict.hold, false, holding, headVerdict.why, tried);
+    if (drainingFor !== null) {
+      hold(entry, "draining");
+      continue;
+    }
+    if (slots <= 0) {
+      hold(entry, "slots");
+      continue;
+    }
+    if (!passesMachine(entry)) {
+      hold(entry, machine!, heavyHoldText(machine!, sample, input.maxRunning, input.quickSlots));
+      continue;
+    }
+    // A reservation keeps the floor too: a light job does not eat into the head's room.
+    const verdict = jobVerdict(plain, sample, entry, budget, reservedFor === null ? undefined : 0);
+    if (verdict.hold === null) {
+      if (jobVerdict(plain, sample, entry, budget, 0).hold !== null) pass.onFloor.add(entry.id);
+      pass.admit(entry);
+      budget = spend(budget, verdict.cost);
+      slots -= 1;
+      continue;
+    }
+    const fitsSettled = jobVerdict(plain, sample, entry, settled).hold === null;
+    if (reservedFor !== null) hold(entry, "reserved");
+    else if (fitsSettled) hold(entry, "committed");
+    else hold(entry, verdict.hold, verdict.why);
+    // An aged head keeps its room only when the queue's own jobs ending would make it fit: a
+    // shortage from load outside the queue, or from a service that never ends, blocks no one.
+    if (isHead && aged(entry) && !fitsSettled) {
+      const ours = running.map(cost);
+      const freed = {
+        memoryBytes: budget.memoryBytes + ours.reduce((sum, job) => sum + job.memoryBytes, 0),
+        cpu: budget.cpu + ours.reduce((sum, job) => sum + job.cpu, 0),
+      };
+      if (jobVerdict(plain, sample, entry, freed).hold === null) {
+        budget = spend(budget, verdict.cost);
+        reserved = verdict.cost.memoryBytes;
+        reservedFor = entry;
       }
-      tried[waiter.id] = fit.why;
     }
   }
-  return finish(null, headVerdict.hold, false, holding, headVerdict.why, tried);
+  return { holding: pass.holding, reserved, reservedFor, drainingFor };
 };

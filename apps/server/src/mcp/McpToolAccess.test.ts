@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   ProviderInstanceId,
   ProviderInteractionMode,
+  RunId,
   RuntimeMode,
   ThreadId,
   ProjectId,
@@ -39,6 +40,9 @@ const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
 const sideChatThreadId = ThreadId.make("thread:side-chat");
+const wakeThreadId = ThreadId.make("thread:queued-wake");
+const heldWakeThreadId = ThreadId.make("thread:held-queued-wake");
+const queuedUserThreadId = ThreadId.make("thread:queued-user-message");
 const otherFullAccessThreadId = ThreadId.make("thread:other-full-access");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
@@ -47,6 +51,36 @@ const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanc
     { taskId: "task:background", kind: "subagent" as const, providerInstanceId },
   ],
 });
+
+const queuedShell = (threadId: ThreadId) => ({
+  ...liveThreadShell(threadId, { activeRunId: null }),
+  latestRunId: RunId.make(`run:${threadId}`),
+  latestRunStartedAt: null,
+  latestRunCompletedAt: null,
+});
+/** Each queued run's own record and the message that queued it, as `getThreadRecords` returns them. */
+const queuedRuns = new Map(
+  (
+    [
+      [wakeThreadId, false, "agent", "provider"],
+      [heldWakeThreadId, true, "agent", "provider"],
+      [queuedUserThreadId, false, "user", "web"],
+    ] as const
+  ).map(([threadId, queueHeld, createdBy, creationSource]) => [
+    threadId,
+    {
+      runs: [
+        {
+          id: RunId.make(`run:${threadId}`),
+          status: "queued",
+          userMessageId: `message:${threadId}`,
+          ...(queueHeld ? { queueHeld } : {}),
+        },
+      ],
+      messages: [{ id: `message:${threadId}`, createdBy, creationSource }],
+    },
+  ]),
+);
 
 const shells = new Map([
   [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
@@ -69,6 +103,11 @@ const shells = new Map([
     },
   ],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  // The provider woke itself (a background task's notice) and already calls tools while its run queues.
+  [wakeThreadId, queuedShell(wakeThreadId)],
+  // The same wake after a Stop holds the queue; a user's queued message never wakes the old session.
+  [heldWakeThreadId, queuedShell(heldWakeThreadId)],
+  [queuedUserThreadId, queuedShell(queuedUserThreadId)],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
   [
@@ -256,6 +295,9 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+const queuedWake = threadCaller(wakeThreadId);
+const heldQueuedWake = threadCaller(heldWakeThreadId);
+const queuedUserMessage = threadCaller(queuedUserThreadId);
 const sideChat = threadCaller(sideChatThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -293,6 +335,9 @@ it.effect.each([
   ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
   ["acts_as_caller", supervised, {}, "ran"],
   ["acts_as_caller", ended, {}, "parent_not_active"],
+  ["acts_as_caller", queuedWake, {}, "ran"],
+  ["acts_as_caller", heldQueuedWake, {}, "parent_not_active"],
+  ["acts_as_caller", queuedUserMessage, {}, "parent_not_active"],
   ["acts_as_caller", background, {}, "ran"],
   ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
   ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
@@ -302,6 +347,7 @@ it.effect.each([
 
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
+  ["writes", queuedWake, {}, "ran"],
   ["writes", background, {}, "ran"],
   ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],
@@ -367,6 +413,10 @@ it.effect.each([
       probeServer(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+          getThreadRecords: ((threadId: ThreadId) =>
+            Effect.succeed(
+              queuedRuns.get(threadId) ?? { runs: [], messages: [] },
+            )) as unknown as ThreadManagement.ThreadManagementService["Service"]["getThreadRecords"],
         }),
       ),
     ),

@@ -3,10 +3,12 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as Schema from "effect/Schema";
 import {
   HEAVY_QUEUE_DEFAULTS,
   heavyQueueLimitError,
@@ -28,13 +30,14 @@ import {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_MAX_RUNNING,
   hasHeadroom,
   HISTORY_RUNS,
   estimate,
+  costFor,
+  laneOf as admissionLaneOf,
   medianDuration,
   runsOf,
   signatureOf,
@@ -45,15 +48,20 @@ import {
   sustain,
   workersFor,
 } from "./admission.ts";
+import { IDLE_CORES, type CostClass } from "./costClass.ts";
+import { jobEntryOf, jobLine, jobOf } from "./jobEntry.ts";
 import { sourceCheckout } from "./claudeSettingsHook.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
 import {
   interceptBashCall,
   isQueued,
   lineParts,
+  PACKAGE_SCRIPT,
   SCRIPT_MAX_BYTES,
+  sshWork,
   type ReadScript,
 } from "./heavyHook.ts";
+import { cachedSshHostname } from "./sshHost.ts";
 import {
   deadlineRecord,
   endedRecord,
@@ -68,6 +76,7 @@ import {
   withRecord,
 } from "./heavyNotices.ts";
 import { listensHere } from "./localPorts.ts";
+import { learnedOf } from "./routeMemory.ts";
 import {
   beforeBoot,
   bootAtOf,
@@ -83,6 +92,7 @@ import {
   runnerConfigFor,
   runnerCopyId,
   startFolder,
+  sentToLinux,
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
@@ -123,39 +133,206 @@ export const isAlive = (pid: number) => {
   }
 };
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path loads this without an Effect runtime.
+const LINUX = NodeOS.platform() === "linux";
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * When a process started, as this platform tells it: clock ticks after boot on Linux, which a
+ * clock step never moves, else `ps` wall-clock seconds. Null when it can't be read.
+ */
+const readStart = (pid: number): number | null => {
+  try {
+    if (LINUX) {
+      const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+      return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]) || null;
+    }
+    const started = NodeChildProcess.execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    });
+    return Math.floor(Date.parse(`${started.trim()} UTC`) / 1000) || null;
+  } catch {
+    return null;
+  }
+};
+let lastStart: { readonly pid: number; readonly at: number; readonly start: number | null } | null =
+  null;
+/** `readStart`, asked again at most once a second while a waiter retries every 25 ms. */
+const processStart = (pid: number) => {
+  if (lastStart?.pid !== pid || Date.now() - lastStart.at > 1_000) {
+    lastStart = { pid, at: Date.now(), start: readStart(pid) };
+  }
+  return lastStart.start;
+};
+let ownStart: number | null | undefined;
+/** Ours in `processStart`'s terms, without a `ps` per process on macOS. */
+const ownStartOf = () =>
+  (ownStart ??= LINUX ? readStart(process.pid) : Math.floor(performance.timeOrigin / 1000));
+/** `ps` gives whole seconds and our own start comes from the clock, so a second either way is us. */
+const sameStart = (recorded: number, current: number) =>
+  LINUX ? current === recorded : current <= recorded + 1;
+
+/** Who holds a lock: its pid, a random part, and when it started, so a reused pid never owns it. */
+export const lockToken = () => {
+  const start = ownStartOf();
+  const random = NodeCrypto.randomBytes(6).toString("hex");
+  return `${process.pid} ${random}${start === null ? "" : ` ${start}`}`;
+};
+const readToken = (lock: string) => {
+  try {
+    return NodeFS.readFileSync(NodePath.join(lock, "owner"), "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A lock is stale when its owner is dead, or when it names no owner (one died between taking it
+ * and writing its token) and is older than `LOCK_STALE_MS`. A live owner keeps it however long it
+ * pauses: a swapped-out process resuming must find its lock still its own. Past that age, a live
+ * pid that started after the owner did is another process that reused it.
+ */
+export const lockIsStale = (
+  token: string | null,
+  ageMs: number,
+  alive: (pid: number) => boolean,
+  startOf: (pid: number) => number | null = processStart,
+) => {
+  const [pidText, , startText] = token?.split(" ") ?? [];
+  const pid = Number(pidText);
+  if (token === null || !Number.isInteger(pid) || pid <= 0) return ageMs > LOCK_STALE_MS;
+  if (!alive(pid)) return true;
+  const recorded = Number(startText);
+  if (ageMs <= LOCK_STALE_MS || startText === undefined || !(recorded > 0)) return false;
+  const current = startOf(pid);
+  return current !== null && !sameStart(recorded, current);
+};
+
+const ageOf = (path: string) => Date.now() - NodeFS.statSync(path).mtimeMs;
+
+/**
+ * Clears a stale lock unless someone else is: one breaker at a time, re-checking under `breaking`.
+ * True when the lock is gone, so the caller retries at once instead of waiting.
+ */
+const breakIfStale = (lock: string): boolean => {
+  const breaking = `${lock}.breaking`;
+  try {
+    NodeFS.mkdirSync(breaking);
+    NodeFS.writeFileSync(NodePath.join(breaking, "owner"), lockToken());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // A breaker that died mid-break leaves this behind: judged like the lock itself.
+    // ponytail: two waiters clearing one dead marker can race a third breaker; rare, heals next try.
+    try {
+      if (lockIsStale(readToken(breaking), ageOf(breaking), isAlive)) {
+        NodeFS.rmSync(breaking, { recursive: true, force: true });
+      }
+    } catch {}
+    return false;
+  }
+  try {
+    const token = readToken(lock);
+    if (lockIsStale(token, ageOf(lock), isAlive)) {
+      NodeFS.rmSync(lock, { recursive: true, force: true });
+    }
+    return true;
+  } catch {
+    // The lock went away meanwhile: nothing to break.
+    return true;
+  } finally {
+    NodeFS.rmSync(breaking, { recursive: true, force: true });
+  }
+};
+
+const LOCK_BUSY = "The heavy queue is busy";
+const lockBusy = (holder: string | null) =>
+  new HeavyQueueError({
+    reason: "unavailable",
+    message: `${LOCK_BUSY}: process ${holder?.split(" ")[0] ?? "unknown"} holds its lock.`,
+  });
+/** A bounded wait that ran out: worth trying again, unlike other failures. */
+const isHeavyQueueError = Schema.is(HeavyQueueError);
+export const isLockBusy = (error: unknown) =>
+  isHeavyQueueError(error) && error.message.startsWith(LOCK_BUSY);
+
+/** How long a caller blocks for the lock before failing; the CLI's waiters wait on. */
+let lockWaitMs = Number.POSITIVE_INFINITY;
+/** A server blocks for 0 ms, so a stuck owner never stalls its event loop; it retries with `whenLockFree`. */
+export const boundLockWait = (ms: number) => {
+  const previous = lockWaitMs;
+  lockWaitMs = ms;
+  return previous;
+};
+
+export const LOCK_ASYNC_RETRY_MS = 50;
+/** The server's wait for a busy lock, spent asleep between tries instead of on the thread. */
+export const SERVER_LOCK_WAIT_MS = 2_000;
+/** `whenLockFree` for plain async code shared with the CLI, where the lock never reads busy. */
+export const whenLockFreeAsync = async <A>(run: () => A, ceilingMs = SERVER_LOCK_WAIT_MS) => {
+  const deadline = Date.now() + ceilingMs;
+  for (;;) {
+    try {
+      return run();
+    } catch (error) {
+      if (!isLockBusy(error) || Date.now() >= deadline) throw error;
+    }
+    // @effect-diagnostics-next-line globalTimers:off -- Plain async code the CLI shares, with no Effect runtime.
+    await new Promise((resolve) => setTimeout(resolve, LOCK_ASYNC_RETRY_MS));
+  }
+};
+
+let lockNotice: { readonly heard: (pid: number) => void; readonly afterMs: number } | null = null;
+/** Who to tell, once a wait for the lock passes `afterMs`, which process holds it; null stops. */
+export const noticeLockWait = (heard: ((pid: number) => void) | null, afterMs = 0) => {
+  lockNotice = heard === null ? null : { heard, afterMs };
+};
 
 export const withLock = <A>(dir: string, run: () => A): A => {
   const lock = NodePath.join(dir, "lock");
+  const token = lockToken();
   NodeFS.mkdirSync(dir, { recursive: true });
-  while (true) {
+  const started = Date.now();
+  const deadline = started + lockWaitMs;
+  let told = false;
+  for (;;) {
     try {
       NodeFS.mkdirSync(lock);
+      NodeFS.writeFileSync(NodePath.join(lock, "owner"), token);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        // ponytail: two contenders can clear the same stale lock and one then deletes the other's fresh lock; holds last milliseconds, so it is rare and the next mutation heals the file.
-        if (Date.now() - NodeFS.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          NodeFS.rmSync(lock, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      pause(LOCK_RETRY_MS);
     }
+    const holder = readToken(lock);
+    let stale: boolean;
+    try {
+      stale = lockIsStale(holder, ageOf(lock), isAlive);
+    } catch {
+      continue; // The lock went away between the two calls.
+    }
+    if (stale && breakIfStale(lock)) continue;
+    const pid = Number(holder?.split(" ")[0]);
+    if (!told && lockNotice !== null && Date.now() - started >= lockNotice.afterMs && pid > 0) {
+      told = true;
+      lockNotice.heard(pid);
+    }
+    const left = deadline - Date.now();
+    if (left <= 0) throw lockBusy(holder);
+    pause(Math.min(LOCK_RETRY_MS, left));
   }
   try {
     return run();
   } finally {
-    NodeFS.rmSync(lock, { recursive: true, force: true });
+    // Only our own lock: one broken while we were away belongs to its new owner now.
+    if (readToken(lock) === token) NodeFS.rmSync(lock, { recursive: true, force: true });
   }
 };
 
 const queuePath = (dir: string) => NodePath.join(dir, "queue.json");
 
-interface QueueDoc {
+export interface QueueDoc {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   /** False: every waiter starts at once. Absent in older files, which read as on. */
   readonly enabled: boolean;
@@ -181,6 +358,10 @@ interface QueueDoc {
   /** Commands the file remembers runs of; the one run longest ago goes first. */
   readonly historyCommands: number;
   readonly headPatienceMinutes: number;
+  readonly quickSeconds: number;
+  readonly quickSlots: number;
+  readonly serviceIdleMinutes: number;
+  readonly reclaimMinutes: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
@@ -406,6 +587,10 @@ const loadDoc = (dir: string): QueueDoc => {
       ),
       historyCommands: limitOf(record, "historyCommands"),
       headPatienceMinutes: limitOf(record, "headPatienceMinutes"),
+      quickSeconds: limitOf(record, "quickSeconds"),
+      quickSlots: limitOf(record, "quickSlots"),
+      serviceIdleMinutes: limitOf(record, "serviceIdleMinutes"),
+      reclaimMinutes: limitOf(record, "reclaimMinutes"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
       copyRemovals: Array.isArray(parsed?.copyRemovals)
@@ -465,8 +650,22 @@ const save = (dir: string, doc: QueueDoc) => {
   NodeFS.renameSync(temp, queuePath(dir));
 };
 
-const prune = (entries: ReadonlyArray<HeavyQueueEntry>) =>
-  entries.filter((entry) => isAlive(entry.pid));
+/**
+ * Drops entries whose process died, except an agent's waiter: it turns orphan and keeps its place
+ * for `reclaimMinutes`, so the agent asking again does not land at the back.
+ */
+const prune = ({ entries, reclaimMinutes }: QueueDoc, now: number) =>
+  entries.flatMap((entry): ReadonlyArray<HeavyQueueEntry> => {
+    if (entry.orphanedAt !== undefined) {
+      return now - entry.orphanedAt < reclaimMinutes * 60_000 ? [entry] : [];
+    }
+    if (isAlive(entry.pid)) return [entry];
+    return entry.startedAt === null && entry.requestKey !== undefined
+      ? [{ ...entry, orphanedAt: now }]
+      : [];
+  });
+
+const isOrphan = (entry: HeavyQueueEntry) => entry.orphanedAt !== undefined;
 
 const runningOf = (entries: ReadonlyArray<HeavyQueueEntry>) =>
   entries.filter((entry) => entry.startedAt !== null);
@@ -494,7 +693,12 @@ export type StartResult =
     }
   | { readonly status: "removed" }
   /** Its question went unanswered and the deadline action is Cancel. */
-  | { readonly status: "canceled"; readonly reason: string };
+  | {
+      readonly status: "canceled";
+      readonly reason: string;
+      /** T3 itself failed its Linux run (`failure`), not Linux being away or a deadline. */
+      readonly t3Fault: boolean;
+    };
 
 type Decided<A> = { readonly doc: QueueDoc; readonly result: A };
 
@@ -544,6 +748,7 @@ export const configFor = (doc: Pick<QueueDoc, "runner">, cwd: string): RunnerPro
 export const modeFor = (doc: Pick<QueueDoc, "enabled" | "runner">, cwd: string) => ({
   enabled: doc.enabled,
   runner: configFor(doc, cwd).runnerEnabled,
+  ...(doc.runner === null ? {} : { runnerHost: doc.runner.machine.runnerHost }),
 });
 
 const gitRoots = new Map<string, string | null>();
@@ -569,15 +774,21 @@ const listening = (port: number) => {
   return answer;
 };
 
-const contextOf =
-  (doc: QueueDoc) =>
-  (cwd: string): WorkContext => ({
+/** Each folder's work context for one plan: `routes.json` is read once for all of them. */
+export const contextOf = (dir: string, doc: QueueDoc, now: number) => {
+  const learned = learnedOf(dir, now);
+  return (cwd: string): WorkContext => ({
     config: configFor(doc, cwd),
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
     listening,
+    learned: (values, at) => {
+      const root = gitRootOf(at);
+      return root === null ? null : learned(values, at, root, configFor(doc, at));
+    },
   });
+};
 
 /** Some project uses the Runner, so jobs can wait on either machine. */
 const runnerOn = (doc: QueueDoc) =>
@@ -585,13 +796,19 @@ const runnerOn = (doc: QueueDoc) =>
   (doc.runner.global.runnerEnabled ||
     doc.runner.projects.some((project) => project.config.runnerEnabled));
 
-const planOf = (doc: QueueDoc, now: number): RoutePlan =>
+const planOf = (
+  dir: string,
+  doc: QueueDoc,
+  now: number,
+  contexts = contextOf(dir, doc, now),
+): RoutePlan =>
   planRoutes({
-    entries: doc.entries,
+    entries: doc.entries.filter((entry) => !isOrphan(entry)),
     maxRunning: doc.maxRunning,
     enabled: doc.enabled,
     paused: doc.paused,
     history: doc.history,
+    linuxHistory: doc.linuxHistory,
     sample: doc.sample,
     lastStartAt: doc.lastStartAt,
     holding: doc.holding,
@@ -601,13 +818,23 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     unseenHeavyMegabytes: doc.unseenHeavyMegabytes,
     unseenMediumMegabytes: doc.unseenMediumMegabytes,
     headPatienceMinutes: doc.headPatienceMinutes,
+    quickSeconds: doc.quickSeconds,
+    quickSlots: doc.quickSlots,
+    serviceIdleMinutes: doc.serviceIdleMinutes,
     now,
-    contextOf: contextOf(doc),
+    contextOf: contexts,
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
     lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
+    lane: (entry) => laneOf(doc.rules, entry),
   });
+
+/** A waiter's place among those bound for its machine, in the order admission tries them. */
+const waitPosition = (plan: RoutePlan, id: string) => {
+  const runner = plan.routes[id] ?? "mac";
+  return plan.ordered.filter((each) => (plan.routes[each] ?? "mac") === runner).indexOf(id) + 1;
+};
 
 /** Fields that describe one attempt; a requeued entry drops them. */
 const withoutAttempt = ({
@@ -622,11 +849,12 @@ const withoutAttempt = ({
   cpu: _cpu,
   memory: _memory,
   stop: _stop,
+  linkError: _linkError,
   ...rest
 }: QueuedEntry) => ({ ...rest, startedAt: null });
 
 /** Starts `id` when the admission plan picks it; running entries stay in front, so index order is wait order. */
-const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
+const decideStart = (dir: string, doc: QueueDoc, id: string, now: number): Decided<StartResult> => {
   const { entries } = doc;
   const index = entries.findIndex((entry) => entry.id === id);
   if (index < 0) return { doc, result: { status: "removed" } };
@@ -647,7 +875,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       },
     };
   }
-  const decision = planOf(doc, now);
+  const contexts = contextOf(dir, doc, now);
+  const decision = planOf(dir, doc, now, contexts);
   const active = runningOf(entries);
   const canceled = decision.cancels[id];
   if (canceled !== undefined) {
@@ -658,7 +887,11 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Tell the agent cancels with no question: the requeue already logged the loss.
         events: withRecord(doc.events, entry.ask === undefined ? null : deadlineRecord(entry, now)),
       },
-      result: { status: "canceled", reason: canceled },
+      result: {
+        status: "canceled",
+        reason: canceled,
+        t3Fault: (entry as QueuedEntry).failure !== undefined,
+      },
     };
   }
   const admit = decision.admits[id];
@@ -678,9 +911,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     }: QueuedEntry = entry;
     const record = startRecord(
       entry,
-      intentOf(entry, contextOf(doc)(entry.cwd)).intent,
+      intentOf(entry, contexts(entry.cwd)).intent,
       admit.runner,
       now,
+      decision.reasons[id],
     );
     const displacedWhy = record?.kind === "displaced" ? decision.reasons[id] : undefined;
     const started: HeavyQueueEntry = {
@@ -710,8 +944,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
           started,
           ...entries.filter((e) => e.startedAt === null && e.id !== id),
         ],
-        // Only a gated Mac start makes the next Mac waiter let it ramp up.
-        lastStartAt: gated ? now : doc.lastStartAt,
+        // Only a gated standard Mac start makes an older build's next Mac waiter let it ramp up.
+        lastStartAt: gated && admissionLaneOf(doc, entry) === "standard" ? now : doc.lastStartAt,
         holding: decision.holding,
         events: withRecord(doc.events, record),
       },
@@ -744,7 +978,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     doc: { ...doc, entries: asked, holding: decision.holding },
     result: {
       status: "waiting",
-      position: there.filter((e) => e.startedAt === null).findIndex((e) => e.id === id) + 1,
+      position: waitPosition(decision, id),
       ...(runningThere === undefined ? {} : { running: runningThere }),
       ...(runnerOn(doc) ? { runner } : {}),
       ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
@@ -794,16 +1028,36 @@ const insertNew = (doc: QueueDoc, entry: HeavyQueueEntry): QueueDoc => {
   return { ...doc, entries: [...entries.slice(0, at), entry, ...entries.slice(at)] };
 };
 
+/** An orphan waits for its agent to ask again: only Stop or that retry ends it. */
+const refuseOrphan = (entry: HeavyQueueEntry | undefined) => {
+  if (entry === undefined || !isOrphan(entry)) return;
+  throw new HeavyQueueError({
+    reason: "not-allowed",
+    message:
+      "This command stopped while waiting; it keeps its place until its agent asks again. Stop removes it.",
+  });
+};
+
 /** Puts waiter `id` before waiter `beforeId`, or last when null; the running entry never moves or gets passed. */
 const decideMove = (
+  dir: string,
   doc: QueueDoc,
   id: string,
   beforeId: string | null,
   note: string | undefined,
+  now: number,
 ): Decided<MoveResult> => {
-  const { entries } = doc;
+  // The line people see is admission's order, so a move lands among that order, not the file's.
+  const shown = planOf(dir, doc, now).ordered;
+  const planned = new Set(shown);
+  const byId = new Map(doc.entries.map((entry) => [entry.id, entry]));
+  let next = 0;
+  const entries = doc.entries.map((entry) =>
+    planned.has(entry.id) ? byId.get(shown[next++]!)! : entry,
+  );
   const target = entries.find((entry) => entry.id === id);
   const anchor = beforeId === null ? undefined : entries.find((entry) => entry.id === beforeId);
+  refuseOrphan(target);
   if (target === undefined || (beforeId !== null && anchor === undefined)) {
     return { doc, result: "not-found" };
   }
@@ -868,17 +1122,29 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
   let changed = false;
   for (const gone of before.entries) {
     if (gone.startedAt === null || kept.has(gone.id)) continue;
-    const signature = signatureOf(gone.label);
+    const signature = signatureOf((gone as QueuedEntry).line ?? gone.label);
     const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      remember(linuxHistory, signature, { durationMs }, after.historyCommands);
+      const memoryBytes = gone.peakMemory;
+      remember(
+        linuxHistory,
+        signature,
+        memoryBytes === undefined ? { durationMs } : { durationMs, memoryBytes },
+        after.historyCommands,
+      );
     } else {
-      if (gone.peakMemory === undefined) continue;
+      // A run too short for a sample counts only once it ended cleanly: its time alone makes it
+      // quick next time, while one cancelled or failed early says nothing about the command.
+      const passed = after.results.some(
+        (result) => result.id === gone.id && result.at === now && result.code === 0,
+      );
+      if (gone.peakMemory === undefined && !passed) continue;
       const run = {
         ...(gone.peakCpu === undefined ? {} : { cpu: gone.peakCpu }),
-        memoryBytes: gone.peakMemory,
+        ...(gone.peakMemory === undefined ? {} : { memoryBytes: gone.peakMemory }),
+        ...(gone.peakTreeMemory === undefined ? {} : { treeMemoryBytes: gone.peakTreeMemory }),
         durationMs,
       };
       remember(history, signature, run, after.historyCommands);
@@ -891,34 +1157,75 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
 /** How long `entry`'s command usually takes on `runner`, from that machine's runs; null without any. */
 export const usualMs = (
   doc: Pick<QueueDoc, "history" | "linuxHistory">,
-  entry: Pick<HeavyQueueEntry, "label">,
+  entry: Pick<HeavyQueueEntry, "label"> & { readonly line?: string },
   runner: HeavyRunner,
 ) => medianDuration(runsOf(runner === "linux" ? doc.linuxHistory : doc.history, entry));
+
+/**
+ * The doc without dead processes. A Linux run whose process died keeps running there with nothing
+ * to stop it: it becomes a lost run, which holds its folder until a heartbeat confirms it stopped.
+ */
+const pruned = (doc: QueueDoc, now: number): QueueDoc => {
+  const entries = prune(doc, now);
+  const lost = doc.entries.flatMap((entry): ReadonlyArray<LostRun> => {
+    if (entry.runner !== "linux" || entry.startedAt === null) return [];
+    if (entries.some((each) => each.id === entry.id)) return [];
+    // Stable, so this view and the write that follows name the same record.
+    const key = `died:${entry.id}:${entry.startedAt}`;
+    if (doc.lostRuns.some((each) => each.key === key)) return [];
+    return [{ key, entryId: entry.id, cwd: entry.cwd, remote: lostRemoteOf(entry) }];
+  });
+  return {
+    ...doc,
+    entries,
+    lostRuns: lost.length === 0 ? doc.lostRuns : [...doc.lostRuns, ...lost],
+  };
+};
 
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
     const loaded = loadDoc(dir);
-    const decided = decide({ ...loaded, entries: prune(loaded.entries) });
+    const decided = decide(pruned(loaded, now));
     save(dir, withFinishedRuns(loaded, decided.doc, now));
     return decided.result;
   });
 
 /** Pruned view; never writes, tolerates a missing or corrupt file. */
-export const readDoc = (dir: string): QueueDoc => {
-  const doc = loadDoc(dir);
-  return { ...doc, entries: prune(doc.entries) };
+export const readDoc = (dir: string, now = Date.now()): QueueDoc => {
+  return pruned(loadDoc(dir), now);
 };
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
 
 /**
  * Adds `entry`, or, for an id already known, attaches to its job: still waiting or running, or
- * ended recently with the code it returns again.
+ * ended recently with the code it returns again. An orphan of the same request is adopted: same
+ * id and place, now owned by this process.
  */
 export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
   mutate(
     dir,
-    (doc): Decided<"added" | "attached" | { readonly code: number }> => {
+    (
+      doc,
+    ): Decided<"added" | "attached" | { readonly code: number } | { readonly adopted: string }> => {
+      const orphan = doc.entries.find(
+        (each) =>
+          isOrphan(each) &&
+          (each.id === entry.id ||
+            (entry.requestKey !== undefined && each.requestKey === entry.requestKey)),
+      );
+      if (orphan !== undefined) {
+        const { orphanedAt: _, ...kept } = orphan;
+        return {
+          doc: {
+            ...doc,
+            entries: doc.entries.map((each) =>
+              each === orphan ? { ...kept, pid: entry.pid } : each,
+            ),
+          },
+          result: { adopted: orphan.id },
+        };
+      }
       if (doc.entries.some((each) => each.id === entry.id)) return { doc, result: "attached" };
       const ended = doc.results.find(
         (each) => each.id === entry.id && now - each.at < RESULT_TTL_MS,
@@ -930,16 +1237,22 @@ export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
   );
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
-  mutate(dir, (doc) => decideStart(doc, id, now), now);
+  mutate(dir, (doc) => decideStart(dir, doc, id, now), now);
 
 /** What the admission rules say right now, without starting anyone. */
 export const readPlan = (dir: string, now = Date.now()) => {
   const doc = readDoc(dir);
-  return { doc, plan: planOf(doc, now) };
+  const contexts = contextOf(dir, doc, now);
+  return { doc, plan: planOf(dir, doc, now, contexts), contexts };
 };
 
 export const HANDED_OFF_RUNS_DIRECT =
   "Its heavy work already goes through t3 heavy or remoto: runs directly";
+
+const classOf = (cost: { readonly class: CostClass; readonly why: string }) => ({
+  class: cost.class,
+  classWhy: cost.why,
+});
 
 /**
  * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
@@ -948,53 +1261,109 @@ export const HANDED_OFF_RUNS_DIRECT =
  */
 export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
   const doc = readDoc(dir);
-  const parts = lineParts(line);
-  const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
-  const commit = commitRoute(parts.command);
-  const handedOff = !parts.remoto && isQueued(parts.command, scriptReader(at));
+  // The job the hook would queue: `$SHELL -c '<line>'`, built as `t3 heavy` builds it.
+  const job = jobOf("/bin/sh", ["-c", line], cwd, NodeOS.homedir());
+  const commit = job.remoto ? null : commitRoute(jobLine(job.program, job.args));
+  const handedOff = !job.remoto && isQueued(jobLine(job.program, job.args), scriptReader(job.cwd));
   if (commit === "direct" || handedOff) {
     return {
       runsOn: "direct" as const,
       reason: handedOff ? HANDED_OFF_RUNS_DIRECT : COMMIT_RUNS_DIRECT,
       startsNow: true,
+      position: null,
       linuxFull: false,
       canceled: false,
+      ...classOf(costFor(doc, { label: jobLine(job.program, job.args) })),
     };
   }
   const id = `probe-${now}`;
-  const withProbe = insertNew(doc, {
-    id,
-    pid: process.pid,
-    threadId: null,
-    label: parts.command,
-    cwd: at,
-    createdAt: new Date(now).toISOString(),
-    startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own.
-    priority: "low",
-    ...(parts.remoto ? { where: "linux" as const } : {}),
-  });
-  const plan = planOf(withProbe, now);
+  // Work sent over the agent's own `ssh` to the Runner's host is queued for Linux, as the hook does.
+  const mode = modeFor(doc, job.cwd);
+  const ssh =
+    mode.runner &&
+    mode.runnerHost !== undefined &&
+    sshWork(line, mode.runnerHost, cachedSshHostname) !== null;
+  const probed = jobEntryOf(
+    {
+      id,
+      pid: process.pid,
+      threadId: null,
+      program: job.program,
+      args: job.args,
+      cwd: job.cwd,
+      createdAt: new Date(now).toISOString(),
+      // As `t3 heavy` queues an agent's job, behind the user's own.
+      priority: "low",
+      ...(job.remoto || ssh ? { where: "linux" as const } : {}),
+      ...(ssh ? { ssh: true } : {}),
+    },
+    scriptReader(job.cwd),
+  );
+  const withProbe = insertNew(doc, probed);
+  const plan = planOf(dir, withProbe, now);
   const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
   // Running there or waiting for it ahead of this command: what fills Linux before it.
-  const ahead = withProbe.entries
-    .slice(
-      0,
-      withProbe.entries.findIndex((e) => e.id === id),
-    )
-    .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  const ahead =
+    withProbe.entries.filter((e) => e.startedAt !== null && e.runner === "linux").length +
+    plan.ordered.slice(0, plan.ordered.indexOf(id)).filter((each) => plan.routes[each] === "linux")
+      .length;
   // A job asked for Linux that needs this Mac never runs: it ends with this reason.
   const cancel = plan.cancels[id];
   return {
     runsOn: plan.routes[id] ?? ("mac" as const),
     reason: cancel ?? plan.reasons[id] ?? null,
     startsNow: cancel === undefined && plan.admits[id] !== undefined,
+    position: waitPosition(plan, id),
     linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
     canceled: cancel !== undefined,
+    // The class admission gives it, by the same rules and clock.
+    ...classOf(costFor({ ...doc, now }, probed)),
   };
 };
 
-/** A server publishes the machine reading and each running job's process-tree peak. */
+/** Past this, any server or waiter takes over writing the reading; under `SAMPLE_GAP_MS`. */
+export const SAMPLE_STALE_MS = 5_000;
+
+/** The reading folded into the sustained limits, after `doc`'s sample and with `entries` running. */
+const sampled = (
+  doc: QueueDoc,
+  reading: Omit<Sample, "headroomSince">,
+  entries: ReadonlyArray<HeavyQueueEntry> = doc.entries,
+): Sample => {
+  const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
+  const limit = sustain(
+    continuous ? doc.sample : null,
+    !hasHeadroom(reading, doc),
+    reading.at,
+    doc.heavyOverLimitSeconds * 1000,
+  );
+  // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
+  const comeback = entries
+    .filter((entry) => entry.slowed === true)
+    .reduce((sum, entry) => {
+      const full = Math.max(
+        entry.peakCpu ?? 0,
+        estimate(doc.history, entry, reading.cpuCount, doc).cpu,
+      );
+      // An unread job counts as using nothing now, so restoring waits rather than flaps.
+      return sum + Math.max(0, full - (entry.cpu ?? 0));
+    }, 0);
+  const slow = sustain(
+    continuous ? (doc.sample?.slow ?? null) : null,
+    reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
+    reading.at,
+    doc.heavyOverLimitSeconds * 1000,
+  );
+  // Admission's short headroom check uses the same unbroken run of readings under the limits.
+  return { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+};
+
+/**
+ * A server publishes the machine reading and each running job's process-tree peak. Only the live
+ * publisher writes every tick, so servers of different builds never restart each other's windows;
+ * another writes once the reading is stale. `primary`: this writer also runs the CPU slowdown.
+ * Null when it left the reading to the publisher.
+ */
 export const recordSample = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
@@ -1005,57 +1374,52 @@ export const recordSample = (
         /** Null when the job's processes could not be read: unknown, never 0. */
         readonly cpu: number | null;
         readonly memoryBytes: number;
+        readonly treeMemoryBytes?: number;
         readonly daemons?: ReadonlyArray<number>;
       }
     >
   > | null,
+  writer = process.pid,
 ) =>
-  mutate(dir, (doc) => {
-    const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
-    const limit = sustain(
-      continuous ? doc.sample : null,
-      !hasHeadroom(reading, doc),
-      reading.at,
-      doc.heavyOverLimitSeconds * 1000,
-    );
+  mutate(dir, (doc): Decided<{ readonly doc: QueueDoc; readonly primary: boolean } | null> => {
+    const publisher = doc.runner?.publisher.pid;
+    const primary = publisher === undefined || publisher === writer || !isAlive(publisher);
+    if (!primary && doc.sample !== null && reading.at - doc.sample.at < SAMPLE_STALE_MS) {
+      return { doc, result: null };
+    }
     const entries = doc.entries.map((entry): HeavyQueueEntry => {
       // On Linux the local tree is only `remoto`'s wrapper, not the job. Null: processes not read.
       if (peaks === null || entry.startedAt === null || entry.runner === "linux") return entry;
       const peak = peaks[entry.id];
-      const { daemons: _daemons, cpu: _cpu, memory: _memory, ...rest } = entry;
+      const { daemons: _daemons, cpu: _cpu, memory: _memory, idleSince, ...rest } = entry;
       // A job this sample could not read keeps its peaks but shows no current usage.
-      if (peak === undefined) return rest;
+      if (peak === undefined) return idleSince === undefined ? rest : { ...rest, idleSince };
+      // Idle only on a reading: unread CPU never starts the idle clock, and work stops it.
+      const idle =
+        entry.server === true
+          ? undefined
+          : peak.cpu === null
+            ? idleSince
+            : peak.cpu < IDLE_CORES
+              ? (idleSince ?? reading.at)
+              : undefined;
       return {
         ...rest,
+        ...(idle === undefined ? {} : { idleSince: idle }),
         ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
         ...(peak.cpu === null
           ? {}
           : { cpu: peak.cpu, peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu) }),
         memory: peak.memoryBytes,
         peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
+        ...(peak.treeMemoryBytes === undefined
+          ? {}
+          : { peakTreeMemory: Math.max(entry.peakTreeMemory ?? 0, peak.treeMemoryBytes) }),
       };
     });
-    // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
-    const comeback = entries
-      .filter((entry) => entry.slowed === true)
-      .reduce((sum, entry) => {
-        const full = Math.max(
-          entry.peakCpu ?? 0,
-          estimate(doc.history, entry, reading.cpuCount, doc).cpu,
-        );
-        // An unread job counts as using nothing now, so restoring waits rather than flaps.
-        return sum + Math.max(0, full - (entry.cpu ?? 0));
-      }, 0);
-    const slow = sustain(
-      continuous ? (doc.sample?.slow ?? null) : null,
-      reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
-      reading.at,
-      doc.heavyOverLimitSeconds * 1000,
-    );
-    // Admission's short headroom check uses the same unbroken run of readings under the limits.
-    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+    const sample = sampled(doc, reading, entries);
     const next: QueueDoc = { ...doc, sample, entries };
-    return { doc: next, result: next };
+    return { doc: next, result: { doc: next, primary } };
   });
 
 /** Records a slowdown step the sampler applied: entries slowed or restored, daemons held lowered. */
@@ -1088,12 +1452,11 @@ export const recordSampleIfStale = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
   staleMs: number,
-) => {
-  const current = readDoc(dir).sample;
-  if (current !== null && reading.at - current.at < staleMs) return false;
-  recordSample(dir, reading, null);
-  return true;
-};
+) =>
+  mutate(dir, (doc) => {
+    if (doc.sample !== null && reading.at - doc.sample.at < staleMs) return { doc, result: false };
+    return { doc: { ...doc, sample: sampled(doc, reading) }, result: true };
+  });
 
 export const setMaxRunning = (dir: string, maxRunning: number) =>
   mutate(dir, (doc) => ({
@@ -1106,6 +1469,30 @@ export const remove = (dir: string, id: string) =>
     doc: { ...doc, entries: doc.entries.filter((entry) => entry.id !== id) },
     result: undefined,
   }));
+
+/**
+ * An agent's waiter stopping before it starts: its entry keeps its place for a retry. Returns its
+ * position and how long it is kept, or null when it was not waiting.
+ */
+export const orphan = (dir: string, id: string, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const position = waitPosition(planOf(dir, doc, now), id);
+      return position === 0
+        ? { doc, result: null }
+        : {
+            doc: {
+              ...doc,
+              entries: doc.entries.map((entry) =>
+                entry.id === id ? { ...entry, orphanedAt: now } : entry,
+              ),
+            },
+            result: { position, minutes: doc.reclaimMinutes },
+          };
+    },
+    now,
+  );
 
 /** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
 export const finish = (
@@ -1180,30 +1567,39 @@ export const recordFault = (dir: string, id: string, fault: Fault, now = Date.no
     dir,
     (doc) => {
       const entry = doc.entries.find((each) => each.id === id);
-      return {
-        doc:
-          entry === undefined
-            ? doc
-            : { ...doc, events: withRecord(doc.events, faultRecord(entry, fault, now)) },
-        result: undefined,
-      };
+      if (entry === undefined) return { doc, result: undefined };
+      // The same job failing the same way again counts on its one record, filed once.
+      const same = doc.events.findLast(
+        (event) => event.kind === "t3-fault" && event.job.id === id && event.cause === fault.cause,
+      );
+      const events =
+        same?.kind === "t3-fault"
+          ? doc.events.map((event) =>
+              event === same ? { ...same, at: now, count: (same.count ?? 1) + 1 } : event,
+            )
+          : withRecord(doc.events, faultRecord(entry, fault, now));
+      return { doc: { ...doc, events }, result: undefined };
     },
     now,
   );
 
-export const move = (dir: string, id: string, beforeId: string | null, note?: string) =>
-  mutate(dir, (doc) => decideMove(doc, id, beforeId, note));
+export const move = (
+  dir: string,
+  id: string,
+  beforeId: string | null,
+  note?: string,
+  now = Date.now(),
+) => mutate(dir, (doc) => decideMove(dir, doc, id, beforeId, note, now));
 
 /** Moves a waiter to the front of the waiters, right behind the running entry. */
-export const promote = (dir: string, id: string, note?: string) =>
-  mutate(dir, (doc) =>
-    decideMove(doc, id, doc.entries.find((entry) => entry.startedAt === null)?.id ?? id, note),
-  );
+export const promote = (dir: string, id: string, note?: string, now = Date.now()) =>
+  mutate(dir, (doc) => decideMove(dir, doc, id, planOf(dir, doc, now).ordered[0] ?? id, note, now));
 
 /** The user override: the waiter starts at once, past the pause, the slots and the load check. */
 export const startNow = (dir: string, id: string) =>
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
+    refuseOrphan(target);
     if (target === undefined) return { doc, result: "not-found" };
     if (target.startedAt !== null) return { doc, result: "running" };
     return {
@@ -1222,6 +1618,7 @@ export const startNow = (dir: string, id: string) =>
 export const setPriority = (dir: string, id: string, priority: "low" | "high") =>
   mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
     const target = doc.entries.find((entry) => entry.id === id);
+    refuseOrphan(target);
     if (target === undefined) return { doc, result: { result: "not-found" } };
     if (target.startedAt !== null) {
       // The user's choice for a running job stands: T3 stops slowing or restoring it on its own.
@@ -1315,9 +1712,10 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
   });
 
 /** Exclusive work, its project's Mac-only list and projects with the Runner off never leave this Mac. */
-export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
-  const context = contextOf(doc)(entry.cwd);
+export const staysOnMac = (contexts: (cwd: string) => WorkContext, entry: HeavyQueueEntry) => {
+  const context = contexts(entry.cwd);
   if (!context.config.runnerEnabled) return true;
+  if (sentToLinux(entry)) return false;
   const { eligibility } = eligibilityOf(entry, context);
   return eligibility === "exclusive" || eligibility === "mac-only";
 };
@@ -1329,6 +1727,32 @@ export const publishRunner = (dir: string, block: RunnerBlock) =>
       ? { doc: { ...doc, runner: block }, result: true }
       : { doc, result: false },
   );
+
+/** A running Linux job's session memory from a heartbeat, and its peak, for what it reserves and learns. */
+const withLinuxMemory = (
+  entry: QueuedEntry,
+  linux: Pick<LinuxHealth, "jobMemory" | "outside">,
+): QueuedEntry => {
+  const { jobMemory } = linux;
+  const id = entry.remote?.id;
+  if (entry.startedAt === null || entry.runner !== "linux" || entry.phase !== "running") {
+    return entry;
+  }
+  if (entry.ssh === true) {
+    // Its own ssh session, found by the job id that ssh sent along.
+    const session = linux.outside?.find((item) => item.jobId === entry.id);
+    if (session === undefined) return entry;
+    const bytes = session.memoryBytes;
+    return { ...entry, memory: bytes, peakMemory: Math.max(entry.peakMemory ?? 0, bytes) };
+  }
+  const job =
+    id !== undefined && jobMemory !== undefined && Object.hasOwn(jobMemory, id)
+      ? jobMemory[id]
+      : undefined;
+  // Only this run's own group: a stale pgid file may name a reused pid.
+  if (job === undefined || job.pgid !== entry.remote?.pgid) return entry;
+  return { ...entry, memory: job.bytes, peakMemory: Math.max(entry.peakMemory ?? 0, job.bytes) };
+};
 
 /**
  * Folds one heartbeat into Linux health, offline only after the configured failures in a row. A
@@ -1350,7 +1774,8 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
       const ended = new Set(
         doc.lostRuns.filter((lost) => !lostRuns.includes(lost)).map((lost) => lost.entryId),
       );
-      const entries = doc.entries.map((entry: QueuedEntry): QueuedEntry => {
+      const entries = doc.entries.map((each: QueuedEntry): QueuedEntry => {
+        const entry = withLinuxMemory(each, linux);
         const stop = stops[entry.id];
         // A restart outranks a memory stop: that run's process group is gone with it.
         if (stop !== undefined && (entry.stop === undefined || stop === "reboot")) {
@@ -1391,7 +1816,9 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: "not-found" };
-    if (runner === "linux" && staysOnMac(doc, target)) return { doc, result: "not-allowed" };
+    if (runner === "linux" && staysOnMac(contextOf(dir, doc, Date.now()), target)) {
+      return { doc, result: "not-allowed" };
+    }
     const update = (patch: (entry: HeavyQueueEntry) => HeavyQueueEntry) => ({
       doc: { ...doc, entries: doc.entries.map((e) => (e.id === id ? patch(e) : e)) },
       result: "ok" as const,
@@ -1435,13 +1862,15 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
     dir,
     (doc): Decided<ReadonlyArray<string>> => {
       if (runner === "linux" && doc.linux.online !== true) return { doc, result: [] };
-      const { routes } = planOf(doc, now);
+      const contexts = contextOf(dir, doc, now);
+      const { routes } = planOf(dir, doc, now, contexts);
       const moves = doc.entries.filter(
         (entry) =>
           entry.startedAt === null &&
+          !isOrphan(entry) &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
-          !(runner === "linux" && (entry.where === "mac" || staysOnMac(doc, entry))),
+          !(runner === "linux" && (entry.where === "mac" || staysOnMac(contexts, entry))),
       );
       const moved = new Set(moves.map((entry) => entry.id));
       return {
@@ -1485,6 +1914,7 @@ export const requeue = (
     | "unconfirmed"
     | "linuxFailedAt"
     | "linkFailures"
+    | "linkError"
     | "failure"
     | "evictedAt"
     | "evictions"
@@ -1624,15 +2054,29 @@ export const settleLostRun = (
     };
   });
 
-/** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
+/**
+ * Reads the script a word names from `cwd`, or a `package.json#X` script's body from `cwd`'s own
+ * `package.json`; null when missing, unreadable or too big to read.
+ */
 export const scriptReader =
   (cwd: string, home = NodeOS.homedir()): ReadScript =>
   (word) => {
-    const path = NodePath.resolve(cwd, word.replace(/^~(?=\/|$)/, home));
+    const packaged = word.startsWith(PACKAGE_SCRIPT);
+    const path = NodePath.resolve(
+      cwd,
+      packaged ? "package.json" : word.replace(/^~(?=\/|$)/, home),
+    );
     try {
       const stat = NodeFS.statSync(path);
       if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) return null;
-      return NodeFS.readFileSync(path, "utf8");
+      const text = NodeFS.readFileSync(path, "utf8");
+      if (!packaged) return text;
+      const scripts: unknown = (JSON.parse(text) as { scripts?: unknown } | null)?.scripts;
+      const body =
+        typeof scripts === "object" && scripts !== null && !Array.isArray(scripts)
+          ? Object.getOwnPropertyDescriptor(scripts, word.slice(PACKAGE_SCRIPT.length))?.value
+          : undefined;
+      return typeof body === "string" ? body : null;
     } catch {
       return null;
     }
@@ -1647,6 +2091,7 @@ export const answerBashCall = (
   hookInput: unknown,
   prefix: string,
   environment: Readonly<Record<string, string | undefined>> = {},
+  inT3 = environment.T3CODE_THREAD_ID !== undefined,
 ) => {
   const doc = readDoc(dir);
   const cwd =
@@ -1655,7 +2100,11 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at));
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment, scriptReader(at), {
+    probe: (line) => probe(dir, line, cwd),
+    inT3,
+    resolveHost: cachedSshHostname,
+  });
 };
 
 /** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */

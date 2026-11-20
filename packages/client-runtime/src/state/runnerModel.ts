@@ -8,19 +8,26 @@ import type {
   HeavyQueueState,
   HeavyRunner,
   HeavyRunnerLinux,
+  HeavyRunnerLinuxOver,
   HeavyRunnerPhase,
   RunnerDeadlineAction,
   RunnerFailedPolicy,
-  RunnerKey,
   RunnerLinuxFullPolicy,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
-import { HEAVY_QUEUE_DEFAULTS } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  RUNNER_DEFAULTS,
+  formatBytes,
+  linuxOverText,
+} from "@t3tools/contracts";
+
+export type RunnerSettingKey = keyof typeof RUNNER_DEFAULTS;
 
 /** Every Runner setting's label and description; web and mobile both read these. */
 export const RUNNER_SETTING_COPY: Record<
-  RunnerKey,
+  RunnerSettingKey,
   { readonly title: string; readonly description: string }
 > = {
   runnerEnabled: {
@@ -31,12 +38,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerWhere: {
     title: "Where heavy work runs",
     description:
-      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
-  },
-  runnerLinuxCommands: {
-    title: "Can run on Linux",
-    description:
-      "A heavy command goes to Linux only when each heavy part of it matches one of these. Builds are left out because their output would stay on the PC.",
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends every job it can run there.",
   },
   runnerMacOnly: {
     title: "Always on this Mac",
@@ -70,10 +72,6 @@ export const RUNNER_SETTING_COPY: Record<
     title: "Send to Linux after",
     description:
       "Mac first sends a job to Linux once this Mac has this many jobs running or waiting.",
-  },
-  runnerLinuxEverything: {
-    title: "Everything",
-    description: "Every heavy command goes to Linux, except what has to stay on this Mac.",
   },
   runnerBringBack: {
     title: "Bring results back",
@@ -236,6 +234,25 @@ export const HEAVY_LIMIT_COPY: Record<
     description:
       "While the first job in line does not fit, smaller ones behind it may start. Once it has waited this long, nothing passes it.",
   },
+  quickSeconds: {
+    title: "Quick job length",
+    description:
+      "A command that usually ends this fast, or names only a few files, starts in its own slots instead of waiting behind long jobs.",
+  },
+  quickSlots: {
+    title: "Quick jobs at once",
+    description: "How many quick jobs may run beside the regular job slots.",
+  },
+  serviceIdleMinutes: {
+    title: "Idle job counts as running in the background after",
+    description:
+      "A job that has run this long and then sits idle stops holding a slot: its load still counts in this Mac's reading.",
+  },
+  reclaimMinutes: {
+    title: "Keep a stopped agent's place for",
+    description:
+      "When an agent's command stops while waiting, its place in line is kept this long for the agent to ask again.",
+  },
 };
 
 /** A limit's description as drawn; the memory floor's exception follows the light job size. */
@@ -258,12 +275,11 @@ export interface HeavyModeInput {
   readonly queuePaused: boolean;
   readonly runnerEnabled: boolean;
   readonly where: RunnerWhere;
-  readonly everything: boolean;
 }
 
 /** One sentence for the current queue × Runner combination; both settings sections show it. */
 export function heavyModeLine(mode: HeavyModeInput): string {
-  const { queueEnabled, queuePaused, runnerEnabled, where, everything } = mode;
+  const { queueEnabled, queuePaused, runnerEnabled, where } = mode;
   if (!runnerEnabled) {
     if (!queueEnabled) return "Heavy jobs start right away, with nothing tracking them.";
     return queuePaused
@@ -276,9 +292,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       case "mac":
         return "Heavy jobs wait their turn on this Mac; nothing goes to Linux.";
       case "linux":
-        return everything
-          ? "Heavy commands run on Linux; what has to stay here waits its turn on this Mac."
-          : "Listed commands run on Linux; everything else waits its turn on this Mac.";
+        return "Heavy jobs Linux can run go there; what needs this Mac waits its turn here.";
       case "automatic":
         return RUNNER_WHERE_DESCRIPTION.automatic;
       case "macFirst":
@@ -289,9 +303,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
     case "mac":
       return "No queue: heavy jobs start on this Mac right away.";
     case "linux":
-      return everything
-        ? "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away."
-        : "No queue: listed commands wait for a Linux slot, the rest start here right away.";
+      return "No queue: jobs Linux can run wait for a Linux slot; what needs this Mac starts right away.";
     case "automatic":
       return RUNNER_WHERE_DESCRIPTION.automatic;
     case "macFirst":
@@ -299,12 +311,27 @@ export function heavyModeLine(mode: HeavyModeInput): string {
   }
 }
 
-const GB = 1024 ** 3;
+/**
+ * Why Linux is over its limits, for words shown beside its CPU and memory readings: those two
+ * limits name only their threshold, since the reading beside them carries the number.
+ */
+export function linuxOverReasons(linux: HeavyRunnerLinux): string | undefined {
+  if (linux.status !== "over-limit") return undefined;
+  const shown = (over: HeavyRunnerLinuxOver) =>
+    over.limit === "memory"
+      ? linux.availableMemoryBytes !== null
+      : over.limit === "cpu" && linux.cpuPercent !== undefined && linux.cpuPercent !== null;
+  const words = linux.overLimits?.map((over) => linuxOverText(over, shown(over))).join("; ");
+  return words || linux.overLimitBy;
+}
 
 /** "Linux online · 1 of 2 running · CPU 12% · load 1.2 on 6 cores · 8.1 GB free", or why it is not. */
 export function linuxLine(linux: HeavyRunnerLinux): string {
   const jobs = `${linux.running} of ${linux.slots} running`;
   if (linux.online === null) return `Checking Linux (${linux.host})…`;
+  if (linux.status === "unresponsive") {
+    return `Linux not responding, too loaded to answer${linux.error === undefined ? "" : `: ${linux.error}`}`;
+  }
   if (!linux.online) {
     return `Linux offline${linux.error === undefined ? "" : `: ${linux.error}`}`;
   }
@@ -317,10 +344,10 @@ export function linuxLine(linux: HeavyRunnerLinux): string {
       ? ""
       : ` · load ${linux.load1.toFixed(1)}${linux.cpuCount === null ? "" : ` on ${linux.cpuCount} cores`}`;
   const memory =
-    linux.availableMemoryBytes === null
-      ? ""
-      : ` · ${(linux.availableMemoryBytes / GB).toFixed(1)} GB free`;
-  return `Linux online · ${jobs}${cpu}${load}${memory}`;
+    linux.availableMemoryBytes === null ? "" : ` · ${formatBytes(linux.availableMemoryBytes)} free`;
+  const reasons = linuxOverReasons(linux);
+  const over = reasons === undefined ? "" : ` · over its limits: ${reasons}`;
+  return `Linux online · ${jobs}${cpu}${load}${memory}${over}`;
 }
 
 /** "4:05" until the deadline, never negative. */
@@ -452,26 +479,60 @@ export function moveAllActions(
   return actions;
 }
 
-/** Linux mode with Everything on: every heavy command may go, so the Linux list does nothing. */
-export function runnerEverythingOn(where: RunnerWhere | null, everything: boolean | null): boolean {
-  return where === "linux" && everything === true;
+interface RunnerModeScope {
+  /** Null (targets disagree) counts as applying. */
+  readonly applies: (where: RunnerWhere | null) => boolean;
+  readonly idle: string;
 }
 
-/**
- * Whether a mode-specific field belongs to the picked mode, and the Linux list to Linux mode only
- * while Everything is off. Null (targets disagree) counts as applying.
- */
-export function runnerModeFieldApplies(
-  key: RunnerKey,
+const LINUX_MODE: RunnerModeScope = {
+  applies: (where) => where === null || where === "linux",
+  idle: "Only applies when Where jobs run is Linux.",
+};
+
+/** Every Runner key states whether it depends on the picked mode; null means it applies in all. */
+const RUNNER_MODE_SCOPE: Record<RunnerSettingKey, RunnerModeScope | null> = {
+  runnerEnabled: null,
+  runnerWhere: null,
+  runnerUnavailable: null,
+  runnerLinuxFull: LINUX_MODE,
+  runnerAskMinutes: null,
+  runnerDeadlineAction: null,
+  runnerDropped: null,
+  runnerMacFirstAfter: {
+    applies: (where) => where === null || where === "macFirst",
+    idle: "Only applies when Where jobs run is Mac first.",
+  },
+  runnerBringBack: null,
+  runnerRouteMemoryDays: null,
+  runnerRouteLearnAfter: null,
+  runnerBringBackExclude: null,
+  runnerBringBackMaxMB: null,
+  runnerMacTools: null,
+  runnerMacOnly: null,
+  runnerHost: null,
+  runnerLinuxSlots: null,
+  runnerHeartbeatSeconds: null,
+  runnerOfflineAfterFailures: null,
+  runnerSshTimeoutSeconds: null,
+  runnerStopWaitSeconds: null,
+  runnerLinuxMemoryFloorPercent: null,
+  runnerLinuxCpuCeilingPercent: null,
+  runnerLinuxEvictionsBeforeAlone: null,
+};
+
+/** Whether a field belongs to the picked mode. */
+export function runnerModeFieldApplies(key: RunnerSettingKey, where: RunnerWhere | null): boolean {
+  return RUNNER_MODE_SCOPE[key]?.applies(where) ?? true;
+}
+
+/** Why a mode-specific field does nothing under the picked mode, or null when it applies. */
+export function runnerModeFieldIdle(
+  key: RunnerSettingKey,
   where: RunnerWhere | null,
-  everything: boolean | null,
-): boolean {
-  if (key === "runnerMacFirstAfter") return where === null || where === "macFirst";
-  if (key === "runnerLinuxEverything" || key === "runnerLinuxFull") {
-    return where === null || where === "linux";
-  }
-  if (key === "runnerLinuxCommands") return !runnerEverythingOn(where, everything);
-  return true;
+): string | null {
+  const scope = RUNNER_MODE_SCOPE[key];
+  return scope === null || scope.applies(where) ? null : scope.idle;
 }
 
 /** The effective values Runner fields depend on; null where the selected targets disagree. */
@@ -487,14 +548,10 @@ export interface RunnerChoices {
  * a field, and show it with this note only when a search lands on it. A mixed choice counts as
  * applying, so a field never hides while some selected target still uses it.
  */
-export function runnerFieldIdle(key: RunnerKey, choices: RunnerChoices): string | null {
+export function runnerFieldIdle(key: RunnerSettingKey, choices: RunnerChoices): string | null {
   if (key === "runnerEnabled") return null;
   if (choices.runnerEnabled === false) return "Only applies while the Runner is on.";
   switch (key) {
-    case "runnerLinuxCommands":
-      return choices.runnerWhere === "mac"
-        ? "Only applies when jobs run on Linux or Hybrid."
-        : null;
     case "runnerAskMinutes":
     case "runnerDeadlineAction":
       return [choices.runnerUnavailable, choices.runnerDropped].some(
@@ -513,16 +570,25 @@ export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
   macFirst: "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
   automatic:
     "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
-  linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
+  linux:
+    "Every job Linux can run goes there. Work that needs this Mac stays here: Always on this Mac, Mac-only tools and local files.",
 };
 
-/** The line under "Where heavy work runs"; with Everything on it says what Everything does. */
-export function runnerWhereLine(where: RunnerWhere | null, everything: boolean | null): string {
-  if (where === null) return RUNNER_SETTING_COPY.runnerWhere.description;
-  return runnerEverythingOn(where, everything)
-    ? RUNNER_SETTING_COPY.runnerLinuxEverything.description
+/** The line under "Where heavy work runs". */
+export function runnerWhereLine(where: RunnerWhere | null): string {
+  return where === null
+    ? RUNNER_SETTING_COPY.runnerWhere.description
     : RUNNER_WHERE_DESCRIPTION[where];
 }
+
+/** The queue's own limits: passing the head and its lanes; the rest also steer Hybrid on the Mac. */
+const QUEUE_ONLY_LIMITS: ReadonlyArray<HeavyQueueLimitKey> = [
+  "headPatienceMinutes",
+  "quickSeconds",
+  "quickSlots",
+  "serviceIdleMinutes",
+  "reclaimMinutes",
+];
 
 export interface HeavyLimitChoices {
   readonly queueEnabled: boolean;
@@ -537,6 +603,7 @@ export interface HeavyLimitChoices {
  */
 export function heavyLimitIdle(key: HeavyQueueLimitKey, choices: HeavyLimitChoices): string | null {
   if (choices.queueEnabled) return null;
+  if (QUEUE_ONLY_LIMITS.includes(key)) return "Only applies while the heavy work queue is on.";
   const runnerOn = choices.runnerEnabled !== false;
   if (key === "heavyOverLimitSeconds") {
     return runnerOn ? null : "Only applies while the heavy work queue or the Runner is on.";

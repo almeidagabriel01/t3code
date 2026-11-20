@@ -1480,6 +1480,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
   runnerMacOnly: Schema.optionalKey(RunnerPatterns),
+  // Deprecated and ignored, as is runnerLinuxEverything: older clients still send both.
   runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
@@ -1791,15 +1792,13 @@ export const ServerSettings = Schema.Struct({
   runnerMacOnly: RunnerPatterns.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacOnly)),
   ),
-  runnerLinuxCommands: RunnerPatterns.pipe(
-    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCommands)),
-  ),
+  // Deprecated, ignored: kept so older clients' patches and saved files still round-trip.
+  runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
   runnerMacFirstAfter: RunnerMacFirstAfter.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacFirstAfter)),
   ),
-  runnerLinuxEverything: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEverything)),
-  ),
+  // Deprecated, ignored: kept so older clients' patches and saved files still round-trip.
+  runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
   runnerBringBack: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBack)),
   ),
@@ -2364,6 +2363,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
   runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
   runnerMacOnly: Schema.optionalKey(RunnerPatterns),
+  // Deprecated and ignored, as is runnerLinuxEverything: older clients still send both.
   runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
   runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
   runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),

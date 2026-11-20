@@ -8,19 +8,21 @@ import { afterEach, describe, expect, it, onTestFinished } from "@effect/vitest"
 
 import {
   callingBins,
+  forwardsSignal,
   heavyLaunch,
-  jobOf,
-  labelOf,
   launchOf,
   parseHeavyArgs,
   selfPrefix,
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
+import { jobOf, labelOf } from "./jobEntry.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
+  linuxFailedNote,
+  linuxRetryNote,
   type QueuedEntry,
 } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
@@ -28,6 +30,13 @@ import { listRoutes } from "./routeMemory.ts";
 import { READ_ENV } from "./runnerExec.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
+
+/** The note a job's end left the agent: a T3 bug to file, Linux to retry later, or none. */
+const noteOf = (stderr: string) => {
+  const t3 = stderr.includes(linuxFailedNote("remoto"));
+  const retry = stderr.includes(linuxRetryNote("remoto"));
+  return t3 && retry ? "both" : t3 ? "t3" : retry ? "retry" : null;
+};
 const children: NodeChildProcess.ChildProcess[] = [];
 const dirs: string[] = [];
 afterEach(() => {
@@ -229,10 +238,14 @@ describe("t3 heavy", () => {
     expect(await Promise.all([first.exited, third.exited])).toEqual([0, 0]);
   });
 
-  it("passes the program's exit code through, and a waiter interrupted leaves the queue", async () => {
+  it("passes the exit code through; an interrupted waiter leaves, an agent's keeps its place", async () => {
     const dir = tempDir();
     const failing = heavy(dir, [process.execPath, "-e", "process.exit(7)"]);
     expect(await failing.exited).toBe(7);
+    // The command's own 75 is not T3 failing it: no note telling the agent to file a T3 bug.
+    const tempfail = heavy(dir, [process.execPath, "-e", "process.exit(75)"]);
+    expect(await tempfail.exited).toBe(75);
+    expect(noteOf(tempfail.stderr())).toBeNull();
 
     const holder = heavy(dir, [process.execPath, "-e", holdProgram(NodePath.join(dir, "m"), "h")]);
     await holder.until("out", "started h");
@@ -241,8 +254,26 @@ describe("t3 heavy", () => {
     waiter.child.kill("SIGTERM");
     expect(await waiter.exited).toBe(143);
     expect(Queue.read(dir)).toHaveLength(1);
+
+    // An agent's waiter keeps its place instead, and the same command run again takes it back.
+    const asAgent = { T3CODE_THREAD_ID: "thread-1" };
+    const agent = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await agent.until("err", "position 1");
+    agent.child.kill("SIGTERM");
+    expect(await agent.exited).toBe(143);
+    expect(agent.stderr()).toContain(
+      "[t3 heavy] stopped while waiting (position 1); run the same command again within 10 min to keep this place.",
+    );
+    const kept = Queue.read(dir)[1]!;
+    expect(kept.orphanedAt).toBeDefined();
+    const retry = heavy(dir, [process.execPath, "-e", ""], asAgent);
+    await retry.until("err", "position 1");
+    expect(Queue.read(dir).map((entry) => [entry.id, entry.pid])).toEqual([
+      [Queue.read(dir)[0]!.id, holder.child.pid],
+      [kept.id, retry.child.pid],
+    ]);
     holder.child.stdin.end();
-    expect(await holder.exited).toBe(0);
+    expect(await Promise.all([holder.exited, retry.exited])).toEqual([0, 0]);
   });
 
   it.each([
@@ -329,6 +360,22 @@ describe("t3 heavy", () => {
     expect(await kept.exited).toBe(0);
   });
 
+  // The CLI waits on a busy lock without limit, and says who holds it.
+  it("says who holds the queue's lock while it waits for it", async () => {
+    const dir = tempDir();
+    const lock = NodePath.join(dir, "lock");
+    NodeFS.mkdirSync(lock, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(lock, "owner"), `${process.pid} other`);
+    const run = heavy(dir, [process.execPath, "-e", "console.log('ran')"]);
+    await run.until(
+      "err",
+      `[t3 heavy] waiting for the queue's lock: process ${process.pid} holds it\n`,
+    );
+    NodeFS.rmSync(lock, { recursive: true });
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toBe("ran\n");
+  });
+
   it("inside a queue job runs at once without queuing, so it never waits on its own slot", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "m");
@@ -339,6 +386,54 @@ describe("t3 heavy", () => {
     expect(Queue.read(dir)).toEqual([]);
     nested.child.stdin.end();
     expect(await nested.exited).toBe(0);
+  });
+
+  // A signal sent to `t3 heavy` alone reached only it: `vp run dev` left its server and Vite.
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "a direct run passes %s to its program",
+    async (signal) => {
+      const dir = tempDir();
+      Queue.setEnabled(dir, false);
+      const run = heavy(dir, [
+        process.execPath,
+        "-e",
+        `process.on(${JSON.stringify(signal)},()=>{console.log("got");process.exit(3)});console.log("ready");setInterval(()=>{},1000)`,
+      ]);
+      await run.until("out", "ready");
+      run.child.kill(signal);
+      expect(await run.exited).toBe(3);
+      expect(run.stdout()).toContain("got");
+    },
+  );
+
+  // A launcher that ignores the signal (`vp` dies without passing it): its child still gets it.
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "a direct run passes %s to its program's tree",
+    async (signal) => {
+      const dir = tempDir();
+      Queue.setEnabled(dir, false);
+      const grand = `process.on(${JSON.stringify(signal)},()=>process.exit(4));console.log("ready");setInterval(()=>{},1000)`;
+      const launcher = [
+        `process.on(${JSON.stringify(signal)},()=>{})`,
+        `const c=require("child_process").spawn(process.execPath,["-e",${JSON.stringify(grand)}],{stdio:"inherit"})`,
+        "c.on('exit',(code)=>process.exit(code))",
+      ].join(";");
+      const run = heavy(dir, [process.execPath, "-e", launcher]);
+      await run.until("out", "ready");
+      run.child.kill(signal);
+      expect(await run.exited).toBe(4);
+    },
+  );
+
+  // Ctrl-C on a terminal reaches the program too; only a signal sent to us alone needs passing.
+  it.each([
+    ["SIGINT", true, false],
+    ["SIGINT", false, true],
+    ["SIGTERM", true, true],
+    ["SIGTERM", false, true],
+    ["SIGHUP", true, true],
+  ] as const)("%s with a terminal %s is passed on: %s", (signal, onTerminal, passed) => {
+    expect(forwardsSignal(signal, onTerminal)).toBe(passed);
   });
 
   it("queue off runs direct with the Runner off, and tracks an ungated job with it on", async () => {
@@ -361,6 +456,7 @@ describe("t3 heavy", () => {
     expect(linux.stderr()).toContain(
       "[t3 heavy] The Runner is off for this project and this job asked for Linux.",
     );
+    expect(noteOf(linux.stderr())).toBe("retry");
     expect(Queue.read(dir)).toEqual([]);
 
     Queue.publishRunner(dir, {
@@ -381,13 +477,19 @@ describe("t3 heavy", () => {
 
   describe("with the Runner sending work to Linux (fake remoto and ssh)", () => {
     const M = "\\036remoto";
+    const WARN = "npm warn install-scripts Run `npm install-scripts ls` to review";
+    const NOT_FOUND = "sh: 1: tsgo: not found";
     const script = (dir: string, name: string, body: string) => {
       const path = NodePath.join(dir, name);
       NodeFS.writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
       return path;
     };
     /** Heartbeats read as online; a stop check answers `gone`. */
-    const setup = (remotoBody: string, config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => {
+    const setup = (
+      remotoBody: string,
+      config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {},
+      machine: Partial<typeof DEFAULT_MACHINE_CONFIG> = {},
+    ) => {
       const dir = tempDir();
       // A checkout, so work started in it may go to Linux.
       NodeFS.mkdirSync(NodePath.join(dir, ".git"));
@@ -395,7 +497,7 @@ describe("t3 heavy", () => {
       script(NodePath.join(dir, "bin"), "vp", 'echo "vp on mac: $*"');
       Queue.publishRunner(dir, {
         global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux", ...config },
-        machine: DEFAULT_MACHINE_CONFIG,
+        machine: { ...DEFAULT_MACHINE_CONFIG, ...machine },
         projects: [],
         publisher: { pid: process.pid, home: dir, primary: true },
       });
@@ -486,11 +588,11 @@ describe("t3 heavy", () => {
       );
       expect(await piped.exited).toBe(0);
       expect(piped.stdout()).toBe(`vp|test|run|a.test.ts| in ${NodeFS.realpathSync(sub)}\n`);
-      // With no heavy call to pick out, the line itself is what it asked Linux to run.
+      // A light call under `remoto` still goes: the agent chose Linux for it.
       script(NodePath.join(dir, "bin"), "npm", 'echo "npm on mac: $*"');
       const light = heavyHere(dir, ["/bin/sh", "-c", "remoto npm run cobertura"], env);
       expect(await light.exited).toBe(0);
-      expect(light.stdout()).toBe(`bash|-c|npm run cobertura| in ${NodeFS.realpathSync(dir)}\n`);
+      expect(light.stdout()).toBe(`npm|run|cobertura| in ${NodeFS.realpathSync(dir)}\n`);
     });
 
     const echoArgs = [
@@ -498,6 +600,38 @@ describe("t3 heavy", () => {
       `printf '%s|' "$@"; echo " in $(pwd -P)\${A+ A=$A}\${K+ K=$K}\${NPM_TOKEN+ NPM_TOKEN=$NPM_TOKEN}"`,
       `printf '${M} exit=0\\n' >&2`,
     ].join("\n");
+
+    // The plan and `linux-part` ask the same rule: an agent's own `remoto` call skips this Mac's
+    // checks, its words expanded here as the agent's shell would. Other calls are still judged.
+    it.each([
+      ['remoto bash -c "$(cat O/body.sh)"', "mac", "bash|-c|echo body-ran| in R\n"],
+      ["remoto bash O/body.sh", "mac", "bash|-c|echo body-ran|O/body.sh| in R\n"],
+      ["remoto vp test run /etc/hosts", "mac", "vp|test|run|/etc/hosts| in R\n"],
+      ["remoto A=1 vp test run /etc/hosts", "mac", "env|A=1|vp|test|run|/etc/hosts| in R\n"],
+      ["remoto sh -c 'vp test run /etc/hosts'", "mac", "vp|test|run|/etc/hosts| in R\n"],
+      [
+        "remoto vp test run a && vp check /etc/hosts",
+        "linux",
+        "vp|test|run|a| in R\nvp on mac: check /etc/hosts\n",
+      ],
+      ["vp test run /etc/hosts", "linux", "vp on mac: test run /etc/hosts\n"],
+    ] as const)("%s (Runner on %s) runs where the plan put it", async (line, where, out) => {
+      const { dir, env } = setup(echoArgs, { runnerWhere: where });
+      const outside = NodeFS.realpathSync(tempDir());
+      NodeFS.writeFileSync(NodePath.join(outside, "body.sh"), "echo body-ran");
+      const run = heavyHere(dir, ["/bin/sh", "-c", line.replaceAll("O/", `${outside}/`)], env);
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(
+        out.replaceAll("O/", `${outside}/`).replaceAll(" R\n", ` ${NodeFS.realpathSync(dir)}\n`),
+      );
+    });
+
+    it("a bare remoto job skips this Mac's checks on Linux too", async () => {
+      const { dir, env } = setup(echoArgs, { runnerWhere: "mac" });
+      const run = heavyHere(dir, ["remoto", "vp", "test", "run", "/etc/hosts"], env);
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(`vp|test|run|/etc/hosts| in ${NodeFS.realpathSync(dir)}\n`);
+    });
 
     it("a cd into another checkout runs on Linux from that folder, not the session's", async () => {
       const { dir, env } = setup(echoArgs);
@@ -798,6 +932,8 @@ describe("t3 heavy", () => {
       const why =
         "Asked for Linux, but it needs this Mac: Linux couldn't run this before: x, 2100-01-01";
       expect(run.stderr()).toContain(`[t3 heavy] ${why}`);
+      expect(Queue.read(dir)).toEqual([]);
+      expect(noteOf(run.stderr())).toBe("retry");
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({ code: 75, error: why });
       expect(NodeFS.existsSync(NodePath.join(dir, "remoto.count"))).toBe(false);
     });
@@ -864,8 +1000,34 @@ describe("t3 heavy", () => {
       expect(Queue.read(dir)).toEqual([]);
     });
 
-    // Two environment faults of one program in one package teach the route: the next call skips
-    // Linux. Forgetting it, or its expiry, sends calls to Linux again.
+    // A warning printed around a call never names a fault: the shell's line does, or none is filed.
+    it.each([
+      ["a warning after the missing tool", 127, [NOT_FOUND, WARN], 0, NOT_FOUND],
+      ["a warning before the missing tool", 127, [WARN, NOT_FOUND], 0, NOT_FOUND],
+      ["only a warning, exit 127", 127, [WARN], 127, null],
+      ["a warning, exit 0", 0, [WARN], 0, null],
+      ["a warning, exit 1", 1, [WARN, "warning: unused variable"], 1, null],
+    ] as const)("%s", async (_, code, lines, exit, error) => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          ...lines.map((line) => `echo '${line}' >&2`),
+          `printf '${M} exit=${code}\\n' >&2`,
+          `exit ${code}`,
+        ].join("\n"),
+        { runnerDropped: "agent" },
+      );
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(exit);
+      const logged = Queue.readDoc(dir).events.flatMap((event) =>
+        event.kind === "t3-fault" ? [event.error] : [],
+      );
+      expect(logged).toEqual(error === null ? [] : [error]);
+      expect(run.stderr().includes("Linux couldn't run this")).toBe(error !== null);
+    });
+
+    // Two environment faults of one program in one package teach the route: the next job skips
+    // Linux whole. Forgetting it, or its expiry, sends it to Linux again.
     it("learns a call Linux failed twice, then forgets it", async () => {
       const { dir, env } = setup(
         [
@@ -888,9 +1050,7 @@ describe("t3 heavy", () => {
       expect(linuxRuns()).toBe(1);
       expect(await call()).toContain(`Learned: ${key} `);
       expect(linuxRuns()).toBe(2);
-      expect(await call()).toMatch(
-        /Linux couldn't run this before: sh: 1: vp: not found, \d{4}-\d{2}-\d{2}; running this call on this Mac/,
-      );
+      await call();
       expect(linuxRuns()).toBe(2);
       // One card per failure Linux had; the learned call never reached it.
       expect(faults(dir).map((fault) => fault.cause)).toEqual([
@@ -1298,6 +1458,7 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(127);
       expect(run.stdout()).toBe("");
       expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}.\n`);
+      expect(noteOf(run.stderr())).toBe("t3");
       expect(Queue.readDoc(dir).results.at(-1)).toMatchObject({
         code: 127,
         error: `Linux couldn't run this: ${error}`,
@@ -1496,6 +1657,10 @@ describe("t3 heavy", () => {
         expect(NodeFS.readFileSync(marker, "utf8")).toBe("x\n");
         expect(runs(dir)).toBe(linuxRuns);
         if (said !== null) expect(run.stderr()).toContain(said);
+        // Only input or output spent on Linux is T3's failure; offline or dropped is retried.
+        expect(noteOf(run.stderr())).toBe(
+          said === null ? null : said.includes("does not run again") ? "t3" : "retry",
+        );
       },
     );
 
@@ -1719,6 +1884,7 @@ describe("t3 heavy", () => {
         expect(await run.exited).toBe(code);
         expect(run.stdout()).toBe(stdout);
         expect(run.stderr()).toContain(said);
+        expect(noteOf(run.stderr())).toBe("retry");
         expect(Queue.read(dir)).toEqual([]);
       },
     );
@@ -1835,6 +2001,7 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(
         "[t3 heavy] Linux couldn't run this: remoto is not installed, and this job asked for Linux.\n",
       );
+      expect(noteOf(run.stderr())).toBe("t3");
       // An agent's own `remoto` runs here instead, and says so.
       const agent = heavyHere(dir, ["/bin/sh", "-c", "remoto /bin/echo ran on mac"], {
         ...env,
@@ -2025,6 +2192,19 @@ describe("t3 heavy", () => {
       );
     });
 
+    it.each([
+      ["vp", ["run", "dev"]],
+      [SH, ["-c", "cd apps/web && vp run dev:desktop"]],
+      ["npx", ["expo", "start"]],
+      ["vp", ["test", "--watch"]],
+    ])("row 14: %s %j keeps running, so it runs outside the queue", (program, args) => {
+      const modeAt = () => ({ enabled: true, runner: true });
+      expect(heavyLaunch({ program, args, where: undefined }, "/w", "/h", modeAt, false)).toEqual({
+        kind: "direct",
+        service: true,
+      });
+    });
+
     // [case, command, an agent's `remoto` T3 takes out, what the refusal says]
     const notCommands = [
       [
@@ -2092,6 +2272,37 @@ describe("t3 heavy", () => {
         where: "mac",
       });
     });
+
+    it.each([
+      ["heavy ssh to the Runner host", ["ssh", "remoto", "cd x && vp test run"], true, "ssh"],
+      ["ssh -t with a heavy docker", ["ssh", "-t", "remoto", "docker compose up"], true, "ssh"],
+      ["light ssh to the Runner host", ["ssh", "remoto", "tail -5 log"], true, "plain"],
+      ["heavy ssh to another host", ["ssh", "other", "vp test run"], true, "plain"],
+      ["heavy ssh with the Runner off", ["ssh", "remoto", "vp test run"], false, "plain"],
+    ] as const)(
+      "%s: an ssh job only when heavy work goes to the Runner host",
+      (_name, [program, ...args], runner, expected) => {
+        const launch = heavyLaunch(
+          { program, args, where: undefined },
+          "/w",
+          "/h",
+          () => ({ enabled: false, runner, runnerHost: "remoto" }),
+          false,
+        );
+        if (expected === "ssh") {
+          expect(launch).toEqual({
+            kind: "queue",
+            cwd: "/w",
+            program,
+            args,
+            where: "linux",
+            ssh: true,
+          });
+        } else {
+          expect(launch).not.toHaveProperty("ssh");
+        }
+      },
+    );
 
     // The queue cancels it with why (`intentOf`): run as written it would land on this Mac silently.
     it("queues --runner linux with the queue and the Runner off", () => {
@@ -2186,6 +2397,7 @@ describe("t3 heavy", () => {
       );
       expect(launch).toEqual({
         kind: "direct",
+        service: true,
         run: { cwd: "/p", program: SH, args: ["-c", "npx expo start"] },
       });
     });
@@ -2398,7 +2610,8 @@ describe("t3 heavy", () => {
         'git add a && git commit -m "x" && vp test run',
       ],
       ["xcodebuild -scheme App test", "Mac-only tool: xcodebuild"],
-      ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
+      // It keeps running: load on this Mac, never a queue job.
+      ["vp run dev:desktop", "light"],
       // A line it can't follow is no reason to keep it here.
       ["vp test run <<EOF\nx\nEOF", "linux", "vp test run <<EOF\nx\nEOF"],
       ["echo a | vp test run", "linux", "echo a | vp test run"],

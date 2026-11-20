@@ -7,6 +7,7 @@ import {
   linkedMachineRow,
   machineBar,
   type MachineBarRow,
+  type MachineStatusChip,
   type MachineGauge,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
@@ -29,12 +30,12 @@ import { Glyph, MACHINE } from "./HeavyWork";
 const MAX_PIPS = 6;
 const clampShare = (share: number) => Math.min(1, Math.max(0, share));
 
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-foreground-muted" }
-    : online
-      ? { text: "online", dot: "bg-adaptive-emerald-600-400" }
-      : { text: "offline", dot: "bg-danger" };
+const CHIP_DOT: Record<MachineStatusChip["tone"], string> = {
+  muted: "bg-foreground-muted",
+  ok: "bg-adaptive-emerald-600-400",
+  warn: "bg-warning-foreground",
+  danger: "bg-danger-foreground",
+};
 
 /** A thin bar for a share of a whole, with its value; warning-coloured when a hold is about it. */
 function Gauge(props: {
@@ -49,7 +50,7 @@ function Gauge(props: {
       <View className="h-1 w-10 overflow-hidden rounded-full bg-subtle-strong">
         {share === null ? null : (
           <View
-            className={`h-full rounded-full ${warn ? "bg-warning" : "bg-foreground-muted"}`}
+            className={`h-full rounded-full ${warn ? "bg-warning-foreground" : "bg-foreground-muted"}`}
             style={{ width: `${clampShare(share) * 100}%` }}
           />
         )}
@@ -70,7 +71,7 @@ function Gauge(props: {
   );
 }
 
-function Slots(props: { readonly row: Pick<MachineBarRow, "slots" | "queueOff"> }) {
+function Slots(props: { readonly row: Pick<MachineBarRow, "slots" | "quick" | "queueOff"> }) {
   const { slots } = props.row;
   if (slots === null && props.row.queueOff === null) return null;
   if (slots === null)
@@ -79,8 +80,14 @@ function Slots(props: { readonly row: Pick<MachineBarRow, "slots" | "queueOff"> 
         Off
       </Text>
     );
+  const { quick } = props.row;
   return (
     <View className="flex-row items-center gap-1.5">
+      {quick === null ? null : (
+        <Text textRole="footnote" className="text-foreground-muted tabular-nums">
+          quick {quick.running}/{quick.slots}
+        </Text>
+      )}
       {slots.slots > MAX_PIPS ? null : (
         <View className="flex-row gap-1">
           {Array.from({ length: slots.slots }, (_, index) => (
@@ -105,20 +112,19 @@ function MachineRow(props: {
   readonly row: Omit<MachineBarRow, "runner">;
   readonly name: string;
   readonly icon: AppSymbolName;
-  /** Linux and linked environments show their connection; This Mac is always here. */
-  readonly remote: boolean;
   readonly hint?: string | null;
   readonly children?: ReactNode;
 }) {
   const { row, name, icon } = props;
   const [open, setOpen] = useState(false);
-  const status = props.remote ? LINUX_STATUS(row.online) : null;
+  const status = row.chip === null ? null : { text: row.chip.text, dot: CHIP_DOT[row.chip.tone] };
   const hints = [
     row.statusHint,
     row.cpu?.hint,
     row.memory?.hint,
     row.offline !== null && row.offline.hint !== row.statusHint ? row.offline.hint : null,
     row.slots?.hint ?? row.queueOff,
+    row.quick?.hint,
     props.hint,
   ].filter((hint): hint is string => hint !== null && hint !== undefined && hint !== "");
   const warned = row.cpu?.warn === true || row.memory?.warn === true;
@@ -127,7 +133,7 @@ function MachineRow(props: {
       accessibilityRole="button"
       accessibilityLabel={[
         name,
-        status?.text,
+        row.statusHint ?? status?.text,
         row.cpu === null ? null : `CPU ${row.cpu.value}`,
         row.memory === null ? null : `${row.memory.value} free`,
         row.slots !== null
@@ -135,6 +141,7 @@ function MachineRow(props: {
           : row.queueOff === null
             ? null
             : "Off",
+        row.quick === null ? null : `${row.quick.running} of ${row.quick.slots} quick`,
         warned ? "warning" : null,
       ]
         .filter(Boolean)
@@ -216,12 +223,7 @@ export function MachineBar(props: {
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <View accessibilityRole="list" accessibilityLabel="Machines">
-      <MachineRow
-        {...MACHINE.mac}
-        remote={false}
-        row={mac}
-        hint={t3 == null ? null : T3_TOTAL_HINT}
-      >
+      <MachineRow {...MACHINE.mac} row={mac} hint={t3 == null ? null : T3_TOTAL_HINT}>
         {t3 == null ? null : (
           <Text
             textRole="footnote"
@@ -232,15 +234,9 @@ export function MachineBar(props: {
           </Text>
         )}
       </MachineRow>
-      {linux === null ? null : <MachineRow {...MACHINE.linux} remote row={linux} />}
+      {linux === null ? null : <MachineRow {...MACHINE.linux} row={linux} />}
       {linked.map((row) => (
-        <MachineRow
-          key={row.environmentId}
-          name={row.name}
-          icon={MACHINE.linux.icon}
-          remote
-          row={row}
-        >
+        <MachineRow key={row.environmentId} name={row.name} icon={MACHINE.linux.icon} row={row}>
           {row.activity === null ? null : (
             <Text textRole="footnote" numberOfLines={1} className="pl-6 text-foreground-muted">
               {row.activity}

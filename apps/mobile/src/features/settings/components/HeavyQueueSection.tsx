@@ -36,7 +36,6 @@ const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
 export interface RunnerMode {
   readonly enabled: boolean;
   readonly where: RunnerWhere;
-  readonly everything: boolean;
 }
 
 const LIMIT_ROWS = [
@@ -48,6 +47,10 @@ const LIMIT_ROWS = [
   { key: "unseenMediumMegabytes", icon: "doc.text" },
   { key: "historyCommands", icon: "archivebox" },
   { key: "headPatienceMinutes", icon: "timer" },
+  { key: "quickSeconds", icon: "bolt.horizontal.circle" },
+  { key: "quickSlots", icon: "square.on.square" },
+  { key: "serviceIdleMinutes", icon: "arrow.clockwise.circle" },
+  { key: "reclaimMinutes", icon: "arrow.uturn.backward" },
 ] as const satisfies ReadonlyArray<{ key: HeavyQueueLimitKey; icon: AppSymbolName }>;
 const UNIT: Record<(typeof HEAVY_QUEUE_LIMITS)[HeavyQueueLimitKey]["unit"], string> = {
   percent: "%",
@@ -55,6 +58,7 @@ const UNIT: Record<(typeof HEAVY_QUEUE_LIMITS)[HeavyQueueLimitKey]["unit"], stri
   MB: " MB",
   minutes: " min",
   commands: "",
+  jobs: "",
 };
 const isAdmission = (key: HeavyQueueLimitKey): key is HeavyQueueAdmissionKey =>
   (HEAVY_QUEUE_ADMISSION_KEYS as ReadonlyArray<HeavyQueueLimitKey>).includes(key);
@@ -150,15 +154,13 @@ export function HeavyQueueSection(props: {
       </View>
     );
   };
-  const limits = LIMIT_ROWS.filter((row) =>
-    // Letting jobs pass the head is the queue's own; the sizes also steer Hybrid's room on the Mac.
-    row.key === "headPatienceMinutes"
-      ? state.enabled
-      : heavyLimitIdle(row.key, {
-          queueEnabled: state.enabled,
-          runnerEnabled: runner?.enabled ?? null,
-          runnerWhere: runner?.where ?? null,
-        }) === null,
+  const limits = LIMIT_ROWS.filter(
+    (row) =>
+      heavyLimitIdle(row.key, {
+        queueEnabled: state.enabled,
+        runnerEnabled: runner?.enabled ?? null,
+        runnerWhere: runner?.where ?? null,
+      }) === null,
   );
   const macLimits = limits.filter(
     (row) => row.key !== "heavyOverLimitSeconds" && !isAdmission(row.key),
@@ -201,7 +203,6 @@ export function HeavyQueueSection(props: {
                 queuePaused: state.paused,
                 runnerEnabled: runner.enabled,
                 where: runner.where,
-                everything: runner.everything,
               })}
             </Text>
           </View>

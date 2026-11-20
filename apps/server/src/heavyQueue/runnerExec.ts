@@ -13,7 +13,13 @@ import type { RunnerMachineConfig } from "@t3tools/contracts";
 import { shellQuote } from "./heavyHook.ts";
 import { worktreeProblemOf } from "./heavyNotices.ts";
 import { parseLine, type Word } from "./shellLine.ts";
-import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
+import {
+  claimLostRun,
+  readDoc,
+  resolveLostPgid,
+  settleLostRun,
+  whenLockFreeAsync,
+} from "./queueFile.ts";
 import {
   browserMissing,
   foldMarker,
@@ -27,6 +33,8 @@ import {
   remotePgidScript,
   remoteStopScript,
   removeCopyScript,
+  idleCopiesScript,
+  unresponsiveFailure,
   sshArgs,
   type HealthCheck,
   type RemoteOutcome,
@@ -45,9 +53,13 @@ const macPath = (word: Word, value: string, home: string, tilde: boolean) => {
   return value.startsWith("/") && word.vars.length === 0 ? value : null;
 };
 
-/** One `:`-separated part of an unquoted `NAME=` value as a Mac path, or null when it is not one. */
-const listPath = (part: string, home: string) => {
-  const fromHome = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(part);
+/**
+ * One `:`-separated part of an unquoted `NAME=` value as a Mac path, or null when it is not one.
+ * `tilde`: the shell expands its leading `~`.
+ */
+const listPath = (part: string, home: string, tilde: boolean) => {
+  const fromHome =
+    (tilde ? /^~(?=\/|$)/.exec(part) : null) ?? /^\$(?:HOME|\{HOME\})(?=\/|$)/.exec(part);
   const rest = fromHome === null ? part : part.slice(fromHome[0].length);
   if (rest.includes("$")) return null;
   if (fromHome !== null) return home + rest;
@@ -74,11 +86,13 @@ const shellTextInCopy = (text: string, root: string, home: string) => {
     for (const word of [...command.assigns, ...command.words, ...targets]) {
       const name = /^[A-Za-z_]\w*=/.exec(word.value)?.[0];
       const raw = text.slice(word.start, word.end);
-      // Unquoted, bash expands `~` after an identifier's `=` and after each `:` of its value.
+      // Unquoted, its text is its value, so each `:` part is rewritten in place.
       if (name !== undefined && raw.startsWith(name) && !/['"\\`]/.test(raw)) {
         const parts = raw.slice(name.length).split(":");
+        let at = name.length;
         const moved = parts.map((part) => {
-          const path = listPath(part, home);
+          const path = listPath(part, home, word.tildes.includes(at));
+          at += part.length + 1;
           return (path === null ? null : inCopy(path)) ?? part;
         });
         if (moved.some((part, at) => part !== parts[at])) {
@@ -87,8 +101,7 @@ const shellTextInCopy = (text: string, root: string, home: string) => {
         continue;
       }
       const flag = name ?? /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
-      // Quoted, bash expands `~` only right after an identifier's `=`, never after a flag's.
-      const tilde = name === undefined ? word.tilde : text.startsWith(`${name}~`, word.start);
+      const tilde = word.tildes.includes(flag.length);
       const path = macPath(word, word.value.slice(flag.length), home, tilde);
       const copy = path === null ? null : inCopy(path);
       if (copy === null) continue;
@@ -360,7 +373,13 @@ const ssh = (
   environment: Env,
   command: string,
   timeoutMs: number,
-): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> =>
+): Promise<{
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  /** Our own timeout ended it: ssh got in, then nothing came back. */
+  readonly timedOut: boolean;
+}> =>
   new Promise((resolve) => {
     NodeChildProcess.execFile(
       sshProgram(environment),
@@ -368,12 +387,13 @@ const ssh = (
       { timeout: timeoutMs, env: { ...process.env, ...environment }, maxBuffer: 64 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+        const timedOut = error !== null && error.killed === true;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr), timedOut });
       },
     );
   });
 
-/** One heartbeat: load, cores and memory, or why ssh could not get them. */
+/** One heartbeat: memory, pressure, CPU and each run's memory, or why ssh could not get them. */
 export const checkLinux = async (
   machine: RunnerMachineConfig,
   environment: Env,
@@ -387,7 +407,11 @@ export const checkLinux = async (
   );
   if (result.code === 0) return { ok: true, reading: parseHeartbeat(result.stdout) };
   const why = result.stderr.trim().split("\n").pop() ?? "";
-  return { ok: false, error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why };
+  return {
+    ok: false,
+    error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why,
+    unresponsive: unresponsiveFailure(result.timedOut, result.stderr),
+  };
 };
 
 const run = (
@@ -597,6 +621,25 @@ export const removeRunnerCopy = async (
   return result.code === 0 && (said === "removed" || said === "busy") ? said : "unreachable";
 };
 
+/** The Linux copies idle past `days` that no run holds; null when Linux is unreachable. */
+export const idleRunnerCopies = async (
+  machine: RunnerMachineConfig,
+  environment: Env,
+  days: number,
+  now: number,
+): Promise<ReadonlyArray<string> | null> => {
+  const result = await ssh(
+    machine,
+    environment,
+    idleCopiesScript(days, now / 1000),
+    (machine.runnerSshTimeoutSeconds + 60) * 1000,
+  );
+  if (result.code !== 0) return null;
+  return result.stdout
+    .split("\n")
+    .flatMap((line) => (line.startsWith("idle ") ? [line.slice(5)] : []));
+};
+
 export type StopResult = "gone" | "stopped" | "killed" | "alive" | "unreachable";
 
 /** Ends whatever is left of run `id` there; only "alive" and "unreachable" leave it unconfirmed. */
@@ -660,17 +703,17 @@ export const drainLostRuns = async (
   const holdMs = (machine.runnerSshTimeoutSeconds + 2 * machine.runnerStopWaitSeconds + 5) * 1000;
   for (const lost of readDoc(dir).lostRuns) {
     const claim = Date.now() + holdMs;
-    if (!claimLostRun(dir, lost, claim)) continue;
+    if (!(await whenLockFreeAsync(() => claimLostRun(dir, lost, claim)))) continue;
     let pgid = lost.remote.pgid;
     if (lost.pgidOnly === true && pgid === null) {
       // Its record still holds the folder, so the pgid file there is still the lost run's.
       const read = await remote.readPgid(machine, environment, lost.remote.id);
       if (read === "unreachable") {
-        settleLostRun(dir, lost, false, claim);
+        await whenLockFreeAsync(() => settleLostRun(dir, lost, false, claim));
         return;
       }
       // No group to stop it by, but nothing new ran in the folder yet: the whole stop is still safe.
-      if (read !== null) resolveLostPgid(dir, lost, read);
+      if (read !== null) await whenLockFreeAsync(() => resolveLostPgid(dir, lost, read));
       pgid = read;
     }
     const result = await remote.stop(
@@ -680,7 +723,7 @@ export const drainLostRuns = async (
       pgid,
       lost.pgidOnly === true && pgid !== null,
     );
-    settleLostRun(dir, lost, confirmed(result), claim);
+    await whenLockFreeAsync(() => settleLostRun(dir, lost, confirmed(result), claim));
     if (result === "unreachable") return;
   }
 };

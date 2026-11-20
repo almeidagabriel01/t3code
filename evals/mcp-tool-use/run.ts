@@ -83,6 +83,7 @@ import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestr
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 import { KanbanToolkit } from "../../apps/server/src/mcp/toolkits/kanban/tools.ts";
+import { linuxFailedNote, linuxRetryNote } from "../../apps/server/src/heavyQueue/runner.ts";
 import { MemoryToolkit } from "../../apps/server/src/mcp/toolkits/memory/tools.ts";
 import { NoteToolkit } from "../../apps/server/src/mcp/toolkits/note/tools.ts";
 import { IntegrationToolkit } from "../../apps/server/src/mcp/toolkits/integration/tools.ts";
@@ -1811,7 +1812,9 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     gitStatus(testCase),
     `World: ${valueText(world ?? {})}`,
     ...(shellMocks.length > 0
-      ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
+      ? [
+          `Commands that match these regexes print exactly this output: ${valueText(shellMocks.map((mock) => ({ ...mock, output: shellText(mock.output) })))}`,
+        ]
       : []),
     // Which device each launcher and session drives, and which of this call's opens are refused.
     ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
@@ -1873,12 +1876,25 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
   });
 };
 
+/** T3's own text a shell mock prints, by its `{{token}}`: read from source, never copied. */
+const SHELL_TEXT: Readonly<Record<string, string>> = {
+  "{{heavy.linuxFailedNote}}": linuxFailedNote("remoto"),
+  "{{heavy.linuxOfflineNote}}": linuxRetryNote("remoto"),
+};
+const shellText = (output: string) =>
+  Object.entries(SHELL_TEXT).reduce(
+    (text, [token, value]) => text.replaceAll(token, value),
+    output,
+  );
+
 /** A shell mock's output, when the command is one simple command that the mock matches. */
-export const mockOutput = (sample: Sample, command: string) =>
-  /&&|\|\||[;|\n]/.test(command.trim())
-    ? undefined
-    : sample.testCase.setup.shellMocks?.find((mock) => new RegExp(mock.match).test(command))
-        ?.output;
+export const mockOutput = (sample: Sample, command: string) => {
+  if (/&&|\|\||[;|\n]/.test(command.trim())) return undefined;
+  const output = sample.testCase.setup.shellMocks?.find((mock) =>
+    new RegExp(mock.match).test(command),
+  )?.output;
+  return output === undefined ? undefined : shellText(output);
+};
 
 type Config = {
   readonly apiKey: string;

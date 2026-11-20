@@ -22,11 +22,37 @@ export interface DaemonClues {
 
 export const NO_CLUES: DaemonClues = { links: [], cwds: new Map(), names: new Map() };
 
-const BUILD_DAEMON = /\b(?:GradleDaemon|KotlinCompileDaemon)\b/;
+/**
+ * A JVM (`java`, by path or not) whose line runs the daemon class; a line that only mentions it is
+ * not. `ps` joins words with spaces, so a folder may hold one but never a ` -` option start.
+ */
+const BUILD_DAEMON =
+  /^(?:[^\s/]*(?:\/(?:(?!\s-)[^/\n])+)*\/)?java\s.*\b(?:GradleDaemon|KotlinCompileDaemon)\b/m;
 
 /** A Gradle or Kotlin compile daemon, by its command line; their workers come with their trees. */
-const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
+export const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
   BUILD_DAEMON.test(process.command);
+
+/** Whether `ps -axo command=` output lists a Gradle or Kotlin daemon. */
+export const hasBuildDaemon = (commands: string) => BUILD_DAEMON.test(commands);
+
+/**
+ * Whether a build daemon is up anywhere on this machine: one that outlived its job is no queue
+ * job's process, so the monitor does not see it, yet its memory is already in the reading.
+ */
+export const anyBuildDaemon = Effect.fn("HeavyQueueDaemons.anyBuildDaemon")(
+  function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return hasBuildDaemon(
+      yield* spawner
+        .string(
+          ChildProcess.make("/bin/ps", ["-axo", "command="], { stdin: "ignore", stderr: "ignore" }),
+        )
+        .pipe(Effect.timeout("2 seconds")),
+    );
+  },
+  Effect.orElseSucceed(() => false),
+);
 
 /** `lsof -F pn` records: each `p<pid>` line, then the `n<name>` lines of its files. */
 const records = (text: string) => {

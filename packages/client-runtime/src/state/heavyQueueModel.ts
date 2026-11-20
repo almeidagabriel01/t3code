@@ -1,18 +1,23 @@
 import {
+  fillsStandardSlot,
+  formatBytes,
   heavyHoldText,
   type HeavyCommand,
+  type HeavyQueueCostClass,
   type HeavyQueueEntry,
   type HeavyQueueHold,
   type HeavyQueueRule,
   type HeavyQueueState,
   type HeavyRunner,
+  type HeavyRunnerLinux,
+  type HeavyRunnerLinuxLimit,
   type HostResourcesSnapshot,
   type LinkedEnvironmentReading,
   type LinkedEnvironmentResources,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { linuxLine, runnerBadge } from "./runnerModel.ts";
+import { linuxLine, linuxOverReasons, runnerBadge } from "./runnerModel.ts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -57,13 +62,18 @@ export function jobPriority(entry: HeavyQueueEntry): {
   readonly changes: ReadonlyArray<PriorityChange>;
 } {
   if (entry.startedAt === null) {
-    return { label: null, changes: entry.priority === "high" ? [] : ["high-now"] };
+    const fixed = entry.priority === "high" || entry.orphanedAt !== undefined;
+    return { label: null, changes: fixed ? [] : ["high-now"] };
   }
   if (entry.qos === "background") return { label: "Low priority", changes: ["normal"] };
   return { label: null, changes: entry.qos === "normal" ? ["lower"] : [] };
 }
 
 export type MoveAction = "next" | "up" | "down" | "end";
+
+/** A waiter holding a place in line; an orphan only keeps its slot for the agent to reclaim. */
+const inLine = (entry: HeavyQueueEntry) =>
+  entry.startedAt === null && entry.orphanedAt === undefined;
 
 /**
  * The `beforeId` for a move RPC, or undefined when the move would change nothing.
@@ -74,7 +84,7 @@ export function moveTarget(
   id: string,
   action: MoveAction,
 ): string | null | undefined {
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  const waiting = entries.filter(inLine);
   const index = waiting.findIndex((entry) => entry.id === id);
   if (index < 0) return undefined;
   switch (action) {
@@ -95,7 +105,7 @@ export function dropTarget(
   id: string,
   overId: string,
 ): string | null | undefined {
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  const waiting = entries.filter(inLine);
   const from = waiting.findIndex((entry) => entry.id === id);
   const to = waiting.findIndex((entry) => entry.id === overId);
   if (from < 0 || to < 0 || from === to) return undefined;
@@ -110,12 +120,8 @@ export function formatDuration(fromIso: string, now: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const GB = 1024 ** 3;
 const cores = (n: number) => `${n.toFixed(1)} cores`;
-const MB = 1024 ** 2;
-// Below a gigabyte "0.0 GB" hides real usage, so small amounts read in megabytes.
-const gb = (bytes: number) =>
-  bytes < GB ? `${Math.max(1, Math.round(bytes / MB))} MB` : `${(bytes / GB).toFixed(1)} GB`;
+const gb = formatBytes;
 const usualTime = (ms: number) => {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -257,22 +263,31 @@ type SummaryState = Pick<
   HeavyQueueState,
   "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
 > &
-  Partial<Pick<HeavyQueueState, "linux">>;
+  Partial<Pick<HeavyQueueState, "linux" | "quickSlots" | "costs">>;
 
 function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
+  // The plan's head: a released waiter or a service starts whatever holds the rest.
   const next = state.entries.find(
-    (entry) => entry.startedAt === null && state.routes[entry.id] !== "linux",
+    (entry) =>
+      inLine(entry) &&
+      entry.forced !== true &&
+      state.costs?.[entry.id]?.class !== "service" &&
+      state.routes[entry.id] !== "linux",
   );
   const holdText =
     hold === null
       ? null
       : hold === "job-memory" || hold === "job-cpu"
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
-        : heavyHoldText(hold, machine, state.maxRunning);
+        : heavyHoldText(hold, machine, state.maxRunning, state.quickSlots);
   return {
-    running: state.entries.filter((entry) => entry.startedAt !== null && entry.runner !== "linux")
-      .length,
+    running: state.entries.filter(
+      (entry) =>
+        entry.startedAt !== null &&
+        entry.runner !== "linux" &&
+        fillsStandardSlot(state.costs?.[entry.id]),
+    ).length,
     slots: state.maxRunning,
     cpuPercent:
       machine === null
@@ -326,6 +341,12 @@ const HOLD_GAUGE: Record<HeavyQueueHold, "cpu" | "memory" | null> = {
   paused: null,
   exclusive: null,
   "runs-alone": null,
+  draining: null,
+  committed: null,
+  "quick-slots": null,
+  "commit-slot": null,
+  other: null,
+  reserved: "memory",
   slots: null,
   settling: null,
   "no-reading": null,
@@ -369,10 +390,11 @@ export function heavyWork(
 } {
   const machineOf = (entry: HeavyQueueEntry): HeavyRunner =>
     runnerBadge(entry, state)?.runner ?? "mac";
+  // An orphan holds no place in line, so it sits after every waiter and leaves their places alone.
   const of = (runner: HeavyRunner, started: boolean) =>
-    state.entries.filter(
-      (entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner,
-    );
+    state.entries
+      .filter((entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner)
+      .sort((a, b) => Number(a.orphanedAt !== undefined) - Number(b.orphanedAt !== undefined));
   const jobPids = new Set(
     state.entries.flatMap((entry) =>
       entry.startedAt !== null && entry.server !== true ? [entry.pid] : [],
@@ -393,6 +415,38 @@ export function heavyWork(
   };
 }
 
+const COST_LABEL: Record<HeavyQueueCostClass, string> = {
+  quick: "Quick",
+  standard: "Job",
+  service: "Keeps running",
+};
+
+/** The class a row's job runs as, and why, as the queue's admission sees it. */
+export function jobCost(
+  state: Pick<HeavyQueueState, "costs">,
+  entry: HeavyQueueEntry,
+): { readonly class: HeavyQueueCostClass; readonly label: string; readonly why: string } | null {
+  const cost = state.costs?.[entry.id];
+  return cost === undefined
+    ? null
+    : { class: cost.class, label: COST_LABEL[cost.class], why: cost.why };
+}
+
+/** The class a direct command shows: only one that never finishes by itself has one. */
+export const commandCostLabel = (command: HeavyCommand) =>
+  command.keepsRunning === true ? COST_LABEL.service : null;
+
+/** What an orphaned waiter's row says instead of its place; null for any other row. */
+export function orphanLine(
+  entry: HeavyQueueEntry,
+  reclaimMinutes: number,
+  now: number,
+): string | null {
+  if (entry.orphanedAt === undefined) return null;
+  const left = Math.max(1, Math.ceil((entry.orphanedAt + reclaimMinutes * 60_000 - now) / 60_000));
+  return `Waiting for the agent to ask again · ${left} min left`;
+}
+
 /** Every row of the heavy work, both machines: what its count and a project's share count. */
 export const heavyWorkItems = (work: ReturnType<typeof heavyWork>) => [
   ...work.mac.running,
@@ -409,28 +463,84 @@ export const formatFreeMemory = gb;
 export interface MachineGauge {
   readonly share: number | null;
   readonly value: string;
-  /** A condition holding the queue is about this gauge; `hint` then names it. */
+  /** A limit or hold is about this gauge; the Mac's `hint` names it, Linux's status hint does. */
   readonly warn: boolean;
   readonly hint: string;
 }
+
+/** A machine's state chip: `ok` only while it takes work, `warn` past its limits, `danger` gone. */
+export interface MachineStatusChip {
+  readonly text: string;
+  readonly tone: "muted" | "ok" | "warn" | "danger";
+}
+
+/** Linux's chip, from its `status`; an older server without one reports only `online`. */
+export const linuxChip = (
+  linux: Pick<HeavyRunnerLinux, "online" | "status">,
+): MachineStatusChip => {
+  const status =
+    linux.status ?? (linux.online === null ? undefined : linux.online ? "online" : "offline");
+  switch (status) {
+    case "online":
+      return { text: "online", tone: "ok" };
+    case "over-limit":
+      return { text: "over limits", tone: "warn" };
+    case "unresponsive":
+      return { text: "not responding", tone: "warn" };
+    case "offline":
+      return { text: "offline", tone: "danger" };
+    default:
+      return { text: "checking", tone: "muted" };
+  }
+};
+
+/** The Linux gauge each limit warns on; the rest have no gauge and show only in the status hint. */
+const LIMIT_GAUGE: Record<HeavyRunnerLinuxLimit, "cpu" | "memory" | null> = {
+  memory: "memory",
+  "memory-pressure": null,
+  swap: null,
+  "io-pressure": null,
+  "cpu-pressure": "cpu",
+  cpu: "cpu",
+};
+
+/** "remoto · over limits · keeping 10% of memory free": host, the chip's words, then why. */
+const linuxStatusHint = (linux: HeavyRunnerLinux) => {
+  const { text } = linuxChip(linux);
+  const reason =
+    linux.status === "over-limit"
+      ? linuxOverReasons(linux)
+      : linux.status === "unresponsive"
+        ? (linux.error ?? "too loaded to answer")
+        : linux.online === false
+          ? linux.error
+          : undefined;
+  return [linux.host, text, reason].filter((part) => part !== undefined && part !== "").join(" · ");
+};
 
 /** One machine of the machine bar. */
 export interface MachineBarRow {
   readonly runner: HeavyRunner;
   /** Linux's connection, null while it is being checked; always true for the Mac. */
   readonly online: boolean | null;
+  /** Null for the Mac, which has no connection to show. */
+  readonly chip: MachineStatusChip | null;
   readonly statusHint: string | null;
   /** Both null while Linux is not online; `offline` then says so. */
   readonly cpu: MachineGauge | null;
   readonly memory: MachineGauge | null;
   readonly offline: { readonly text: string; readonly hint: string } | null;
   /** Null on the Mac while the queue is off, `queueOff` then holding its note; null on a linked row without a queue reading. */
-  readonly slots: {
-    readonly running: number;
-    readonly slots: number;
-    readonly hint: string;
-  } | null;
+  readonly slots: MachineSlots | null;
+  /** Quick jobs run in slots of their own; null while none runs. */
+  readonly quick: MachineSlots | null;
   readonly queueOff: string | null;
+}
+
+interface MachineSlots {
+  readonly running: number;
+  readonly slots: number;
+  readonly hint: string;
 }
 
 const NO_GAUGE = (hint: string): MachineGauge => ({ share: null, value: "--", warn: false, hint });
@@ -486,15 +596,21 @@ export function machineBar(
         };
   const memory = machine ?? host ?? null;
   const work = heavyWork(state, []);
-  const note = machineSummaries(state).mac.note;
+  const summary = machineSummaries(state).mac;
+  const note = summary.note;
   const gauge = macNoteGauge(state);
   const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
   const cpuWarning = warning("cpu");
   const memoryWarning = warning("memory");
-  const macRunning = work.mac.running.length;
+  const classOf = (entry: HeavyQueueEntry) => state.costs?.[entry.id]?.class ?? "standard";
+  const macRunning = summary.running;
+  const quickRunning = work.mac.running.filter(
+    (entry) => classOf(entry) === "quick" && state.costs?.[entry.id]?.commit !== true,
+  ).length;
   const mac: MachineBarRow = {
     runner: "mac",
     online: true,
+    chip: null,
     statusHint: null,
     cpu:
       cpu === null
@@ -531,18 +647,31 @@ export function machineBar(
           ),
         }
       : null,
+    quick:
+      quickRunning === 0
+        ? null
+        : {
+            running: quickRunning,
+            slots: state.quickSlots,
+            hint: `${quickRunning} of ${state.quickSlots} quick jobs running on this Mac`,
+          },
     queueOff: state.enabled ? null : (note ?? ""),
   };
   if (linux === null) return { mac, linux: null };
   const linuxRunning = work.linux.running.length;
-  const live = linux.online === true;
+  const live = linux.online === true && linux.status !== "unresponsive";
   const cores = linux.cpuCount;
+  const statusHint = linuxStatusHint(linux);
+  const past = (on: "cpu" | "memory") =>
+    linux.status === "over-limit" &&
+    (linux.overLimits ?? []).some((over) => LIMIT_GAUGE[over.limit] === on);
   return {
     mac,
     linux: {
       runner: "linux",
       online: linux.online,
-      statusHint: live ? `${linux.host} · online` : linuxLine(linux),
+      chip: linuxChip(linux),
+      statusHint,
       cpu: !live
         ? null
         : linux.cpuPercent === undefined || linux.cpuPercent === null
@@ -550,7 +679,7 @@ export function machineBar(
           : {
               share: linux.cpuPercent / 100,
               value: `${Math.round(linux.cpuPercent)}%`,
-              warn: false,
+              warn: past("cpu"),
               hint: `${Math.round(linux.cpuPercent)}% CPU in use${linux.load1 === null ? "" : ` · load ${linux.load1.toFixed(1)}${cores === null ? "" : ` on ${cores} cores`}`}`,
             },
       memory: !live
@@ -563,17 +692,26 @@ export function machineBar(
                   ? null
                   : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
               value: gb(linux.availableMemoryBytes),
-              warn: false,
+              warn: past("memory"),
               hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
             },
       offline: live
         ? null
-        : { text: linux.online === false ? "Offline" : "Checking…", hint: linuxLine(linux) },
+        : {
+            text:
+              linux.status === "unresponsive"
+                ? "Not responding"
+                : linux.online === false
+                  ? "Offline"
+                  : "Checking…",
+            hint: statusHint,
+          },
       slots: {
         running: linuxRunning,
         slots: linux.slots,
         hint: `${linuxRunning} of ${linux.slots} running on Linux${state.enabled && state.paused ? " · paused" : ""}`,
       },
+      quick: null,
       queueOff: null,
     },
   };
@@ -646,14 +784,18 @@ export function linkedMachineRow(entry: LinkedEnvironmentResources, now: number)
               hint: hints("Not answering right now.", old),
             }
           : { text: "Checking…", hint: hints(old) };
+    const online = entry.status === "offline" || entry.status === "expired" ? false : null;
+    const chip = linuxChip({ online });
     return {
       ...base,
-      online: entry.status === "offline" || entry.status === "expired" ? false : null,
-      statusHint: offline.hint,
+      online,
+      chip,
+      statusHint: hints(`${label} · ${chip.text}`, offline.hint === "" ? null : offline.hint),
       cpu: null,
       memory: null,
       offline,
       slots: null,
+      quick: null,
       activity: null,
     };
   }
@@ -662,6 +804,7 @@ export function linkedMachineRow(entry: LinkedEnvironmentResources, now: number)
   return {
     ...base,
     online: true,
+    chip: linuxChip({ online: true }),
     statusHint: `${label} · online${since === null ? "" : ` for ${formatDuration(isoAt(since), now)}`}`,
     cpu:
       cpuPercent === null
@@ -690,6 +833,7 @@ export function linkedMachineRow(entry: LinkedEnvironmentResources, now: number)
             slots: heavy.slots,
             hint: `${heavy.running} of ${heavy.slots} running on ${label}${heavy.waiting === 0 ? "" : ` · ${heavy.waiting} waiting`}`,
           },
+    quick: null,
     activity: activityLine(reading),
   };
 }

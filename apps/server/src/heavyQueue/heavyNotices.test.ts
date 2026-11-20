@@ -134,8 +134,8 @@ describe("what an admission records", () => {
   it.each([
     ["Linux-bound on Linux", "linux", "linux", null],
     ["Mac-bound on the Mac", "mac", "mac", null],
-    ["Hybrid on the Mac", "automatic", "mac", null],
-    ["Hybrid on Linux", "automatic", "linux", "hybrid"],
+    ["Automatic on Linux", "automatic", "linux", null],
+    ["Automatic overflow on the Mac", "automatic", "mac", "hybrid"],
     ["Mac first on the Mac", "macFirst", "mac", null],
     ["Mac first on Linux", "macFirst", "linux", null],
     ["Linux-bound on the Mac", "linux", "mac", "displaced"],
@@ -857,14 +857,16 @@ describe("notices for machine changes", () => {
     ]);
   });
 
-  it("Hybrid sending a job to Linux is planned", () => {
-    expect(titles({ records: [record(startRecord(waiter, "automatic", "linux", NOW))] })).toEqual([
-      {
-        one: "pnpm test went to Linux",
-        description: "Each job goes to the machine with the shorter queue.",
-        category: "planned",
-        machine: "linux",
-      },
+  // The plan's own reason: Linux may be full, offline, past its limits or the queue paused.
+  it.each([
+    ["This Mac took it: Linux is full", "This Mac took it: Linux is full"],
+    ["Automatic: Linux is unavailable", "Automatic: Linux is unavailable"],
+    ["Automatic: queue paused", "Automatic: queue paused"],
+    [undefined, "Automatic sent it to this Mac."],
+  ] as const)("Automatic sending a job to this Mac because %j is planned", (why, description) => {
+    const start = startRecord(waiter, "automatic", "mac", NOW, why);
+    expect(titles({ records: [record(start)] })).toEqual([
+      { one: "pnpm test went to this Mac", description, category: "planned", machine: "mac" },
     ]);
   });
 
@@ -890,7 +892,7 @@ describe("which notices each setting shows", () => {
       records: [
         record(endedRecord(mac, 1, NOW)),
         record(startRecord(entry({ startedAt: null }), "linux", "mac", NOW)),
-        record(startRecord(entry({ startedAt: null }), "automatic", "linux", NOW)),
+        record(startRecord(entry({ startedAt: null }), "automatic", "mac", NOW)),
       ],
     }),
   );
@@ -928,6 +930,8 @@ describe("jobs stuck waiting", () => {
     ["short usual run, under the floor", waiting(STUCK_FLOOR_MS / MIN - 1), () => MIN, false],
     ["long usual run, under three runs", waiting(50), () => 20 * MIN, false],
     ["long usual run, past three runs", waiting(61), () => 20 * MIN, true],
+    // Its agent stopped it; it waits to be asked again, not for the machine.
+    ["an orphan", { ...waiting(61), orphanedAt: NOW }, () => 20 * MIN, false],
   ])("%s", (_name, job, usualMs, expected) => {
     expect(stuck({ entries: [job], usualMs })).toEqual(expected ? ["job-1"] : []);
   });
@@ -1081,7 +1085,10 @@ describe("grouping", () => {
       },
       "3 jobs moved to this Mac",
     ],
-    [{ records: [record(startRecord(waiter, "automatic", "linux", NOW))] }, "3 jobs went to Linux"],
+    [
+      { records: [record(startRecord(waiter, "automatic", "mac", NOW))] },
+      "3 jobs went to this Mac",
+    ],
     [{ linuxBefore: lost(true), linuxAfter: lost(false) }, "Linux went offline"],
     [{ linuxBefore: lost(false), linuxAfter: lost(true) }, "Linux is back online"],
     [{ queueFileError: "EACCES" }, "The heavy queue file is not usable"],
@@ -1294,6 +1301,48 @@ describe("errorLineOf", () => {
       null,
       "rsync: connection unexpectedly closed",
     ],
+    // A warning never names the failure; a warning that reports one still does.
+    [
+      "a warning after the error",
+      "sh: 1: tsgo: not found\nnpm warn install-scripts Run `npm install-scripts ls` to review\n",
+      null,
+      "sh: 1: tsgo: not found",
+    ],
+    [
+      "warnings of every shape",
+      "npm WARN deprecated glob@7.2.3\n WARN  Issues with peer dependencies found\n(node:42) ExperimentalWarning: VM Modules\nDeprecationWarning: Buffer() is deprecated\nwarning: unused import\nyarn warn x\n",
+      null,
+      null,
+    ],
+    [
+      "an unhandled rejection",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED\n",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED",
+      "(node:42) UnhandledPromiseRejectionWarning: Error: connect ECONNREFUSED",
+    ],
+    [
+      "cargo's failed build",
+      "warning: unused variable\nwarning: build failed, waiting for other jobs to finish...\n",
+      null,
+      "warning: build failed, waiting for other jobs to finish...",
+    ],
+    ["a count of warnings", "Warnings: 0, Errors: 1\n", null, "Warnings: 0, Errors: 1"],
+    // A warning-shaped line that reports a failure stays; the pure warnings after it are skipped.
+    ...[
+      "warning: could not open file, aborting",
+      "warning: unable to access 'https://x/': Permission denied",
+      "WARNING: cannot connect to Docker daemon",
+      "warning: can't find module",
+      "Warning: no tests found, exiting with code 1",
+      "warning: lockfile out of date, refusing to install (--frozen-lockfile)",
+      "warning: install aborted",
+      "warning: 3 errors suppressed",
+    ].map((line): [string, string, null, string] => [
+      line,
+      `${line}\nnpm warn deprecated glob@7.2.3\nDeprecationWarning: x\n(node:1) ExperimentalWarning: y\nwarning: unused variable\n`,
+      null,
+      line,
+    ]),
   ])("%s", (_case, text, failure, last) => {
     expect(errorLineOf(text)).toEqual({ failure, last });
   });

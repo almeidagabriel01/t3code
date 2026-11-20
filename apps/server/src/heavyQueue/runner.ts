@@ -7,16 +7,25 @@ import {
   HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   type HeavyQueueEntry,
+  type HeavyQueueOrder,
   type HeavyRunner,
   type HeavyRunnerAskReason,
+  type HeavyRunnerLinuxOver,
+  type HeavyRunnerLinuxOutside,
+  formatBytes,
+  linuxOverText,
   type RunnerMachineConfig,
   type RunnerProjectConfig,
   type RunnerWhere,
 } from "@t3tools/contracts";
 
 import {
+  admissionOrder,
+  budgetOf,
   jobVerdict,
-  kindOf,
+  laneOf,
+  linuxEstimate,
+  type LinuxHistory,
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
@@ -27,15 +36,16 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
+import { DEV_PROGRAMS, EXECUTORS, kindOf, PACKAGE_MANAGERS, scriptCode } from "./commandShapes.ts";
+import { HEAVY_CORES, HEAVY_MEMORY_BYTES, roundMemory } from "./classifyHeavyCommands.ts";
 import {
   entryOf,
-  EXECUTORS,
   FOLDER_FLAGS,
   lineParts,
   nameOf,
+  PACKAGE_SCRIPT,
   pmBinAt,
   readLine,
-  RUNNERS as PACKAGE_MANAGERS,
   shellQuote,
   TYPE_CHECKERS,
   workParts,
@@ -44,7 +54,7 @@ import {
 } from "./heavyHook.ts";
 import type { SyncBack } from "./heavyNotices.ts";
 import { localPortsIn } from "./localPorts.ts";
-import type { Word } from "./shellLine.ts";
+import { withHome, type Word, wordFrom } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
@@ -225,6 +235,8 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly linkFailures?: number;
   /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
   readonly failure?: string;
+  /** The last line Linux printed when its link last failed, for the retry's reason. */
+  readonly linkError?: string;
   /** Its worktree broke the install on Linux (a stale lockfile): the fix, for its end notice. */
   readonly worktree?: string;
   /** Its question and answer while a Linux attempt runs: back if the attempt never got there. */
@@ -258,7 +270,7 @@ const expand = (
   vars: ReadonlyMap<string, string | null>,
   cwd: string,
 ): { readonly value: string } | { readonly unknown: string } => {
-  let value = word.tilde ? word.value.replace(/^~(?=\/|$)/, vars.get("HOME") ?? "~") : word.value;
+  let value = withHome(word, vars.get("HOME") ?? "~");
   for (const name of word.vars) {
     if (name === "") return { unknown: "$(…)" };
     const known = name === "PWD" ? cwd : vars.get(name);
@@ -293,29 +305,6 @@ export const LINUX_FULL_WAITING = "Linux is full: waiting (this Mac is busier)";
 const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
 const GIT_WRITES =
   /^(commit|merge|rebase|cherry-pick|am|revert|reset|checkout|switch|stash|tag|pull|fetch)$/;
-const DEV_WORD = /^(dev|start|serve|preview|storybook)$/;
-/** A finite step a script's name may also name: `serve-static-build` builds and ends. */
-const FINITE_STEP = /^(build|test|lint|check|typecheck|e2e|ci|bundle|compile|export|generate)$/;
-/**
- * A script or task that never ends: a watch segment anywhere in its name watches; a server word
- * leading it with no finite step after serves.
- */
-const scriptCode = (name: string): "watches" | "serves-port" | null => {
-  const [head = "", ...rest] = name.split(/[:._-]/);
-  if (head === "watch" || rest.includes("watch")) return "watches";
-  const serves = DEV_WORD.test(head) && !rest.some((each) => FINITE_STEP.test(each));
-  return serves ? "serves-port" : null;
-};
-const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
-  vite: /^(dev|serve|preview)?$/,
-  next: /^(dev|start)$/,
-  expo: /^start$/,
-  wrangler: /^dev$/,
-  storybook: /^(dev)?$/,
-  "start-storybook": /^/,
-  "react-native": /^start$/,
-  metro: /^(serve|start)?$/,
-};
 const TASK_RUNNERS = new Set(["turbo", "nx", "lerna"]);
 // `-w` means watch only to these; to `pnpm` it is the workspace root, to `jest` its workers.
 const SHORT_WATCH = new Set(["vitest", "mocha", "tsc", "tsgo"]);
@@ -323,6 +312,67 @@ const WATCH = /^--watch(All|-path(=.*)?)?(=true)?$/;
 /** Runners that restart on file changes: watching is what they are for. */
 const WATCHERS = new Set(["nodemon", "ts-node-dev", "tsnd"]);
 const DOCKERS = new Set(["docker", "podman", "docker-compose", "nerdctl"]);
+const COMPOSE_SUBCOMMAND =
+  /^(attach|build|commit|config|cp|create|down|events|exec|export|images|kill|logs|ls|pause|port|ps|pull|push|restart|rm|run|scale|start|stats|stop|top|unpause|up|version|wait|watch)$/;
+/** Compose options before the subcommand whose next word is their value (`-p build up`). */
+const COMPOSE_VALUE_FLAGS = new Set([
+  "-p",
+  "--project-name",
+  "-f",
+  "--file",
+  "--profile",
+  "--project-directory",
+  "--env-file",
+  "--ansi",
+  "--progress",
+  "--parallel",
+]);
+// `-dp 80:80` and `-itP` end a short cluster with a publish flag; `-ePATH=…` does not.
+const PUBLISHES = /^(-[dit]*[pP]|--publish(-all)?(=|$)|--service-ports$|--net(work)?=host$)/;
+
+/**
+ * A container tool's reason: a fresh build or run needs nothing of this Mac's daemon, unless it
+ * publishes a port here; any other subcommand acts on containers or images that daemon has.
+ */
+const dockerReason = (
+  program: string,
+  first: string,
+  after: ReadonlyArray<string>,
+): MacReason | null => {
+  const compose =
+    program === "docker-compose"
+      ? after
+      : first === "compose"
+        ? after.slice(after.indexOf("compose") + 1)
+        : null;
+  const args = compose ?? after;
+  // In compose, the subcommand is the first word that is no option or option value: `-p build`
+  // names the project.
+  const at =
+    compose === null
+      ? args.indexOf(first)
+      : args.findIndex(
+          (word, index) =>
+            !word.startsWith("-") &&
+            !COMPOSE_VALUE_FLAGS.has(args[index - 1] ?? "") &&
+            COMPOSE_SUBCOMMAND.test(word),
+        );
+  const sub = args[at] ?? "";
+  const named = { subject: `${program} ${program === "docker-compose" ? sub : first}` };
+  const rest = args.slice(at + 1);
+  const publishes = rest.some(
+    (word, index) =>
+      PUBLISHES.test(word) || (/^--net(work)?$/.test(word) && rest[index + 1] === "host"),
+  );
+  // An `up` that ends with its containers is a run: it serves nothing here.
+  const ends = rest.some((word) => /^--(abort-on-container-exit|exit-code-from)(=|$)/.test(word));
+  if ((compose !== null && sub === "up" && !ends) || (sub === "run" && publishes)) {
+    return { code: "serves-port", ...named };
+  }
+  return (compose === null ? /^(build|buildx|run)$/ : /^(build|run|up)$/).test(sub)
+    ? null
+    : { code: "mac-docker", ...named };
+};
 // What they build or run is native to the machine they run on: Linux would bring back an ELF.
 const NATIVE_TOOLS = new Set([
   "rustc",
@@ -399,9 +449,14 @@ const subcommandWords = (program: string, after: ReadonlyArray<string>) => {
 /**
  * What a part's program does to this Mac, whatever the patterns say: a Mac-only tool, a native
  * build, a change to this checkout (a git write; an install, whose `node_modules` never comes
- * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs.
+ * back), or a server used from here. Judged on the program `npx` or `pnpm exec` runs. In a
+ * script's body, an install or a container command is the copy's own: Linux needs the tool.
  */
-const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason | null => {
+const programReason = (
+  part: Part,
+  macTools: ReadonlyArray<string>,
+  inScript: boolean,
+): MacReason | null => {
   let { program } = part;
   let after = part.values.slice(part.programAt + 1);
   let words = subcommandWords(program, after);
@@ -411,7 +466,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
   if (binAt === 0) {
     const at = part.programAt + 1;
     const values = [...part.values.slice(0, at), "exec", ...part.values.slice(at)];
-    const bin = programReason({ ...part, values }, macTools);
+    const bin = programReason({ ...part, values }, macTools, inScript);
     if (bin !== null) return bin;
   }
   if (execAt !== null) {
@@ -450,14 +505,17 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
     return { code: "watches", subject: named };
   }
   if (DOCKERS.has(program) && first !== "") {
-    return first === "compose" && words.includes("up")
-      ? { code: "serves-port", subject: named }
-      : { code: "mac-docker", subject: named };
+    const docker = dockerReason(program, first, after);
+    return inScript && docker?.code === "mac-docker" ? null : docker;
   }
   if (!PACKAGE_MANAGERS.has(program)) return null;
-  const install = [first, second].find((word) => INSTALLS.test(word));
-  if (install !== undefined) return { code: "mac-state", subject: `${program} ${install}` };
-  const script = first === "run" || first === "run-script" ? second : first;
+  const runs = first === "run" || first === "run-script";
+  // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
+  const install = runs ? undefined : [first, second].find((word) => INSTALLS.test(word));
+  if (install !== undefined && !inScript) {
+    return { code: "mac-state", subject: `${program} ${install}` };
+  }
+  const script = runs ? second : first;
   const code = scriptCode(script);
   return code === null ? null : { code, subject: `${program} ${script}` };
 };
@@ -468,7 +526,7 @@ const programReason = (part: Part, macTools: ReadonlyArray<string>): MacReason |
  */
 export const neverEnds = (line: string, read?: ReadScript) =>
   readLine(line, read).parts.some((part) => {
-    const code = part.handsOffInside ? undefined : programReason(part, [])?.code;
+    const code = part.handsOffInside ? undefined : programReason(part, [], false)?.code;
     return code === "serves-port" || code === "watches";
   });
 
@@ -545,8 +603,9 @@ const tieOf = (
   config: RunnerProjectConfig,
   listening: (port: number) => boolean,
   env: ReadonlyArray<string>,
+  inScript: boolean,
 ): MacReason | null => {
-  const own = programReason(part, config.runnerMacTools);
+  const own = programReason(part, config.runnerMacTools, inScript);
   if (own !== null) return own;
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
@@ -555,7 +614,11 @@ const tieOf = (
   // `remoto` syncs the checkout it runs from, so each part is judged against its own.
   const root = rootOf(cwd);
   if (root === null) return { code: "mac-env", subject: cwd };
-  const { script } = part;
+  const { script, source } = part;
+  // Linux's copy has only the synced tree: a source that reaches this Mac's home stays here.
+  if (source?.body != null && LOCAL_STATE.test(source.body)) {
+    return { code: "mac-env", subject: source.word };
+  }
   const valueReason = (value: string): MacReason | null => {
     const path = outsidePath(value, cwd, root);
     if (path !== null) return { code: "mac-env", subject: path };
@@ -563,10 +626,10 @@ const tieOf = (
     return port === undefined ? null : { code: "mac-port", subject: `localhost:${port}` };
   };
   for (const word of part.command.words.slice(part.programAt)) {
-    // A script read with the job travels as its text; one that couldn't be read is only here.
+    // A script read with the job travels as its text; one unread or written by the line is here.
     if (
       word.value === script?.word
-        ? script.body !== null
+        ? script.body !== null && script.written !== true
         : word === part.command.words[part.programAt]
     ) {
       continue;
@@ -583,6 +646,10 @@ const tieOf = (
 };
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/** A source reading this Mac's home: `os.homedir()`, `$HOME`, `~/`, `Path.home()`, `expanduser`. */
+const LOCAL_STATE =
+  /\bhomedir\s*\(|\benv\.HOME\b|\$\{?HOME\b|["'`]~\/|\bPath\.home\s*\(|\bexpanduser\s*\(|\b(ENV|environ|getenv|Getenv|env\.get)\W{1,3}HOME\b/;
 
 const programName = (path: string | undefined) => path?.split("/").pop() ?? "";
 
@@ -703,11 +770,14 @@ const editReason = (
 const lineReason = (
   line: string,
   start: string | null,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript | undefined,
   nested = false,
+  inScript = false,
 ): MacReason | null => {
   const { config, home, rootOf, listening = () => false } = context;
+  // Route memory's reason waits for the line's own: any of them wins over it.
+  let learned: MacReason | null = null;
   const parsed = readLine(line, read);
   // The parser keeps a `case` arm's pattern as the command's first word: `a) xcodebuild` runs it.
   const source = parsed.unsafe === "case" ? line.replace(CASE_ARM, "$1\n") : line;
@@ -721,16 +791,7 @@ const lineReason = (
   const exported = new Set<string>();
   const nameOf = (word: Word) => word.value.slice(0, word.value.indexOf("="));
   const assigned = (word: Word, cwd: string) =>
-    literalValue(
-      // `D=~/x` expands the `~` when it is not quoted.
-      {
-        ...word,
-        value: word.value.slice(nameOf(word).length + 1),
-        tilde: source[word.start + nameOf(word).length + 1] === "~",
-      },
-      vars,
-      cwd,
-    );
+    literalValue(wordFrom(word, nameOf(word).length + 1), vars, cwd);
   const cwdAt = (scope: ReadonlyArray<number>): string | null => {
     const key = scope.join("/");
     if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
@@ -770,16 +831,24 @@ const lineReason = (
         config,
         listening,
         env.filter((value) => value !== null),
+        inScript,
       );
       // A pattern matches the text a shell runs too: what that text runs says why first.
       if (mac !== null && mac.code !== "pinned") return mac;
+      if (mac === null && at !== null) {
+        learned ??= context.learned?.(part.values.slice(part.programAt), at) ?? null;
+      }
       const given = shellTextOf(part.values.slice(part.programAt));
       // A text this shell builds (`sh -c "$(cat x)"`) shows what it does only when it runs.
       const built = part.command.words.some(
         (word) => word.value === given && word.vars.includes(""),
       );
+      // A package.json script was read from the line's own folder: elsewhere it is another's.
+      const elsewhere =
+        part.script?.word.startsWith(PACKAGE_SCRIPT) === true && (moved !== null || cwd !== start);
+      const scriptBody = elsewhere ? undefined : (part.script?.body ?? undefined);
       const body =
-        part.script?.body ??
+        scriptBody ??
         (built ? undefined : shellTextOf(moved?.values ?? part.values.slice(part.programAt)));
       if (body !== undefined) {
         const root = at === null ? null : rootOf(at);
@@ -787,12 +856,19 @@ const lineReason = (
           body,
           at ?? start,
           { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
-          // A script inside a `sh -c` text was read with the job; a script's own scripts are not.
-          part.script === null ? read : undefined,
+          // A script inside a `sh -c` text was read with the job, and a package script's files
+          // (not its package scripts); a shell script's own scripts are not.
+          part.script === null
+            ? read
+            : part.script.word.startsWith(PACKAGE_SCRIPT) && read !== undefined
+              ? (word) => (word.startsWith(PACKAGE_SCRIPT) ? null : read(word))
+              : undefined,
           // Only a text sent whole runs on Linux; a `sh -c` text in a job runs in this Mac's shell.
           whole || part.remoto !== null,
+          inScript || scriptBody !== undefined,
         );
-        if (inner !== null) return inner;
+        if (inner?.code === "learned") learned ??= inner;
+        else if (inner !== null) return inner;
       }
       if (mac !== null) return mac;
     }
@@ -827,7 +903,7 @@ const lineReason = (
       }
     }
   }
-  return null;
+  return learned;
 };
 
 /**
@@ -836,7 +912,7 @@ const lineReason = (
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -856,7 +932,7 @@ export const eligibilityOf = (
 export const macReasonOf = (
   values: ReadonlyArray<string>,
   cwd: string,
-  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "listening" | "learned">,
   read: ReadScript,
 ) => lineReason(values.map(shellQuote).join(" "), cwd, context, read);
 
@@ -881,6 +957,13 @@ export interface LinuxHealth extends Sustained {
   readonly backOnlineAt?: number;
   /** Seconds since Linux booted, as of `okAt`. */
   readonly uptimeSeconds?: number;
+  readonly swapTotalBytes?: number | null;
+  readonly swapFreeBytes?: number | null;
+  readonly pressure?: LinuxPressure | null;
+  readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
+  readonly outside?: ReadonlyArray<LinuxOutside>;
+  /** The failing checks reached the host but got no answer in time: alive, too loaded to reply. */
+  readonly unresponsive?: boolean;
 }
 
 export const UNKNOWN_HEALTH: LinuxHealth = {
@@ -898,14 +981,47 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
   underLimitSince: null,
 };
 
+/** `/proc/pressure` share of the last 10 s, 0–100: how long work stalled on each resource. */
+export interface LinuxPressure {
+  /** Some task waited for a core. */
+  readonly cpu: number | null;
+  readonly memorySome: number | null;
+  /** Every task stalled on memory at once: reclaim and swap thrashing. */
+  readonly memoryFull: number | null;
+  readonly ioFull: number | null;
+}
+
 export interface LinuxReading {
   readonly cpuPercent: number | null;
+  /** Informational only: on WSL it counts tasks blocked on disk and swap, not CPU in use. */
   readonly load1: number | null;
   readonly cpuCount: number | null;
+  /** `MemAvailable`: free plus what the kernel can reclaim, page cache of the copies included. */
   readonly availableMemoryBytes: number | null;
   readonly totalMemoryBytes: number | null;
   readonly uptimeSeconds?: number;
+  readonly swapTotalBytes?: number | null;
+  readonly swapFreeBytes?: number | null;
+  /** Null where the kernel has no PSI. */
+  readonly pressure?: LinuxPressure | null;
+  /** Resident memory of the session in each `runs/<id>.pgid`, with that group. */
+  readonly jobMemory?: Readonly<Record<string, LinuxJobMemory>>;
+  /** Heavy cgroups there no queue job holds, busiest first. */
+  readonly outside?: ReadonlyArray<LinuxOutside>;
 }
+
+export type LinuxOutside = HeavyRunnerLinuxOutside;
+
+/** A pgid file can outlive its run, and its number can come back as another process. */
+export interface LinuxJobMemory {
+  readonly pgid: number;
+  readonly bytes: number;
+}
+
+const cpuTimes = (line: string | undefined) => {
+  const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
+  return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
+};
 
 /**
  * The busy share between two `/proc/stat` `cpu` lines, 0–100: busy is all but idle and iowait,
@@ -913,11 +1029,7 @@ export interface LinuxReading {
  * missing or the counters did not move forward.
  */
 const cpuPercentBetween = (before: string | undefined, after: string | undefined) => {
-  const times = (line: string | undefined) => {
-    const fields = line?.trim().split(/\s+/).slice(1, 9).map(Number) ?? [];
-    return fields.length === 8 && fields.every(Number.isFinite) ? fields : null;
-  };
-  const [a, b] = [times(before), times(after)];
+  const [a, b] = [cpuTimes(before), cpuTimes(after)];
   if (a === null || b === null) return null;
   const total = b.reduce((sum, n) => sum + n, 0) - a.reduce((sum, n) => sum + n, 0);
   const idle = b[3]! + b[4]! - (a[3]! + a[4]!);
@@ -927,46 +1039,278 @@ const cpuPercentBetween = (before: string | undefined, after: string | undefined
 
 /** `HEARTBEAT_COMMAND` output. */
 export const parseHeartbeat = (text: string): LinuxReading => {
-  const lines = text.split("\n");
-  const load1 = Number(lines[0]?.trim().split(/\s+/)[0]);
-  const cpuCount = Number(lines[1]?.trim());
-  const mem = lines
-    .find((line) => line.startsWith("Mem:"))
-    ?.trim()
-    .split(/\s+/);
-  const total = Number(mem?.[1]);
-  const available = Number(mem?.[6]);
+  const lines = text.split("\n").map((line) => line.trim());
+  const load1 = Number(lines[0]?.split(/\s+/)[0]);
+  const cpuCount = Number(lines[1]);
   const value = (n: number) => (Number.isFinite(n) ? n : null);
+  const kib = (label: string) => {
+    const line = lines.find((each) => each.startsWith(`${label}:`));
+    return line === undefined ? null : value(Number(line.split(/\s+/)[1]) * 1024);
+  };
+  const avg10 = (resource: string, kind: "some" | "full") => {
+    const line = lines.find((each) => each.startsWith(`psi ${resource} ${kind} `));
+    const match = line === undefined ? null : /\bavg10=([\d.]+)/.exec(line);
+    return match === null ? null : value(Number(match[1]));
+  };
+  const hasPressure = lines.some((line) => line.startsWith("psi "));
+  const jobMemory: Record<string, LinuxJobMemory> = Object.create(null);
+  const jobCgroups = new Set<string>();
+  for (const line of lines) {
+    const [tag, id, pgid, rss, cgroup] = line.split(/\s+/);
+    // `ps` reports KiB.
+    if (tag === "job" && id !== undefined && /^\d+$/.test(pgid ?? "") && /^\d+$/.test(rss ?? "")) {
+      jobMemory[id] = { pgid: Number(pgid), bytes: Number(rss) * 1024 };
+      if (cgroup !== undefined) jobCgroups.add(cgroupPath(cgroup));
+    }
+  }
   const [before, after] = lines.filter((line) => /^cpu\s/.test(line));
+  const valid = Number.isInteger(cpuCount) && cpuCount > 0;
   // `/proc/uptime`: the only line of exactly two numbers.
-  const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line.trim()));
+  const uptime = lines.find((line) => /^\d+(\.\d+)?\s+\d+(\.\d+)?$/.test(line));
   return {
     cpuPercent: cpuPercentBetween(before, after),
     load1: value(load1),
-    cpuCount: Number.isInteger(cpuCount) && cpuCount > 0 ? cpuCount : null,
-    totalMemoryBytes: value(total),
-    availableMemoryBytes: value(available),
-    ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.trim().split(/\s+/)[0]) }),
+    cpuCount: valid ? cpuCount : null,
+    totalMemoryBytes: kib("MemTotal"),
+    availableMemoryBytes: kib("MemAvailable"),
+    swapTotalBytes: kib("SwapTotal"),
+    swapFreeBytes: kib("SwapFree"),
+    pressure: hasPressure
+      ? {
+          cpu: avg10("cpu", "some"),
+          memorySome: avg10("memory", "some"),
+          memoryFull: avg10("memory", "full"),
+          ioFull: avg10("io", "full"),
+        }
+      : null,
+    jobMemory,
+    outside: outsideOf(lines, ticksPerCore(before, after, valid ? cpuCount : null), {
+      cgroups: jobCgroups,
+      runIds: new Set(Object.keys(jobMemory)),
+    }),
+    ...(uptime === undefined ? {} : { uptimeSeconds: Number(uptime.split(/\s+/)[0]) }),
   };
+};
+
+/** `0::/a.slice` (cgroup v2) as `/a.slice`. */
+const cgroupPath = (text: string) => text.replace(/^0::/, "");
+
+/**
+ * Set on an ssh job's own ssh: `LC_` because ssh's default config sends `LC_*` and sshd accepts it,
+ * so the heartbeat finds the job's session there by it.
+ */
+export const SSH_JOB_ENV = "LC_T3_HEAVY_JOB";
+
+const RUN_DIR = /\/runs\/([A-Za-z0-9_-][A-Za-z0-9._-]*-[0-9a-f]{8})(?:\/|$)/;
+const CONTAINER_CGROUP = /(?:docker-|\/docker\/)([0-9a-f]{64})(?:\.scope)?$/;
+/** Heavy cgroups listed, busiest first: enough for a person, small on the wire. */
+const OUTSIDE_MAX = 8;
+
+/**
+ * `/proc/stat` ticks one core gives in the heartbeat's window, from its two `cpu` lines. Without
+ * them, USER_HZ (always 100) over the half-second sleep.
+ */
+const ticksPerCore = (
+  before: string | undefined,
+  after: string | undefined,
+  cpuCount: number | null,
+) => {
+  const [a, b] = [cpuTimes(before), cpuTimes(after)];
+  const total =
+    a === null || b === null ? 0 : b.reduce((sum, n) => sum + n, 0) - a.reduce((s, n) => s + n, 0);
+  return cpuCount !== null && total > 0 ? total / cpuCount : 50;
+};
+
+/**
+ * The heartbeat's `out` cgroups (`out <ticks> <bytes> <pid> <cgroup>`) past half a core or 1 GiB,
+ * less the heartbeat's own (`self`) and the queue's: a job's session (`job … <cgroup>`) or its copy.
+ * `outcmd`/`outcwd <pid> <text>` and docker's `dock\t<id>\t<name>\t<image>\t<t3.thread>\t<dir>`
+ * name each one. A line that doesn't parse is skipped alone.
+ */
+const outsideOf = (
+  lines: ReadonlyArray<string>,
+  perCore: number,
+  queue: { readonly cgroups: ReadonlySet<string>; readonly runIds: ReadonlySet<string> },
+): ReadonlyArray<LinuxOutside> => {
+  const rest = (tag: string) =>
+    new Map(
+      lines.flatMap((line) => {
+        const match = new RegExp(`^${tag} (\\d+) (.+)$`).exec(line);
+        return match === null ? [] : [[Number(match[1]), match[2]!.trim()] as const];
+      }),
+    );
+  const commands = rest("outcmd");
+  const cwds = rest("outcwd");
+  const self = lines
+    .find((line) => line.startsWith("self "))
+    ?.slice(5)
+    .trim();
+  const containers = new Map(
+    lines.flatMap((line) => {
+      const [tag, id, name, image, thread, dir] = line.split("\t");
+      return tag === "dock" && /^[0-9a-f]{64}$/.test(id ?? "")
+        ? [[id!, { name: name ?? "", image: image ?? "", thread, dir }] as const]
+        : [];
+    }),
+  );
+  const mountRuns = new Map(
+    lines.flatMap((line) => {
+      const [tag, id, ...sources] = line.split("\t");
+      const runId = sources.map((source) => RUN_DIR.exec(source)?.[1]).find(Boolean);
+      return tag === "mnt" && /^[0-9a-f]{64}$/.test(id ?? "") && runId !== undefined
+        ? [[id!, runId] as const]
+        : [];
+    }),
+  );
+  const jobs = new Map(
+    lines.flatMap((line) => {
+      const match = /^outjob (\/\S*) ([A-Za-z0-9._:-]+)$/.exec(line);
+      return match === null ? [] : [[match[1]!, match[2]!] as const];
+    }),
+  );
+  const items: LinuxOutside[] = [];
+  for (const line of lines) {
+    const match = /^out (\d+) (\d+) (\d+) (\/\S*)$/.exec(line);
+    if (match === null) continue;
+    const [, ticks, bytes, pidText, cgroup] = match as unknown as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const pid = Number(pidText);
+    const containerId = CONTAINER_CGROUP.exec(cgroup)?.[1];
+    const container = containerId === undefined ? undefined : containers.get(containerId);
+    const runId =
+      (RUN_DIR.exec(cwds.get(pid) ?? "") ?? RUN_DIR.exec(container?.dir ?? ""))?.[1] ??
+      (containerId === undefined ? undefined : mountRuns.get(containerId));
+    const jobId = jobs.get(cgroup);
+    const cpu = Math.round((Number(ticks) / perCore) * 10) / 10;
+    const memoryBytes = roundMemory(Number(bytes));
+    if (cgroup === (self === undefined ? undefined : cgroupPath(self))) continue;
+    if (queue.cgroups.has(cgroup) || (runId !== undefined && queue.runIds.has(runId))) continue;
+    if (cpu < HEAVY_CORES && memoryBytes < HEAVY_MEMORY_BYTES) continue;
+    items.push({
+      cgroup,
+      pid,
+      cpu,
+      memoryBytes,
+      command: commands.get(pid) ?? "",
+      ...(runId === undefined ? {} : { runId }),
+      ...(containerId === undefined
+        ? {}
+        : {
+            container: {
+              id: containerId.slice(0, 12),
+              name: container?.name ?? "",
+              image: container?.image ?? "",
+            },
+          }),
+      ...(container?.thread ? { threadId: container.thread } : {}),
+      ...(jobId === undefined ? {} : { jobId }),
+    });
+  }
+  return items
+    .toSorted((a, b) => b.cpu - a.cpu || b.memoryBytes - a.memoryBytes)
+    .slice(0, OUTSIDE_MAX);
 };
 
 export type HealthCheck =
   | { readonly ok: true; readonly reading: LinuxReading }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly unresponsive?: boolean };
 
-const GIB = 1024 ** 3;
+/**
+ * A failed check that reached the host: sshd accepted TCP but never finished its banner, or the
+ * heartbeat logged in and then hung. A host that refuses, has no route or never answers the
+ * connect is offline instead.
+ */
+export const unresponsiveFailure = (timedOut: boolean, stderr: string) =>
+  timedOut || /banner exchange/i.test(stderr);
 
-/** Which of Linux's own limits a reading is past, for the waiting reason; null when none or unknown. */
-const linuxOverBy = (reading: LinuxReading, machine: RunnerMachineConfig): string | null => {
+/** PSI ceilings over the last 10 s. Memory and disk stalls are thrashing whatever the CPU says. */
+const LINUX_MEMORY_STALL_LIMIT = 10;
+const LINUX_IO_STALL_LIMIT = 30;
+/**
+ * `cpu some` passes 50% on any multi-threaded test run, so only near-constant waiting is a ceiling;
+ * the CPU limit setting stays on CPU in use.
+ */
+const LINUX_CPU_STALL_LIMIT = 90;
+/** Less swap free than this share is the last step before the OOM killer. */
+const LINUX_SWAP_FREE_SHARE = 0.1;
+
+/**
+ * Every limit of Linux's a reading is past, each with its metric and value, the most urgent first;
+ * empty when none or unknown. The load average never counts: WSL adds tasks blocked on disk and
+ * swap to it. Without PSI only free memory, swap and CPU in use (`/proc/stat`) decide.
+ */
+export const linuxOverBy = (
+  reading: Pick<
+    LinuxReading,
+    | "availableMemoryBytes"
+    | "totalMemoryBytes"
+    | "cpuPercent"
+    | "swapTotalBytes"
+    | "swapFreeBytes"
+    | "pressure"
+  >,
+  machine: RunnerMachineConfig,
+): ReadonlyArray<HeavyRunnerLinuxOver> => {
   const { availableMemoryBytes: free, totalMemoryBytes: total, cpuPercent: cpu } = reading;
+  const pressure = reading.pressure ?? null;
+  const over: Array<HeavyRunnerLinuxOver> = [];
   const floor = machine.runnerLinuxMemoryFloorPercent;
   if (free !== null && total !== null && free < (floor / 100) * total) {
-    return `${(Math.max(0, free) / GIB).toFixed(1)} GB free, keeping ${floor}%`;
+    over.push({ limit: "memory", value: free, threshold: floor });
   }
-  if (cpu === null) return null;
-  return cpu > machine.runnerLinuxCpuCeilingPercent
-    ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
-    : null;
+  const stall = (share: number | null | undefined, limit: number) =>
+    share !== null && share !== undefined && share >= limit ? Math.round(share) : null;
+  const memory = stall(pressure?.memoryFull, LINUX_MEMORY_STALL_LIMIT);
+  if (memory !== null) {
+    over.push({ limit: "memory-pressure", value: memory, threshold: LINUX_MEMORY_STALL_LIMIT });
+  }
+  const { swapTotalBytes: swap, swapFreeBytes: swapFree } = reading;
+  if (
+    swap !== null &&
+    swap !== undefined &&
+    swap > 0 &&
+    swapFree !== null &&
+    swapFree !== undefined &&
+    swapFree < swap * LINUX_SWAP_FREE_SHARE
+  ) {
+    over.push({
+      limit: "swap",
+      value: swapFree,
+      threshold: LINUX_SWAP_FREE_SHARE * 100,
+      total: swap,
+    });
+  }
+  const io = stall(pressure?.ioFull, LINUX_IO_STALL_LIMIT);
+  if (io !== null) {
+    over.push({ limit: "io-pressure", value: io, threshold: LINUX_IO_STALL_LIMIT });
+  }
+  const waited = stall(pressure?.cpu, LINUX_CPU_STALL_LIMIT);
+  if (waited !== null) {
+    over.push({ limit: "cpu-pressure", value: waited, threshold: LINUX_CPU_STALL_LIMIT });
+  }
+  if (cpu !== null && cpu > machine.runnerLinuxCpuCeilingPercent) {
+    over.push({
+      limit: "cpu",
+      value: Math.round(cpu),
+      threshold: machine.runnerLinuxCpuCeilingPercent,
+    });
+  }
+  return over;
+};
+
+/** What clients show: offline, reached but not answering, over its limits, or online. */
+export const linuxStatus = (
+  health: LinuxHealth,
+): "online" | "over-limit" | "unresponsive" | "offline" | undefined => {
+  if (health.online === null) return undefined;
+  if (health.failures > 0 && health.unresponsive === true) return "unresponsive";
+  if (health.online === false) return "offline";
+  return health.overLimit ? "over-limit" : "online";
 };
 
 /** Readings further apart than this are not one run of them: one missed beat at most. */
@@ -978,6 +1322,36 @@ export const LINUX_SETTLE_MS = 60_000;
 
 // Half the entry floor, so a stop never makes room that lets the same start back in at once.
 export const LINUX_EVICT_SHARE = 0.5;
+
+/** Containers nothing ties to a job, thread or project: named apart from loose work. */
+const unknownContainersNote = (outside: ReadonlyArray<LinuxOutside>) => {
+  const count = outside.filter(
+    (item) =>
+      item.container !== undefined &&
+      item.runId === undefined &&
+      item.threadId === undefined &&
+      item.projectId === undefined,
+  ).length;
+  return count === 0 ? "" : ` (${count} container${count === 1 ? "" : "s"} of unknown origin)`;
+};
+
+/**
+ * Linux's heavy work outside the queue: the heartbeat already leaves out each job's own session,
+ * and this the copies of jobs still syncing or installing, before they have a session to show.
+ */
+export const linuxOutside = (
+  health: Pick<LinuxHealth, "outside">,
+  entries: ReadonlyArray<HeavyQueueEntry>,
+): ReadonlyArray<LinuxOutside> => {
+  const running = entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux");
+  const runIds = new Set(running.flatMap((entry) => (entry.remote ? [entry.remote.id] : [])));
+  const jobIds = new Set(running.map((entry) => entry.id));
+  return (health.outside ?? []).filter(
+    (item) =>
+      (item.runId === undefined || !runIds.has(item.runId)) &&
+      (item.jobId === undefined || !jobIds.has(item.jobId)),
+  );
+};
 
 /** When Linux last booted, from the latest reading; null without one. */
 export const bootAtOf = (health: LinuxHealth) =>
@@ -991,7 +1365,7 @@ export const beforeBoot = (bootAt: number | null, startedAt: number) =>
 
 /**
  * Running Linux attempts to stop after a reading: every one from before Linux restarted, and,
- * once memory falls below half the floor, the newest of two or more. Never the only one (alone,
+ * once memory falls below half the floor or stalls past twice its ceiling, the newest of two or more. Never the only one (alone,
  * a job that fills memory is its own problem) and one at a time: the next waits for a reading
  * taken after the last stop.
  */
@@ -1008,7 +1382,9 @@ export const linuxStops = (
   }
   const { okAt, availableMemoryBytes: free, totalMemoryBytes: total } = health;
   const floor = (machine.runnerLinuxMemoryFloorPercent / 100) * LINUX_EVICT_SHARE;
-  if (okAt === null || free === null || total === null || !(free < total * floor)) return stops;
+  const short = free !== null && total !== null && free < total * floor;
+  const stalled = (health.pressure?.memoryFull ?? 0) >= 2 * LINUX_MEMORY_STALL_LIMIT;
+  if (okAt === null || !(short || stalled)) return stops;
   const live = running.filter(
     (entry) => (entry as QueuedEntry).stop === undefined && stops[entry.id] === undefined,
   );
@@ -1039,11 +1415,13 @@ export const nextHealth = (
     previous.failures > 0 &&
     previous.failedAt !== undefined &&
     now - previous.failedAt < (machine.runnerHeartbeatSeconds * 1000) / 2;
-  if (sameEvent) return { ...previous, error: check.error };
+  if (sameEvent) {
+    return { ...previous, error: check.error, unresponsive: check.unresponsive === true };
+  }
   if (check.ok) {
     // One missed beat keeps the run of readings; a longer silence starts over from "has room".
     const continuous = previous.okAt !== null && now - previous.okAt <= readingGapMs(machine);
-    const over = linuxOverBy(check.reading, machine) !== null;
+    const over = linuxOverBy(check.reading, machine).length > 0;
     const backOnlineAt = previous.online === false ? now : previous.backOnlineAt;
     return {
       online: true,
@@ -1064,6 +1442,7 @@ export const nextHealth = (
     checkedAt: now,
     failedAt: now,
     error: check.error,
+    unresponsive: check.unresponsive === true,
   };
 };
 
@@ -1135,6 +1514,8 @@ export interface WorkContext {
   readonly rootOf: (cwd: string) => string | null;
   /** Whether something on this Mac listens on a TCP port; nothing does when absent. */
   readonly listening?: (port: number) => boolean;
+  /** Route memory's reason to keep a call (program first) in `cwd` here; none when absent. */
+  readonly learned?: (values: ReadonlyArray<string>, cwd: string) => MacReason | null;
 }
 
 export interface RoutePlanInput extends PlanInput {
@@ -1145,6 +1526,10 @@ export interface RoutePlanInput extends PlanInput {
   readonly runnerOn?: boolean;
   /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
   readonly lostCwds?: ReadonlyArray<string>;
+  /** The user's own and "first" jobs lead; "last" ones trail until they aged twice as long. */
+  readonly lane?: (entry: HeavyQueueEntry) => "first" | "normal" | "last";
+  /** What Linux runs used there, for the memory each start reserves. */
+  readonly linuxHistory?: LinuxHistory;
 }
 
 interface LinuxBusy {
@@ -1173,6 +1558,9 @@ export interface RoutePlan {
   readonly cancels: Readonly<Record<string, string>>;
   /** Waiters "When Linux is full" moved to this Mac, with why: they stay there (`route`). */
   readonly moved: Readonly<Record<string, string>>;
+  /** Waiter ids in the order admission tries them (`admissionOrder`), and why each sits there. */
+  readonly ordered: ReadonlyArray<string>;
+  readonly order: Readonly<Record<string, HeavyQueueOrder>>;
   readonly room: boolean;
   readonly holding: boolean;
   readonly mac: Plan | null;
@@ -1210,6 +1598,21 @@ const isCall = (entry: HeavyQueueEntry) => (entry as QueuedEntry).call === true;
 export const askedLinux = (entry: HeavyQueueEntry) =>
   entry.where === "linux" && !isCall(entry) && (entry as QueuedEntry).linuxOnly === true;
 
+/** An agent's own `remoto` or `ssh` sent it to Linux: that choice outranks this Mac's checks. */
+export const sentToLinux = (entry: HeavyQueueEntry) =>
+  entry.ssh === true || (entry.where === "linux" && !isCall(entry) && !askedLinux(entry));
+
+/**
+ * An agent's own `remoto` or `ssh` outranks this Mac's checks, unless the user moved the job here:
+ * the plan asks it of the job, and `linux-part` of the call that sat under `remoto`.
+ */
+export const agentChoseLinux = (entry: HeavyQueueEntry) =>
+  entry.ssh === true || (sentToLinux(entry) && entry.route !== "mac");
+
+/** `--runner mac` with no reason given, on work Linux could run: kept here, and said so. */
+export const ASKED_MAC_NEEDLESSLY =
+  "Asked for this Mac, but nothing here needs it: drop --runner mac so the PC can take it";
+
 const RUNNER_OFF_ASKED = "The Runner is off for this project and this job asked for Linux";
 
 /**
@@ -1224,6 +1627,9 @@ export const intentOf = (
   if (!context.config.runnerEnabled) {
     const why = "Runner off for this project";
     return askedLinux(entry) ? { ...mac(why), cancel: RUNNER_OFF_ASKED } : mac(why);
+  }
+  if (agentChoseLinux(entry)) {
+    return { intent: "linux", reason: "" };
   }
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
@@ -1240,24 +1646,39 @@ export const intentOf = (
   return mac(
     verdict.reason ??
       (entry.where === "mac"
-        ? ((entry as QueuedEntry).routeReason ??
-          macReasonText({ code: "pinned", subject: "--runner mac" }))
+        ? ((entry as QueuedEntry).routeReason ?? ASKED_MAC_NEEDLESSLY)
         : "Runner set to this Mac"),
   );
 };
 
+/** Why this Mac took a job Linux couldn't start now, worded for the Mac's row. */
+const macTookWhy = (busy: LinuxBusy) =>
+  busy.kind === "slots"
+    ? "Linux is full"
+    : busy.kind === "limits"
+      ? "Linux is at its limits"
+      : busy.kind === "reading"
+        ? "no fresh reading of Linux's load"
+        : busy.why;
+
 /**
- * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie).
- * Mac first: this Mac up to `runnerMacFirstAfter` jobs, then Linux. In both, a machine that can
- * start it now takes it from one that can't, and one over its sustained limits takes nothing new;
- * past both, the job holds. Neither asks: Linux offline or unknown keeps the job on the Mac.
+ * Decides every waiter in queue order. Automatic: Linux whenever it can start the job now; else
+ * this Mac, if it has room and no waiter; else the job waits for Linux. Mac first: this Mac up to
+ * `runnerMacFirstAfter` jobs, then Linux, a full Mac yielding to a Linux that can start it now.
+ * Past both sustained limits, the job holds. Neither asks: Linux offline or unknown keeps it here.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const { entries, now, health, machine, sample } = input;
   const queueOn = input.enabled;
   const paused = queueOn && input.paused;
   const running = entries.filter((entry) => entry.startedAt !== null);
-  const waiting = entries.filter((entry) => entry.startedAt === null);
+  // Light work and shorter runs take the first slots on either machine, aged jobs before them.
+  const { waiting, order } = admissionOrder(
+    input,
+    entries.filter((entry) => entry.startedAt === null),
+    input.lane,
+  );
+  const ordered = waiting.map((entry) => entry.id);
   const linuxRunning = running.filter((entry) => entry.runner === "linux");
   const macRunning = running.filter((entry) => entry.runner !== "linux");
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
@@ -1269,7 +1690,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Jobs waiting for Linux to empty: it admits nobody else meanwhile. */
   const alone = new Set(waiting.filter(runsAlone).map((entry) => entry.id));
   let linuxCount = linuxRunning.length;
-  let macCount = macRunning.length;
+  /** A service holds no slot and never runs alone: it is load in the reading, nothing more. */
+  const isQuick = (entry: HeavyQueueEntry) => laneOf(input, entry) === "quick";
+  const holdsSlot = (entry: HeavyQueueEntry) => laneOf(input, entry) === "standard";
+  let macCount = macRunning.filter(holdsSlot).length;
   let lastLinuxStart = Math.max(
     -Infinity,
     ...linuxRunning.map((entry) => Date.parse(entry.startedAt!)),
@@ -1277,10 +1701,37 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
   const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
-  const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
-  const linuxOverNow = linuxOverBy(health, machine);
+  const macExclusive =
+    queueOn && macRunning.some((entry) => holdsSlot(entry) && kindOf(entry) === "exclusive");
+  /** The Mac's room this pass: jobs routed there spend it, so two that fit alone don't both go. */
+  let macBudget = fresh ? budgetOf(input, sample, macRunning) : null;
+  const linuxOverFirst = linuxOverBy(health, machine)[0];
+  const linuxOverNow = linuxOverFirst === undefined ? null : linuxOverText(linuxOverFirst);
   const okAt = health.okAt ?? -Infinity;
   const stale = now - okAt > readingGapMs(machine);
+  const linuxHistory = input.linuxHistory ?? {};
+  const totalMemory = health.totalMemoryBytes;
+  const memoryFloor =
+    totalMemory === null ? 0 : (machine.runnerLinuxMemoryFloorPercent / 100) * totalMemory;
+  /** A run's peak, capped at what Linux could ever give it: one bigger never waits for nothing. */
+  const linuxNeed = (entry: HeavyQueueEntry) => {
+    const need = linuxEstimate(linuxHistory, entry, input);
+    return totalMemory === null ? need : Math.min(need, totalMemory - memoryFloor);
+  };
+  /**
+   * Memory the running Linux jobs have yet to take: each one's peak less what the heartbeat last
+   * read of its session (`memory`). `MemAvailable` already counts what they hold, and anything
+   * else there (docker containers, other users) along with it.
+   */
+  const outside = linuxOutside(health, entries);
+  const outsideNote =
+    outside.length === 0
+      ? ""
+      : ` · outside the queue: ${outside.length} using ${Math.round(outside.reduce((sum, item) => sum + item.cpu, 0) * 10) / 10} cores, ${formatBytes(outside.reduce((sum, item) => sum + item.memoryBytes, 0))}${unknownContainersNote(outside)}`;
+  let linuxReserved = linuxRunning.reduce(
+    (sum, entry) => sum + Math.max(0, linuxNeed(entry) - (entry.memory ?? 0)),
+    0,
+  );
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -1299,7 +1750,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     alone.delete(entry.id);
     if (shows) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
-    macCount += 1;
+    if (holdsSlot(entry)) macCount += 1;
+    // Only what fits spends it, as in `plan`: a waiter too big to start takes no one's room.
+    const verdict = macBudget === null ? null : jobVerdict(input, sample!, entry, macBudget);
+    if (macBudget !== null && verdict !== null && verdict.hold === null) {
+      const { cost } = verdict;
+      macBudget = {
+        memoryBytes: macBudget.memoryBytes - cost.memoryBytes,
+        cpu: macBudget.cpu - cost.cpu,
+      };
+    }
     if (!queueOn) admits[entry.id] = { runner: "mac", ungated: true };
     // Its job's slot is its own: waiting for another could wait on that job (pause included). A
     // Linux call sent here leaves the queue instead, to run under its job (`leavesForMac`).
@@ -1327,14 +1787,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * limits, which only the sustained ones may turn into a move.
    */
   const macRoom = (entry: HeavyQueueEntry) =>
-    !macOver &&
-    !macExclusive &&
-    (!queueOn ||
-      (macCount < Math.max(1, input.maxRunning) &&
-        (macCount === 0 ||
-          !fresh ||
-          machineHold(sample, input) !== null ||
-          jobVerdict(input, sample, entry).hold === null)));
+    isQuick(entry)
+      ? // Quick work passes the slots and a job that runs alone; only its memory can keep it off.
+        !macOver &&
+        (macBudget === null || jobVerdict(input, sample!, entry, macBudget).hold !== "job-memory")
+      : !macOver &&
+        !macExclusive &&
+        (!queueOn ||
+          (macCount < Math.max(1, input.maxRunning) &&
+            (macCount === 0 ||
+              macBudget === null ||
+              machineHold(sample!, input) !== null ||
+              jobVerdict(input, sample!, entry, macBudget).hold === null)));
   /** Why Linux cannot take `entry` (of `worktree`) now, or null when it can. */
   const linuxBusy = (entry: HeavyQueueEntry, worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0 && !isCall(entry)) {
@@ -1359,11 +1823,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       };
     }
     if (stale) return { kind: "reading", why: "a fresh reading of Linux" };
+    // Its last checks reached it but got no answer: thrashing, not gone. Nothing new goes there.
+    if (health.failures > 0 && health.unresponsive === true) {
+      return { kind: "limits", why: "Linux isn't answering: too loaded to reply" };
+    }
     if (health.overLimit) {
-      return { kind: "limits", why: linuxOverNow ?? "easing back under its limits" };
+      return {
+        kind: "limits",
+        why: `${linuxOverNow ?? "easing back under its limits"}${outsideNote}`,
+      };
     }
     // Only the sustained limits move work elsewhere, but no new start goes past the instant ones.
-    if (linuxOverNow !== null) return { kind: "limits", why: linuxOverNow };
+    if (linuxOverNow !== null) return { kind: "limits", why: `${linuxOverNow}${outsideNote}` };
     // Bounds stop and start on a job that only fits there alone.
     if (runsAlone(entry) && linuxFree < machine.runnerLinuxSlots) {
       return {
@@ -1372,14 +1843,29 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         alone: true,
       };
     }
+    // One job always runs on an empty Linux, as on this Mac; work outside the queue makes it
+    // not empty. Checked before the settle wait, so a job started this pass holds its peak here.
+    const free = health.availableMemoryBytes;
+    const empty = linuxFree === machine.runnerLinuxSlots && outside.length === 0;
+    if (free !== null && totalMemory !== null && !empty) {
+      const need = linuxNeed(entry);
+      if (free - linuxReserved - need < memoryFloor) {
+        return {
+          kind: "limits",
+          why: `needs ~${formatBytes(need)}; ${formatBytes(free)} free, ${formatBytes(linuxReserved)} held for running jobs, ${formatBytes(memoryFloor)} kept spare${outsideNote}`,
+        };
+      }
+    }
     if (okAt < lastLinuxStart + LINUX_SETTLE_MS) {
       return { kind: "reading", why: "a reading a minute after the last job started there" };
     }
     return null;
   };
-  /** Hybrid's balance: this Mac's backlog per slot is no longer than Linux's (the Mac on a tie). */
-  const macShorter = () =>
-    macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
+  /** Why Linux cannot take `entry` now; a fresh-reading wait never applies to quick work. */
+  const busyFor = (entry: HeavyQueueEntry, worktree: string) => {
+    const busy = linuxBusy(entry, worktree);
+    return busy !== null && busy.kind === "reading" && isQuick(entry) ? null : busy;
+  };
   /** Each machine's wait for `entry` in rounds of its slots; one that can't start it now counts one. */
   /**
    * Nothing but its slots keeps this Mac from starting `entry`: no sustained or instant limit, no
@@ -1392,7 +1878,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     (!queueOn ||
       macCount === 0 ||
       !fresh ||
-      (machineHold(sample, input) === null && jobVerdict(input, sample, entry).hold === null));
+      (machineHold(sample, input) === null &&
+        jobVerdict(input, sample, entry, macBudget!).hold === null));
   const macWaitsLess = (entry: HeavyQueueEntry) => {
     const macSlots = Math.max(1, input.maxRunning);
     const macWait = macRoom(entry) ? 0 : Math.max(1, macCount + 1 - macSlots) / macSlots;
@@ -1430,6 +1917,14 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
    * "When Linux is offline" or "If a Linux run fails", with its question and deadline. A run Linux
    * hasn't confirmed stopped reruns nowhere yet, but every other choice acts now.
    */
+  /** Only an offline Linux "comes back"; online, the job is between attempts of its own. */
+  const linuxWait = (entry: HeavyQueueEntry) => {
+    const { linkFailures, linkError } = entry as QueuedEntry;
+    if (health.online === false) return "waiting for Linux to come back";
+    if (linkFailures === undefined) return "checking whether Linux is up";
+    const attempt = `retrying on Linux (attempt ${linkFailures} of ${linkAttempts(machine)})`;
+    return linkError === undefined ? attempt : `${attempt}: ${linkError}`;
+  };
   const follow = (entry: HeavyQueueEntry, config: RunnerProjectConfig) => {
     const reason: HeavyRunnerAskReason = droppedFinal(entry, machine) ? "dropped" : "unavailable";
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
@@ -1475,13 +1970,15 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     cancel(`${what} and nobody answered in time: canceled`);
   };
-  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string, reason: string) => {
     alone.delete(entry.id);
     routes[entry.id] = "linux";
+    reasons[entry.id] = reason;
     linuxCount += 1;
     linuxFree -= 1;
     busyWorktrees.add(worktree);
     lastLinuxStart = now;
+    linuxReserved += linuxNeed(entry);
     admits[entry.id] = { runner: "linux", ungated: !queueOn };
   };
 
@@ -1525,7 +2022,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     // A run that failed on Linux follows "If a Linux run fails" in every mode, below.
@@ -1534,16 +2031,16 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       (up || !droppedFinal(entry, machine))
     ) {
       const hybrid = intent === "automatic";
-      const mode = hybrid ? "Hybrid" : "Mac first";
+      const mode = hybrid ? "Automatic" : "Mac first";
       if (hybrid && paused) {
-        toMac(entry, "Hybrid: queue paused");
+        toMac(entry, "Automatic: queue paused");
         continue;
       }
       if (!up) {
         toMac(entry, `${mode}: Linux is unavailable`);
         continue;
       }
-      const busy = linuxBusy(entry, worktree);
+      const busy = busyFor(entry, worktree);
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";
         linuxCount += 1;
@@ -1553,36 +2050,37 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       const past = macCount >= config.runnerMacFirstAfter;
       let onMac: boolean;
       if (hybrid) {
-        onMac = macShorter();
-        if (onMac && macOver) onMac = false;
-        else if (!onMac && health.overLimit) onMac = true;
-        // A machine that can start it now takes it from the other one, which can't.
-        if (onMac && busy === null && !macRoom(entry)) onMac = false;
-        else if (
-          !onMac &&
-          busy !== null &&
-          !startsOnLinux(entry, busy) &&
-          macWaiters.length === 0 &&
-          macRoom(entry)
-        )
-          onMac = true;
+        onMac =
+          busy !== null && !startsOnLinux(entry, busy) && macWaiters.length === 0 && macRoom(entry);
       } else {
         onMac = !macOver && (!past || health.overLimit);
-        // Under its count, a full Mac still yields to a Linux that can start it now.
-        if (onMac && busy === null && !macRoom(entry)) onMac = false;
+        // A full Mac yields to Linux whether Linux can start it now or not: deciding on Linux's
+        // passing state flipped the job between machines. Only Linux past its limits keeps it here.
+        if (onMac && !macRoom(entry) && !health.overLimit) onMac = false;
       }
       if (onMac) {
-        toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
+        toMac(
+          entry,
+          hybrid && busy !== null
+            ? `This Mac took it: ${macTookWhy(busy)}`
+            : macRoom(entry)
+              ? "Mac first: this Mac has room"
+              : "Mac first: Linux is at its limits",
+        );
         continue;
       }
+      const macFirstWhy = past
+        ? `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`
+        : "Mac first: this Mac has no room";
       if (paused && entry.forced !== true) toLinux(entry, "paused");
-      else if (busy === null || startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
-      else {
+      else if (busy === null || startsOnLinux(entry, busy)) {
+        toLinuxNow(entry, worktree, hybrid ? "Linux first: the PC can start it now" : macFirstWhy);
+      } else {
         toLinux(entry, busy);
-        if (hybrid && macOver) reasons[entry.id] = "Hybrid: this Mac is over its limits";
-        if (!hybrid && past) {
-          reasons[entry.id] = `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`;
-        }
+        if (hybrid) {
+          const why = busy.kind === "reading" ? "no fresh reading of its load" : busy.why;
+          reasons[entry.id] = `Linux can't start it yet: ${why}`;
+        } else if (past) reasons[entry.id] = macFirstWhy;
       }
       continue;
     }
@@ -1592,9 +2090,21 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     if (up) {
-      const busy = linuxBusy(entry, worktree);
+      const busy = busyFor(entry, worktree);
       if (busy !== null && !startsOnLinux(entry, busy)) linuxFullRoute(entry, config, busy);
-      else toLinuxNow(entry, worktree);
+      else {
+        toLinuxNow(
+          entry,
+          worktree,
+          entry.route === "linux"
+            ? "Moved to Linux"
+            : askedLinux(entry)
+              ? "Asked for Linux"
+              : entry.where === "linux"
+                ? "Sent to Linux with remoto"
+                : "Runner set to Linux",
+        );
+      }
       continue;
     }
     if (health.online === null && entry.linuxFailedAt === undefined) {
@@ -1603,7 +2113,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     // The user (or an expired question) already chose to wait.
     if (entry.route === "linux") {
-      toLinux(entry, "waiting for Linux to come back");
+      toLinux(entry, linuxWait(entry));
       continue;
     }
     follow(entry, config);
@@ -1618,13 +2128,15 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       asks,
       cancels,
       moved,
+      ordered,
+      order,
       room: true,
       holding: false,
       mac: null,
     };
   }
   const mac = plan({ ...input, entries: [...macRunning, ...macWaiters] });
-  if (mac.admit !== null) admits[mac.admit] = { runner: "mac", ungated: false };
+  for (const id of mac.admits) admits[id] = { runner: "mac", ungated: false };
   return {
     admits,
     routes,
@@ -1642,11 +2154,28 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     asks,
     cancels,
     moved,
+    ordered,
+    order,
     room: mac.room,
     holding: mac.holding,
     mac,
   };
 };
+
+/**
+ * What an agent reads when the queue fails its job for Linux's or T3's reasons: going around the
+ * queue hides the work from admission and loads the PC unseen, so the failure goes to T3's board.
+ */
+const noSsh = (host: string) =>
+  `Do not get around it by running the work with \`ssh ${host} '…'\` or outside the queue: T3 then can't see or limit it.`;
+
+/** T3 itself failed the job (its copy, worktree, sync or spent input): a bug to file. */
+export const linuxFailedNote = (host: string) =>
+  `[t3 heavy] This failed in T3's queue or on Linux, not in your command. ${noSsh(host)} Treat it as a T3 bug: unless T3 already filed a problem card for it, file one on the T3 Code project's board (t3_kanban create_card) with this command and the error above, then tell the user the work is blocked on it.\n`;
+
+/** Linux was offline, dropped the job, or it was canceled or needs this Mac: no bug, no card. */
+export const linuxRetryNote = (host: string) =>
+  `[t3 heavy] Linux couldn't take this job now; that is not a T3 bug, so file no card. ${noSsh(host)} Run it again later, rerun it through the queue with \`--runner mac\` to use this Mac, or ask the user.\n`;
 
 /** Stderr lines `remoto` prints with `REMOTO_MARKERS=1`; people never see them. */
 export const MARKER = "\u001eremoto ";
@@ -1767,26 +2296,89 @@ export const sshArgs = (
 export const runnerCopyId = (realPath: string, sha1: (text: string) => string) =>
   `${realPath.slice(realPath.lastIndexOf("/") + 1).replace(/[^A-Za-z0-9._-]/gu, "_")}-${sha1(realPath).slice(0, 8)}`;
 
-const RUNNER_COPY_ID = /^[A-Za-z0-9._-]+-[0-9a-f]{8}$/;
+// No leading dot: hidden names, `.trash-*` included, are never a copy.
+const RUNNER_COPY_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]*-[0-9a-f]{8}$/;
 
 /**
- * Deletes `runs/<id>` and the lock and pgid files `remoto-rodar` keeps beside it. Prints `busy` when
- * a run still holds it, `removed` otherwise.
+ * Deletes `runs/<id>` and its pgid file, or prints `busy` while `remoto-rodar` holds its lock or its
+ * group lives. Under the lock both are renamed to `.trash-*`, so a sync that never locks
+ * (`rsync --delete`) meets no half-deleted copy; the delete runs after. The lock file stays.
  */
 export const removeCopyScript = (id: string) => {
-  if (!RUNNER_COPY_ID.test(id) || id.startsWith(".")) throw new Error(`Unsafe run id: ${id}`);
+  if (!RUNNER_COPY_ID.test(id)) throw new Error(`Unsafe run id: ${id}`);
   const folder = `"$HOME/runs/${id}"`;
+  // A leading dot and a decimal tail: never a copy name, a `*.lock`, or a `*.pgid`.
+  const trash = `"$HOME/runs/.trash-${id}-$$"`;
   return [
+    "(",
+    `if [ -e ${folder}.lock ] && command -v flock >/dev/null; then exec 9>>${folder}.lock; flock -n 9 || exit 3; fi`,
     `p=$(cat ${folder}.pgid 2>/dev/null)`,
-    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then echo busy; exit 0; fi`,
-    `rm -rf -- ${folder} ${folder}.lock ${folder}.pgid && echo removed`,
+    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then exit 3; fi`,
+    `mkdir ${trash} || exit 4`,
+    `if [ -e ${folder} ]; then mv -- ${folder} ${trash}/copy || exit 4; fi`,
+    `if [ -e ${folder}.pgid ]; then mv -- ${folder}.pgid ${trash}/pgid || exit 4; fi`,
+    ")",
+    `case $? in 3) echo busy ;; 0) rm -rf -- ${trash} && echo removed ;; *) rm -rf -- ${trash} ;; esac`,
+    // Trash an earlier removal left when its connection dropped mid-delete.
+    `rm -rf -- "$HOME/runs"/.trash-* 2>/dev/null`,
+    "exit 0",
   ].join("\n");
 };
 
+/** Copies unused this long go; the next run of their worktree syncs a fresh one. */
+export const RUNNER_COPY_RETENTION_DAYS = 14;
+
+/**
+ * Prints `idle <id>` for each copy whose last run (`remoto-rodar` truncates `runs/<id>.lock` on
+ * every start) is older than `days` and that no run holds now. A copy with no lock is left: a sync
+ * may be writing it before its first run.
+ */
+export const idleCopiesScript = (days: number, nowSeconds: number) => {
+  const cutoff = Math.floor(nowSeconds) - Math.max(1, Math.floor(days)) * 86_400;
+  return [
+    `cd "$HOME/runs" 2>/dev/null || exit 0`,
+    "for l in *.lock; do",
+    "  id=${l%.lock}",
+    `  case "$id" in ''|.*|*[!A-Za-z0-9._-]*) continue ;; esac`,
+    `  [ -d "$id" ] || continue`,
+    `  t=$(stat -c %Y "$l" 2>/dev/null || stat -f %m "$l" 2>/dev/null) || continue`,
+    `  [ "$t" -lt ${cutoff} ] || continue`,
+    `  if command -v flock >/dev/null; then flock -n "$l" true || continue; fi`,
+    `  echo "idle $id"`,
+    "done",
+    "exit 0",
+  ].join("\n");
+};
+
+// `t3cg` prints each process's `pid ticks rss-pages cgroup` (the v2 path, or systemd's on v1).
+// Its readings around the `/proc/stat` pair give each cgroup's CPU in the same half second; only
+// cgroups past a quarter core or 512 MB come back as `out` lines, with their busiest process.
+const CGROUP_TICKS = `t3cg() { awk '{ split(FILENAME, f, "/"); p = f[3] } FILENAME ~ /cgroup$/ { if (sub(/^0::/, "") || sub(/^[0-9]+:name=systemd:/, "")) g[p] = $0; next } (p in g) && g[p] != "/" { s = $0; sub(/^.*\\) /, "", s); split(s, x, " "); print p, x[12] + x[13], x[22], g[p] }' /proc/[0-9]*/cgroup /proc/[0-9]*/stat 2>/dev/null; }`;
+const OUTSIDE = [
+  `O=$({ printf '%s\\n' "$A" | awk '{ print "a", $0 }'; printf '%s\\n' "$B"; } | awk '$1 == "a" { t[$2] = $3; next } { d = ($1 in t) ? $2 - t[$1] : 0; if (d < 0) d = 0; k = $4; c[k] += d; m[k] += $3 * 4096; if (!(k in b) || d > b[k]) { b[k] = d; top[k] = $1 } } END { for (k in c) if (c[k] >= 12 || m[k] >= 536870912) printf "out %.0f %.0f %d %s\\n", c[k], m[k], top[k], k }')`,
+  `[ -z "$O" ] || printf '%s\\n' "$O"`,
+  `for p in $(printf '%s\\n' "$O" | awk '{ print $4 }'); do printf 'outcmd %s %s\\n' "$p" "$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-300)"; printf 'outcwd %s %s\\n' "$p" "$(readlink /proc/$p/cwd 2>/dev/null)"; done`,
+  // An ssh job's session carries its id (`SSH_JOB_ENV`): the first process of the cgroup with it names the job.
+  `for k in $(printf '%s\\n' "$O" | awk '$5 !~ /docker/ { print $5 }'); do for p in $(printf '%s\\n' "$B" | awk -v k="$k" '$4 == k { print $1 }' | head -64); do j=$(tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | sed -n 's/^${SSH_JOB_ENV}=//p'); [ -n "$j" ] && { echo "outjob $k $j"; break; }; done; done`,
+  // A container's bind sources name the `runs/<id>` copy of the job that started it, when it mounts one.
+  `case "$O" in *docker*) timeout 2 docker ps --no-trunc --format 'dock\\t{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Label "t3.thread"}}\\t{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null; I=$(printf '%s\\n' "$O" | grep -o '[0-9a-f]\\{64\\}'); [ -z "$I" ] || timeout 2 docker inspect --format '{{printf "mnt\\t%s" .Id}}{{range .Mounts}}{{printf "\\t%s" .Source}}{{end}}' $I 2>/dev/null ;; esac`,
+  `{ read -r s < /proc/self/cgroup; } 2>/dev/null; echo "self $s"`,
+];
 // Two `/proc/stat` readings half a second apart: CPU in use now, with no state between heartbeats.
-// `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone.
-export const HEARTBEAT_COMMAND =
-  "cat /proc/loadavg; nproc; free -b; head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; cat /proc/uptime";
+// `/proc/uptime` dates the last boot, so runs from before a restart are known to be gone. Memory
+// comes from `/proc/meminfo` and pressure from `/proc/pressure` (absent without PSI).
+export const HEARTBEAT_COMMAND = [
+  CGROUP_TICKS,
+  "cat /proc/loadavg; nproc; head -1 /proc/stat; A=$(t3cg); sleep 0.5; head -1 /proc/stat; B=$(t3cg); cat /proc/uptime",
+  "grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo",
+  `for r in cpu memory io; do sed "s/^/psi $r /" /proc/pressure/$r 2>/dev/null; done`,
+  // ponytail: a run's session only; containers it starts live under dockerd and show in
+  // MemAvailable and PSI, not in its own peak. Attribute them by cgroup if that undercounts.
+  `for f in runs/*.pgid; do p=$(cat "$f" 2>/dev/null); case $p in ''|*[!0-9]*|0|1) continue ;; esac; b=\${f#runs/}; c=$(awk '/^0::/ || /^[0-9]+:name=systemd:/ { sub(/^[0-9]+:[^:]*:/, ""); print; exit }' "/proc/$p/cgroup" 2>/dev/null); echo "job \${b%.pgid} $p $(ps -o rss= -s "$p" 2>/dev/null | awk '{s+=$1} END {print s+0}') $c"; done`,
+  ...OUTSIDE,
+  // Docker missing or slow never fails the heartbeat: its status is the last command's.
+  ":",
+].join("; ");
 
 /**
  * Stops what is left of run `id` there: its process group, then anything still naming its
