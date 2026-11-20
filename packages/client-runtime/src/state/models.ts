@@ -420,10 +420,17 @@ export function scopeThreadShell(
 
 const THREAD_PROVIDER_STACK_LIMIT = 3;
 
+/** The provider account a thread runs on: its live run's instance, else the one it selected. */
+export function threadProviderInstanceId(
+  thread: Pick<EnvironmentThreadShell, "modelSelection" | "runtime">,
+): ProviderInstanceId {
+  return thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+}
+
 export function resolveThreadProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
 ): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const current = threadProviderInstanceId(thread);
   const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
   return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }

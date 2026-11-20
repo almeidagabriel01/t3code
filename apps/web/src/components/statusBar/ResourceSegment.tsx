@@ -14,7 +14,6 @@ import {
   type ResourceTelemetrySnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
-import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -46,7 +45,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
 import { resourceManagerOpenAtom, useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
-import { useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useWorkingThreadKeys } from "../../state/assistants";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
@@ -657,7 +656,7 @@ function ResourceManager({
   };
   const projects = useProjects();
   const threads = useThreadShells();
-  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const working = useWorkingThreadKeys();
   const snapshots = useEnvironmentSnapshots(resources.map(({ environmentId }) => environmentId));
   const projectById = new Map<ProjectId, ProjectInfo>(
     projects.map((project) => [project.id, project]),
@@ -668,7 +667,7 @@ function ResourceManager({
       {
         projectId: thread.projectId,
         title: thread.title,
-        working: isWorkingShell(thread, openDecisionThreadKeys),
+        working: working.has(`${thread.environmentId}:${thread.id}`),
       },
     ]),
   );

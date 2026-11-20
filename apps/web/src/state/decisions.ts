@@ -22,7 +22,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
-import { useEnvironmentsWithScope } from "./session";
+import { readableEnvironmentIds, useEnvironmentsWithScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 
 const decisionsEnvironment = createDecisionsEnvironmentAtoms(connectionAtomRuntime);
@@ -74,6 +74,17 @@ const openDecisionThreadKeysAtom = Atom.family((key: string) =>
   ),
 );
 
+/** Scoped thread keys with an open decision in every readable environment, outside React too. */
+export const allOpenDecisionThreadKeysAtom = Atom.make((get) =>
+  get(
+    openDecisionThreadKeysAtom(
+      environmentIdsKey(
+        readableEnvironmentIds(get, get(decisionsEnvironmentIdsAtom), AuthOrchestrationReadScope),
+      ),
+    ),
+  ),
+).pipe(Atom.withLabel("web-all-open-decision-thread-keys"));
+
 /** Open decisions by urgency and recent settled ones, across the environments that have them. */
 export function useDecisionEntries() {
   return useAtomValue(decisionEntriesAtom(environmentIdsKey(useDecisionsEnvironmentIds())));
@@ -81,7 +92,7 @@ export function useDecisionEntries() {
 
 /** Scoped thread keys with an open decision, for attention and Activity ranking. */
 export function useOpenDecisionThreadKeys(): ReadonlySet<string> {
-  return useAtomValue(openDecisionThreadKeysAtom(environmentIdsKey(useDecisionsEnvironmentIds())));
+  return useAtomValue(allOpenDecisionThreadKeysAtom);
 }
 
 /** The thread's open decisions, most urgent first. */

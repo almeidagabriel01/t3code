@@ -31,6 +31,7 @@ import {
   windowBand,
   paceTextClass,
 } from "@t3tools/shared/usagePace";
+import { useWorkingThreadKeys } from "../../state/assistants";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -53,7 +54,6 @@ import {
 import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
 import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
-import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
 import { useUsageItems } from "./useUsageItems";
 import { ResetCreditDialog, useResetCredit } from "../usage/UsageLimits";
@@ -164,16 +164,18 @@ export function ItemIcon({ item }: { readonly item: UsageItem }) {
 /** Thin arc around the icon while any thread on this instance is working. */
 function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
   const threads = useThreadShells();
+  const working = useWorkingThreadKeys();
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const now = useMinuteNow();
-  const working = collectUsageSessions({
+  const workingHere = collectUsageSessions({
     threads,
     instanceId: item.entry.instanceId,
     environmentIds: item.environmentIds,
-    isWorking: (thread) => isWorkingShell(thread, openDecisionThreadKeys),
+    working,
+    openDecisionThreadKeys,
     now,
   }).filter((session) => session.state === "working").length;
-  if (working === 0) return <ItemIcon item={item} />;
+  if (workingHere === 0) return <ItemIcon item={item} />;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -192,7 +194,7 @@ function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
           className="pointer-events-none absolute -inset-0.5 rounded-full border border-transparent border-t-primary motion-safe:visible-animate-spin"
         />
       </TooltipTrigger>
-      <TooltipPopup side="top">{working} working</TooltipPopup>
+      <TooltipPopup side="top">{workingHere} working</TooltipPopup>
     </Tooltip>
   );
 }
@@ -413,12 +415,14 @@ function RosterMetric({
 function RosterSessions({ item, now }: { readonly item: UsageItem; readonly now: number }) {
   const threads = useThreadShells();
   const projects = useProjects();
+  const working = useWorkingThreadKeys();
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const sessions = collectUsageSessions({
     threads,
     instanceId: item.entry.instanceId,
     environmentIds: item.environmentIds,
-    isWorking: (thread) => isWorkingShell(thread, openDecisionThreadKeys),
+    working,
+    openDecisionThreadKeys,
     now,
   });
   const titles = new Map(projects.map((p) => [`${p.environmentId}:${p.id}`, p.title]));

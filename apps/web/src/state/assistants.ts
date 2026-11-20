@@ -21,6 +21,8 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
+import { threadOwnerResolver } from "@t3tools/client-runtime/sidebarZones";
+import { workingItems, workingThreadKeys } from "@t3tools/client-runtime/workingConsumers";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -56,7 +58,8 @@ import { useEnvironmentQuery } from "./query";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { showGroupTab } from "./openGroupTabs";
 import { environmentServerConfigsAtom } from "./server";
-import { useEnvironmentsWithScope } from "./session";
+import { allOpenDecisionThreadKeysAtom } from "./decisions";
+import { readableEnvironmentIds, useEnvironmentsWithScope } from "./session";
 import { environmentThreadShells } from "./threads";
 import { reuseEntries, sameStamped } from "./stableEntries";
 import { useAtomCommand } from "./use-atom-command";
@@ -292,6 +295,62 @@ const assistantLiveWorkAtom = Atom.family((key: string) =>
 /** Where each assistant works right now and its live delegated children, derived once for every row. */
 export function useAssistantLiveWork() {
   return useAtomValue(assistantLiveWorkAtom(environmentIdsKey(useAssistantsEnvironmentIds())));
+}
+
+const readableAssistantsKeyAtom = Atom.make((get) =>
+  environmentIdsKey(
+    readableEnvironmentIds(get, get(assistantsEnvironmentIdsAtom), AuthOrchestrationReadScope),
+  ),
+).pipe(Atom.withLabel("web-readable-assistants-key"));
+
+/** Who started each thread, tag-hidden ones included; the sidebar and the working set read it. */
+export const threadOwnerOfAtom = Atom.make((get) => {
+  const key = get(readableAssistantsKeyAtom);
+  const { active, activeTeams } = get(assistantEntriesAtom(key));
+  const taskAssistantByThreadKey = new Map<string, string>();
+  for (const [assistantKey, tasks] of get(assistantTasksByAssistantAtom(key))) {
+    const environmentId = assistantKey.slice(0, assistantKey.indexOf(":"));
+    for (const task of tasks) {
+      taskAssistantByThreadKey.set(`${environmentId}:${task.threadId}`, assistantKey);
+    }
+  }
+  const teamKeyByThreadKey = new Map<string, string>();
+  for (const { environmentId, team } of activeTeams) {
+    for (const threadId of team.chat?.threadIds ?? []) {
+      teamKeyByThreadKey.set(`${environmentId}:${threadId}`, `${environmentId}:${team.id}`);
+    }
+  }
+  return threadOwnerResolver({
+    shells: get(environmentThreadShells.quietAllThreadShellsAtom),
+    taskAssistantByThreadKey,
+    teamKeyByThreadKey,
+    activeAssistantKeys: new Set(
+      active.map((entry) => `${entry.environmentId}:${entry.assistant.id}`),
+    ),
+  });
+}).pipe(Atom.withLabel("web-thread-owner-of"));
+
+/** The one working set (`workingItems`) every web and desktop surface counts, the tray included. */
+export const workingItemsAtom = Atom.make((get) =>
+  workingItems({
+    shells: get(environmentThreadShells.quietAllThreadShellsAtom),
+    ownerOf: get(threadOwnerOfAtom),
+    teams: get(assistantEntriesAtom(get(readableAssistantsKeyAtom))).activeTeams,
+    openDecisionThreadKeys: get(allOpenDecisionThreadKeysAtom),
+  }),
+).pipe(Atom.withLabel("web-working-items"));
+
+export const workingThreadKeysAtom = Atom.make((get) =>
+  workingThreadKeys(get(workingItemsAtom)),
+).pipe(Atom.withLabel("web-working-thread-keys"));
+
+export function useWorkingItems() {
+  return useAtomValue(workingItemsAtom);
+}
+
+/** Threads in the working set, for surfaces that mark one thread at a time. */
+export function useWorkingThreadKeys(): ReadonlySet<string> {
+  return useAtomValue(workingThreadKeysAtom);
 }
 
 /** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */

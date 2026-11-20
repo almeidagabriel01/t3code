@@ -1,6 +1,10 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "./shell.ts";
-import { formatWorkingDurationLabel, resolveThreadWorkingStartedAt } from "./models.ts";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadWorkingStartedAt,
+  threadProviderInstanceId,
+} from "./models.ts";
 import { resolveSidebarThreadStatus } from "./threadAttention.ts";
 
 export type UsageSessionState = "waiting" | "working" | "recent";
@@ -18,55 +22,72 @@ export interface UsageSession {
 const RECENT_WINDOW_MS = 60 * 60_000;
 const STATE_ORDER: Record<UsageSessionState, number> = { waiting: 0, working: 1, recent: 2 };
 
+interface SessionSets {
+  /** `workingThreadKeys(workingItems(...))`: an account's working is that set's slice. */
+  readonly working: ReadonlySet<string>;
+  /** `openDecisionThreadKeys`: a thread waiting on a decision needs the user, as in Activity. */
+  readonly openDecisionThreadKeys: ReadonlySet<string>;
+}
+
 function sessionState(
   thread: EnvironmentThreadShell,
-  isWorking: (thread: EnvironmentThreadShell) => boolean,
+  sets: SessionSets,
   now: number,
 ): UsageSessionState | null {
-  if (isWorking(thread)) return "working";
+  const key = `${thread.environmentId}:${thread.id}`;
+  if (sets.working.has(key)) return "working";
   const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval" || status === "input" || status === "request") return "waiting";
+  if (
+    status === "approval" ||
+    status === "input" ||
+    status === "request" ||
+    sets.openDecisionThreadKeys.has(key)
+  ) {
+    return "waiting";
+  }
   const updated = Date.parse(thread.updatedAt);
   return Number.isFinite(updated) && now - updated <= RECENT_WINDOW_MS ? "recent" : null;
 }
 
 /** Live threads currently on `instanceId` in `environmentIds`: waiting for you, then working, then recent. */
-export function collectUsageSessions(input: {
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly instanceId: ProviderInstanceId;
-  readonly environmentIds: ReadonlyArray<EnvironmentId>;
-  /** `isWorkingShell`, so these sessions count what every Working list does. */
-  readonly isWorking: (thread: EnvironmentThreadShell) => boolean;
-  readonly now: number;
-}): ReadonlyArray<UsageSession> {
+export function collectUsageSessions(
+  input: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly instanceId: ProviderInstanceId;
+    readonly environmentIds: ReadonlyArray<EnvironmentId>;
+    readonly now: number;
+  } & SessionSets,
+): ReadonlyArray<UsageSession> {
   const { instanceId, environmentIds } = input;
   return collectSessionsWhere({
     threads: input.threads,
-    isWorking: input.isWorking,
+    working: input.working,
+    openDecisionThreadKeys: input.openDecisionThreadKeys,
     now: input.now,
     matches: (thread) =>
       environmentIds.includes(thread.environmentId) &&
-      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId) === instanceId,
+      threadProviderInstanceId(thread) === instanceId,
   });
 }
 
 /** One account can sign in as several provider instances across environments. */
-export function collectAccountSessions(input: {
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly instances: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly instanceId: ProviderInstanceId;
-  }>;
-  /** `isWorkingShell`, so these sessions count what every Working list does. */
-  readonly isWorking: (thread: EnvironmentThreadShell) => boolean;
-  readonly now: number;
-}): ReadonlyArray<UsageSession> {
+export function collectAccountSessions(
+  input: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly instances: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly instanceId: ProviderInstanceId;
+    }>;
+    readonly now: number;
+  } & SessionSets,
+): ReadonlyArray<UsageSession> {
   return collectSessionsWhere({
     threads: input.threads,
-    isWorking: input.isWorking,
+    working: input.working,
+    openDecisionThreadKeys: input.openDecisionThreadKeys,
     now: input.now,
     matches: (thread) => {
-      const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+      const instanceId = threadProviderInstanceId(thread);
       return input.instances.some(
         (entry) => entry.environmentId === thread.environmentId && entry.instanceId === instanceId,
       );
@@ -74,12 +95,13 @@ export function collectAccountSessions(input: {
   });
 }
 
-function collectSessionsWhere(input: {
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly matches: (thread: EnvironmentThreadShell) => boolean;
-  readonly isWorking: (thread: EnvironmentThreadShell) => boolean;
-  readonly now: number;
-}): ReadonlyArray<UsageSession> {
+function collectSessionsWhere(
+  input: {
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+    readonly matches: (thread: EnvironmentThreadShell) => boolean;
+    readonly now: number;
+  } & SessionSets,
+): ReadonlyArray<UsageSession> {
   const { now } = input;
   return input.threads
     .flatMap((thread) => {
@@ -91,7 +113,7 @@ function collectSessionsWhere(input: {
       ) {
         return [];
       }
-      const state = sessionState(thread, input.isWorking, now);
+      const state = sessionState(thread, input, now);
       if (state === null) return [];
       const startedAt =
         state === "recent"

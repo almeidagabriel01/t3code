@@ -4,18 +4,18 @@ import { environmentReachable } from "@t3tools/client-runtime/connection";
 import {
   assistantStatusOf,
   teamsLayout,
-  threadOwnerResolver,
   type ZoneIndicator,
 } from "@t3tools/client-runtime/sidebarZones";
-import { workingItems, workingRows } from "@t3tools/client-runtime/workingConsumers";
+import { workingRows } from "@t3tools/client-runtime/workingConsumers";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import {
+  threadOwnerOfAtom,
   useAssistantEntries,
   useAssistantLiveWork,
-  useAssistantTasksByAssistant,
+  useWorkingItems,
 } from "../../state/assistants";
-import { useDecisionEntries, useOpenDecisionThreadKeys } from "../../state/decisions";
+import { useDecisionEntries } from "../../state/decisions";
 import { useProjects, useQuietAllThreadShells, useQuietThreadShells } from "../../state/entities";
 import { environmentPresentations } from "../../state/presentation";
 
@@ -27,34 +27,12 @@ import { environmentPresentations } from "../../state/presentation";
 export function useAssistantStatus() {
   const shells = useQuietThreadShells();
   const allShells = useQuietAllThreadShells();
-  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const { active, activeTeams } = useAssistantEntries();
-  const tasksByAssistant = useAssistantTasksByAssistant();
   const decisions = useDecisionEntries().open;
   const { sites } = useAssistantLiveWork();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-
-  const taskAssistantByThreadKey = new Map<string, string>();
-  for (const [assistantKey, tasks] of tasksByAssistant) {
-    const environmentId = assistantKey.slice(0, assistantKey.indexOf(":"));
-    for (const task of tasks) {
-      taskAssistantByThreadKey.set(`${environmentId}:${task.threadId}`, assistantKey);
-    }
-  }
-  const teamKeyByThreadKey = new Map<string, string>();
-  for (const { environmentId, team } of activeTeams) {
-    for (const threadId of team.chat?.threadIds ?? []) {
-      teamKeyByThreadKey.set(`${environmentId}:${threadId}`, `${environmentId}:${team.id}`);
-    }
-  }
-  const ownerOf = threadOwnerResolver({
-    shells: allShells,
-    taskAssistantByThreadKey,
-    teamKeyByThreadKey,
-    activeAssistantKeys: new Set(
-      active.map((entry) => `${entry.environmentId}:${entry.assistant.id}`),
-    ),
-  });
+  const ownerOf = useAtomValue(threadOwnerOfAtom);
+  const working = useWorkingItems();
   const status = assistantStatusOf({
     shells,
     decisions,
@@ -63,12 +41,6 @@ export function useAssistantStatus() {
     reachable: (environmentId) =>
       environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
     teams: activeTeams,
-  });
-  const working = workingItems({
-    shells: allShells,
-    ownerOf,
-    teams: activeTeams,
-    openDecisionThreadKeys,
   });
   return { shells, allShells, active, activeTeams, ownerOf, working, ...status };
 }
