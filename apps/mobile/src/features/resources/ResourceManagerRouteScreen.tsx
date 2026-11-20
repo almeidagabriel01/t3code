@@ -5,7 +5,7 @@ import {
   macReading,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import { withArrivedKeys } from "@t3tools/client-runtime/list-order";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import {
   addUsage,
   environmentResourceTree,
@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { useHeavyCommandsState, useHeavyQueueState } from "../../state/heavyQueue";
@@ -101,6 +102,7 @@ function EnvironmentResources(props: {
   const terminals = runningTerminals(
     useKnownTerminalSessions({ environmentId, threadId: null }).sessions ?? [],
   );
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const threads = new Map<string, ResourceThreadInfo>(
     useThreadShells()
       .filter((thread) => thread.environmentId === environmentId)
@@ -109,7 +111,7 @@ function EnvironmentResources(props: {
         {
           projectId: thread.projectId,
           title: thread.title,
-          working: threadRuntimeIsActive(thread.runtime),
+          working: isWorkingShell(thread, openDecisionThreadKeys),
         },
       ]),
   );

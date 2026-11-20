@@ -29,6 +29,7 @@ const { mocks } = vi.hoisted(() => ({
       projectId: string;
       title?: string;
       runtime?: { status: string } | null;
+      archivedAt?: null;
     }>,
     host: null as unknown,
     linked: null as unknown,
@@ -95,6 +96,7 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.can }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
+vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set() }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || mocks.titles[ref.threadId] === undefined
@@ -1035,13 +1037,21 @@ describe("ResourceManagerRouteScreen", () => {
       },
     ];
     mocks.shells = [
-      { environmentId: "env", id: "t1", projectId: "p1", title: "Fix build", runtime: null },
+      {
+        environmentId: "env",
+        id: "t1",
+        projectId: "p1",
+        title: "Fix build",
+        runtime: null,
+        archivedAt: null,
+      },
       {
         environmentId: "env",
         id: "t2",
         projectId: "p1",
         title: "Docs",
         runtime: { status: "running" },
+        archivedAt: null,
       },
     ];
     // Terminals usually load before the first sample; the order holds only from the first sample.

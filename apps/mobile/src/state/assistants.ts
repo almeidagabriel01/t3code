@@ -56,8 +56,9 @@ import { useEnvironmentQuery } from "./query";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
-import { decisionEntriesAtom } from "./decisions";
+import { decisionEntriesAtom, openDecisionThreadKeysAtom } from "./decisions";
 import { environmentPresentations } from "./presentation";
+import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { environmentThreadShells } from "./threads";
@@ -165,12 +166,13 @@ export function useAssistantStatus() {
 }
 
 const workingRowsAtom = Atom.make((get) => {
-  const shells = get(environmentThreadShells.quietThreadShellsAtom);
+  const shells = get(environmentThreadShells.quietAllThreadShellsAtom);
   const { active, activeTeams } = get(assistantEntriesAtom);
   const items = workingItems({
     shells,
     ownerOf: get(threadOwnershipAtom).ownerOf,
     teams: activeTeams,
+    openDecisionThreadKeys: get(openDecisionThreadKeysAtom),
   });
   if (items.length === 0) return [];
   const presentations = get(environmentPresentations.presentationsAtom);
@@ -183,6 +185,12 @@ const workingRowsAtom = Atom.make((get) => {
   const titles = new Map(
     shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell.title]),
   );
+  const projectTitles = new Map(
+    get(environmentProjects.projectsAtom).map((project) => [
+      `${project.environmentId}:${project.id}`,
+      project.title,
+    ]),
+  );
   return workingRows(items, {
     // Work routed to a linked machine names an assistant that lives on another environment.
     assistant: (environmentId, id) =>
@@ -192,12 +200,13 @@ const workingRowsAtom = Atom.make((get) => {
       teams.get(`${environmentId}:${id}`) ??
       activeTeams.find((entry) => entry.team.id === id)?.team.name,
     thread: (environmentId, id) => titles.get(`${environmentId}:${id}`),
+    project: (environmentId, id) => projectTitles.get(`${environmentId}:${id}`),
     environment: (environmentId) =>
       presentations.get(environmentId as EnvironmentId)?.entry.target.label,
   });
 }).pipe(Atom.withLabel("mobile-working-rows"));
 
-/** Assistants, group members and subagents working now, with who and on which machine. */
+/** Everything working now (`workingItems`), with who and on which machine. */
 export function useWorkingRows() {
   return useAtomValue(workingRowsAtom);
 }
@@ -280,7 +289,8 @@ export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArra
 export const threadOwnershipAtom = Atom.make((get): ThreadOwnership => {
   const entries = get(assistantEntriesAtom);
   return buildThreadOwnership({
-    shells: get(environmentThreadShells.quietThreadShellsAtom),
+    // Tag-hidden threads too: a hidden assistant thread still owns its subagents.
+    shells: get(environmentThreadShells.quietAllThreadShellsAtom),
     active: entries.active,
     activeTeams: entries.activeTeams,
     tasksByAssistant: get(assistantTasksByAssistantAtom),

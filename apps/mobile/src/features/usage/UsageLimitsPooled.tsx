@@ -42,12 +42,14 @@ import {
   useUsagePaceSettings,
 } from "./usagePaceSettings";
 import { collectAccountSessions } from "@t3tools/client-runtime/state/usageSessions";
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import {
   poolPacePresentation,
   weekAllowanceText,
   weekBarSplit,
   type WeekBarSplit,
 } from "@t3tools/shared/usagePace";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
@@ -599,6 +601,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const [revealed, setRevealed] = useState(false);
   const paceSettings = useUsagePaceSettings();
   const threads = useThreadShells();
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const projects = useProjects();
   const openThread = useOpenLinkedThread();
   const keys = providerAccountKeys(selected);
@@ -608,6 +611,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
       ? collectAccountSessions({
           threads,
           now,
+          isWorking: (thread) => isWorkingShell(thread, openDecisionThreadKeys),
           instances: [...selected].flatMap(([environmentId, presentation]) =>
             (presentation.serverConfig?.providers ?? []).flatMap((provider) => {
               const key = `${environmentId}:${provider.instanceId}`;

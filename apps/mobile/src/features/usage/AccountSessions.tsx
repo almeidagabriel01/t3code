@@ -1,6 +1,7 @@
 import {
   groupSessionsByProject,
   splitSessions,
+  usageSessionsHeading,
   type UsageSession,
 } from "@t3tools/client-runtime/state/usageSessions";
 import { useState } from "react";
@@ -29,7 +30,11 @@ function SessionGroups(props: {
             {session.title}
           </Text>
           <Text className="text-xs text-foreground-muted">
-            {session.state === "waiting" ? "Waiting" : session.state === "working" ? "Working" : ""}{" "}
+            {session.state === "waiting"
+              ? "Waiting for you"
+              : session.state === "working"
+                ? "Working"
+                : ""}{" "}
             {session.elapsed}
           </Text>
         </Pressable>
@@ -38,7 +43,7 @@ function SessionGroups(props: {
   ));
 }
 
-/** "Sessions · 2 running", with finished threads in their own collapsed list. */
+/** "Sessions · 2 working · 1 need you", with finished threads in their own collapsed list. */
 export function AccountSessions(props: {
   readonly sessions: ReadonlyArray<UsageSession>;
   readonly projectTitles: ReadonlyMap<string, string>;
@@ -46,13 +51,13 @@ export function AccountSessions(props: {
 }) {
   const [finishedOpen, setFinishedOpen] = useState(false);
   if (props.sessions.length === 0) return null;
-  const { running, finished } = splitSessions(props.sessions);
+  const { open, finished } = splitSessions(props.sessions);
   return (
     <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
       <Text className="text-sm font-t3-medium text-foreground">
-        {running.length > 0 ? `Sessions · ${running.length} running` : "Sessions"}
+        {usageSessionsHeading(props.sessions)}
       </Text>
-      <SessionGroups sessions={running} projectTitles={props.projectTitles} onOpen={props.onOpen} />
+      <SessionGroups sessions={open} projectTitles={props.projectTitles} onOpen={props.onOpen} />
       {finished.length > 0 ? (
         <>
           <Pressable

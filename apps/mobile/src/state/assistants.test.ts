@@ -20,7 +20,16 @@ vi.mock("./presentation", async () => {
 });
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { environmentThreadShells: { quietThreadShellsAtom: Atom.make([]) } };
+  return {
+    environmentThreadShells: {
+      quietThreadShellsAtom: Atom.make([]),
+      quietAllThreadShellsAtom: Atom.make([]),
+    },
+  };
+});
+vi.mock("./projects", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentProjects: { projectsAtom: Atom.make([]) } };
 });
 vi.mock("./session", () => ({ environmentSession: {}, sessionHasScope: () => false }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));

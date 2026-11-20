@@ -47,14 +47,16 @@ async function mount(sessions: ReadonlyArray<UsageSession>, onOpen = vi.fn()) {
 const text = (container: HTMLElement) => container.textContent ?? "";
 
 describe("AccountSessions", () => {
-  it("counts only running threads and keeps finished ones collapsed until opened", async () => {
+  it("counts working and need-you threads apart and keeps finished ones collapsed until opened", async () => {
     const { container, root, onOpen } = await mount([
+      session("asks", "waiting"),
       session("live", "working"),
       session("done-1", "recent"),
       session("done-2", "recent"),
     ]);
-    expect(text(container)).toContain("Sessions · 1 running");
+    expect(text(container)).toContain("Sessions · 1 working · 1 need you");
     expect(text(container)).toContain("live");
+    expect(text(container)).toContain("asksWaiting for you");
     expect(text(container)).toContain("Finished · 2");
     expect(text(container)).not.toContain("done-1");
 

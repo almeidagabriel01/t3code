@@ -60,7 +60,7 @@ export const decisionEntriesAtom = Atom.make((get) =>
   collectDecisionEntries(get(decisionStatesAtom)),
 ).pipe(Atom.withLabel("mobile-decision-entries"));
 
-const openDecisionThreadKeysAtom = Atom.make((get) =>
+export const openDecisionThreadKeysAtom = Atom.make((get) =>
   openDecisionThreadKeys(get(decisionStatesAtom)),
 ).pipe(Atom.withLabel("mobile-open-decision-thread-keys"));
 

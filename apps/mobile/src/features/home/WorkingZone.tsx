@@ -10,7 +10,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 const SHOWN_LIMIT = 5;
 
 /**
- * Assistants, group members and subagents working now, each with who and on which machine.
+ * Everything working now (`workingItems`), each with who and on which machine.
  * Sits below Needs you on Home and in the tablet sidebar; absent while none work.
  */
 export function WorkingZone(props: { readonly gutter: number; readonly sidebar?: boolean }) {
