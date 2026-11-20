@@ -22,7 +22,11 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
 import { environmentReachable } from "@t3tools/client-runtime/connection";
 import { assistantStatusOf } from "@t3tools/client-runtime/sidebarZones";
-import { workingItems, workingRows } from "@t3tools/client-runtime/workingConsumers";
+import {
+  workingItems,
+  workingRows,
+  workingThreadKeys,
+} from "@t3tools/client-runtime/workingConsumers";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -165,16 +169,30 @@ export function useAssistantStatus() {
   return useAtomValue(assistantStatusAtom);
 }
 
+/** The one working set (`workingItems`) every mobile surface counts. */
+const workingItemsAtom = Atom.make((get) =>
+  workingItems({
+    shells: get(environmentThreadShells.quietAllThreadShellsAtom),
+    ownerOf: get(threadOwnershipAtom).ownerOf,
+    teams: get(assistantEntriesAtom).activeTeams,
+    openDecisionThreadKeys: get(openDecisionThreadKeysAtom),
+  }),
+).pipe(Atom.withLabel("mobile-working-items"));
+
+const workingThreadKeysAtom = Atom.make((get) => workingThreadKeys(get(workingItemsAtom))).pipe(
+  Atom.withLabel("mobile-working-thread-keys"),
+);
+
+/** Threads in the working set, for surfaces that mark or count one thread at a time. */
+export function useWorkingThreadKeys(): ReadonlySet<string> {
+  return useAtomValue(workingThreadKeysAtom);
+}
+
 const workingRowsAtom = Atom.make((get) => {
+  const items = get(workingItemsAtom);
+  if (items.length === 0) return [];
   const shells = get(environmentThreadShells.quietAllThreadShellsAtom);
   const { active, activeTeams } = get(assistantEntriesAtom);
-  const items = workingItems({
-    shells,
-    ownerOf: get(threadOwnershipAtom).ownerOf,
-    teams: activeTeams,
-    openDecisionThreadKeys: get(openDecisionThreadKeysAtom),
-  });
-  if (items.length === 0) return [];
   const presentations = get(environmentPresentations.presentationsAtom);
   const assistants = new Map(
     active.map((entry) => [`${entry.environmentId}:${entry.assistant.id}`, entry.assistant.name]),

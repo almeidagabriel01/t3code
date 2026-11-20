@@ -79,6 +79,7 @@ vi.mock("../../state/session", () => {
 });
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set() }));
+vi.mock("../../state/assistants", () => ({ useWorkingThreadKeys: () => new Set() }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [], useThreadShells: () => [] }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => vi.fn() }));
