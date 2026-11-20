@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { ThreadOwner } from "./sidebarZones.ts";
-import type { EnvironmentThreadShell } from "./state/models.ts";
+import { threadProviderInstanceId, type EnvironmentThreadShell } from "./state/models.ts";
 import { resolveSidebarThreadStatus, sidebarStatusIsRunning } from "./state/threadAttention.ts";
 
 export type WorkingShell = Pick<
@@ -28,6 +28,8 @@ export type WorkingShell = Pick<
   | "createdAt"
   | "title"
   | "projectId"
+  | "modelSelection"
+  | "deletedAt"
 > & { readonly latestRun: { readonly startedAt?: string | null | undefined } | null };
 
 /** A group member the server reports running before its thread reaches this client. */
@@ -51,7 +53,11 @@ function consumerOf(shell: WorkingShell, owner: ThreadOwner): ConsumerRef {
     owner.kind === "assistant" && owner.teamKey !== null
       ? AssistantTeamId.make(idAfterEnvironment(owner.teamKey))
       : null;
-  const ref = consumerRefFromThread(shell, shell.environmentId, groupId);
+  // The account the usage bar files this thread under, so each account's working is a subset.
+  const ref = {
+    ...consumerRefFromThread(shell, shell.environmentId, groupId),
+    providerInstanceId: threadProviderInstanceId(shell),
+  };
   const { threadId, environmentId, providerInstanceId } = ref;
   const base = { threadId, environmentId, providerInstanceId };
   if (ref.kind === "subagent") return ref;
@@ -78,7 +84,8 @@ export interface WorkingItem<S extends WorkingShell = WorkingShell> {
 /**
  * Whether `workingItems` lists this thread. Working: a turn is in progress (starting, running,
  * waiting on its children or on background work) and nothing waits on the user. A merely live
- * provider session, Needs you (approval, answer, decision), archived and side chats are not.
+ * provider session, Needs you (approval, answer, decision), deleted, archived and side chats
+ * are not.
  */
 export function isWorkingShell(
   shell: Pick<
@@ -93,10 +100,12 @@ export function isWorkingShell(
     | "pendingGuestMessageCount"
     | "runtime"
     | "blockedOnThreadWait"
+    | "deletedAt"
   >,
   openDecisionThreadKeys: ReadonlySet<string>,
 ): boolean {
   return (
+    shell.deletedAt === null &&
     shell.archivedAt === null &&
     shell.sideChatOf == null &&
     !openDecisionThreadKeys.has(`${shell.environmentId}:${shell.id}`) &&
@@ -125,7 +134,7 @@ export function workingItems<S extends WorkingShell>(input: {
   const items: Array<WorkingItem<S> & { readonly at: string }> = [];
   const covered = new Set<string>();
   for (const shell of input.shells) {
-    if (shell.archivedAt !== null || shell.sideChatOf != null) continue;
+    if (shell.deletedAt !== null || shell.archivedAt !== null || shell.sideChatOf != null) continue;
     const key = `${shell.environmentId}:${shell.id}`;
     const owner = input.ownerOf(shell);
     const consumer = consumerOf(shell, owner);
@@ -167,6 +176,11 @@ export function workingItems<S extends WorkingShell>(input: {
   return items
     .sort((a, b) => b.at.localeCompare(a.at) || a.key.localeCompare(b.key))
     .map(({ at: _at, ...item }) => item);
+}
+
+/** Keys of the working threads, for surfaces that mark threads; members known by name have none. */
+export function workingThreadKeys(items: ReadonlyArray<WorkingItem>): ReadonlySet<string> {
+  return new Set(items.flatMap((item) => (item.shell === null ? [] : [item.key])));
 }
 
 /**

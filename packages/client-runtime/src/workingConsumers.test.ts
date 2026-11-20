@@ -6,6 +6,7 @@ import { collectUsageSessions } from "./state/usageSessions.ts";
 import {
   isWorkingShell,
   workingConsumerLine,
+  workingThreadKeys,
   workingItems,
   type WorkingItem,
   type WorkingShell,
@@ -202,6 +203,21 @@ describe("working parity", () => {
     ["idle subagent", shell("sub-idle", { lineage: subagentOf("p-run"), runtime: null }), "idle"],
     ["side chat mid-turn", shell("side", { sideChatOf: "p-run" } as never), "off"],
     ["archived mid-turn", shell("old", { archivedAt: "2026-11-02T00:00:00.000Z" }), "off"],
+    ["deleted mid-turn", shell("gone", { deletedAt: "2026-11-02T00:00:00.000Z" }), "off"],
+    // The run moved to another account; the usage bar and the consumer both follow the run.
+    [
+      "project thread whose run is on another account",
+      shell("p-moved", { runtime: { status: "running", providerInstanceId: "codex" } as never }),
+      "working",
+    ],
+    [
+      "idle thread that selected another account",
+      shell("p-switched", {
+        runtime: null,
+        modelSelection: { instanceId: "codex", model: "m" } as never,
+      }),
+      "idle",
+    ],
   ] as const;
   const state = cases.map(([, thread]) => thread);
   const decisions = new Set(["mac:p-decide"]);
@@ -218,15 +234,18 @@ describe("working parity", () => {
     openDecisionThreadKeys: decisions,
   });
   const listed = new Set(items.map((item) => item.key));
+  // The desktop tray and both Resource Managers mark threads by this set.
+  const marked = workingThreadKeys(items);
   const usage = (["mac", "vps"] as const).flatMap((environmentId) =>
     (["claude-work", "codex"] as const).flatMap((instanceId) =>
       collectUsageSessions({
         threads: state,
         instanceId: instanceId as never,
         environmentIds: [environmentId as never],
-        isWorking: (thread) => isWorkingShell(thread, decisions),
+        working: marked,
+        openDecisionThreadKeys: decisions,
         now: Date.parse("2026-11-19T10:30:00.000Z"),
-      }),
+      }).map((session) => ({ ...session, instanceId })),
     ),
   );
   const usageState = new Map(usage.map((s) => [`${s.environmentId}:${s.threadId}`, s.state]));
@@ -235,11 +254,29 @@ describe("working parity", () => {
     const key = `${thread.environmentId}:${thread.id}`;
     const working = expected === "working";
     expect(listed.has(key)).toBe(working);
+    expect(marked.has(key)).toBe(working);
     expect(isWorkingShell(thread, decisions)).toBe(working);
     expect(usageState.get(key) === "working").toBe(working);
-    if (expected === "needsYou" && !key.endsWith("p-decide")) {
-      expect(usageState.get(key)).toBe("waiting");
+    // Need you, as Activity ranks it: approval, input, request or an open decision.
+    if (expected === "needsYou") expect(usageState.get(key)).toBe("waiting");
+    // A live session whose turn ended reads as Recent.
+    if (expected === "idle") expect(usageState.get(key)).toBe("recent");
+  });
+
+  it("files each working thread under the account its consumer names", () => {
+    const accountOf = new Map(
+      items.flatMap((item) =>
+        item.consumer.threadId === null ? [] : [[item.key, item.consumer.providerInstanceId]],
+      ),
+    );
+    const working = usage.filter((s) => s.state === "working");
+    expect(working.length).toBeGreaterThan(0);
+    for (const session of working) {
+      expect(accountOf.get(`${session.environmentId}:${session.threadId}`)).toBe(
+        session.instanceId,
+      );
     }
+    expect(usage.find((s) => s.threadId === "p-switched")?.instanceId).toBe("codex");
   });
 
   it("counts the same working set everywhere, across environments", () => {
@@ -253,6 +290,7 @@ describe("working parity", () => {
     expect(state.filter((thread) => isWorkingShell(thread, decisions))).toHaveLength(
       threadItems.length,
     );
+    expect([...marked].toSorted()).toEqual(threadItems.map((item) => item.key).toSorted());
     expect(new Set(threadItems.map((item) => item.consumer.environmentId))).toEqual(
       new Set(["mac", "vps"]),
     );
@@ -260,6 +298,7 @@ describe("working parity", () => {
       "assistant",
       "groupMember",
       "subagent",
+      "thread",
       "thread",
       "thread",
       "thread",
