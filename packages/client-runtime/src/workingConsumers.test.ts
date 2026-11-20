@@ -204,6 +204,20 @@ describe("working parity", () => {
     ["side chat mid-turn", shell("side", { sideChatOf: "p-run" } as never), "off"],
     ["archived mid-turn", shell("old", { archivedAt: "2026-11-02T00:00:00.000Z" }), "off"],
     ["deleted mid-turn", shell("gone", { deletedAt: "2026-11-02T00:00:00.000Z" }), "off"],
+    [
+      "deleted subagent mid-turn",
+      shell("sub-gone", { lineage: subagentOf("p-run"), deletedAt: "2026-11-02T00:00:00.000Z" }),
+      "off",
+    ],
+    ["assistant waiting on a decision mid-turn", shell("assistant:ada:3"), "needsYou"],
+    [
+      "subagent whose run is on another account",
+      shell("sub-moved", {
+        lineage: subagentOf("p-run"),
+        runtime: { status: "running", providerInstanceId: "codex" } as never,
+      }),
+      "working",
+    ],
     // The run moved to another account; the usage bar and the consumer both follow the run.
     [
       "project thread whose run is on another account",
@@ -220,7 +234,7 @@ describe("working parity", () => {
     ],
   ] as const;
   const state = cases.map(([, thread]) => thread);
-  const decisions = new Set(["mac:p-decide"]);
+  const decisions = new Set(["mac:p-decide", "mac:assistant:ada:3"]);
   const owners = threadOwnerResolver({
     shells: state,
     taskAssistantByThreadKey: new Map(),
@@ -269,6 +283,8 @@ describe("working parity", () => {
         item.consumer.threadId === null ? [] : [[item.key, item.consumer.providerInstanceId]],
       ),
     );
+    // The run moved to codex while the thread still names claude-work.
+    expect(accountOf.get("mac:sub-moved")).toBe("codex");
     const working = usage.filter((s) => s.state === "working");
     expect(working.length).toBeGreaterThan(0);
     for (const session of working) {
@@ -297,6 +313,7 @@ describe("working parity", () => {
     expect(threadItems.map((item) => item.consumer.kind).toSorted()).toEqual([
       "assistant",
       "groupMember",
+      "subagent",
       "subagent",
       "thread",
       "thread",
