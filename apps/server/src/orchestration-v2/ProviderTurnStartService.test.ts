@@ -45,6 +45,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import { ASSISTANT_SUMMARY_TOKEN_CAP } from "../assistants/assistantRequestContext.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import { SIDE_CHAT_NOTE } from "./SideChatNote.ts";
 import * as EventSink from "./EventSink.ts";
@@ -313,6 +314,13 @@ function makeLocalCommandHarness(input: {
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
+  /** A resumable native session after a run that ended this long ago with this much context. */
+  readonly assistantSession?: {
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly minutesSinceLastRun: number;
+    readonly usedTokens: number;
+  };
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -342,7 +350,9 @@ function makeLocalCommandHarness(input: {
 }) {
   const settledRuns: Array<string> = [];
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
-  const threadId = ThreadId.make("thread-native-account-command");
+  const threadId = ThreadId.make(
+    input.assistantSession?.threadId ?? "thread-native-account-command",
+  );
   const runId = RunId.make("run-native-account-command");
   const rootNodeId = NodeId.make("root-native-account-command");
   const attemptId = RunAttemptId.make("attempt-native-account-command");
@@ -352,7 +362,9 @@ function makeLocalCommandHarness(input: {
   const oldInstanceId = ProviderInstanceId.make("antigravity-personal");
   const newInstanceId = ProviderInstanceId.make("codex-personal");
   const checkpointScopeId = CheckpointScopeId.make("scope-native-account-command");
-  const messageId = MessageId.make("message-native-account-command");
+  const messageId = MessageId.make(
+    input.assistantSession?.messageId ?? "message-native-account-command",
+  );
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
     id: runId,
     threadId,
@@ -708,6 +720,37 @@ function makeLocalCommandHarness(input: {
       ),
     };
   }
+  if (input.assistantSession !== undefined) {
+    const nativeThreadRef = {
+      driver: providerThread.driver,
+      nativeId: "native-assistant-thread",
+      strength: "strong" as const,
+    };
+    const endedAt = DateTime.subtract(now, { minutes: input.assistantSession.minutesSinceLastRun });
+    projection = {
+      ...projection,
+      runs: [
+        {
+          ...run,
+          id: RunId.make("previous-assistant-run"),
+          ordinal: 1,
+          status: "completed",
+          startedAt: endedAt,
+          completedAt: endedAt,
+        },
+        ...projection.runs,
+      ],
+      providerThreads: projection.providerThreads.map((candidate) =>
+        candidate.id === providerThreadId
+          ? {
+              ...candidate,
+              nativeThreadRef,
+              contextUsage: { usedTokens: input.assistantSession!.usedTokens },
+            }
+          : candidate,
+      ),
+    };
+  }
   const previousTurnId = ProviderTurnId.make("previous-provider-turn");
   if (input.previousTurn !== undefined) {
     const previousRunId = RunId.make("previous-failed-run");
@@ -879,42 +922,52 @@ function makeLocalCommandHarness(input: {
     forkThread,
     startTurn,
   };
+  const resumeThread = vi.fn(() => Effect.succeed(projection.providerThreads.at(-1)!));
+  const assistantSession = {
+    driver: providerThread.driver,
+    providerSession,
+    resumeThread,
+    ensureThread: fallbackEnsureThread,
+    startTurn,
+  };
   const open = vi.fn(() =>
-    input.sideChat !== undefined
-      ? Effect.succeed(sideChatSession as never)
-      : input.interruptOpen === true
-        ? Effect.interrupt
-        : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
-          ? Effect.succeed(resumeFallbackSession as never)
-          : "ensureThreadFailure" in input
-            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-            : "openFailure" in input
-              ? Effect.sync(() => {
-                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-                }).pipe(
-                  Effect.andThen(
-                    Effect.fail(
-                      new ProviderSessionManager.ProviderSessionOpenError({
-                        instanceId: newInstanceId,
-                        providerSessionId,
-                        cause: input.openFailure,
-                      }),
+    input.assistantSession !== undefined
+      ? Effect.succeed(assistantSession as never)
+      : input.sideChat !== undefined
+        ? Effect.succeed(sideChatSession as never)
+        : input.interruptOpen === true
+          ? Effect.interrupt
+          : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
+            ? Effect.succeed(resumeFallbackSession as never)
+            : "ensureThreadFailure" in input
+              ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+              : "openFailure" in input
+                ? Effect.sync(() => {
+                    if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderSessionManager.ProviderSessionOpenError({
+                          instanceId: newInstanceId,
+                          providerSessionId,
+                          cause: input.openFailure,
+                        }),
+                      ),
                     ),
-                  ),
-                )
-              : input.failReadsAfterRunning === true || input.previousTurn !== undefined
-                ? Effect.succeed({
-                    driver: providerThread.driver,
-                    providerSession,
-                    ensureThread: () => Effect.succeed(providerThread),
-                    resumeThread: () => Effect.succeed(projection.providerThreads[0]),
-                  } as never)
-                : Effect.die("A local command must not open a native session."),
+                  )
+                : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+                  ? Effect.succeed({
+                      driver: providerThread.driver,
+                      providerSession,
+                      ensureThread: () => Effect.succeed(providerThread),
+                      resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    } as never)
+                  : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >((runInput) =>
-    input.sideChat !== undefined
+    input.sideChat !== undefined || input.assistantSession !== undefined
       ? runInput.session.startTurn(runInput as never).pipe(Effect.orDie)
       : input.failReadsAfterRunning === true || input.previousTurn !== undefined
         ? Effect.suspend(() =>
@@ -1000,22 +1053,40 @@ function makeLocalCommandHarness(input: {
       ),
     }),
   );
+  const preparedHandoffs: Array<
+    Parameters<
+      ContextHandoffService.ContextHandoffServiceV2["Service"]["prepareProviderHandoff"]
+    >[0]
+  > = [];
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
-            input.sideChat?.nativeForkFrom === undefined
-              ? Effect.die("history read must fail first")
-              : Effect.succeed({
-                  ...handoff,
-                  id: ContextHandoffId.make("side-chat-fork-context"),
-                  createdByProviderInstanceId: handoff.toProviderInstanceId,
-                  status: "ready",
-                  summaryMessageId: null,
-                  summaryText: "PARENT_HISTORY",
-                  updatedAt: handoff.createdAt,
-                }),
+            input.assistantSession !== undefined
+              ? Effect.sync(() => {
+                  preparedHandoffs.push(handoff);
+                  return {
+                    ...handoff,
+                    id: ContextHandoffId.make("assistant-summary"),
+                    createdByProviderInstanceId: handoff.toProviderInstanceId,
+                    status: "ready" as const,
+                    summaryMessageId: null,
+                    summaryText: "EARLIER_TURNS",
+                    updatedAt: handoff.createdAt,
+                  };
+                })
+              : input.sideChat?.nativeForkFrom === undefined
+                ? Effect.die("history read must fail first")
+                : Effect.succeed({
+                    ...handoff,
+                    id: ContextHandoffId.make("side-chat-fork-context"),
+                    createdByProviderInstanceId: handoff.toProviderInstanceId,
+                    status: "ready",
+                    summaryMessageId: null,
+                    summaryText: "PARENT_HISTORY",
+                    updatedAt: handoff.createdAt,
+                  }),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           writeIfRunCurrent,
@@ -1072,7 +1143,7 @@ function makeLocalCommandHarness(input: {
               projection.runs.find((candidate) => candidate.id === id),
             ),
           getTurnStartHistory: () =>
-            input.sideChat !== undefined
+            input.sideChat !== undefined || input.assistantSession !== undefined
               ? Effect.succeed([])
               : Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
@@ -1124,6 +1195,8 @@ function makeLocalCommandHarness(input: {
     createWorktree,
     open,
     fallbackEnsureThread,
+    resumeThread,
+    preparedHandoffs,
     writeIfRunCurrent,
     startRootRun,
     startTurn,
@@ -2034,6 +2107,88 @@ effectIt.effect("checks the run's status without loading the thread's history", 
       harness.getRuntimeRecoveryProjection.mock.calls.length,
       "recovery projection reads beyond the inherited background items snapshot",
     ).toBe(1);
+  }),
+);
+
+const TYPED = "6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f";
+effectIt.effect.each([
+  {
+    case: "a typed request after the gap",
+    threadId: "assistant:jarvis:1",
+    messageId: TYPED,
+    minutesSinceLastRun: 11,
+    usedTokens: 1_000,
+    cut: true,
+  },
+  {
+    case: "a wake over the context ceiling",
+    threadId: "assistant:jarvis:1",
+    messageId: "autonomy-wake:jarvis:1",
+    minutesSinceLastRun: 1,
+    usedTokens: 61_000,
+    cut: true,
+  },
+  {
+    case: "a wake with little context",
+    threadId: "assistant:jarvis:1",
+    messageId: "autonomy-wake:jarvis:1",
+    minutesSinceLastRun: 30,
+    usedTokens: 1_000,
+    cut: false,
+  },
+  {
+    case: "a typed message inside the gap",
+    threadId: "assistant:jarvis:1",
+    messageId: TYPED,
+    minutesSinceLastRun: 9,
+    usedTokens: 1_000,
+    cut: false,
+  },
+  {
+    case: "a group thread",
+    threadId: "assistant:jarvis:g-0123456789abcdef",
+    messageId: TYPED,
+    minutesSinceLastRun: 30,
+    usedTokens: 90_000,
+    cut: false,
+  },
+  {
+    case: "an ordinary thread",
+    threadId: "thread-ordinary",
+    messageId: TYPED,
+    minutesSinceLastRun: 30,
+    usedTokens: 90_000,
+    cut: false,
+  },
+])("an assistant's conversation drops its native session for $case: $cut", (row) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Next request", assistantSession: row });
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-09-04T12:00:00Z")));
+
+    yield* harness.start;
+
+    const sent = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    if (row.cut) {
+      expect(harness.resumeThread).not.toHaveBeenCalled();
+      expect(harness.fallbackEnsureThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forceNewNativeThread: true,
+          existingProviderThread: expect.objectContaining({ nativeThreadRef: null }),
+        }),
+      );
+      expect(harness.preparedHandoffs).toMatchObject([
+        { strategy: "full_thread_summary", tokenCap: ASSISTANT_SUMMARY_TOKEN_CAP },
+      ]);
+      expect(sent).toContain("EARLIER_TURNS");
+      expect(sent).toContain("<t3_open_tasks>");
+    } else {
+      expect(harness.resumeThread).toHaveBeenCalled();
+      expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+      expect(harness.preparedHandoffs).toEqual([]);
+      expect(sent).not.toContain("<t3_open_tasks>");
+    }
+    expect(sent).toContain("Next request");
+    expect(harness.startRootRun.mock.calls[0]?.[0].refreshMemoryContext).toBeDefined();
   }),
 );
 

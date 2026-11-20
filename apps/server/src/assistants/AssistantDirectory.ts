@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { SettledWait } from "../autonomy/needsYou.ts";
+import { type AssistantOpenTask, OPEN_TASKS_LIMIT } from "./assistantRequestContext.ts";
 import {
   allTeams,
   decodeEnvironmentPreference,
@@ -180,6 +181,8 @@ export interface AssistantDirectoryShape {
     readonly keys: ReadonlyArray<string>;
     readonly since: string;
   }) => Effect.Effect<ReadonlyArray<SettledWait>>;
+  /** The threads this assistant launched that are still open; empty when unreadable. */
+  readonly openTasks?: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<AssistantOpenTask>>;
   /** Titles of the projects that still exist; a missing or unreadable one is simply absent. */
   readonly projectTitles?: (
     projectIds: ReadonlyArray<string>,
@@ -265,6 +268,28 @@ const make = Effect.gen(function* () {
       },
       // A failed read only drops the note; the live check still covers the assistant.
       Effect.orElseSucceed(() => []),
+    ),
+    openTasks: Effect.fn("AssistantDirectory.openTasks")(
+      function* (threadId) {
+        const rows = yield* sql<{
+          readonly thread_id: string;
+          readonly title: string;
+          readonly status: string | null;
+        }>`
+          SELECT t.thread_id, t.title,
+            (SELECT r.status FROM orchestration_v2_projection_runs r
+              WHERE r.thread_id = t.thread_id ORDER BY r.ordinal DESC LIMIT 1) AS status
+          FROM assistant_tasks t
+          WHERE t.assistant_id = ${assistantIdFromThreadId(threadId)} AND t.dismissed_at IS NULL
+          ORDER BY t.created_at DESC LIMIT ${OPEN_TASKS_LIMIT}`;
+        return rows.map((row): AssistantOpenTask => ({
+          threadId: row.thread_id,
+          title: row.title,
+          status: row.status ?? "not started",
+        }));
+      },
+      // A failed read only drops the list; the turn itself still runs.
+      Effect.orElseSucceed((): ReadonlyArray<AssistantOpenTask> => []),
     ),
     projectTitles: (projectIds) =>
       projectIds.length === 0

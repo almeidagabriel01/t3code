@@ -415,3 +415,24 @@ it.effect("the note says where launches run by default, by the rule launches fol
     }
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("open tasks leave out dismissed ones and read the latest run's status", () =>
+  Effect.gen(function* () {
+    const directory = yield* Directory.AssistantDirectory;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seed("jarvis");
+    const task = (id: string, dismissed: string | null) => sql`
+      INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at, dismissed_at)
+      VALUES (${id}, 'jarvis', 'p1', ${`Title ${id}`}, '2026-01-01', ${dismissed})`;
+    yield* task("t-open", null);
+    yield* task("t-done", "2026-01-02");
+    const run = (id: string, ordinal: number, status: string) => sql`
+      INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES (${id}, 't-open', ${ordinal}, 'codex', ${status}, '2026-01-01', '{}')`;
+    yield* run("r1", 1, "completed");
+    yield* run("r2", 2, "running");
+    assert.deepEqual(yield* directory.openTasks!(thread("jarvis")), [
+      { threadId: "t-open", title: "Title t-open", status: "running" },
+    ]);
+  }).pipe(Effect.provide(directoryLayer)),
+);

@@ -83,6 +83,7 @@ export interface ContextHandoffServiceV2Shape {
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly createdAt: DateTime.Utc;
+    readonly tokenCap?: number;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
   readonly prepareSideChatContext: (input: {
@@ -501,6 +502,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
       readonly createdAt: DateTime.Utc;
+      /** Tighter than the configured cap, for a summary that must stay short. */
+      readonly tokenCap?: number;
     }) {
       const handoffId = yield* idAllocator.allocate
         .contextHandoff({
@@ -535,7 +538,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               ];
         }),
         coverage,
-        budget: tokenCap,
+        budget: Math.min(tokenCap, input.tokenCap ?? tokenCap),
       });
       return {
         id: handoffId,

@@ -244,6 +244,71 @@ describe("AntigravityAdapterV2 session open", () => {
 });
 
 describe("AntigravityAdapterV2 client file system", () => {
+  it.effect("opens a new native session when an assistant's turn drops the old one", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+      const requestLog = path.join(logs, "requests.ndjson");
+      const crypto = yield* SecureRandom.SecureRandom;
+      const instanceId = ProviderInstanceId.make("antigravity-fresh-session-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_REQUEST_LOG_PATH: requestLog },
+            },
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-workspace-",
+      });
+      const threadId = ThreadId.make("assistant:antigravity:1");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-fresh"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const original = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+      // ProviderTurnStartService's recovery path, which the assistant session cut reuses.
+      const replacement = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: { ...original, nativeThreadRef: null },
+        forceNewNativeThread: true,
+      });
+      assert.equal(replacement.id, original.id);
+      // A replacement agent process opens it; the mock's ids restart per process, so count opens.
+      const methods = (yield* fileSystem.readFileString(requestLog))
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { method?: string }).method);
+      assert.equal(methods.filter((method) => method === "session/new").length, 2);
+      assert.notInclude(methods, "session/load");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

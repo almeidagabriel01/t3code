@@ -58,6 +58,11 @@ import {
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import { assistantNote, settledWaitsForTurn } from "../assistants/assistantNote.ts";
+import {
+  ASSISTANT_SUMMARY_TOKEN_CAP,
+  assistantSessionCut,
+  openTasksForCut,
+} from "../assistants/assistantRequestContext.ts";
 import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1023,7 +1028,33 @@ export const layer: Layer.Layer<
         run,
         attempts: projection.attempts,
       });
+      // The assistant's own conversation drops its native history between requests and past a
+      // size ceiling; the recovery path below then hands over a short summary instead.
+      const lastRunEndedAt =
+        projection.runs
+          .filter((source) => source.ordinal < run.ordinal && source.completedAt !== null)
+          .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.completedAt ?? null;
+      const proposedCut =
+        nativeForkTransfer !== undefined || providerThread.nativeThreadRef === null
+          ? null
+          : assistantSessionCut({
+              threadId: projection.thread.id,
+              messageId: message.id,
+              now: yield* DateTime.now,
+              lastRunEndedAt,
+              usedTokens: providerThread.contextUsage?.usedTokens,
+              otherRunActive: projection.runs.some(
+                (source) => source.id !== run.id && isActiveRun(source),
+              ),
+            });
+      const sessionCut =
+        proposedCut !== null && !(yield* session.hasPendingBackgroundWork ?? Effect.succeed(false))
+          ? proposedCut
+          : null;
       const restartNote = [
+        sessionCut === null
+          ? ""
+          : yield* openTasksForCut(assistantDirectory, projection.thread.id, projection.subagents),
         yield* assistantNote(assistantDirectory, projection.thread.id, userText).pipe(
           Effect.provide(noteServices),
         ),
@@ -1248,6 +1279,7 @@ export const layer: Layer.Layer<
             toProviderInstanceId: run.providerInstanceId,
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
+            ...(sessionCut === null ? {} : { tokenCap: ASSISTANT_SUMMARY_TOKEN_CAP }),
             runs: projection.runs,
             items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
               (item) =>
@@ -1421,14 +1453,17 @@ export const layer: Layer.Layer<
             handoff.delivery?.status === "pending",
         );
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          sessionCut !== null || uncertainDelivery
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause:
+                    sessionCut === null
+                      ? "Uncertain native history injection"
+                      : `Assistant session cut: ${sessionCut}`,
                 }),
               )
             : session.resumeThread({
@@ -1506,11 +1541,14 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery
-            ? "uncertain_history_delivery"
-            : resumed._tag === "Success"
-              ? "handoff_budget_exhausted"
-              : "resume_failed",
+          reason:
+            sessionCut !== null
+              ? `assistant_${sessionCut}`
+              : uncertainDelivery
+                ? "uncertain_history_delivery"
+                : resumed._tag === "Success"
+                  ? "handoff_budget_exhausted"
+                  : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(
