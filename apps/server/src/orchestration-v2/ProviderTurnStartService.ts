@@ -1040,6 +1040,10 @@ export const layer: Layer.Layer<
           : assistantSessionCut({
               threadId: projection.thread.id,
               messageId: message.id,
+              text: message.text,
+              fromOwnWork:
+                message.senderThreadId !== undefined &&
+                projection.subagents.some((task) => task.childThreadId === message.senderThreadId),
               now: yield* DateTime.now,
               lastRunEndedAt,
               usedTokens: providerThread.contextUsage?.usedTokens,
@@ -1048,7 +1052,14 @@ export const layer: Layer.Layer<
               ),
             });
       const sessionCut =
-        proposedCut !== null && !(yield* session.hasPendingBackgroundWork ?? Effect.succeed(false))
+        proposedCut !== null &&
+        !(yield* (
+          session.hasPendingBackgroundWorkForThread?.(providerThread, {
+            includeSubagents: true,
+          }) ??
+            session.hasPendingBackgroundWork ??
+            Effect.succeed(false)
+        ))
           ? proposedCut
           : null;
       const restartNote = [

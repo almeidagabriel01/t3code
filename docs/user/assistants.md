@@ -546,7 +546,7 @@ projects.
 
 - **Reset conversation** starts a fresh conversation with the same settings, on the model its
   project sets for the assistant. The earlier one is archived.
-- You don't need to reset to save tokens: a request you send after 10 quiet minutes, or any turn
+- You don't need to reset to save tokens: a request you send 10 minutes or more after its last turn ended, or any turn
   once the conversation's context passes 60k tokens, starts a fresh provider session with a short
   summary, the open tasks and the assistant's memory. The whole history stays on screen.
 - **Restore** brings back one of an assistant's earlier conversations from **Archived threads**. The

@@ -416,23 +416,27 @@ it.effect("the note says where launches run by default, by the rule launches fol
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("open tasks leave out dismissed ones and read the latest run's status", () =>
+it.effect("open tasks leave out dismissed ones and list work still running first", () =>
   Effect.gen(function* () {
     const directory = yield* Directory.AssistantDirectory;
     const sql = yield* SqlClient.SqlClient;
     yield* seed("jarvis");
-    const task = (id: string, dismissed: string | null) => sql`
+    const task = (id: string, createdAt: string, dismissed: string | null) => sql`
       INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at, dismissed_at)
-      VALUES (${id}, 'jarvis', 'p1', ${`Title ${id}`}, '2026-01-01', ${dismissed})`;
-    yield* task("t-open", null);
-    yield* task("t-done", "2026-01-02");
-    const run = (id: string, ordinal: number, status: string) => sql`
-      INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
-      VALUES (${id}, 't-open', ${ordinal}, 'codex', ${status}, '2026-01-01', '{}')`;
-    yield* run("r1", 1, "completed");
-    yield* run("r2", 2, "running");
+      VALUES (${id}, 'jarvis', 'p1', ${`Title ${id}`}, ${createdAt}, ${dismissed})`;
+    yield* task("t-open", "2026-01-01", null);
+    yield* task("t-finished", "2026-01-03", null);
+    yield* task("t-done", "2026-01-04", "2026-01-05");
+    const run = (threadId: string, id: string, ordinal: number, status: string) => sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES (${id}, ${threadId}, ${ordinal}, 'codex', ${status}, '2026-01-01', '{}')`;
+    yield* run("t-open", "r1", 1, "completed");
+    yield* run("t-open", "r2", 2, "running");
+    yield* run("t-finished", "r3", 1, "completed");
     assert.deepEqual(yield* directory.openTasks!(thread("jarvis")), [
       { threadId: "t-open", title: "Title t-open", status: "running" },
+      { threadId: "t-finished", title: "Title t-finished", status: "completed" },
     ]);
   }).pipe(Effect.provide(directoryLayer)),
 );

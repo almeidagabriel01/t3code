@@ -281,7 +281,9 @@ const make = Effect.gen(function* () {
               WHERE r.thread_id = t.thread_id ORDER BY r.ordinal DESC LIMIT 1) AS status
           FROM assistant_tasks t
           WHERE t.assistant_id = ${assistantIdFromThreadId(threadId)} AND t.dismissed_at IS NULL
-          ORDER BY t.created_at DESC LIMIT ${OPEN_TASKS_LIMIT}`;
+          ORDER BY status IN ('queued', 'preparing', 'starting', 'running', 'waiting') DESC,
+            t.created_at DESC
+          LIMIT ${OPEN_TASKS_LIMIT}`;
         return rows.map((row): AssistantOpenTask => ({
           threadId: row.thread_id,
           title: row.title,

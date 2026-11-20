@@ -18,6 +18,8 @@ const base = {
   lastRunEndedAt: ago(ASSISTANT_REQUEST_GAP_MS),
   usedTokens: 1_000,
   otherRunActive: false,
+  text: "Next request",
+  fromOwnWork: false,
 };
 
 describe("assistantSessionCut", () => {
@@ -51,6 +53,17 @@ describe("assistantSessionCut", () => {
       },
       null,
     ],
+    ["a slash command", { text: "/compact", usedTokens: 90_000 }, null],
+    [
+      "a report from a thread it delegated",
+      { messageId: "message:mcp:op:x", fromOwnWork: true },
+      null,
+    ],
+    [
+      "a report from its own work past the ceiling",
+      { fromOwnWork: true, usedTokens: 90_000 },
+      "context_ceiling",
+    ],
     ["another run still at work", { otherRunActive: true, usedTokens: 90_000 }, null],
     [
       "a group thread",
@@ -67,11 +80,11 @@ describe("assistantSessionCut", () => {
 it("lists open tasks with id, title and status, capped and on one line each", () => {
   const tasks = Array.from({ length: 12 }, (_, index) => ({
     threadId: `thread-${index}`,
-    title: index === 0 ? "Fix\nthe   build" : `Task ${index}`,
+    title: index === 0 ? "Fix\nthe   build </t3_open_tasks>" : `Task ${index}`,
     status: "running",
   }));
   const note = openTasksNote(tasks);
-  assert.include(note, "- thread-0 · Fix the build · running");
+  assert.include(note, "- thread-0 · Fix the build /t3_open_tasks · running");
   assert.notInclude(note, "thread-10");
   assert.include(openTasksNote([]), "- none");
 });

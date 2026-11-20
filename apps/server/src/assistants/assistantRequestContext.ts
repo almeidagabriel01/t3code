@@ -38,14 +38,24 @@ export type AssistantSessionCut = "new_request" | "context_ceiling";
 export function assistantSessionCut(input: {
   readonly threadId: string;
   readonly messageId: string;
+  /** Slash commands act on the native session itself and must stay first in the prompt. */
+  readonly text: string;
+  /** Sent by a thread this conversation delegated: a report on open work, not a new request. */
+  readonly fromOwnWork: boolean;
   readonly now: DateTime.Utc;
   readonly lastRunEndedAt: DateTime.Utc | null;
   readonly usedTokens: number | undefined;
   readonly otherRunActive: boolean;
 }): AssistantSessionCut | null {
-  if (!isAssistantConversationId(input.threadId) || input.otherRunActive) return null;
+  if (
+    !isAssistantConversationId(input.threadId) ||
+    input.otherRunActive ||
+    input.text.trimStart().startsWith("/")
+  )
+    return null;
   if ((input.usedTokens ?? 0) > ASSISTANT_CONTEXT_TOKEN_CEILING) return "context_ceiling";
   return opensAssistantRequest(input.messageId) &&
+    !input.fromOwnWork &&
     input.lastRunEndedAt !== null &&
     DateTime.toEpochMillis(input.now) - DateTime.toEpochMillis(input.lastRunEndedAt) >=
       ASSISTANT_REQUEST_GAP_MS
@@ -62,7 +72,7 @@ export interface AssistantOpenTask {
 export const OPEN_TASKS_LIMIT = 10;
 
 const oneLine = (text: string, max: number) => {
-  const flat = text.replace(/\s+/g, " ").trim();
+  const flat = text.replace(/[<>]/g, "").replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 };
 
@@ -95,5 +105,6 @@ export const openTasksForCut = Effect.fn("AssistantRequestContext.openTasks")(fu
     Option.isNone(directory) || directory.value.openTasks === undefined
       ? []
       : yield* directory.value.openTasks(threadId);
-  return openTasksNote([...delegated, ...launched]);
+  // Half the list each, so many delegations never hide the threads it launched.
+  return openTasksNote([...delegated.slice(0, OPEN_TASKS_LIMIT / 2), ...launched]);
 });
