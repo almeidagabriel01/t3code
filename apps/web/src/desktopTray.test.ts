@@ -42,11 +42,23 @@ vi.mock("./state/shell", async () => {
   atoms.live = Atom.make<ReadonlySet<string>>(new Set<string>());
   return { liveShellEnvironmentIdsAtom: atoms.live };
 });
+vi.mock("./state/assistants", async () => {
+  const { Atom } = await import("effect/reactivity");
+  atoms.working = Atom.make<ReadonlySet<string>>(new Set<string>());
+  return { workingThreadKeysAtom: atoms.working };
+});
+vi.mock("./state/decisions", async () => {
+  const { Atom } = await import("effect/reactivity");
+  atoms.decisions = Atom.make<ReadonlySet<string>>(new Set<string>());
+  return { allOpenDecisionThreadKeysAtom: atoms.decisions };
+});
 vi.mock("./state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
   atoms.identities = Atom.make<ReadonlyArray<unknown>>([]);
   return { environmentSummaries: { identitiesAtom: atoms.identities } };
 });
+
+import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 
 import { deriveTrayMenu, parseTrayOpenThreadAction, startDesktopTray } from "./desktopTray";
 
@@ -70,6 +82,7 @@ const shell = (
     pendingSubagentRequest: null,
     pendingGuestMessageCount: 0,
     archivedAt: null,
+    deletedAt: null,
     sideChatOf: null,
     pinnedAt: null,
     pinOrderKey: null,
@@ -81,6 +94,21 @@ const running = { runtime: { status: "running" } };
 const projects = [{ environmentId: envA, id: "p1", title: "Project One" }] as never;
 const live = new Set([envA]);
 const ids = (rows: DesktopTrayMenu["attention"]) => rows.map((row) => row.threadId);
+// What `workingThreadKeysAtom` holds for these shells, so the tray reads the one working set.
+const menu = (
+  threads: ReadonlyArray<never>,
+  labels: ReadonlyMap<EnvironmentId, string> | null = null,
+  openDecisionThreadKeys: ReadonlySet<string> = new Set(),
+) => {
+  const keyOf = (thread: { environmentId: string; id: string }) =>
+    `${thread.environmentId}:${thread.id}`;
+  const working = new Set(
+    (threads as ReadonlyArray<Parameters<typeof isWorkingShell>[0]>)
+      .filter((thread) => isWorkingShell(thread, openDecisionThreadKeys))
+      .map(keyOf),
+  );
+  return deriveTrayMenu(threads, projects, live, labels, { working, openDecisionThreadKeys });
+};
 
 describe("deriveTrayMenu", () => {
   it.each([
@@ -137,15 +165,24 @@ describe("deriveTrayMenu", () => {
       expected: { attention: [], running: [], pinned: ["a", "b"] },
     },
     {
-      name: "a thread of an environment that is not live only shows as pinned",
+      // Running follows the working set every surface counts, so it has no liveness rule of its own.
+      name: "a request on an environment that is not live does not need you",
       threads: [
-        shell("stale", { ...running, hasPendingApprovals: true }, envB),
-        shell("stalePin", { ...running, pinnedAt: "x" }, envB),
+        shell("stale", { hasPendingApprovals: true }, envB),
+        shell("stalePin", { pinnedAt: "x" }, envB),
+        shell("staleRun", running, envB),
       ],
-      expected: { attention: [], running: [], pinned: ["stalePin"] },
+      expected: { attention: [], running: ["staleRun"], pinned: ["stalePin"] },
     },
-  ])("$name", ({ threads, expected }) => {
-    const result = deriveTrayMenu(threads, projects, live, null);
+    {
+      name: "a thread waiting on a decision needs you, even mid-turn",
+      threads: [shell("decide", running), shell("busy", running)],
+      decisions: new Set([`${envA}:decide`]),
+      expected: { attention: ["decide"], running: ["busy"], pinned: [] },
+    },
+  ])("$name", ({ threads, expected, ...rest }) => {
+    const decisions = "decisions" in rest ? rest.decisions : undefined;
+    const result = menu(threads, null, decisions);
     expect({
       attention: ids(result.attention),
       running: ids(result.running),
@@ -157,17 +194,15 @@ describe("deriveTrayMenu", () => {
     const many = Array.from({ length: 25 }, (_, i) =>
       shell(`t${i}`, { hasPendingApprovals: true }),
     );
-    const result = deriveTrayMenu(many, projects, live, null);
+    const result = menu(many);
     expect(result.attention).toHaveLength(20);
     expect(result.attentionCount).toBe(25);
   });
 
   it("labels rows with project, bounded text, and the environment only when given", () => {
     const long = "é".repeat(300);
-    const [row] = deriveTrayMenu(
+    const [row] = menu(
       [shell("a", { title: long, hasPendingApprovals: true }), shell("b", { projectId: "none" })],
-      projects,
-      live,
       new Map([[envA, "Laptop"]]),
     ).attention;
     expect(row).toEqual({
@@ -177,12 +212,8 @@ describe("deriveTrayMenu", () => {
       project: "Project One",
       environment: "Laptop",
     });
-    const unknown = deriveTrayMenu(
-      [shell("b", { projectId: "none", hasPendingApprovals: true })],
-      projects,
-      live,
-      null,
-    ).attention[0];
+    const unknown = menu([shell("b", { projectId: "none", hasPendingApprovals: true })])
+      .attention[0];
     expect(unknown).toMatchObject({ project: null, environment: null });
   });
 });

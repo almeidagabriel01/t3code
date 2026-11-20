@@ -67,6 +67,16 @@ const environmentsWithScopeAtom = Atom.family((key: string) => {
   }).pipe(Atom.withLabel(`web-environments-with-scope:${key}`));
 });
 
+/** `useEnvironmentsWithScope` for atoms: the `ids` whose session holds `scope`, in order. */
+export function readableEnvironmentIds(
+  get: Atom.AtomContext,
+  ids: ReadonlyArray<EnvironmentId>,
+  scope: AuthEnvironmentScope,
+): ReadonlyArray<EnvironmentId> {
+  const readable = get(environmentsWithScopeAtom(`${scope}\n${environmentIdsKey(ids)}`));
+  return ids.filter((id) => readable.has(id));
+}
+
 const environmentsScopeAccessAtom = Atom.family((key: string) => {
   const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
   const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);

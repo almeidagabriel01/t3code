@@ -12,7 +12,6 @@ import type {
 } from "@t3tools/client-runtime/state/models";
 import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import { isWorkingShell } from "@t3tools/client-runtime/workingConsumers";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -22,6 +21,8 @@ import {
   subscribeClientSettings,
   subscribeClientSettingsHydration,
 } from "./hooks/useSettings";
+import { workingThreadKeysAtom } from "./state/assistants";
+import { allOpenDecisionThreadKeysAtom } from "./state/decisions";
 import { environmentSummaries } from "./state/presentation";
 import { environmentProjects } from "./state/projects";
 import { liveShellEnvironmentIdsAtom } from "./state/shell";
@@ -30,8 +31,6 @@ import { environmentThreadShells } from "./state/threads";
 // Main shows a handful per section; the cap keeps the IPC payload small however many threads exist.
 const SECTION_LIMIT = 20;
 const TEXT_LIMIT = 200;
-
-const NO_DECISIONS: ReadonlySet<string> = new Set();
 
 const bounded = (text: string) => Array.from(text).slice(0, TEXT_LIMIT).join("");
 
@@ -59,9 +58,9 @@ const newestFirst = (left: TrayShell, right: TrayShell) =>
   right.updatedAt.localeCompare(left.updatedAt);
 
 /**
- * Needs-you follows the sidebar status and running is `isWorkingShell`, assistants' threads
- * included, and only for environments whose shells are live (a cached shell may describe a run
- * that already ended). A thread lands in one section.
+ * Running is the working set every surface counts (`workingThreadKeysAtom`). Needs-you is
+ * Activity's: a pending request on a live environment (a cached shell may describe one already
+ * answered) or an open decision. A thread lands in one section.
  * `environmentLabels` is null when only one environment exists, so labels stay out of the rows.
  */
 export function deriveTrayMenu(
@@ -69,6 +68,10 @@ export function deriveTrayMenu(
   projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId" | "id" | "title">>,
   liveEnvironmentIds: ReadonlySet<EnvironmentId>,
   environmentLabels: ReadonlyMap<EnvironmentId, string> | null,
+  sets: {
+    readonly working: ReadonlySet<string>;
+    readonly openDecisionThreadKeys: ReadonlySet<string>;
+  },
 ): DesktopTrayMenu {
   const projectTitles = new Map(
     projects.map((project) => [`${project.environmentId}\u0000${project.id}`, project.title]),
@@ -85,16 +88,23 @@ export function deriveTrayMenu(
   const running: TrayShell[] = [];
   const pinned: TrayShell[] = [];
   for (const thread of threads) {
-    if (thread.archivedAt !== null || thread.sideChatOf != null) continue;
-    const live = liveEnvironmentIds.has(thread.environmentId);
-    // The tray reads no decisions; a thread waiting on one stays among the running.
-    if (live && isWorkingShell(thread, NO_DECISIONS)) {
+    const key = `${thread.environmentId}:${thread.id}`;
+    if (sets.working.has(key)) {
       running.push(thread);
       continue;
     }
-    if (isAssistantThreadId(thread.id)) continue;
-    const status = live ? resolveSidebarThreadStatus(thread) : null;
-    if (status === "approval" || status === "input" || status === "request") {
+    if (thread.archivedAt !== null || thread.sideChatOf != null || isAssistantThreadId(thread.id)) {
+      continue;
+    }
+    const status = liveEnvironmentIds.has(thread.environmentId)
+      ? resolveSidebarThreadStatus(thread)
+      : null;
+    if (
+      sets.openDecisionThreadKeys.has(key) ||
+      status === "approval" ||
+      status === "input" ||
+      status === "request"
+    ) {
       attention.push(thread);
     } else if (thread.pinnedAt !== null) {
       pinned.push(thread);
@@ -160,6 +170,10 @@ export function startDesktopTray(
       identities.length > 1
         ? new Map(identities.map(({ environmentId, label }) => [environmentId, label]))
         : null,
+      {
+        working: registry.get(workingThreadKeysAtom),
+        openDecisionThreadKeys: registry.get(allOpenDecisionThreadKeysAtom),
+      },
     );
   };
   const schedule = () => {
@@ -170,6 +184,8 @@ export function startDesktopTray(
 
   const unsubscribes = [
     registry.subscribe(environmentThreadShells.quietAllThreadShellsAtom, schedule),
+    registry.subscribe(workingThreadKeysAtom, schedule),
+    registry.subscribe(allOpenDecisionThreadKeysAtom, schedule),
     registry.subscribe(environmentProjects.projectsAtom, schedule),
     registry.subscribe(liveShellEnvironmentIdsAtom, schedule),
     registry.subscribe(environmentSummaries.identitiesAtom, schedule),
