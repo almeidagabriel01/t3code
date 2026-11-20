@@ -68,7 +68,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { AssistantId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import {
   AssistantRequests,
@@ -3703,6 +3703,89 @@ describe("OrchestratorMcpService provider resolution", () => {
           ...inherited,
           options: [inherited.options[0]],
         });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect("an assistant's conversation delegates on its model for the project", () =>
+    Effect.gen(function* () {
+      const assistantThreadId = ThreadId.make("assistant:jarvis:1");
+      const projectModel = { instanceId: codexInstanceId, model: "gpt-5.4" } as const;
+      const jarvisModel = { instanceId: codexInstanceId, model: "jarvis-model" } as const;
+      const commands: Array<{ readonly modelSelection?: unknown }> = [];
+      const task = {
+        id: taskId,
+        threadId: assistantThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: jarvisModel.model,
+        status: "running",
+        result: null,
+      };
+      const projection = (subagents: ReadonlyArray<unknown>) => {
+        const base = parentProjection(subagents, projectModel);
+        return { ...base, thread: { ...base.thread, id: assistantThreadId } } as never;
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === assistantThreadId
+                ? projection(commands.length > 0 ? [task] : [])
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command as { readonly modelSelection?: unknown });
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest({
+          defaultModelSelection: projectModel,
+          projectSettingsOverrides: {
+            [projectId]: {
+              assistantModelSelections: { [AssistantId.make("jarvis")]: jarvisModel },
+            },
+          },
+        }),
+        providerRegistryLayer([
+          {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+            }),
+            models: [projectModel.model, jarvisModel.model].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const assistantScope: McpInvocationScope = {
+        ...scope,
+        thread: { ...scope.thread!, threadId: assistantThreadId },
+      };
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(assistantScope);
+        assert.equal(capabilities.inheritedModel, jarvisModel.model);
+        yield* service.delegateTask(assistantScope, { task: "Run the tests.", mode: "async" });
+        assert.deepEqual(commands[0]?.modelSelection, jarvisModel);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );

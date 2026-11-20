@@ -250,7 +250,8 @@ type DelegateTaskInput = {
 ```
 
 Runtime and interaction modes inherit from the parent when omitted. Provider
-and model follow the project's model precedence, not the parent's model, and
+and model follow the project's model precedence (with the calling assistant's
+layers when an assistant's conversation calls), not the parent's model, and
 never switch to a usage-limit fallback; to keep the parent's model, name it. A
 task in a linked environment without a model follows its project's precedence
 there.
@@ -375,7 +376,7 @@ before the agent starts. Creating a worktree in the task prompt does not update
 this binding.
 
 Pass the task in `message`. Project and modes inherit when omitted; the model
-follows the project's precedence, not the caller's; workspace does not. `scratch: true` launches without a project, in a folder of
+follows the project's precedence (with the calling assistant's layers), not the caller's; workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the

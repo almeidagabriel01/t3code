@@ -112,6 +112,12 @@ export function assistantIdFromThreadId(threadId: string): string | null {
   return cut <= 0 ? null : rest.slice(0, cut);
 }
 
+/** The assistant whose conversation (its own or a group one) a caller thread is, if any. */
+export function callerAssistantId(threadId: string | undefined): AssistantId | undefined {
+  const id = threadId === undefined ? null : assistantIdFromThreadId(threadId);
+  return id === null ? undefined : AssistantId.make(id);
+}
+
 /** The original bot icons an assistant can wear instead of its initial; paths live in client-runtime. */
 export const ASSISTANT_ICON_IDS = [
   "bot",

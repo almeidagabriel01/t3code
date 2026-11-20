@@ -1,5 +1,6 @@
 import {
   type AssistantError,
+  AssistantId,
   type MemoryTaskGrantCeiling,
   CommandId,
   assistantThreadIdFor,
@@ -692,13 +693,15 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => taskError("Could not read schedule task.", { taskId, cause })),
       );
 
-    /** A task the server scheduled without a model takes the project's when its thread is made. */
+    /** A task scheduled without a model takes the precedence's, with its assistant's, when its thread is made. */
     const newThreadModel = Effect.fn("ScheduledTaskService.newThreadModel")(
       function* (task: ScheduledTask) {
         if (Option.isNone(projectModelSelection) || !(yield* followsProject(task.id)))
           return task.modelSelection;
         return (yield* projectModelSelection.value.resolveForNewThread({
           projectId: task.projectId,
+          assistantId:
+            task.ownerAssistantId == null ? undefined : AssistantId.make(task.ownerAssistantId),
         })).selection;
       },
       // An unreadable precedence still runs the task, on the model it was saved with.

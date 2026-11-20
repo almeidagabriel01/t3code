@@ -4,6 +4,7 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
+  callerAssistantId,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -192,12 +193,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )
             : undefined;
-        // Neither the caller's model nor a usage-limit fallback: the project's precedence decides.
+        // Neither the caller's model nor a usage-limit fallback: the precedence decides, with
+        // the launching assistant's default when an assistant launches it.
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
           (yield* ProjectModelSelection.ProjectModelSelectionService.pipe(
-            Effect.flatMap((service) => service.resolveForNewThread({ projectId })),
+            Effect.flatMap((service) =>
+              service.resolveForNewThread({
+                projectId,
+                assistantId: callerAssistantId(caller?.id),
+              }),
+            ),
             Effect.mapError(unavailable),
           )).selection;
         let startedRuntimeMode =

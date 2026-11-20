@@ -69,6 +69,7 @@ import {
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
+  callerAssistantId,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import {
@@ -1142,12 +1143,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** New work with no explicit model follows the project's precedence, never the caller's model. */
-  const projectDefaultModelSelection = (projectId: ProjectId) =>
-    projectModelSelection.resolveForNewThread({ projectId }).pipe(
-      Effect.map(({ selection }) => selection),
-      Effect.mapError((error) => failure("orchestration_error", error.message)),
-    );
+  /**
+   * New work with no explicit model follows the precedence, never the caller's current model;
+   * an assistant's conversation (its own or a group one) brings that assistant's layers.
+   */
+  const projectDefaultModelSelection = (
+    projectId: ProjectId,
+    callerThreadId: ThreadId | undefined,
+  ) =>
+    projectModelSelection
+      .resolveForNewThread({ projectId, assistantId: callerAssistantId(callerThreadId) })
+      .pipe(
+        Effect.map(({ selection }) => selection),
+        Effect.mapError((error) => failure("orchestration_error", error.message)),
+      );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -2129,7 +2138,7 @@ const make = Effect.gen(function* () {
       const modelSelection =
         bindToCurrentThread && parent !== undefined
           ? parent.thread.modelSelection
-          : yield* projectDefaultModelSelection(projectId);
+          : yield* projectDefaultModelSelection(projectId, scope.thread?.threadId);
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2469,7 +2478,7 @@ const make = Effect.gen(function* () {
       const inherited =
         parent === undefined
           ? undefined
-          : yield* projectDefaultModelSelection(parent.thread.projectId);
+          : yield* projectDefaultModelSelection(parent.thread.projectId, parent.thread.id);
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2618,7 +2627,7 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
-        base: yield* projectDefaultModelSelection(parent.thread.projectId),
+        base: yield* projectDefaultModelSelection(parent.thread.projectId, parent.thread.id),
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -3037,7 +3046,7 @@ const make = Effect.gen(function* () {
                 parent,
                 base:
                   committedThread?.modelSelection ??
-                  (yield* projectDefaultModelSelection(parent.thread.projectId)),
+                  (yield* projectDefaultModelSelection(parent.thread.projectId, parent.thread.id)),
                 target:
                   committedThread === null
                     ? request.target

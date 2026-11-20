@@ -60,6 +60,8 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** Assistants' own models in the project. */
+  readonly assistantModels?: Readonly<Record<string, ModelSelection>>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -85,6 +87,13 @@ const clientLaunchHarness = (input: {
             projectSettingsFolded: true,
             projectSettingsOverrides: {
               [projectId]: { defaultModelSelection: input.overrideModel },
+            },
+          }),
+      ...(input.assistantModels === undefined
+        ? {}
+        : {
+            projectSettingsOverrides: {
+              [projectId]: { assistantModelSelections: input.assistantModels },
             },
           }),
     }),
@@ -694,13 +703,15 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
 );
 
 it.effect(
-  "a thread an assistant launches becomes its task, once, follows the project, and other callers link nothing",
+  "a thread an assistant launches becomes its task, once, runs on its model, and other callers link nothing",
   () =>
     Effect.gen(function* () {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const jarvisModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "fable" };
       const { projectId, modelSelection, dependencies } = clientLaunchHarness({
         runtimeModeCeiling: "auto",
         launched,
+        assistantModels: { jarvis: jarvisModel },
       });
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
@@ -760,16 +771,24 @@ it.effect(
       // A retry of the same launch keeps the first link.
       yield* launchFrom(ThreadId.make("assistant:jarvis:1"), "Renamed", "key-1");
       yield* launchFrom(ThreadId.make("thread:plain"), "Plain", "key-2");
+      // A group conversation of the same assistant brings its model too.
+      yield* launchFrom(ThreadId.make("assistant:jarvis:g-0123456789abcdef"), "Group", "key-3");
       const linked = yield* tasks.list;
-      expect(linked.map((task) => [task.assistantId, task.title])).toEqual([
+      expect(linked.map((task) => [task.assistantId, task.title]).sort()).toEqual([
         ["jarvis", "Add retry"],
+        ["jarvis", "Group"],
       ]);
-      expect(linked[0]?.threadId).toBe(launched[0]?.threadId);
-      expect(linked[0]?.projectId).toBe(projectId);
-      // The caller runs Codex; with no model given, the new thread takes the project's.
-      expect(launched.map((input) => input.modelSelection)).toEqual(
-        launched.map(() => modelSelection),
-      );
+      const first = linked.find((task) => task.title === "Add retry");
+      expect(first?.threadId).toBe(launched[0]?.threadId);
+      expect(first?.projectId).toBe(projectId);
+      // The caller runs Codex; with no model given, the new thread takes the assistant's model
+      // for the project, and a caller no assistant runs gets the project's.
+      expect(launched.map((input) => input.modelSelection)).toEqual([
+        jarvisModel,
+        jarvisModel,
+        modelSelection,
+        jarvisModel,
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(AssistantTasks.layer, AssistantDirectory.layer).pipe(
