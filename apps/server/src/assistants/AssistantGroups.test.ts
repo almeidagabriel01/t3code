@@ -4707,6 +4707,16 @@ it.effect("a routed request keeps its sender in what the member reads", () => {
       { kind: "agent", assistantId: null, label: "Planning chat" },
     );
     yield* groups.idle;
+    // The lead routes with one text call, not a turn; only its pick is woken.
+    assert.lengthOf(h.routeCalls, 1);
+    assert.deepEqual(
+      h.sent.map((input) => input.threadId.split(":")[1]),
+      ["ada"],
+    );
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.owner_id),
+      ["ada"],
+    );
     assert.include(h.sent[0]!.text, "Request from Planning chat (an agent, not the user):");
     yield* groups.post(
       { teamId: TEAM, text: "Weekly numbers" },
