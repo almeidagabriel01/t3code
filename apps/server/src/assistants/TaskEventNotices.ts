@@ -75,10 +75,13 @@ export interface TaskEventNotice {
 }
 
 const SECTION_BREAK = "\n\n---\n\n";
+/** A break only where a task headline follows, so a rule inside a last message stays in place. */
+const SECTION_SPLIT = /\n\n---\n\n(?=Task [[<])/;
+const MERGED_PREFIX = `${TASK_EVENT_MESSAGE_PREFIX}merged:`;
 
 /** A merged notice's id derives from the runs it tells, so a replay lands on the same message. */
 const mergedMessageId = (runIds: ReadonlyArray<string>) =>
-  `${TASK_EVENT_MESSAGE_PREFIX}merged:${NodeCrypto.createHash("sha256")
+  `${MERGED_PREFIX}${NodeCrypto.createHash("sha256")
     .update(runIds.toSorted().join("\n"))
     .digest("hex")
     .slice(0, 32)}`;
@@ -247,7 +250,7 @@ const make = Effect.gen(function* () {
       SELECT subject_thread_id, run_id FROM assistant_task_notices
       WHERE thread_id = ${notice.threadId} AND message_id IN ${sql.in(ids)}`;
     const others = queued
-      .flatMap(({ message }) => message.text.slice(0, -closing.length).split(SECTION_BREAK))
+      .flatMap(({ message }) => message.text.slice(0, -closing.length).split(SECTION_SPLIT))
       .filter((section) => !isSectionAbout(section, notice.run.threadId));
     const runIds = [
       runId,
@@ -387,8 +390,11 @@ const make = Effect.gen(function* () {
                   ({ message }) =>
                     message.id !== messageId &&
                     (mergedIds.includes(message.id) ||
-                      message.id === previous?.message_id ||
-                      (isTaskEvent(message) && message.senderThreadId === notice.run.threadId)),
+                      // Other tasks' news rides in a merged message this one did not take over.
+                      (!message.id.startsWith(MERGED_PREFIX) &&
+                        (message.id === previous?.message_id ||
+                          (isTaskEvent(message) &&
+                            message.senderThreadId === notice.run.threadId)))),
                 )
                 .map(({ runId }) => runId),
             );
@@ -408,7 +414,10 @@ const make = Effect.gen(function* () {
   const foldQueued: TaskEventNotices["Service"]["foldQueued"] = (threadId) =>
     lock.withPermits(1)(
       dropQueued(threadId, (queued) => {
-        const events = queued.filter(({ message }) => isTaskEvent(message));
+        // A merged message tells several tasks, so it never stands for one of them here.
+        const events = queued.filter(
+          ({ message }) => isTaskEvent(message) && !message.id.startsWith(MERGED_PREFIX),
+        );
         return events
           .filter(
             ({ message }, index) =>

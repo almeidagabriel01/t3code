@@ -515,18 +515,60 @@ it.effect(
   },
 );
 
-it.effect("one task alone keeps its own id, and a replay of a merge lands on the same id", () => {
-  const first = harness({ busy: true });
-  const second = harness({ busy: true });
-  const mergedOf = (h: ReturnType<typeof harness>) =>
-    Effect.gen(function* () {
-      const notices = yield* TaskEventNotices;
-      yield* notices.send(taskNotice(asked(h, "a1", taskThread)));
-      assert.strictEqual(h.state.queued[0]?.message.id, "assistant-task:a1");
-      yield* notices.send(taskNotice(asked(h, "b1", otherTask)));
-      return h.state.queued[0]!.message.id;
-    }).pipe(Effect.provide(h.layer));
+it.effect("one task alone keeps its own id, and a replayed merge lands on the same id", () => {
+  const h = harness({ busy: true });
   return Effect.gen(function* () {
-    assert.strictEqual(yield* mergedOf(first), yield* mergedOf(second));
-  });
+    const notices = yield* TaskEventNotices;
+    yield* notices.send(taskNotice(asked(h, "a1", taskThread)));
+    assert.strictEqual(h.state.queued[0]?.message.id, "assistant-task:a1");
+    const b1 = asked(h, "b1", otherTask);
+    yield* notices.send(taskNotice(b1));
+    const merged = h.state.queued[0]!.message.id;
+    // The send is repeated as after a crash before its mark: the same runs, the same message.
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM assistant_task_notices WHERE subject_thread_id = ${otherTask}`;
+    const cancelled = [...h.cancelled];
+    assert.strictEqual(yield* notices.send(taskNotice(b1)), "sent");
+    assert.strictEqual(h.sends.at(-1)?.messageId, merged);
+    assert.deepStrictEqual(h.cancelled, cancelled);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a notice that does not merge never cancels a merged one carrying other tasks", () => {
+  const h = harness({ busy: true });
+  return Effect.gen(function* () {
+    const notices = yield* TaskEventNotices;
+    yield* notices.send(taskNotice(asked(h, "a1", taskThread)));
+    yield* notices.send(taskNotice(asked(h, "b1", otherTask)));
+    const merged = h.state.queued[0]!.message.id;
+    // A watch on task a reports its next run with its own text and no instruction to merge on.
+    assert.strictEqual(yield* notices.send(notice(asked(h, "a2", taskThread))), "sent");
+    assert.include(
+      h.state.queued.map((entry) => entry.message.id),
+      merged,
+    );
+    yield* notices.foldQueued(assistantThread);
+    assert.include(
+      h.state.queued.map((entry) => entry.message.id),
+      merged,
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a rule inside a task's last message is not a section break", () => {
+  const h = harness({ busy: true });
+  return Effect.gen(function* () {
+    const notices = yield* TaskEventNotices;
+    const withRule = (subject: Run) => ({
+      ...taskNotice(subject),
+      text: `${taskNotice(subject).text}\n\nIts last message:\nPart one\n\n---\n\nPart two of ${subject.id}`,
+    });
+    yield* notices.send(withRule(asked(h, "a1", taskThread)));
+    yield* notices.send(taskNotice(asked(h, "b1", otherTask)));
+    yield* notices.send(withRule(asked(h, "a2", taskThread)));
+    const [text = ""] = queuedTexts(h);
+    assert.notInclude(text, "Part two of a1");
+    assert.include(text, "Part two of a2");
+    assert.include(text, "Task [b1]");
+  }).pipe(Effect.provide(h.layer));
 });
