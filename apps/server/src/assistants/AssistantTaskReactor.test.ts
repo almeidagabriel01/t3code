@@ -146,6 +146,8 @@ const harness = (
   const onSend: { current: (input: unknown) => Effect.Effect<void> } = {
     current: () => Effect.void,
   };
+  /** The task thread's pending background work, as its shell reads it now. */
+  const background = { current: options.pendingBackgroundTasks ?? [] };
   const records = (threadId: string) =>
     Effect.succeed({
       thread: THREADS[threadId] ?? plainThread,
@@ -205,7 +207,7 @@ const harness = (
             Effect.succeed({
               title: "Add retry",
               archivedAt: null,
-              pendingBackgroundTasks: options.pendingBackgroundTasks ?? [],
+              pendingBackgroundTasks: background.current,
               ...options.shell,
             } as never),
           getThreadRecords: records,
@@ -257,7 +259,7 @@ const harness = (
       ),
     ),
   );
-  return { sends, notices, folded, allFolded, dispatched, onSend, toGroup, layer };
+  return { sends, notices, folded, allFolded, dispatched, onSend, toGroup, background, layer };
 };
 
 const insertAssistant = (id: string, archived = false) =>
@@ -683,27 +685,123 @@ it.effect("a run that ends while its thread resumes by itself does not report fi
   });
 });
 
-it.effect(
-  "a dev server left running, a PR watch or an older live run do not hold the report",
-  () => {
+it.effect("a PR watch or an older live run do not hold the report", () => {
+  const h = harness({
+    pendingBackgroundTasks: [
+      { taskId: "pull-request-watch:github.com/acme/app#7", kind: "monitor", awaited: true },
+    ],
+    runs: [
+      { id: "run-old", ordinal: 0, status: "waiting" },
+      { id: "run-completed", ordinal: 1, status: "completed" },
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+    assert.strictEqual(h.notices.length, 1);
+    assert.include(String(h.notices[0]?.text), "finished");
+  }).pipe(Effect.provide(h.layer));
+});
+
+const heldRun = {
+  id: "run-completed",
+  threadId: taskThread,
+  ordinal: 1,
+  status: "completed",
+  userMessageId: "m1",
+};
+
+const backgroundEnded = {
+  type: "provider-thread.updated",
+  threadId: taskThread,
+  payload: { pendingBackgroundTasks: [] },
+} as never as OrchestrationV2DomainEvent;
+
+it.effect.each([
+  { left: "a subagent", work: [{ taskId: "t1", kind: "subagent" }] },
+  { left: "a workflow", work: [{ taskId: "t1", kind: "background_task" }] },
+  { left: "an awaited command", work: [{ taskId: "t1", kind: "command", awaited: true }] },
+  { left: "a command it did not await", work: [{ taskId: "t1", kind: "command" }] },
+  { left: "a monitor", work: [{ taskId: "t1", kind: "monitor" }] },
+])(
+  "a run that ends leaving $left running wakes no one; the end of that work wakes once",
+  ({ work }) => {
     const h = harness({
-      pendingBackgroundTasks: [
-        { taskId: "dev", kind: "command" },
-        { taskId: "pull-request-watch:github.com/acme/app#7", kind: "monitor", awaited: true },
-      ],
-      runs: [
-        { id: "run-old", ordinal: 0, status: "waiting" },
-        { id: "run-completed", ordinal: 1, status: "completed" },
-      ],
+      pendingBackgroundTasks: work,
+      runs: [heldRun],
     });
     return Effect.gen(function* () {
       yield* setupAda();
-      yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+      const reactor = yield* Reactor.AssistantTaskReactor;
+      yield* reactor.handle(runEvent(taskThread, "completed"));
+      assert.strictEqual(h.notices.length, 0);
+      // Updates while the work still runs change nothing.
+      yield* reactor.handle(backgroundEnded);
+      assert.strictEqual(h.notices.length, 0);
+      h.background.current = [];
+      yield* reactor.handle(backgroundEnded);
+      yield* reactor.handle(backgroundEnded);
       assert.strictEqual(h.notices.length, 1);
-      assert.include(String(h.notices[0]?.text), "finished");
+      assert.strictEqual(h.notices[0]?.messageId, "assistant-task:run-completed");
+      // The released hold has no timer left to report again.
+      yield* TestClock.adjust(Reactor.UNAWAITED_HOLD);
+      assert.strictEqual(h.notices.length, 1);
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a partial run, then a run that really ends, wakes once for the second", () => {
+  const h = harness({ pendingBackgroundTasks: [{ taskId: "t1", kind: "subagent" }] });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* reactor.handle(runEvent(taskThread, "completed", "run.updated", 1));
+    h.background.current = [];
+    yield* reactor.handle({
+      type: "run.updated",
+      payload: {
+        id: "run-final",
+        threadId: taskThread,
+        status: "completed",
+        ordinal: 2,
+        userMessageId: "m2",
+      },
+    } as never);
+    yield* reactor.handle(backgroundEnded);
+    assert.deepEqual(
+      h.notices.map((notice) => notice.messageId),
+      ["assistant-task:run-final"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a command that never ends, such as a dev server, holds the report for a while", () => {
+  const h = harness({
+    pendingBackgroundTasks: [{ taskId: "dev", kind: "command" }],
+    runs: [heldRun],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+    assert.strictEqual(h.notices.length, 0);
+    yield* TestClock.adjust(Reactor.UNAWAITED_HOLD);
+    assert.strictEqual(h.notices.length, 1);
+    assert.strictEqual(h.notices[0]?.messageId, "assistant-task:run-completed");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a subagent still running holds the report past the hold", () => {
+  const h = harness({
+    pendingBackgroundTasks: [{ taskId: "t1", kind: "subagent" }],
+    runs: [heldRun],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+    yield* TestClock.adjust(Reactor.UNAWAITED_HOLD);
+    assert.strictEqual(h.notices.length, 0);
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("start wakes for what already waits, and a second start repeats the same ids", () => {
   // `changes` opens with what waits at subscription; NeedsUser.test covers that ordering.

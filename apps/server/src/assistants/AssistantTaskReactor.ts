@@ -1,7 +1,9 @@
 import {
   CommandId,
   MessageId,
+  type AssistantTask,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -49,6 +51,11 @@ const TERMINAL = new Set<string>([
 ] satisfies ReadonlyArray<TaskEventStatus>);
 const LIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const LAST_MESSAGE_CHARS = 1_500;
+/**
+ * The longest a finished run waits on commands or monitors it did not mark awaited before it
+ * reports: as often a test the agent reads on exit as a dev server that never ends.
+ */
+export const UNAWAITED_HOLD = Duration.minutes(30);
 /** Approvals a policy or the agent itself settles within seconds never reach an assistant. */
 export const REQUEST_WAKE_GRACE = Duration.seconds(10);
 
@@ -113,20 +120,25 @@ const make = Effect.gen(function* () {
   ) => (Option.isSome(task) && task.value.sourceThreadId != null ? report : Effect.succeed(false));
 
   /**
-   * A completed run whose thread goes on by itself: a newer run is lined up, or it parked on work
-   * that wakes it when done (subagents, awaited commands). That later run reports instead.
+   * Why a completed run does not report yet: its thread goes on by itself (a newer run is lined up,
+   * or it parked on work that wakes it when done, such as subagents and awaited commands), or it
+   * left commands or monitors running that it did not mark awaited, which hold it for a while.
    */
-  const resumesOnItsOwn = Effect.fnUntraced(function* (run: {
+  const holdOf = Effect.fnUntraced(function* (run: {
     readonly id: string;
     readonly threadId: ThreadId;
     readonly ordinal: number;
   }) {
     const { runs } = yield* threads.getThreadRecords(run.threadId, ["runs"]);
-    if (runs.some((other) => other.ordinal > run.ordinal && LIVE.has(other.status))) return true;
+    if (runs.some((other) => other.ordinal > run.ordinal && LIVE.has(other.status))) {
+      return "resumes" as const;
+    }
     const shell = yield* engine.getThreadShell(run.threadId);
-    return backgroundWorkHoldsCompletion(
-      (shell?.pendingBackgroundTasks ?? []).filter((task) => !isPullRequestWatchTask(task)),
+    const pending = (shell?.pendingBackgroundTasks ?? []).filter(
+      (task) => !isPullRequestWatchTask(task),
     );
+    if (backgroundWorkHoldsCompletion(pending)) return "resumes" as const;
+    return pending.length > 0 ? ("unawaited" as const) : ("none" as const);
   });
 
   /**
@@ -144,7 +156,7 @@ const make = Effect.gen(function* () {
       if (shell == null || shell.activeRunId !== null || taskStatusOf(shell) !== "done") return;
       const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
       const last = deliveredRunOf(runs);
-      if (last?.status !== "completed" || (yield* resumesOnItsOwn(last))) return;
+      if (last?.status !== "completed" || (yield* holdOf(last)) === "resumes") return;
       const notice = yield* notices.told({ threadId: owner.value.threadId, run: last });
       if (Option.isNone(notice)) return;
       const { runs: ownerRuns } = yield* threads.getThreadRecords(owner.value.threadId, ["runs"]);
@@ -167,12 +179,90 @@ const make = Effect.gen(function* () {
     return Option.fromNullishOr(rows[0]?.subject_thread_id as ThreadId | undefined);
   });
 
+  /** Tells the owner how a run of its task ended, through the notices door. */
+  const report = Effect.fn("AssistantTaskReactor.report")(function* (
+    task: AssistantTask,
+    run: Pick<
+      OrchestrationV2Run,
+      "id" | "threadId" | "status" | "userMessageId" | "checkpointId" | "ordinal"
+    >,
+  ) {
+    const owner = yield* needsUser.conversation(task.assistantId);
+    if (Option.isNone(owner)) return;
+    const shell = yield* engine.getThreadShell(run.threadId).pipe(Effect.orElseSucceed(() => null));
+    const lastMessage = yield* threads
+      .getThreadRecords(run.threadId, ["messages"], {
+        messageRoles: ["assistant"],
+        messageRunIds: [run.id],
+      })
+      .pipe(
+        Effect.map(
+          (records) =>
+            records.messages.findLast((message) => message.text.trim() !== "")?.text ?? null,
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+    yield* notices.send({
+      // The thread being written to is the assistant's, so its project, not the task's.
+      threadId: owner.value.threadId,
+      projectId: owner.value.projectId,
+      run,
+      messageId: `${TASK_EVENT_MESSAGE_PREFIX}${run.id}`,
+      text: taskWakeText({
+        title: shell?.title ?? task.title,
+        threadId: run.threadId,
+        status: run.status as TaskEventStatus,
+        lastMessage,
+      }),
+      createdBy: "agent",
+      senderThreadId: run.threadId,
+    });
+    // A notice the assistant already read can cover this run too.
+    if (run.status === "completed") yield* dismissIfDelivered(run.threadId);
+  });
+
+  /** Tasks whose last completed run is held, until the work holding it ends or the hold expires. */
+  const holds = yield* FiberMap.make<ThreadId>();
+
+  /**
+   * Reports a held task's last run once nothing holds it any more. `expired` stops unawaited
+   * commands and monitors from holding it: a dev server never ends.
+   */
+  const release = Effect.fn("AssistantTaskReactor.release")(function* (
+    task: AssistantTask,
+    expired: boolean,
+  ) {
+    const { runs } = yield* threads.getThreadRecords(task.threadId, ["runs"]);
+    const last = deliveredRunOf(runs);
+    if (last?.status !== "completed") return false;
+    const hold = yield* holdOf(last);
+    if (hold === "resumes" || (hold === "unawaited" && !expired)) return false;
+    yield* report(task, last);
+    return true;
+  });
+
+  const holdReport = (task: AssistantTask) =>
+    FiberMap.run(
+      holds,
+      task.threadId,
+      Effect.sleep(UNAWAITED_HOLD).pipe(
+        Effect.andThen(release(task, true)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant task held report failed", {
+            threadId: task.threadId,
+            cause,
+          }),
+        ),
+      ),
+    ).pipe(Effect.asVoid);
+
   const handle: AssistantTaskReactor["Service"]["handle"] = Effect.fn(
     "AssistantTaskReactor.handle",
   )(
     function* (event) {
       if (event.type === "thread.deleted" || event.type === "thread.archived") {
         const task = yield* tasks.forThread(event.threadId);
+        yield* FiberMap.remove(holds, event.threadId);
         yield* forRequest(task, groups.settleLaunch(event.threadId));
         return;
       }
@@ -187,7 +277,10 @@ const make = Effect.gen(function* () {
         (event.type === "turn-item.updated" && turnItemUpdateCanEndBackgroundWork(event.payload))
       ) {
         const task = yield* tasks.forThread(event.threadId);
-        yield* forRequest(task, groups.settleLaunch(event.threadId));
+        if (yield* forRequest(task, groups.settleLaunch(event.threadId))) return;
+        if (Option.isSome(task) && (yield* FiberMap.has(holds, event.threadId))) {
+          if (yield* release(task.value, false)) yield* FiberMap.remove(holds, event.threadId);
+        }
         return;
       }
       if (event.type !== "run.created" && event.type !== "run.updated") return;
@@ -200,47 +293,14 @@ const make = Effect.gen(function* () {
       const task = yield* tasks.forThread(run.threadId);
       if (Option.isNone(task)) return;
       if (yield* forRequest(task, groups.settleLaunch(run.threadId))) return;
+      // A run that ends with work still pending is partial: the run that really ends reports.
       // Failures always report; a wrong read reports rather than staying silent.
-      if (
-        run.status === "completed" &&
-        (yield* resumesOnItsOwn(run).pipe(Effect.orElseSucceed(() => false)))
-      ) {
-        return;
+      if (run.status === "completed") {
+        const hold = yield* holdOf(run).pipe(Effect.orElseSucceed(() => "none" as const));
+        if (hold !== "none") return yield* holdReport(task.value);
       }
-      const owner = yield* needsUser.conversation(task.value.assistantId);
-      if (Option.isNone(owner)) return;
-      const shell = yield* engine
-        .getThreadShell(run.threadId)
-        .pipe(Effect.orElseSucceed(() => null));
-      const lastMessage = yield* threads
-        .getThreadRecords(run.threadId, ["messages"], {
-          messageRoles: ["assistant"],
-          messageRunIds: [run.id],
-        })
-        .pipe(
-          Effect.map(
-            (records) =>
-              records.messages.findLast((message) => message.text.trim() !== "")?.text ?? null,
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-      yield* notices.send({
-        // The thread being written to is the assistant's, so its project, not the task's.
-        threadId: owner.value.threadId,
-        projectId: owner.value.projectId,
-        run,
-        messageId: `${TASK_EVENT_MESSAGE_PREFIX}${run.id}`,
-        text: taskWakeText({
-          title: shell?.title ?? task.value.title,
-          threadId: run.threadId,
-          status: run.status as TaskEventStatus,
-          lastMessage,
-        }),
-        createdBy: "agent",
-        senderThreadId: run.threadId,
-      });
-      // A notice the assistant already read can cover this run too.
-      if (run.status === "completed") yield* dismissIfDelivered(run.threadId);
+      yield* FiberMap.remove(holds, run.threadId);
+      yield* report(task.value, run);
     },
     (effect, event) =>
       effect.pipe(
@@ -335,12 +395,27 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  /** Tasks whose delivery completed while the server was down leave the list on start. */
+  /**
+   * On start, tasks whose delivery completed while the server was down leave the list, and a run
+   * held before the restart reports: the session that would have resumed it is gone.
+   */
   const dismissDelivered = tasks.list.pipe(
     Effect.flatMap((all) =>
       Effect.forEach(
         all.filter((task) => task.dismissedAt === null),
-        (task) => dismissIfDelivered(task.threadId),
+        (task) =>
+          Effect.gen(function* () {
+            yield* dismissIfDelivered(task.threadId);
+            if (yield* forRequest(Option.some(task), groups.settleLaunch(task.threadId))) return;
+            yield* release(task, true);
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("assistant task catch-up skipped", {
+                threadId: task.threadId,
+                cause,
+              }),
+            ),
+          ),
         { discard: true },
       ),
     ),
