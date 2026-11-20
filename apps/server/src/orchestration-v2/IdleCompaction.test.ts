@@ -444,6 +444,7 @@ describe("groupIdleCompaction", () => {
       statuses: ["completed", "cancelled"],
       skip: true,
     },
+    // A follow-up's task keeps its request in `request_id`, not in the message it answers.
     { case: "a task still runs", statuses: ["completed", "running"], skip: false },
     { case: "a task waits for its children", statuses: ["waiting"], skip: false },
     { case: "a task is paused for the user", statuses: ["paused"], skip: false },
@@ -460,10 +461,11 @@ describe("groupIdleCompaction", () => {
       }
       for (const [index, status] of statuses.entries()) {
         yield* sql`
-          INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
-            owner_id, instruction, status, created_at, updated_at)
-          VALUES (${`task-${index}`}, 'team-1', 'task-0', 'root', 'request-1', 'ada', 'Do it',
-            ${status}, '2026-01-01', '2026-01-01')`;
+          INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_id,
+            request_message_id, owner_id, instruction, status, created_at, updated_at)
+          VALUES (${`task-${index}`}, 'team-1', 'task-0', 'root', 'request-1',
+            ${index === 0 ? "request-1" : `follow-up-${index}`}, 'ada', 'Do it', ${status},
+            '2026-01-01', '2026-01-01')`;
       }
       // Another member's open task in the same request keeps nothing open for this one.
       yield* sql`

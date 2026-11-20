@@ -18,7 +18,8 @@ export const layer = Layer.effect(
         const rows = yield* sql<{ readonly open: number }>`
           SELECT EXISTS (
             SELECT 1 FROM assistant_group_tasks t
-            WHERE t.request_message_id = r.request_id AND t.owner_id = r.assistant_id
+            WHERE COALESCE(t.request_id, t.request_message_id) = r.request_id
+              AND t.owner_id = r.assistant_id
               AND t.status IN (${sql.literal(openTaskStatusesSql)})
           ) AS open
           FROM assistant_group_request_threads r WHERE r.thread_id = ${threadId}`;
