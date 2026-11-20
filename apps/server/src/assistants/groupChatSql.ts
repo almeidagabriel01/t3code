@@ -97,6 +97,12 @@ export const scopeWaitingRequestsSql = (team: string, scope: string) =>
       ORDER BY h.seq) o
     WHERE o.n = 1)`;
 
+/** A task its owner may still run again: working, or stopped where the user can resume it. */
+export const openTaskStatusesSql = list([
+  ...ASSISTANT_GROUP_WORKING_TASK_STATUSES,
+  ...ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+]);
+
 /** A task counts toward the group's `working`: queued, running or waiting. */
 export const workingTaskStatusesSql = list(ASSISTANT_GROUP_WORKING_TASK_STATUSES);
 

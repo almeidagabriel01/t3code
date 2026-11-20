@@ -227,6 +227,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
 import * as AssistantGroupReactor from "./assistants/AssistantGroupReactor.ts";
+import * as GroupIdleCompaction from "./assistants/groupIdleCompaction.ts";
 import * as AssistantRequestReactor from "./assistants/AssistantRequestReactor.ts";
 import * as AssistantTaskReactor from "./assistants/AssistantTaskReactor.ts";
 import * as AssistantTasks from "./assistants/AssistantTasks.ts";
@@ -692,7 +693,7 @@ const layerThreadSettlementWorker = Layer.effectDiscard(
 
 const layerIdleCompactionWorker = Layer.effectDiscard(
   IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(ProjectionStoreV2.layer));
+).pipe(Layer.provide(ProjectionStoreV2.layer), Layer.provide(GroupIdleCompaction.layer));
 
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),

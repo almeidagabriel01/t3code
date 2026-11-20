@@ -7,6 +7,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,15 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
+ * Threads whose session is not coming back, so keeping its prompt cache warm is waste: a group
+ * request's member thread once its tasks there are closed. Assistants provide it.
+ */
+export const IdleCompactionSkip = Context.Reference<(threadId: ThreadId) => Effect.Effect<boolean>>(
+  "t3/orchestration-v2/IdleCompactionSkip",
+  { defaultValue: () => () => Effect.succeed(false) },
+);
+
+/**
  * Beta: when a run completes on a Claude instance set to compact before the
  * cache expires, waits until shortly before its prompt cache expires and sends
  * `/compact` as a visible T3 Code turn. Timers live in
@@ -29,12 +39,14 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const skips = yield* IdleCompactionSkip;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, completedRunId: RunId) {
       let runId = completedRunId;
       // Loops after the wait or a retarget: the thread may have moved on.
       while (true) {
+        if (yield* skips(threadId)) return;
         const current = yield* settings.getSettings;
         const thread = yield* projections.getThread(threadId);
         const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)

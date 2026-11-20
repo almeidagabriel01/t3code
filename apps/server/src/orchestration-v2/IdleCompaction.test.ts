@@ -17,10 +17,13 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as GroupIdleCompaction from "../assistants/groupIdleCompaction.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -205,8 +208,10 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
+    // A closed group request's member thread is not coming back: no history read, no /compact.
+    { mode: "beforeCacheExpires", skipped: true, reads: 0 },
   ] as const)(
-    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured/$skipped",
     (scenario) => {
       const test = {
         override: "default",
@@ -317,7 +322,15 @@ describe("IdleCompactionService", () => {
             const service = yield* IdleCompactionService.make;
             yield* service.start();
             yield* Deferred.await(done);
-          }).pipe(Effect.provide(dependencies), Effect.withTracer(tracer));
+          }).pipe(
+            Effect.provide(dependencies),
+            "skipped" in test
+              ? Effect.provideService(IdleCompactionService.IdleCompactionSkip, () =>
+                  Effect.succeed(true),
+                )
+              : (effect) => effect,
+            Effect.withTracer(tracer),
+          );
           expect(historyReads).toBe(test.reads);
           expect(dispatches).toBe(test.reads);
         }),
@@ -415,6 +428,55 @@ describe("IdleCompactionService", () => {
         }).pipe(Effect.provide(dependencies));
         expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
       }),
+    ),
+  );
+});
+
+describe("groupIdleCompaction", () => {
+  it.effect.each([
+    {
+      case: "every task of the member in the request completed",
+      statuses: ["completed"],
+      skip: true,
+    },
+    {
+      case: "its tasks completed or were cancelled",
+      statuses: ["completed", "cancelled"],
+      skip: true,
+    },
+    { case: "a task still runs", statuses: ["completed", "running"], skip: false },
+    { case: "a task waits for its children", statuses: ["waiting"], skip: false },
+    { case: "a task is paused for the user", statuses: ["paused"], skip: false },
+    { case: "a task failed and can be resumed", statuses: ["failed"], skip: false },
+    { case: "the thread is no group request's", statuses: [], skip: false, plain: true },
+  ])("skips a request thread only when $case", ({ statuses, skip, ...rest }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const member = ThreadId.make("assistant:ada:r-1");
+      if (!("plain" in rest)) {
+        yield* sql`
+          INSERT INTO assistant_group_request_threads (request_id, assistant_id, team_id, thread_id)
+          VALUES ('request-1', 'ada', 'team-1', ${member})`;
+      }
+      for (const [index, status] of statuses.entries()) {
+        yield* sql`
+          INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+            owner_id, instruction, status, created_at, updated_at)
+          VALUES (${`task-${index}`}, 'team-1', 'task-0', 'root', 'request-1', 'ada', 'Do it',
+            ${status}, '2026-01-01', '2026-01-01')`;
+      }
+      // Another member's open task in the same request keeps nothing open for this one.
+      yield* sql`
+        INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+          owner_id, instruction, status, created_at, updated_at)
+        VALUES ('other', 'team-1', 'other', 'root', 'request-1', 'bo', 'Do it', 'running',
+          '2026-01-01', '2026-01-01')`;
+      const skips = yield* IdleCompactionService.IdleCompactionSkip;
+      expect(yield* skips(member)).toBe(skip);
+    }).pipe(
+      Effect.provide(
+        GroupIdleCompaction.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+      ),
     ),
   );
 });
