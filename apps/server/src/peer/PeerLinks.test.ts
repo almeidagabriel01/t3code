@@ -21,6 +21,7 @@ import { Tool, Toolkit } from "effect/ai";
 import {
   FetchHttpClient,
   HttpClient,
+  HttpClientRequest,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
@@ -584,6 +585,53 @@ it.effect("keeps a link alive while its peer answers, and says when the peer ref
       yield* Ref.set(b.bearers, []);
       expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual(["skipped"]);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("keeps using a link whose peer predates renewal, and says so once per pass", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* linkTo(a.links, b);
+      const before = Option.getOrThrow(yield* a.links.get(box.environmentId)).expiresAt;
+      // An older peer has no such route: a dev build says 404, a built one serves its web app.
+      for (const oldAnswer of [
+        () => HttpServerResponse.empty({ status: 404 }),
+        () => HttpServerResponse.text("<!doctype html><html></html>", { contentType: "text/html" }),
+      ]) {
+        const front = yield* serveRaw((request) =>
+          request.url.startsWith("/api/peer-link/session")
+            ? Effect.succeed(oldAnswer())
+            : HttpClient.execute(
+                HttpClientRequest.make(request.method)(`${b.url}${request.url}`).pipe(
+                  HttpClientRequest.setHeaders(request.headers),
+                ),
+              ).pipe(
+                Effect.flatMap((response) =>
+                  response.arrayBuffer.pipe(
+                    Effect.map((body) =>
+                      HttpServerResponse.uint8Array(new Uint8Array(body), {
+                        status: response.status,
+                        contentType: response.headers["content-type"],
+                      }),
+                    ),
+                  ),
+                ),
+                Effect.provide(FetchHttpClient.layer),
+                Effect.orDie,
+              ),
+        );
+        yield* a.sql`UPDATE peer_environment_links SET urls_json = ${JSON.stringify([front])}, last_error = NULL`;
+        expect((yield* a.links.renewAll).map((renewal) => renewal.outcome)).toEqual([
+          "incompatible",
+        ]);
+        const stored = Option.getOrThrow(yield* a.links.get(box.environmentId));
+        expect(stored.lastError).toContain("cannot renew links");
+        expect(stored.expiresAt.epochMilliseconds).toBe(before.epochMilliseconds);
+        yield* probe(a);
+      }
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
