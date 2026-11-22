@@ -5,10 +5,14 @@ import {
   type AssistantId,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { assistantGroupDraftThreadId } from "@t3tools/client-runtime/assistantGroupChat";
 import { NO_LEAD_LABEL, teamMemberChoices } from "@t3tools/client-runtime/assistantTeam";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useState } from "react";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   useAssistantEntries,
@@ -130,6 +134,12 @@ function AssistantTeamDialog(props: {
     const reply = await actions.remove(team.id);
     setSaving(false);
     if (!reply.ok) return setError(reply.message);
+    // The group's unsent draft goes with it, as a deleted thread's does, uploads included.
+    if (environmentId !== null) {
+      const draftRef = scopeThreadRef(environmentId, assistantGroupDraftThreadId(team.id));
+      releaseComposerDraftUploads(draftRef);
+      useComposerDraftStore.getState().clearDraftThread(draftRef);
+    }
     props.onClose();
   };
 

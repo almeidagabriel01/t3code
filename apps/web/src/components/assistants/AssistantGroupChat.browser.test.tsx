@@ -29,6 +29,7 @@ import { formatUpcomingTimestamp } from "~/timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { openGroupTabsAtom } from "~/state/openGroupTabs";
 import { getRouter } from "~/router";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { clearGroupDrafts } from "./GroupComposer";
 import { assistantDialogAtom } from "./assistantDialogState";
 import { closeAssistantInfo } from "./assistantInfoState";
@@ -600,8 +601,14 @@ it("says on the card when the member waits for the user's approval", async () =>
 
 it("keeps an unsent message when the user leaves the chat and comes back", async () => {
   publishGroupChat([message(1)]);
+  uploads.upload.mockImplementation(async (_environmentId: string, file: File) => ({
+    attachmentId: `pending-${file.name}`,
+    mimeType: file.type,
+  }));
   await using screen = await openChat();
   await userEvent.type(composer(), "@ada half written");
+  paste(composer().element(), [sheet()]);
+  await expect.element(main().getByRole("button", { name: "sheet.pdf" })).toBeVisible();
   await screen.router.navigate({ to: "/assistants" });
   await expect.element(composer()).not.toBeInTheDocument();
   await screen.router.navigate({
@@ -609,6 +616,8 @@ it("keeps an unsent message when the user leaves the chat and comes back", async
     params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
   });
   await expectComposer("@ada half written");
+  // Unsent files live in the group's draft as a thread's do, so they come back with the text.
+  await expect.element(main().getByRole("button", { name: "sheet.pdf" })).toBeVisible();
 });
 
 it("replies to a member's message and sends the reply link, or drops it", async () => {
@@ -1232,6 +1241,8 @@ it("attaches pasted files, keeps the others when one fails, and sends what is re
 
   await expect.element(main().getByRole("button", { name: "Submit message" })).toBeEnabled();
   await userEvent.click(main().getByRole("button", { name: "Submit message" }));
+  // A message on its way is not a draft: its text and files left the draft when it went.
+  expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
   await eventually(() =>
     expect(fakeGroupChat.posts).toEqual([
       {

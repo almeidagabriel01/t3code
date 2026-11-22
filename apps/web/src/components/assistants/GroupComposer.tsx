@@ -11,7 +11,6 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupComposerSession,
   type AssistantGroupChatState,
-  assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
   assistantGroupFailedSendRouting,
   assistantGroupShownOutgoing,
@@ -145,7 +144,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { GroupMentionChip } from "./GroupMentionChip";
 import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
-import { clearGroupAttachments, useGroupAttachments } from "./useGroupAttachments";
+import {
+  type GroupAttachment,
+  releaseGroupAttachments,
+  useGroupAttachments,
+} from "./useGroupAttachments";
 
 export type GroupSendResult =
   | { readonly ok: true }
@@ -195,6 +198,7 @@ const NOT_REVERTING = { current: false };
 const GROUP_INTAKE_THREAD_ID = ThreadId.make("group-composer");
 const NO_INLINE_FILES: ReadonlySet<string> = new Set();
 const NO_IDS: ReadonlyArray<never> = [];
+const NO_ATTACHMENTS: ReadonlyArray<GroupAttachment> = [];
 
 /** For tests: each starts with empty drafts. */
 export const clearGroupDrafts = () => {
@@ -204,7 +208,6 @@ export const clearGroupDrafts = () => {
     ),
   }));
   outgoings.clear();
-  clearGroupAttachments();
 };
 
 function MentionOptionLabel(props: {
@@ -355,6 +358,8 @@ interface Outgoing extends AssistantGroupOutgoing, GroupLandedSend {
   readonly sendKey: string;
   /** The text it sent, trimmed; `prompt` is what the composer shows now. */
   readonly text: string;
+  /** The files it took out of the draft, held until the server has its own copies. */
+  readonly attachments: ReadonlyArray<GroupAttachment>;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
@@ -597,6 +602,7 @@ export function GroupComposer(props: {
   const setPrompt = (value: string, cursor: number, expanded: number) => {
     if (shown === null) return setDraft(value, cursor, expanded);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
+    if (value === "") attached.giveBack(shown.attachments);
     setOutgoing(
       shown.tab,
       value === ""
@@ -665,10 +671,18 @@ export function GroupComposer(props: {
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
   const attached = useGroupAttachments(
-    props.draftKey,
+    draftRef,
     props.environmentId,
-    assistantGroupHeldAttachments(outgoing, shown),
-    new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
+    shown?.attachments ?? NO_ATTACHMENTS,
+    (item) => {
+      if (shown === null) return;
+      const attachments = shown.attachments.filter((entry) => entry.id !== item.id);
+      setOutgoing(shown.tab, {
+        ...shown,
+        attachments,
+        attachmentIds: attachments.map((entry) => entry.id),
+      });
+    },
   );
   const capabilities = useFileAttachmentCapabilities(props.environmentId);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
@@ -767,7 +781,7 @@ export function GroupComposer(props: {
   const settle = (sent: Outgoing) => {
     setOutgoing(sent.tab, null);
     recalled.current = null;
-    attached.clear(sent.attachmentIds);
+    releaseGroupAttachments(sent.attachments);
     props.onLanded(sent);
   };
   const seenSend = useRef<string | null>(null);
@@ -816,6 +830,7 @@ export function GroupComposer(props: {
         expanded: value.length,
       },
       attachmentIds,
+      attachments: attached.items,
       projectLabel:
         lockedProject ??
         projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
@@ -828,6 +843,8 @@ export function GroupComposer(props: {
       routing: props.routing,
     };
     if (shown === null) setDraft("", 0, 0);
+    // The draft keeps only what was never sent: the files go with the message, as its text does.
+    attached.take();
     setOutgoing(sent.tab, sent);
     setError(null);
     const result = await props.onSend(value.trim(), ready, requestId);

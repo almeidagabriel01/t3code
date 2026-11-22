@@ -554,6 +554,14 @@ interface ComposerDraftStoreState {
     options?: { allowDuplicates?: boolean; appendReference?: boolean },
   ) => string[];
   removeFile: (threadRef: ComposerThreadTarget, fileId: string) => void;
+  /**
+   * Moves these images and files out of the draft as they are, previews and uploads intact, for a
+   * send that holds them until the server confirms. The prompt is left alone.
+   */
+  takeAttachments: (
+    threadRef: ComposerThreadTarget,
+    ids: ReadonlyArray<string>,
+  ) => Array<ComposerImageAttachment | ComposerFileAttachment>;
   setFileUpload: (
     threadRef: ComposerThreadTarget,
     fileId: string,
@@ -3421,6 +3429,27 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
           return acceptedIds;
+        },
+        takeAttachments: (threadRef, ids) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          const current = threadKey.length === 0 ? undefined : get().draftsByThreadKey[threadKey];
+          if (!current || ids.length === 0) return [];
+          const taken = new Set(ids);
+          const kept = (item: { readonly id: string }) => !taken.has(item.id);
+          const nextDraft: ComposerThreadDraftState = {
+            ...current,
+            images: current.images.filter(kept),
+            files: current.files.filter(kept),
+            nonPersistedImageIds: current.nonPersistedImageIds.filter((id) => !taken.has(id)),
+            persistedAttachments: current.persistedAttachments.filter(kept),
+          };
+          set((state) => {
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+          return [...current.images, ...current.files].filter((item) => taken.has(item.id));
         },
         removeFile: (threadRef, fileId) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

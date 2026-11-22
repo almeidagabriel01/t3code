@@ -95,7 +95,7 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
-import { serializeComposerImages } from "./composerImagePersistence";
+import { useDraftAttachmentSync } from "./useDraftAttachmentSync";
 import {
   isInsideCollapsedComposerControls,
   isInsideRestingComposerControlScope,
@@ -126,7 +126,6 @@ import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
-  attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -136,7 +135,6 @@ import {
 import {
   releaseAttachmentUpload,
   releaseDraftAttachment,
-  startAttachmentUpload,
   useAttachmentUploadStore,
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
@@ -808,62 +806,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
   );
-  const clearComposerDraftPersistedAttachments = useComposerDraftStore(
-    (store) => store.clearPersistedAttachments,
-  );
-  const syncComposerDraftPersistedAttachments = useComposerDraftStore(
-    (store) => store.syncPersistedAttachments,
-  );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or releases server attachment uploads as upload capability, limits and draft attachments change
-  useEffect(() => {
-    if (!attachmentUploadsCapabilityKnown) {
-      return;
-    }
-    if (!supportsAttachmentUploads) {
-      // Reconnect or version skew can hide upload support; retain hydrated uploads.
-      for (const attachment of attachmentsToReleaseOnUploadCapabilityLoss([
-        ...composerImages,
-        ...composerFiles,
-      ])) {
-        releaseAttachmentUpload(attachment.id);
-      }
-      return;
-    }
-    if (!canOperateThread) return;
-    const invalidFiles =
-      maxFileAttachmentBytes === null
-        ? composerFiles
-        : composerFiles.filter((file) => file.sizeBytes > maxFileAttachmentBytes);
-    for (const attachment of attachmentsToReleaseOnUploadCapabilityLoss(invalidFiles)) {
-      releaseAttachmentUpload(attachment.id);
-    }
-    const uploadableFiles =
-      maxFileAttachmentBytes === null
-        ? []
-        : composerFiles.filter((file) => file.sizeBytes <= maxFileAttachmentBytes);
-    const uploadableAttachments = [...composerImages, ...uploadableFiles];
-    for (const attachment of uploadableAttachments) {
-      if (attachment.type === "file" && composerFileNeedsReattach(attachment)) {
-        continue;
-      }
-      startAttachmentUpload({
-        environmentId,
-        image: attachment,
-        draftTarget: attachmentDraftTarget,
-      });
-    }
-  }, [
-    attachmentUploadsCapabilityKnown,
-    attachmentDraftTarget,
-    canOperateThread,
-    composerFiles,
-    composerImages,
+  useDraftAttachmentSync({
     environmentId,
-    maxFileAttachmentBytes,
+    target: attachmentDraftTarget,
+    images: composerImages,
+    files: composerFiles,
+    attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
-  ]);
+    maxFileAttachmentBytes,
+    canOperate: canOperateThread,
+  });
 
   const {
     providerInstanceEntries,
@@ -1525,51 +1479,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
   }, [composerFooterHasWideActions]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads draft images as data URLs and persists them to the draft store, dropping stale results on cleanup
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (composerImages.length === 0) {
-        clearComposerDraftPersistedAttachments(attachmentDraftTarget);
-        return;
-      }
-      const getPersistedAttachmentsForThread = () =>
-        getComposerDraft(attachmentDraftTarget)?.persistedAttachments ?? [];
-      try {
-        const currentPersistedAttachments = getPersistedAttachmentsForThread();
-        const serialized = await serializeComposerImages(
-          composerImages,
-          currentPersistedAttachments,
-        );
-        if (cancelled) return;
-        syncComposerDraftPersistedAttachments(attachmentDraftTarget, serialized);
-      } catch {
-        const currentImageIds = new Set(composerImages.map((image) => image.id));
-        const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
-        const fallbackPersistedIds: Array<string> = [];
-        for (const attachment of fallbackPersistedAttachments) {
-          if (currentImageIds.has(attachment.id)) {
-            fallbackPersistedIds.push(attachment.id);
-          }
-        }
-        const fallbackPersistedIdSet = new Set(fallbackPersistedIds);
-        const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
-          fallbackPersistedIdSet.has(attachment.id),
-        );
-        if (cancelled) return;
-        syncComposerDraftPersistedAttachments(attachmentDraftTarget, fallbackAttachments);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    attachmentDraftTarget,
-    clearComposerDraftPersistedAttachments,
-    composerImages,
-    getComposerDraft,
-    syncComposerDraftPersistedAttachments,
-  ]);
 
   const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
 

@@ -390,6 +390,37 @@ describe("composerDraftStore unsent draft marker", () => {
     useComposerDraftStore.getState().setPrompt(ref, "sent next");
     useComposerDraftStore.getState().clearComposerContent(ref);
     expect(hasDraft()).toBe(false);
+
+    useComposerDraftStore.getState().setPrompt(ref, "kept per environment");
+    clearComposerDraftsEnvironment(OTHER_TEST_ENVIRONMENT_ID);
+    expect(hasDraft()).toBe(true);
+    clearComposerDraftsEnvironment(TEST_ENVIRONMENT_ID);
+    expect(hasDraft()).toBe(false);
+
+    // Deleting the conversation (thread, assistant or group) drops its draft.
+    useComposerDraftStore.getState().setPrompt(ref, "for a deleted conversation");
+    useComposerDraftStore.getState().clearDraftThread(ref);
+    expect(hasDraft()).toBe(false);
+  });
+
+  it("lights a group draft holding only files, and a send takes them out intact", () => {
+    const ref = scopeThreadRef(
+      TEST_ENVIRONMENT_ID,
+      assistantGroupDraftThreadId(AssistantTeamId.make("team-1")),
+    );
+    using revoke = vi.spyOn(URL, "revokeObjectURL");
+    const store = useComposerDraftStore.getState();
+    store.addImages(ref, [makeImage({ id: "img-1", previewUrl: "blob:img-1" })]);
+    store.addFiles(ref, [makeFile("file-1")], { appendReference: false });
+    expect(
+      composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(ref)),
+    ).toBe(true);
+
+    const taken = useComposerDraftStore.getState().takeAttachments(ref, ["img-1", "file-1"]);
+
+    expect(taken.map((item) => item.id)).toEqual(["img-1", "file-1"]);
+    expect(revoke).not.toHaveBeenCalled();
+    expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
   });
 });
 
