@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeRotatingLogFileWriter } from "../app/DesktopObservability.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 
 export interface RendererIdentity {
   readonly surface: "main" | "preview" | "splash" | "picture-in-picture" | "devtools";
@@ -36,11 +37,35 @@ interface RendererMemory {
   readonly peakWorkingSetBytes: number;
 }
 
-interface RendererRecord {
+// Last GPU process reading from the shared sampler; its age shows how stale it is at an incident.
+interface GpuSample {
+  readonly sampledAtUnixMs: number;
+  readonly pid: number;
+  readonly percentCpuUsage: number;
+  readonly cumulativeCpuSeconds: number | null;
+  readonly idleWakeupsPerSecond: number;
+  readonly workingSetBytes: number;
+  readonly peakWorkingSetBytes: number;
+}
+
+interface RecordBase {
   readonly version: 1;
   readonly mainPid: number;
   readonly mainSessionStartedAtUnixMs: number;
   readonly timestampUnixMs: number;
+}
+
+interface ChildProcessGoneRecord extends RecordBase {
+  readonly event: "child-process-gone";
+  readonly processType: Electron.Details["type"];
+  readonly reason: Electron.Details["reason"];
+  readonly exitCode: number | null;
+  readonly serviceName?: string;
+  readonly name?: string;
+  readonly gpu: GpuSample | null;
+}
+
+interface RendererRecord extends RecordBase {
   readonly event:
     | "created"
     | "identified"
@@ -59,6 +84,7 @@ interface RendererRecord {
   readonly memory: RendererMemory | null;
   readonly reason?: Electron.RenderProcessGoneDetails["reason"];
   readonly exitCode?: number;
+  readonly gpu?: GpuSample | null;
 }
 
 interface TrackedRenderer {
@@ -74,16 +100,31 @@ interface TrackedRenderer {
 const nonnegative = (value: number): number | null =>
   Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 
+const toGpuSample = (metric: Electron.ProcessMetric, sampledAtUnixMs: number): GpuSample => ({
+  sampledAtUnixMs,
+  pid: metric.pid,
+  percentCpuUsage: Number.isFinite(metric.cpu.percentCPUUsage) ? metric.cpu.percentCPUUsage : 0,
+  cumulativeCpuSeconds:
+    metric.cpu.cumulativeCPUUsage !== undefined && Number.isFinite(metric.cpu.cumulativeCPUUsage)
+      ? metric.cpu.cumulativeCPUUsage
+      : null,
+  idleWakeupsPerSecond: nonnegative(metric.cpu.idleWakeupsPerSecond) ?? 0,
+  workingSetBytes: nonnegative(metric.memory.workingSetSize * 1024) ?? 0,
+  peakWorkingSetBytes: nonnegative(metric.memory.peakWorkingSetSize * 1024) ?? 0,
+});
+
 const make = Effect.fn("DesktopRendererHistory.make")(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const path = yield* Path.Path;
   const clock = yield* Clock.Clock;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const mainSessionStartedAtUnixMs = clock.currentTimeMillisUnsafe();
-  const records = yield* Queue.sliding<RendererRecord>(256);
+  const records = yield* Queue.sliding<RendererRecord | ChildProcessGoneRecord>(256);
   const active = new Map<number, TrackedRenderer>();
   let accepting = true;
+  let gpu: GpuSample | null = null;
   const writer = yield* makeRotatingLogFileWriter({
     filePath: path.join(environment.logDir, "renderer-history.ndjson"),
     maxBytes: 256 * 1024,
@@ -96,7 +137,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     ),
   );
 
-  const writeRecord = (record: RendererRecord) =>
+  const writeRecord = (record: RendererRecord | ChildProcessGoneRecord) =>
     writer.writeText(`${JSON.stringify(record)}\n`).pipe(Effect.ignore);
   const writerFiber = yield* Effect.forever(
     Effect.uninterruptibleMask((restore) =>
@@ -155,6 +196,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
       rendererPidSource,
       rendererCreationTimeMs: renderer.creationTimeMs,
       memory: renderer.memory,
+      ...(event === "sample" || event === "unresponsive" || event === "responsive" ? { gpu } : {}),
       ...(details === undefined
         ? {}
         : {
@@ -252,6 +294,8 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     Effect.sync(() => {
       if (!accepting) return;
       const sampledAtUnixMs = clock.currentTimeMillisUnsafe();
+      const gpuMetric = metrics.find((metric) => metric.type === "GPU");
+      gpu = gpuMetric === undefined ? null : toGpuSample(gpuMetric, sampledAtUnixMs);
       if (sampledAtUnixMs - lastSampledAtUnixMs < 30_000) return;
       lastSampledAtUnixMs = sampledAtUnixMs;
       const byPid = new Map(metrics.map((metric) => [metric.pid, metric]));
@@ -278,6 +322,27 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         () => Effect.void,
       ),
     );
+  // GPU and utility crashes leave every renderer alive, so only the app sees them.
+  const onChildProcessGone = (_event: Electron.Event, details: Electron.Details) => {
+    if (!accepting) return;
+    Queue.offerUnsafe(records, {
+      version: 1,
+      mainPid: process.pid,
+      mainSessionStartedAtUnixMs,
+      timestampUnixMs: clock.currentTimeMillisUnsafe(),
+      event: "child-process-gone",
+      processType: details.type,
+      reason: details.reason,
+      exitCode: Number.isFinite(details.exitCode) ? Math.round(details.exitCode) : null,
+      ...(details.serviceName === undefined
+        ? {}
+        : { serviceName: details.serviceName.slice(0, 128) }),
+      ...(details.name === undefined ? {} : { name: details.name.slice(0, 128) }),
+      gpu,
+    });
+  };
+  yield* electronApp.on("child-process-gone", onChildProcessGone);
+
   const shutdown = Effect.sync(() => {
     accepting = false;
     for (const renderer of active.values()) renderer.removeListeners();

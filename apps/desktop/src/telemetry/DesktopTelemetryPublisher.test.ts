@@ -29,9 +29,12 @@ const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory
   shutdown: Effect.void,
 });
 
+type AppListener = (...args: ReadonlyArray<unknown>) => void;
+
 function layerElectronApp(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
   onMetricsRead: () => void = () => undefined,
+  appListeners = new Map<string, AppListener>(),
 ) {
   return Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
@@ -59,7 +62,10 @@ function layerElectronApp(
     appendCommandLineSwitch: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
-    on: () => Effect.void,
+    on: (eventName, listener) =>
+      Effect.sync(() => {
+        appListeners.set(eventName, listener as AppListener);
+      }),
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
@@ -229,6 +235,7 @@ describe("DesktopRendererHistory", () => {
                   logDir: directory,
                 } as DesktopEnvironment.DesktopEnvironment["Service"]),
               ),
+              layerElectronApp([]),
               layerFile,
             ),
           ),
@@ -357,6 +364,114 @@ describe("DesktopRendererHistory", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("records the GPU process reading at samples and hangs, and GPU process exits", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-renderer-gpu-" });
+      const appListeners = new Map<string, AppListener>();
+      const goneWritten = yield* Deferred.make<void>();
+      const layerFile = Layer.succeed(FileSystem.FileSystem, {
+        ...fileSystem,
+        writeFile: (target, bytes, options) =>
+          fileSystem
+            .writeFile(target, bytes, options)
+            .pipe(
+              Effect.tap(() =>
+                new TextDecoder().decode(bytes).includes("child-process-gone")
+                  ? Deferred.succeed(goneWritten, undefined)
+                  : Effect.void,
+              ),
+            ),
+      });
+      const layer = DesktopRendererHistory.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              DesktopEnvironment.DesktopEnvironment,
+              DesktopEnvironment.DesktopEnvironment.of({
+                logDir: directory,
+              } as DesktopEnvironment.DesktopEnvironment["Service"]),
+            ),
+            layerElectronApp([], undefined, appListeners),
+            layerFile,
+          ),
+        ),
+      );
+      const renderer = Object.assign(new NodeEvents.EventEmitter(), {
+        id: 3,
+        getOSProcessId: () => 9_101,
+        isDestroyed: () => false,
+      });
+      const metrics = [
+        {
+          pid: 9_101,
+          type: "Tab",
+          creationTime: 1,
+          memory: { workingSetSize: 1_024, peakWorkingSetSize: 1_024 },
+          cpu: { percentCPUUsage: 1, cumulativeCPUUsage: 2, idleWakeupsPerSecond: 0 },
+        },
+        {
+          pid: 9_200,
+          type: "GPU",
+          creationTime: 1,
+          memory: { workingSetSize: 3_072, peakWorkingSetSize: 6_144 },
+          cpu: { percentCPUUsage: 97.5, cumulativeCPUUsage: 412.25, idleWakeupsPerSecond: 40 },
+        },
+      ] satisfies Electron.ProcessMetric[];
+      yield* Effect.gen(function* () {
+        const history = yield* DesktopRendererHistory.DesktopRendererHistory;
+        yield* history.register(renderer as unknown as Electron.WebContents, { surface: "main" });
+        yield* history.recordMetrics(metrics);
+        renderer.emit("unresponsive");
+        appListeners.get("child-process-gone")?.(
+          {},
+          { type: "GPU", reason: "crashed", exitCode: 139.4, name: "GPU" },
+        );
+        yield* Deferred.await(goneWritten);
+      }).pipe(Effect.provide(layer));
+
+      const decodeRow = Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            event: Schema.String,
+            processType: Schema.optional(Schema.String),
+            reason: Schema.optional(Schema.String),
+            exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
+            gpu: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  pid: Schema.Number,
+                  percentCpuUsage: Schema.Number,
+                  cumulativeCpuSeconds: Schema.NullOr(Schema.Number),
+                  workingSetBytes: Schema.Number,
+                  peakWorkingSetBytes: Schema.Number,
+                }),
+              ),
+            ),
+          }),
+        ),
+      );
+      const contents = yield* fileSystem.readFileString(`${directory}/renderer-history.ndjson`);
+      const rows = yield* Effect.forEach(contents.trim().split("\n"), (line) => decodeRow(line));
+      const byEvent = (event: string) => rows.find((row) => row.event === event);
+      const gpu = {
+        pid: 9_200,
+        percentCpuUsage: 97.5,
+        cumulativeCpuSeconds: 412.25,
+        workingSetBytes: 3_072 * 1_024,
+        peakWorkingSetBytes: 6_144 * 1_024,
+      };
+      assert.isUndefined(byEvent("created")?.gpu);
+      assert.deepInclude(byEvent("sample")?.gpu, gpu);
+      assert.deepInclude(byEvent("unresponsive")?.gpu, gpu);
+      const gone = byEvent("child-process-gone");
+      assert.equal(gone?.processType, "GPU");
+      assert.equal(gone?.reason, "crashed");
+      assert.equal(gone?.exitCode, 139);
+      assert.deepInclude(gone?.gpu, gpu);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rotates retained incident history within three 256 kib files", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -397,6 +512,7 @@ describe("DesktopRendererHistory", () => {
                 logDir: directory,
               } as DesktopEnvironment.DesktopEnvironment["Service"]),
             ),
+            layerElectronApp([]),
             layerFile,
           ),
         ),

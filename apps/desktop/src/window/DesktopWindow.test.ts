@@ -40,6 +40,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -321,6 +322,7 @@ function layerTest(input: {
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
+        Layer.mock(ElectronDialog.ElectronDialog)({}),
         layerDesktopEnvironment,
         layerDesktopAppSettings,
         layerDesktopClientSettings,
@@ -445,6 +447,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             recordMetrics: () => Effect.void,
             shutdown: Effect.void,
           }),
+          Layer.mock(ElectronDialog.ElectronDialog)({}),
           layerDesktopEnvironment,
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,
@@ -518,6 +521,43 @@ describe("DesktopWindow", () => {
       assert.deepEqual(
         DesktopWindow.resolveInitialMainWindowBounds(bounds, displays),
         DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+      );
+    }
+  });
+
+  it("prompts once per hang, cancels on recovery and escalates a reload that stays hung", () => {
+    const rows: ReadonlyArray<
+      readonly [
+        DesktopWindow.UnresponsiveRecoveryPhase,
+        DesktopWindow.UnresponsiveRecoverySignal,
+        DesktopWindow.UnresponsiveRecoveryPhase,
+        DesktopWindow.UnresponsiveRecoveryAction,
+      ]
+    > = [
+      ["idle", "unresponsive", "prompting", "prompt"],
+      ["prompting", "unresponsive", "prompting", "none"],
+      ["waiting", "unresponsive", "waiting", "none"],
+      ["prompting", "responsive", "idle", "dismiss-prompt"],
+      ["prompting", "loaded", "idle", "dismiss-prompt"],
+      ["waiting", "responsive", "idle", "none"],
+      ["prompting", "wait-chosen", "waiting", "none"],
+      ["prompting", "reload-chosen", "reloading", "reload"],
+      ["idle", "reload-chosen", "idle", "none"],
+      ["idle", "wait-chosen", "idle", "none"],
+      ["reloading", "loaded", "idle", "none"],
+      ["reloading", "responsive", "idle", "none"],
+      ["reloading", "unresponsive", "crashing", "crash"],
+      ["reloading", "reload-deadline", "crashing", "crash"],
+      ["idle", "reload-deadline", "idle", "none"],
+      ["crashing", "reload-deadline", "crashing", "none"],
+      ["crashing", "loaded", "idle", "none"],
+      ["crashing", "unresponsive", "prompting", "prompt"],
+    ];
+    for (const [phase, signal, nextPhase, action] of rows) {
+      assert.deepEqual(
+        DesktopWindow.nextUnresponsiveRecovery(phase, signal),
+        [nextPhase, action],
+        `${phase} + ${signal}`,
       );
     }
   });

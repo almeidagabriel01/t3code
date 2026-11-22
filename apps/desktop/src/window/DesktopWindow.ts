@@ -36,6 +36,7 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   getInitialWindowBackgroundColor,
@@ -87,6 +88,7 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const UNRESPONSIVE_RELOAD_DEADLINE_MS = 10_000;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
 
 type DesktopWindowRuntimeServices =
@@ -97,6 +99,7 @@ type DesktopWindowRuntimeServices =
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
   | ElectronApp.ElectronApp
+  | ElectronDialog.ElectronDialog
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -107,6 +110,38 @@ type DesktopWindowRuntimeServices =
 export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
+
+export type UnresponsiveRecoveryPhase = "idle" | "prompting" | "waiting" | "reloading" | "crashing";
+export type UnresponsiveRecoverySignal =
+  | "unresponsive"
+  | "responsive"
+  | "loaded"
+  | "reload-chosen"
+  | "wait-chosen"
+  | "reload-deadline";
+export type UnresponsiveRecoveryAction = "none" | "prompt" | "dismiss-prompt" | "reload" | "crash";
+
+/** One prompt per hang; a reload that does not load or answer in time escalates to a renderer crash. */
+export function nextUnresponsiveRecovery(
+  phase: UnresponsiveRecoveryPhase,
+  signal: UnresponsiveRecoverySignal,
+): readonly [UnresponsiveRecoveryPhase, UnresponsiveRecoveryAction] {
+  switch (signal) {
+    case "unresponsive":
+      if (phase === "idle" || phase === "crashing") return ["prompting", "prompt"];
+      if (phase === "reloading") return ["crashing", "crash"];
+      return [phase, "none"];
+    case "responsive":
+    case "loaded":
+      return ["idle", phase === "prompting" ? "dismiss-prompt" : "none"];
+    case "reload-chosen":
+      return phase === "prompting" ? ["reloading", "reload"] : [phase, "none"];
+    case "wait-chosen":
+      return phase === "prompting" ? ["waiting", "none"] : [phase, "none"];
+    case "reload-deadline":
+      return phase === "reloading" ? ["crashing", "crash"] : [phase, "none"];
+  }
+}
 
 export type MainWindowZoomDirection = "in" | "out" | "reset";
 export type MainWindowContentsCommand = "reload" | "forceReload" | "toggleDevTools";
@@ -286,6 +321,7 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
   let backendHasStarted = false;
@@ -722,6 +758,10 @@ export const make = Effect.gen(function* () {
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
     let rendererRecoveryTimestamps: number[] = [];
+    let unresponsivePhase: UnresponsiveRecoveryPhase = "idle";
+    let unresponsivePrompt: AbortController | undefined;
+    let unresponsiveDeadlineFiber: Fiber.Fiber<void, never> | undefined;
+    let recoveryCrashRequested = false;
     const clearDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber === undefined) {
         return;
@@ -803,7 +843,90 @@ export const make = Effect.gen(function* () {
         );
       },
     );
+    const applyUnresponsiveRecovery = (signal: UnresponsiveRecoverySignal): void => {
+      const [phase, action] = nextUnresponsiveRecovery(unresponsivePhase, signal);
+      unresponsivePhase = phase;
+      if (phase !== "reloading" && unresponsiveDeadlineFiber !== undefined) {
+        runFork(Fiber.interrupt(unresponsiveDeadlineFiber));
+        unresponsiveDeadlineFiber = undefined;
+      }
+      if (window.isDestroyed()) return;
+      switch (action) {
+        case "none":
+          return;
+        case "prompt": {
+          const prompt = new AbortController();
+          unresponsivePrompt = prompt;
+          runFork(
+            electronDialog
+              .showMessageBox(
+                {
+                  type: "warning",
+                  title: "Window not responding",
+                  message: "The T3 Code window stopped responding.",
+                  detail:
+                    "Reloading the window keeps your agents and the server running. You can also reload later with View → Reload.",
+                  buttons: ["Reload Window", "Wait"],
+                  defaultId: 0,
+                  cancelId: 1,
+                  signal: prompt.signal,
+                },
+                window,
+              )
+              .pipe(
+                Effect.map(({ response }): UnresponsiveRecoverySignal =>
+                  response === 0 ? "reload-chosen" : "wait-chosen",
+                ),
+                Effect.catchCause((cause) =>
+                  logWindowWarning("unresponsive window prompt failed", { cause }).pipe(
+                    Effect.as<UnresponsiveRecoverySignal>("wait-chosen"),
+                  ),
+                ),
+                Effect.flatMap((choice) =>
+                  Effect.sync(() => {
+                    // An aborted prompt resolves as Wait; the episode already ended.
+                    if (unresponsivePrompt !== prompt) return;
+                    unresponsivePrompt = undefined;
+                    applyUnresponsiveRecovery(choice);
+                  }),
+                ),
+              ),
+          );
+          return;
+        }
+        case "dismiss-prompt":
+          unresponsivePrompt?.abort();
+          unresponsivePrompt = undefined;
+          return;
+        case "reload":
+          runFork(logWindowWarning("reloading unresponsive main window"));
+          window.webContents.reload();
+          unresponsiveDeadlineFiber = runFork(
+            Effect.sleep(UNRESPONSIVE_RELOAD_DEADLINE_MS).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  unresponsiveDeadlineFiber = undefined;
+                  applyUnresponsiveRecovery("reload-deadline");
+                }),
+              ),
+            ),
+          );
+          return;
+        case "crash":
+          runFork(logWindowWarning("crashing main renderer that stayed unresponsive after reload"));
+          recoveryCrashRequested = true;
+          window.webContents.forcefullyCrashRenderer();
+          return;
+      }
+    };
+    window.webContents.on("unresponsive", () => applyUnresponsiveRecovery("unresponsive"));
+    window.webContents.on("responsive", () => applyUnresponsiveRecovery("responsive"));
+    window.webContents.on("did-finish-load", () => applyUnresponsiveRecovery("loaded"));
+
     window.webContents.on("render-process-gone", (_event, details) => {
+      // A crash the user asked for must reload even past the crash-loop cap.
+      const requested = recoveryCrashRequested;
+      recoveryCrashRequested = false;
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
@@ -817,9 +940,9 @@ export const make = Effect.gen(function* () {
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
           );
           const shouldRecover =
-            recoverable &&
             !window.isDestroyed() &&
-            rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
+            (requested ||
+              (recoverable && rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS));
           yield* logWindowWarning("main window render process gone", {
             reason: details.reason,
             exitCode: details.exitCode,
