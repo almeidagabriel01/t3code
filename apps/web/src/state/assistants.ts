@@ -331,7 +331,7 @@ export const threadOwnerOfAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("web-thread-owner-of"));
 
 /** The one working set (`workingItems`) every web and desktop surface counts, the tray included. */
-export const workingItemsAtom = Atom.make((get) =>
+const workingItemsAtom = Atom.make((get) =>
   workingItems({
     shells: get(environmentThreadShells.quietAllThreadShellsAtom),
     ownerOf: get(threadOwnerOfAtom),
