@@ -137,6 +137,8 @@ export class AssistantService extends Context.Service<
       options?: { readonly id?: string },
     ) => Effect.Effect<Assistant, AssistantError>;
     readonly update: (input: AssistantsUpdateInput) => Effect.Effect<Assistant, AssistantError>;
+    /** After a run of a conversation ends: the switch a changed default deferred mid-turn. */
+    readonly applyPendingModel: (threadId: ThreadId) => Effect.Effect<void>;
     /** Keeps its own copy of a finished avatar upload; clearing goes through `update { avatar: null }`. */
     readonly setAvatarImage: (
       input: AssistantsSetAvatarImageInput,
@@ -301,6 +303,77 @@ const make = Effect.gen(function* () {
         `The provider instance ${next.instanceId} does not exist or is disabled.`,
       );
     }
+  });
+
+  /**
+   * Switches the live conversation to `target`, which also replaces a provider session resumed on
+   * the old model. Mid-turn the thread refuses another provider, so the target waits in
+   * `pending_model_selection` for the turn's end (`applyPendingModel`).
+   */
+  const switchConversation = Effect.fn("AssistantService.switchConversation")(function* (
+    row: AssistantRow,
+    target: ModelSelection | null,
+  ) {
+    const threadId = row.thread_id as ThreadId | null;
+    const thread = threadId === null ? undefined : yield* inspectThread(threadId);
+    const pending = (selection: ModelSelection | null) =>
+      sql`UPDATE assistants SET pending_model_selection = ${
+        selection === null ? null : encodeModelSelectionJson(selection)
+      } WHERE assistant_id = ${row.assistant_id}`;
+    if (
+      target === null ||
+      threadId === null ||
+      thread === undefined ||
+      thread.deletedAt !== null ||
+      modelSelectionsEqual(target, thread.modelSelection)
+    ) {
+      return yield* pending(null);
+    }
+    const id = yield* random.uuidV4().pipe(Effect.orDie);
+    const switched = yield* threads
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`assistant-model:${id}`),
+        threadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    if (switched._tag === "Success") return yield* pending(null);
+    if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") {
+      return yield* pending(target);
+    }
+    yield* Effect.logWarning("assistant conversation kept its model", {
+      threadId,
+      cause: switched.failure,
+    });
+    yield* pending(null);
+  });
+
+  /** The model a row's default stands for: the default itself, or what a conversation starts on. */
+  const effectiveDefault = (row: AssistantRow) => {
+    const own = decodeModelSelectionJson(row.default_model_selection);
+    return own !== null
+      ? Effect.succeed(own)
+      : projectModelSelection
+          .resolveForNewThread({
+            projectId: row.project_id as ProjectId,
+            assistantId: row.assistant_id as AssistantId,
+          })
+          .pipe(Effect.map(({ selection }) => selection));
+  };
+
+  /**
+   * A changed default moves a conversation still on the previous one (`previous`, read before the
+   * row changed); a model picked in the conversation by hand stays.
+   */
+  const followDefaultModel = Effect.fn("AssistantService.followDefaultModel")(function* (
+    row: AssistantRow,
+    previous: ModelSelection,
+  ) {
+    const threadId = row.thread_id as ThreadId | null;
+    const thread = threadId === null ? undefined : yield* inspectThread(threadId);
+    if (thread === undefined || !modelSelectionsEqual(thread.modelSelection, previous)) return;
+    yield* switchConversation(row, yield* effectiveDefault(row));
   });
 
   /** Ids derive from (assistant, generation), so a repeat after a crash lands on the same thread. */
@@ -800,6 +873,14 @@ const make = Effect.gen(function* () {
                 );
           const mcpServersJson =
             saved === undefined ? row.mcp_servers_json : encodeMcpServers(saved.servers);
+          const previousDefault =
+            input.defaultModelSelection === undefined || input.modelSelection !== undefined
+              ? undefined
+              : yield* effectiveDefault(row).pipe(
+                  Effect.mapError(() =>
+                    assistantError("storage", "Could not work out the conversation's model."),
+                  ),
+                );
           const now = yield* nowIso;
           if (projectChanged) {
             // A thread can't change projects: the new project gets the next generation.
@@ -872,12 +953,21 @@ const make = Effect.gen(function* () {
               }
               if (input.modelSelection !== undefined) {
                 const modelSelection = input.modelSelection;
+                // A pick by hand outranks a default switch still waiting for the turn to end.
+                yield* sql`UPDATE assistants SET pending_model_selection = NULL
+                  WHERE assistant_id = ${row.assistant_id}`;
                 yield* dispatchThread((commandId) => ({
                   type: "thread.model-selection.set",
                   commandId,
                   threadId: previousThreadId,
                   modelSelection,
                 }));
+              } else if (previousDefault !== undefined) {
+                yield* followDefaultModel(yield* findRow(row.assistant_id), previousDefault).pipe(
+                  Effect.mapError(() =>
+                    assistantError("storage", "Could not switch the conversation's model."),
+                  ),
+                );
               }
               if (archivedAt !== null && row.archived_at === null) {
                 yield* archiveThread(previousThreadId, true);
@@ -1284,6 +1374,26 @@ const make = Effect.gen(function* () {
     ensureDefault,
     create,
     update,
+    applyPendingModel: Effect.fn("AssistantService.applyPendingModel")(
+      // Read under the lock: an update that just deferred the switch commits its flag first.
+      (threadId) =>
+        lock.withPermits(1)(
+          Effect.gen(function* () {
+            const rows = yield* sql<AssistantRow>`
+              SELECT * FROM assistants
+              WHERE thread_id = ${threadId} AND pending_model_selection IS NOT NULL`;
+            const row = rows[0];
+            if (row === undefined) return;
+            yield* switchConversation(row, decodeModelSelectionJson(row.pending_model_selection));
+          }),
+        ),
+      (effect) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("deferred assistant model switch failed", { cause }),
+          ),
+        ),
+    ),
     setAvatarImage,
     dismissTask: Effect.fn("AssistantService.dismissTask")((threadId) =>
       setTaskDismissed(threadId, true),

@@ -41,6 +41,7 @@ import {
   ChatAttachmentId,
   CommandId,
   isAssistantGroupThreadId,
+  isAssistantThreadId,
   TextGenerationError,
   type ModelSelection,
   MessageId,
@@ -2282,13 +2283,20 @@ const make = Effect.gen(function* () {
     if (parent !== undefined) yield* settleWait(parent);
   });
 
-  /** The model the lead would route on: its own conversation's, else the project's default. */
+  /** The model the lead would route on: its own conversation's, else what new work of its gets. */
   const leadSelection = Effect.fn("AssistantGroups.leadSelection")(function* (lead: AssistantRow) {
     const current =
       lead.thread_id === null ? undefined : yield* inspectThread(lead.thread_id as ThreadId);
-    return (
-      current?.modelSelection ?? (yield* assistants.defaultModel(lead.project_id as ProjectId))
-    );
+    if (current !== undefined) return current.modelSelection;
+    return yield* modelSelections
+      .resolveForNewThread({
+        projectId: lead.project_id as ProjectId,
+        assistantId: lead.assistant_id as AssistantId,
+      })
+      .pipe(
+        Effect.map(({ selection }) => selection),
+        Effect.catch(() => assistants.defaultModel(lead.project_id as ProjectId)),
+      );
   });
 
   /** The lead's own provider instance must offer routing: no usage-limit fallback stands in for it. */
@@ -3566,7 +3574,12 @@ const make = Effect.gen(function* () {
       }
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) {
-        if (ENDED_RUN.has(event.payload.status)) yield* settleLaunchSource(event.payload.threadId);
+        if (!ENDED_RUN.has(event.payload.status)) return;
+        yield* settleLaunchSource(event.payload.threadId);
+        // An assistant's own conversation: a default changed mid-turn switches it now.
+        if (isAssistantThreadId(event.payload.threadId)) {
+          yield* assistants.applyPendingModel(event.payload.threadId);
+        }
         return;
       }
       if (

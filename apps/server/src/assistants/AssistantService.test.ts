@@ -137,6 +137,11 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
                     if (command.type === "thread.archive") thread.archivedAt = "now";
                     if (command.type === "thread.unarchive") thread.archivedAt = null;
                     if (command.type === "thread.delete") thread.deletedAt = "now";
+                    if (command.type === "thread.model-selection.set") {
+                      thread.modelSelection = (
+                        command as unknown as { modelSelection: ModelSelection }
+                      ).modelSelection;
+                    }
                   }
                   return {} as never;
                 }).pipe(Effect.orDie),
@@ -786,11 +791,14 @@ it.effect(
       });
       assert.deepEqual(set.defaultModelSelection, beyond);
       assert.equal(set.defaultEnvironment, "env-peer");
-      // Other edits keep it, and it never switches the current conversation.
+      // Other edits keep it and leave the conversation's model alone.
+      const switches = () =>
+        dispatched.filter((command) => command.type === "thread.model-selection.set").length;
+      const before = switches();
       const renamed = yield* assistants.update({ assistantId: made.id, name: "Renamed" });
       assert.deepEqual(renamed.defaultModelSelection, beyond);
       assert.equal(renamed.defaultEnvironment, "env-peer");
-      assert.isFalse(dispatched.some((command) => command.type === "thread.model-selection.set"));
+      assert.equal(switches(), before);
       const cleared = yield* assistants.update({
         assistantId: made.id,
         defaultModelSelection: null,
@@ -862,6 +870,63 @@ it.effect(
         name: "Dev 3",
         defaultModelSelection: beyond,
       });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "a changed default moves a conversation still on the previous one, after the turn when busy",
+  () => {
+    const { layer, threads, dispatched, refusedCommands } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [repo]: { defaultModelSelection: model("repo") } },
+      });
+      const made = yield* assistants.create(create());
+      const threadId = made.threadId!;
+      const modelNow = () => threads.get(threadId)!.modelSelection.model;
+      const switches = () =>
+        dispatched.filter((command) => command.type === "thread.model-selection.set").length;
+      assert.equal(modelNow(), "repo");
+
+      // An idle conversation on the previous default (none: what it started on) takes the new one.
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: model("fable") });
+      assert.equal(modelNow(), "fable");
+      const afterFirst = switches();
+      // Saving the same default again changes nothing.
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: model("fable") });
+      assert.equal(switches(), afterFirst);
+
+      // Mid-turn the save still succeeds; the switch lands when the turn ends.
+      refusedCommands.add("thread.model-selection.set");
+      const saved = yield* assistants.update({
+        assistantId: made.id,
+        defaultModelSelection: model("opus"),
+      });
+      assert.deepEqual(saved.defaultModelSelection, model("opus"));
+      assert.equal(modelNow(), "fable");
+      refusedCommands.clear();
+      yield* assistants.applyPendingModel(threadId);
+      assert.equal(modelNow(), "opus");
+      const afterPending = switches();
+      yield* assistants.applyPendingModel(threadId);
+      assert.equal(switches(), afterPending);
+
+      // Clearing the default falls back to the project's.
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: null });
+      assert.equal(modelNow(), "repo");
+
+      // Where no project sets a model, a first default still moves the conversation.
+      const homebody = yield* assistants.create(create({ name: "Homebody", scope: "all" }));
+      yield* assistants.update({ assistantId: homebody.id, defaultModelSelection: model("own") });
+      assert.equal(threads.get(homebody.threadId!)!.modelSelection.model, "own");
+
+      // A model picked in the conversation by hand stays when the default changes.
+      yield* assistants.update({ assistantId: made.id, modelSelection: model("hand") });
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: model("fable") });
+      assert.equal(modelNow(), "hand");
     }).pipe(Effect.provide(layer));
   },
 );

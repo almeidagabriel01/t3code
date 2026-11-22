@@ -58,6 +58,7 @@ export interface AssistantRow {
   readonly project_ids_json?: string | null;
   readonly default_model_selection?: string | null;
   readonly default_environment?: string | null;
+  readonly pending_model_selection?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }

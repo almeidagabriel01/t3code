@@ -175,6 +175,11 @@ the project's or group's model changes; a thread off it was changed by the user,
 wins over that pick. Over a model picked in the thread by hand, the switch also records that model
 in `restore_model_selection`, and the next task without a pick switches back to it.
 
+An assistant's own conversation follows a changed default only while it still runs on the previous
+one (no default reads as what the conversation would start on); a model picked there by hand stays.
+Mid-turn the switch waits in `assistants.pending_model_selection`, and the group reactor's run-end
+handling applies it (`AssistantService.applyPendingModel`), so the next answer runs on the new model.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
 tasks run per group. A finished run posts the `result` tool text or the run's last assistant message,

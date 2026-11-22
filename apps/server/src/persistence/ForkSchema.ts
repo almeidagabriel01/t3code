@@ -530,6 +530,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   }
   // Where an assistant's implicit launches run: 'local', 'auto' or a linked environment id; NULL inherits.
   yield* addColumns("assistants", [["default_environment", "TEXT"]]);
+  // The model a changed default switches the conversation to once its current turn ends.
+  yield* addColumns("assistants", [["pending_model_selection", "TEXT"]]);
   // The environment an "auto" launch picked, so a retry with the same request id lands there too.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_launch_routes (
