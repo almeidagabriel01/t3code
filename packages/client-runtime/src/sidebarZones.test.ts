@@ -1,10 +1,13 @@
 import { AssistantId, ProjectId, type AssistantTeamChatScope } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { rankAssistants } from "./assistantList.ts";
+import { assistantLiveWork } from "./assistantLiveWork.ts";
 import {
   assistantIndicator,
   assistantStatus,
   assistantStatusOf,
+  assistantWorkReasonLabel,
   countWaits,
   folderAttention,
   folderIndicator,
@@ -264,11 +267,29 @@ describe("indicators", () => {
       { ...chat, unreadCount: 4 },
       { kind: "running", count: 2 },
     ],
+    [
+      "a member the chat lists running, once beside its working thread",
+      0,
+      ["working", "idle"],
+      { ...chat, runningMemberIds: ["m0", "m1"] },
+      { kind: "running", count: 2 },
+    ],
+    [
+      "a running task of a member drawn in another group",
+      0,
+      ["idle"],
+      { ...chat, runningMemberIds: ["elsewhere"] },
+      { kind: "running", count: 1 },
+    ],
     ["unread messages", 0, ["idle"], { ...chat, unreadCount: 4 }, { kind: "unread", count: 4 }],
     ["nothing", 0, ["idle"], null, null],
   ] as const)("a folder shows %s", (_name, needsYou, moods, folderChat, expected) => {
     expect(
-      folderIndicator({ needsYou, members: moods.map((mood) => ({ mood })), chat: folderChat }),
+      folderIndicator({
+        needsYou,
+        members: moods.map((mood, index) => ({ id: `m${index}`, mood })),
+        chat: folderChat,
+      }),
     ).toEqual(expected);
   });
 
@@ -557,6 +578,7 @@ describe("assistantStatusOf", () => {
           face: "working",
         },
       ] as never,
+      teams: [],
       reachable: () => reachable,
     });
 
@@ -583,6 +605,7 @@ describe("assistantStatusOf", () => {
       decisions: [],
       ownerOf,
       sites: [],
+      teams: [],
       reachable: () => true,
     });
     expect(status.of("e", limited).detail).toBe("Usage limit");
@@ -699,5 +722,184 @@ describe("needsYouCards", () => {
       ["old-request", { kind: "thread" }, null, null],
       ["guest", { kind: "thread" }, null, null],
     ]);
+  });
+});
+
+describe("group work", () => {
+  const GROUP = "VSTelecom · Dev";
+  const thread = (id: string, extra: object = {}) =>
+    ({
+      ...shell(id),
+      projectId: "p",
+      title: id,
+      createdAt: "2026-11-17T14:38:00.000Z",
+      updatedAt: "2026-11-17T14:38:00.000Z",
+      pinnedAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      pendingSubagentRequest: null,
+      pendingGuestMessageCount: 0,
+      queuedMessageCount: 0,
+      blockedOnThreadWait: false,
+      latestRun: null,
+      runtime: null,
+      source: { latestVisibleMessage: null },
+      ...extra,
+    }) as never;
+  const running = { runtime: { status: "running" } };
+  const lead = { id: "lead", name: "VSTelecom Lead", threadId: "assistant:lead:1" };
+  const qa = { id: "qa", name: "VSTelecom QA", threadId: "assistant:qa:1" };
+  const request = (id: string) => `assistant:${id}:g-6b44572d60beb333`;
+  const own = [thread(lead.threadId), thread(qa.threadId)];
+
+  /** The sidebar as both clients derive it: status, ranking, then the Teams layout. */
+  const sidebar = (input: {
+    readonly shells: ReadonlyArray<never>;
+    readonly runningMemberIds?: ReadonlyArray<string>;
+    readonly tasks?: ReadonlyArray<{ readonly assistantId: string; readonly threadId: string }>;
+  }) => {
+    const chat = {
+      latestSeq: 1,
+      readSeq: 1,
+      unreadCount: 0,
+      working: (input.runningMemberIds ?? []).length > 0,
+      preview: null,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [request("lead"), request("qa")],
+      ...(input.runningMemberIds === undefined
+        ? {}
+        : { runningMemberIds: input.runningMemberIds }),
+    };
+    const teams = [
+      { environmentId: "e", team: { id: "vs", name: GROUP, memberIds: ["lead", "qa"], chat } },
+    ];
+    const work = assistantLiveWork({
+      tasks: (input.tasks ?? []).map((task) => ({
+        environmentId: "e" as never,
+        task: { ...task, createdAt: "2026-11-17T14:38:00.000Z", dismissedAt: null } as never,
+      })),
+      shells: input.shells,
+    });
+    const ownerOf = threadOwnerResolver({
+      shells: input.shells,
+      taskAssistantByThreadKey: new Map(
+        (input.tasks ?? []).map((task) => [`e:${task.threadId}`, `e:${task.assistantId}`]),
+      ),
+      teamKeyByThreadKey: new Map(chat.threadIds.map((id) => [`e:${id}`, "e:vs"])),
+      activeAssistantKeys: new Set(["e:lead", "e:qa"]),
+    });
+    const status = assistantStatusOf({
+      shells: input.shells,
+      decisions: [],
+      ownerOf,
+      sites: work.threads,
+      teams,
+      reachable: () => true,
+    });
+    const ranked = rankAssistants(
+      [lead, qa].map((assistant) => ({ environmentId: "e", assistant })),
+      input.shells,
+      (entry, presence) => status.read(entry.environmentId, entry.assistant.id, presence),
+    );
+    const folder = teamsLayout({ assistants: ranked, teams, items: status.items }).folders[0]!;
+    return {
+      folder: folder.indicator,
+      moods: Object.fromEntries(
+        folder.members.map(({ entry, presence }) => [entry.assistant.id, presence.mood]),
+      ),
+      why: (assistant: typeof lead) =>
+        status.why("e", assistant).map(assistantWorkReasonLabel).join(", "),
+    };
+  };
+
+  it("a routed request with Lead and QA running makes the group and both members working (the print)", () => {
+    // The chat says Running from the group's tasks before either member's thread has a run.
+    const view = sidebar({
+      shells: [...own, thread(request("lead")), thread(request("qa"))],
+      runningMemberIds: ["lead", "qa"],
+    });
+    expect(view.folder).toEqual({ kind: "running", count: 2 });
+    expect(view.moods).toEqual({ lead: "working", qa: "working" });
+    expect(view.why(lead)).toBe(`In ${GROUP}`);
+  });
+
+  it.each([
+    [
+      "own chat",
+      [thread(lead.threadId, running), thread(qa.threadId)],
+      {},
+      "In its chat",
+    ],
+    [
+      "request the lead routed, or an @mention: its request thread runs",
+      [...own, thread(request("lead"), running)],
+      {},
+      `In ${GROUP}`,
+    ],
+    [
+      "resume or follow-up: its request thread queued again",
+      [...own, thread(request("lead"), { runtime: { status: "queued" } })],
+      {},
+      `In ${GROUP}`,
+    ],
+    [
+      "a task the chat lists running before its thread starts",
+      [...own, thread(request("lead"))],
+      { runningMemberIds: ["lead"] },
+      `In ${GROUP}`,
+    ],
+    [
+      "a native subagent of its request thread",
+      [
+        ...own,
+        thread(request("lead")),
+        thread("sub", {
+          title: "Review the diff",
+          lineage: { parentThreadId: request("lead"), relationshipToParent: "subagent" },
+          ...running,
+        }),
+      ],
+      {},
+      "Subagent: Review the diff",
+    ],
+    [
+      "a thread it launched (t3_thread_launch or delegate_task)",
+      [...own, thread("launched", { title: "Fix login", ...running })],
+      { tasks: [{ assistantId: "lead", threadId: "launched" }] },
+      "Thread: Fix login",
+    ],
+  ] as const)("%s makes the member and its group working", (_origin, shells, extra, why) => {
+    const view = sidebar({ shells, ...extra });
+    expect(view.folder).toEqual({ kind: "running", count: 1 });
+    expect(view.moods).toEqual({ lead: "working", qa: "idle" });
+    expect(view.why(lead)).toBe(why);
+    expect(view.why(qa)).toBe("");
+  });
+
+  it("drops the indicator once every run and task ends, from the same state", () => {
+    const busy = sidebar({
+      shells: [...own, thread(request("lead"), running), thread(request("qa"), running)],
+      runningMemberIds: ["lead", "qa"],
+    });
+    const done = sidebar({
+      shells: [
+        ...own,
+        thread(request("lead"), { runtime: { status: "completed" } }),
+        thread(request("qa"), { runtime: { status: "completed" } }),
+      ],
+      runningMemberIds: [],
+    });
+    expect(busy.folder).toEqual({ kind: "running", count: 2 });
+    expect(done.folder).toBeNull();
+    expect(done.moods).toEqual({ lead: "idle", qa: "idle" });
+  });
+
+  it("counts a member once when its thread and the chat both say it runs", () => {
+    const view = sidebar({
+      shells: [...own, thread(request("lead"), running)],
+      runningMemberIds: ["lead", "lead"],
+    });
+    expect(view.folder).toEqual({ kind: "running", count: 1 });
   });
 });

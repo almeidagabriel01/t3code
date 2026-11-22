@@ -20,6 +20,8 @@ export interface AssistantWorkSite {
   readonly assistantId: string;
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
+  /** A thread it launched, or a native subagent of one of its own or group threads. */
+  readonly kind: "task" | "subagent";
   /** "waiting" when the work there waits on the user, so its face matches the label beside it. */
   readonly face: Extract<AssistantFace, "working" | "waiting">;
 }
@@ -65,6 +67,7 @@ export function assistantLiveWork(input: {
       assistantId: task.assistantId,
       projectId: shell.projectId,
       threadId: shell.id,
+      kind: "task",
       face: state === "waiting" ? "waiting" : "working",
       at: task.createdAt,
     });
@@ -82,6 +85,7 @@ export function assistantLiveWork(input: {
         assistantId,
         projectId: child.projectId,
         threadId: child.id,
+        kind: "subagent",
         face: NEEDS_USER.has(resolveSidebarThreadStatus(child)) ? "waiting" : "working",
         at: child.createdAt,
       });

@@ -19,11 +19,13 @@ import {
 import { sortByAttention, type AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
+  assistantGroupThreadsOf,
   assistantPresence,
   assistantPresenceOf,
   type AssistantMood,
   type AssistantPresence,
 } from "./assistantRobot.ts";
+import { resolveSidebarThreadStatus, sidebarStatusIsRunning } from "./state/threadAttention.ts";
 
 /**
  * The sidebar's three zones (Needs you, Teams, Projects), derived once so web and mobile draw the
@@ -269,6 +271,7 @@ export interface ZoneTeam {
   readonly environmentId: string;
   readonly team: {
     readonly id: string;
+    readonly name?: string | undefined;
     readonly memberIds: ReadonlyArray<string>;
     readonly chat?: FolderChat | null | undefined;
   };
@@ -328,7 +331,10 @@ export function teamsLayout<
     });
     const indicator = folderIndicator({
       needsYou,
-      members: members.map(({ presence }) => ({ mood: presence.mood })),
+      members: members.map(({ entry, presence }) => ({
+        id: entry.assistant.id,
+        mood: presence.mood,
+      })),
       chat: team.team.chat ?? null,
     });
     return { team, members, needsYou, indicator };
@@ -379,7 +385,7 @@ export function assistantIndicator(input: {
   return null;
 }
 
-type FolderChat = Pick<AssistantTeamChat, "scopes"> & {
+type FolderChat = Pick<AssistantTeamChat, "scopes" | "runningMemberIds"> & {
   readonly pausedTasks: number;
   readonly failedTasks: number;
   readonly unreadCount: number;
@@ -389,16 +395,20 @@ type FolderChat = Pick<AssistantTeamChat, "scopes"> & {
  * A group folder's one indicator, from the members drawn inside it and the group's own threads:
  * needs you (a counted wait, or a tab the server flags as waiting), then running N (one working
  * member makes the group working), failed, a member held by a usage limit, paused, then unread.
+ * Running counts each member once: working by its threads, or listed by the group's chat.
  */
 export function folderIndicator(input: {
   /** From `countWaits` over the drawn members and the group's key. */
   readonly needsYou: number;
-  readonly members: ReadonlyArray<{ readonly mood: AssistantMood }>;
+  readonly members: ReadonlyArray<{ readonly id: string; readonly mood: AssistantMood }>;
   readonly chat: FolderChat | null;
 }): ZoneIndicator | null {
   if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
   if (assistantGroupChatWaiting(input.chat ?? undefined)) return { kind: "needs", count: 1 };
-  const running = input.members.filter((member) => member.mood === "working").length;
+  const running = new Set([
+    ...input.members.flatMap((member) => (member.mood === "working" ? [member.id] : [])),
+    ...(input.chat?.runningMemberIds ?? []),
+  ]).size;
   if (running > 0) return { kind: "running", count: running };
   if (
     (input.chat?.failedTasks ?? 0) > 0 ||
@@ -509,8 +519,8 @@ export const ENVIRONMENT_DISCONNECTED_LABEL = "This environment is disconnected"
 /**
  * The one status every screen shows for an assistant (sidebar, Home, info, Work, a thread's
  * presence menu). A known-disconnected environment wins, since its cached threads are stale. Then
- * comes a wait the Needs you list holds, then a failed run, then work in its own threads or in
- * tasks it launched, then idle.
+ * comes a wait the Needs you list holds, then a failed run, then work in its own threads, in tasks
+ * it launched, or in a group whose chat lists it running, then idle.
  */
 export function assistantStatus(input: {
   /** `assistantPresence` of its own conversation and group threads. */
@@ -519,10 +529,13 @@ export function assistantStatus(input: {
   readonly needsYou: number;
   /** Its live launched tasks and delegated children. */
   readonly sites: ReadonlyArray<Pick<AssistantWorkSite, "face">>;
+  /** Names of the groups whose chat lists a task of it running; their cards say Running. */
+  readonly groups?: ReadonlyArray<string> | undefined;
   /** False when its environment is known to be unreachable; null while that is unknown. */
   readonly reachable: boolean | null;
 }): AssistantPresence {
   const { presence } = input;
+  const groups = input.groups ?? [];
   const still = { since: null, reading: false } as const;
   if (input.reachable === false) {
     return { mood: "idle", detail: ENVIRONMENT_DISCONNECTED_LABEL, ...still, queued: 0 };
@@ -533,16 +546,50 @@ export function assistantStatus(input: {
       : { ...presence, mood: "needs", detail: "Needs you", ...still };
   }
   if (presence.mood === "failed" || presence.mood === "working") return presence;
-  // A request nobody lists (T3 answers it itself) and a live task are both work in progress.
-  if (presence.mood === "needs" || input.sites.length > 0) {
-    return { ...presence, mood: "working", detail: "Working", ...still };
+  // A request nobody lists (T3 answers it itself), a live task and a group task are all work.
+  if (presence.mood === "needs" || input.sites.length > 0 || groups.length > 0) {
+    const detail = input.sites.length === 0 && groups.length > 0 ? `Working in ${groups[0]}` : "Working";
+    return { ...presence, mood: "working", detail, ...still };
   }
   return presence;
 }
 
+/** One reason an assistant is working, so a row can say why and where. */
+export type AssistantWorkReason =
+  | { readonly kind: "chat" }
+  | { readonly kind: "group"; readonly group: string }
+  | {
+      readonly kind: "thread" | "subagent";
+      readonly threadId: string;
+      readonly title: string;
+    };
+
+/** The words every client shows for a reason. */
+export function assistantWorkReasonLabel(reason: AssistantWorkReason): string {
+  switch (reason.kind) {
+    case "chat":
+      return "In its chat";
+    case "group":
+      return `In ${reason.group}`;
+    case "thread":
+      return `Thread: ${reason.title}`;
+    case "subagent":
+      return `Subagent: ${reason.title}`;
+  }
+}
+
+/** "<name> · <reasons>", the line a group's status and a member's tooltip show. */
+export const assistantWorkLine = (name: string, reasons: ReadonlyArray<AssistantWorkReason>) =>
+  reasons.length === 0
+    ? name
+    : `${name} · ${reasons.map(assistantWorkReasonLabel).join(", ")}`;
+
+const UNNAMED_GROUP = "a group";
+
 /**
  * Every assistant's `assistantStatus` at once, from the shared state both clients hold: `items` is
- * the Needs you list, `read` adjusts a presence in hand, `of` reads an assistant from the shells.
+ * the Needs you list, `read` adjusts a presence in hand, `of` reads an assistant from the shells,
+ * and `why` lists what it is working on.
  */
 export function assistantStatusOf<
   S extends ZoneShell & Parameters<typeof assistantPresenceOf>[2][number],
@@ -551,18 +598,33 @@ export function assistantStatusOf<
   readonly shells: ReadonlyArray<S>;
   readonly decisions: ReadonlyArray<{ readonly environmentId: string; readonly decision: D }>;
   readonly ownerOf: (shell: Pick<S, "environmentId" | "id">) => ThreadOwner;
+  /** Every live launched task and delegated child (`assistantLiveWork().threads`). */
   readonly sites: ReadonlyArray<AssistantWorkSite>;
+  /** Active groups; their chats list the members running a task. */
+  readonly teams: ReadonlyArray<ZoneTeam>;
   readonly reachable: (environmentId: string) => boolean | null;
 }) {
   const { shells, sites } = input;
   const items = needsYouItems({ shells, decisions: input.decisions, ownerOf: input.ownerOf });
+  const groupName = new Map<string, string>();
+  const runningIn = new Map<string, string[]>();
+  for (const { environmentId, team } of input.teams) {
+    const name = team.name ?? UNNAMED_GROUP;
+    groupName.set(keyOf(environmentId, team.id), name);
+    for (const assistantId of new Set(team.chat?.runningMemberIds ?? [])) {
+      const key = keyOf(environmentId, assistantId);
+      runningIn.set(key, [...(runningIn.get(key) ?? []), name]);
+    }
+  }
+  const shellByKey = new Map(shells.map((shell) => [keyOf(shell.environmentId, shell.id), shell]));
+  const sitesOf = (environmentId: string, assistantId: string) =>
+    sites.filter((site) => site.environmentId === environmentId && site.assistantId === assistantId);
   const read = (environmentId: string, assistantId: string, presence: AssistantPresence) =>
     assistantStatus({
       presence,
       needsYou: countWaits(items, { assistantKeys: new Set([keyOf(environmentId, assistantId)]) }),
-      sites: sites.filter(
-        (site) => site.environmentId === environmentId && site.assistantId === assistantId,
-      ),
+      sites: sitesOf(environmentId, assistantId),
+      groups: runningIn.get(keyOf(environmentId, assistantId)) ?? [],
       reachable: input.reachable(environmentId),
     });
   const of = (
@@ -578,5 +640,36 @@ export function assistantStatusOf<
           assistant.id,
           assistantPresenceOf(assistant, environmentId, shells, limitLabel),
         );
-  return { items, read, of };
+  const running = (shell: S | undefined) =>
+    shell !== undefined &&
+    shell.archivedAt === null &&
+    sidebarStatusIsRunning(resolveSidebarThreadStatus(shell));
+  const why = (
+    environmentId: string,
+    assistant: { readonly id: string; readonly threadId: string | null },
+  ): ReadonlyArray<AssistantWorkReason> => {
+    const reasons: AssistantWorkReason[] = [];
+    if (assistant.threadId !== null && running(shellByKey.get(keyOf(environmentId, assistant.threadId)))) {
+      reasons.push({ kind: "chat" });
+    }
+    const groups = new Set<string>();
+    for (const shell of assistantGroupThreadsOf(shells, environmentId, assistant.id)) {
+      if (!running(shell)) continue;
+      const owner = input.ownerOf(shell);
+      const teamKey = owner.kind === "assistant" ? owner.teamKey : null;
+      groups.add((teamKey === null ? undefined : groupName.get(teamKey)) ?? UNNAMED_GROUP);
+    }
+    for (const name of runningIn.get(keyOf(environmentId, assistant.id)) ?? []) groups.add(name);
+    for (const group of groups) reasons.push({ kind: "group", group });
+    for (const site of sitesOf(environmentId, assistant.id)) {
+      const title = shellByKey.get(keyOf(site.environmentId, site.threadId))?.title ?? "";
+      reasons.push({
+        kind: site.kind === "subagent" ? "subagent" : "thread",
+        threadId: site.threadId,
+        title,
+      });
+    }
+    return reasons;
+  };
+  return { items, read, of, why };
 }
