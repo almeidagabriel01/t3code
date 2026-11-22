@@ -115,6 +115,7 @@ import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import {
+  ASKED_IN_TEXT_PREFIX,
   asksUser,
   decisionsHoldingThread,
   threadsWaitingOnUser,
@@ -534,6 +535,17 @@ const invalid = (message: string) => Effect.fail(assistantError("invalid", messa
 const clip = (text: string, max: number) => {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max).join("")}…`;
+};
+
+/** `clip` by UTF-16 length, the unit decision limits count in, never splitting a character. */
+const clipUnits = (text: string, max: number) => {
+  if (text.length <= max) return text;
+  let kept = "";
+  for (const char of text) {
+    if (kept.length + char.length > max - 1) break;
+    kept += char;
+  }
+  return `${kept}…`;
 };
 
 const joinNames = (names: ReadonlyArray<string>, conjunction = "and") =>
@@ -2312,9 +2324,6 @@ const make = Effect.gen(function* () {
   ) {
     const tasks: TaskRow[] = [];
     for (const recipient of recipients) {
-      if (message.author === "user" && message.request_id !== null) {
-        yield* answerInChat(message.request_id, recipient.assistant_id);
-      }
       tasks.push(
         yield* insertTask({
           teamId: team.id,
@@ -2326,6 +2335,10 @@ const make = Effect.gen(function* () {
           status: "queued",
         }),
       );
+      // After the new task opens, so the request never reads as done in between.
+      if (message.author === "user" && message.request_id !== null) {
+        yield* answerInChat(message.request_id, recipient.assistant_id);
+      }
     }
     return tasks;
   });
@@ -3325,12 +3338,12 @@ const make = Effect.gen(function* () {
         fromThreadId: threadId,
         projectId: projectId as ProjectId,
         threadTitle: `${team.name} · ${subject}`,
-        clientRequestId: `group-asks:${task.task_id}:${task.revision}`,
-        title: clip(
+        clientRequestId: `${ASKED_IN_TEXT_PREFIX}${task.task_id}:${task.revision}`,
+        title: clipUnits(
           `${yield* nameOf(task.owner_id)} asks: ${subject}`,
-          DECISION_TITLE_MAX_LENGTH - 1,
+          DECISION_TITLE_MAX_LENGTH,
         ),
-        context: clip(answer, DECISION_CONTEXT_MAX_LENGTH - 1),
+        context: clipUnits(answer, DECISION_CONTEXT_MAX_LENGTH),
         options: [{ id: "recommendations", label: "Go ahead with your recommendations" }],
       });
       return decision.id as string;

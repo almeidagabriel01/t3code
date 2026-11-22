@@ -6,6 +6,9 @@ import { MACHINE_REQUEST_KINDS, requestDecision } from "../autonomy/needsYou.ts"
 import { NOTICE_REQUEST_PREFIX } from "../decisions/DecisionService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
+/** The decisions the server opens for a question a member asked in its answer (`asksUser`). */
+export const ASKED_IN_TEXT_PREFIX = "group-asks:";
+
 /** Something a thread waits on the user for right now. */
 export interface ThreadWait {
   /** Stable per wait (`request:<id>` or `decision:<id>`): one notice per wait across restarts. */
@@ -97,8 +100,10 @@ export const threadsWaitingOnUser = Effect.fn("AssistantGroupWaiting.threadsWait
       readonly title: string;
       readonly context: string;
       readonly options_json: string;
+      readonly client_request_id: string;
     }>`
-      SELECT decision_id, from_thread_id, title, context, options_json FROM decisions
+      SELECT decision_id, from_thread_id, title, context, options_json, client_request_id
+      FROM decisions
       WHERE from_thread_id IN ${sql.in(ids)} AND status = 'open'
         AND approval_request_id IS NULL
         AND client_request_id NOT LIKE ${`${NOTICE_REQUEST_PREFIX}%`}
@@ -109,7 +114,8 @@ export const threadsWaitingOnUser = Effect.fn("AssistantGroupWaiting.threadsWait
         threadId: row.from_thread_id as ThreadId,
         decisionId: row.decision_id,
         title: row.title,
-        context: row.context,
+        // Its context is the member's answer, posted just above the notice in the chat.
+        context: row.client_request_id.startsWith(ASKED_IN_TEXT_PREFIX) ? "" : row.context,
         options: optionLabels(row.options_json),
       });
     }

@@ -509,6 +509,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
     const orphan = yield* createThread("orphan", asChild(settledParent, null));
     const task = yield* createThread("task");
     const asking = yield* createThread("asking");
+    const todo = yield* createThread("todo");
     const parentRun = yield* createRun(parent, "running");
     const record = (
       childThreadId: ThreadId,
@@ -559,6 +560,11 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
         VALUES (${id}, ${thread}, 'project:settlement', ${clientRequestId}, 't', 'Ship it?', '',
           '[{"id":"yes","label":"Yes"}]', ${status}, ${DateTime.formatIso(old)})`;
     yield* decision(asking, "d-open", "ask-1");
+    // A to-do waits on the user too: it is in Needs you until they mark it done.
+    yield* sql`INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id,
+        thread_title, title, context, options_json, status, kind, created_at)
+      VALUES ('d-todo', ${todo}, 'project:settlement', 'todo-1', 't', 'Renew the key', '',
+        '[{"id":"done","label":"Done"}]', 'open', 'manual', ${DateTime.formatIso(old)})`;
     // Answered questions and autonomy's own notices wait on nobody.
     yield* decision(task, "d-answered", "ask-2", "answered");
     yield* decision(task, "d-notice", "autonomy:notice-1");
@@ -595,6 +601,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
     assert.equal(byId.get(task)?.assistantTaskDismissed, true);
     assert.equal(byId.get(native)?.assistantTaskDismissed, false);
     assert.equal(byId.get(asking)?.waitsOnDecision, true);
+    assert.equal(byId.get(todo)?.waitsOnDecision, true);
     assert.equal(byId.get(task)?.waitsOnDecision, false);
     // A parent turn that ends once the child finished is the one that read its result.
     yield* createRun(parent, "completed", 2);

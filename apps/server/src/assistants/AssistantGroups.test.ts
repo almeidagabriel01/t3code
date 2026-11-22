@@ -7272,10 +7272,13 @@ it.effect.each([
       (yield* waitNotices(h)).map((row) => [row.wait_key, row.wait_resolved_at]),
       [[`decision:${open[0]!.id}`, null]],
     );
-    // Nothing settles a request that waits on the user.
-    assert.notInclude(
-      h.dispatched.filter((row) => row.type === "thread.settle").map((row) => row.threadId),
-      h.threadOf("ada"),
+    // The notice points at the answer above it instead of repeating it.
+    const notice = (yield* h.messages).find((row) => row.kind === "notice")!;
+    assert.notInclude(notice.text, said.slice(0, 40));
+    // Nothing settles a request that waits on the user, the asker's thread or a teammate's.
+    assert.deepEqual(
+      h.dispatched.filter((row) => row.type === "thread.settle"),
+      [],
     );
   }).pipe(Effect.provide(withDecisions(h)));
 });
@@ -7303,12 +7306,19 @@ it.effect("answering the question a member asked runs its task again once", () =
   }).pipe(Effect.provide(withDecisions(h)));
 });
 
-it.effect("a user's reply in the chat answers what the member asked, in one turn", () => {
+it.effect.each([
+  { asked: "in text", ask: (h: ReturnType<typeof harness>) => h.finish(0, "completed", ASKS_USER) },
+  {
+    asked: "with t3_decision",
+    ask: (h: ReturnType<typeof harness>) =>
+      askAda(h).pipe(Effect.andThen(h.finish(0, "completed", "I asked you."))),
+  },
+])("a user's reply in the chat answers what the member asked $asked, in one turn", ({ ask }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada fix the build" }, h.user);
-    yield* h.finish(0, "completed", ASKS_USER);
+    yield* ask(h);
     yield* groups.syncWaitingThread(h.threadOf("ada"));
     const asked = (yield* h.messages).findLast((row) => row.kind === "message")!;
     yield* groups.post(
@@ -7327,5 +7337,10 @@ it.effect("a user's reply in the chat answers what the member asked, in one turn
     assert.include(h.sent[1]!.text, "1. Yes 2. Your call 3. Your call");
     yield* groups.syncWaitingThread(h.threadOf("ada"));
     assert.isNotNull((yield* waitNotices(h))[0]!.wait_resolved_at);
+    // The old task ended after the new one opened: the request never read as done.
+    assert.deepEqual(
+      h.dispatched.filter((row) => row.type === "thread.settle"),
+      [],
+    );
   }).pipe(Effect.provide(withDecisions(h)));
 });
