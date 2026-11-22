@@ -446,6 +446,9 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         one: `${name} was cancelled`,
         many: (n) => `${jobs(n)} were cancelled`,
         description: `${record.dropped ? "Linux dropped it" : "Linux was unavailable"} and nobody answered in time`,
+        ...(record.dropped
+          ? { manyDescription: "Linux dropped them and nobody answered in time" }
+          : {}),
       });
     case "linux-lost": {
       const steps = (several: boolean) => [
@@ -504,6 +507,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
             : record.cause === "deadline"
               ? "Linux was unavailable and nobody answered in time"
               : "Linux is unavailable",
+        ...(record.cause === "dropped" ? { manyDescription: "Linux dropped them mid-run" } : {}),
       });
     }
     // The problem detector files these and tells the user; the toasts above already cover the job.

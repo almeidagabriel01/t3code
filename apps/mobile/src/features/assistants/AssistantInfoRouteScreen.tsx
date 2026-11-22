@@ -19,16 +19,16 @@ import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
 import { AssistantId, AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ComponentProps, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { Button, type ButtonProps } from "../../components/ui/Button";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRow } from "../../components/ui/ListRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { TileButton } from "../../components/ui/TileButton";
 import { useNowMinuteMs } from "../../lib/clock";
 import {
   type AssistantEntry,
@@ -88,10 +88,10 @@ function Actions(props: { readonly children: ReactNode }) {
   return <View className="flex-row gap-2">{props.children}</View>;
 }
 
-function ActionButton(props: ButtonProps) {
+function ActionButton(props: ComponentProps<typeof TileButton>) {
   return (
     <View className="min-w-0 flex-1">
-      <Button size="tile" fullWidth {...props} />
+      <TileButton {...props} />
     </View>
   );
 }

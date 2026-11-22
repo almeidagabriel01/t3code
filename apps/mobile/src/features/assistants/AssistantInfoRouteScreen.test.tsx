@@ -78,7 +78,7 @@ vi.mock("../../components/ui/ListSection", () => ({
 vi.mock("../../components/ui/ListRowLayout", () => ({ ListRowLayout: ui.row }));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: ui.pressable }));
 vi.mock("../../components/ui/ListActionRow", () => ({ ListActionRow: ui.pressable }));
-vi.mock("../../components/ui/Button", () => ({ Button: ui.pressable }));
+vi.mock("../../components/ui/TileButton", () => ({ TileButton: ui.pressable }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({

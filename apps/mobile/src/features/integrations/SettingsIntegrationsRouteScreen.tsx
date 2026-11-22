@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/integrations";
 import { IntegrationCategory, type EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
-import { ScrollView as HorizontalScroll, View } from "react-native";
+import { ScrollView as HorizontalScroll, useWindowDimensions, View } from "react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -42,8 +42,16 @@ const MENU_IMAGES: Readonly<Record<IntegrationMenuAction["kind"], string>> = {
   "use-token": "key",
 };
 
-function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly flows: Flows }) {
-  const { row, flows } = props;
+/** Below this list width the action goes under the text; phones always stack (Android's sw600dp). */
+const BESIDE_MIN_WIDTH = 560;
+const PHONE_MAX_SHORT_SIDE = 600;
+
+function IntegrationRow(props: {
+  readonly row: IntegrationDirectoryRow;
+  readonly flows: Flows;
+  readonly stacked: boolean;
+}) {
+  const { row, flows, stacked } = props;
   const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
   const primary = row.primary;
@@ -78,13 +86,14 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         onPress={() => run(() => flows.connect(primary.catalogId))}
       />
     );
-  // The 240dp text floor makes every phone (Pro Max included) wrap the action under the text,
-  // while tablets and wide panes keep it beside. Rows with an action never have onPress.
+  // Rows with an action never have onPress.
   const body = (
     <View className="min-h-14 flex-row items-center gap-3 py-3 ps-4 pe-2">
       <IntegrationIcon icon={row.icon} />
-      <View className="min-w-0 flex-1 flex-row flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        <View className="min-w-0 shrink grow basis-[240px] gap-1">
+      <View
+        className={stacked ? "min-w-0 flex-1 gap-2" : "min-w-0 flex-1 flex-row items-center gap-3"}
+      >
+        <View className="min-w-0 flex-1 gap-1">
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {row.title}
           </Text>
@@ -93,8 +102,11 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
               textRole="footnote"
               className="text-foreground-muted"
               // Rows without a catalog entry describe themselves by their URL or command.
-              numberOfLines={row.entry === null ? 1 : 2}
-              ellipsizeMode={row.entry === null ? "head" : "tail"}
+              {...(row.entry === null
+                ? { numberOfLines: 1, ellipsizeMode: "head" as const }
+                : stacked
+                  ? {}
+                  : { numberOfLines: 2 })}
             >
               {row.description}
             </Text>
@@ -114,7 +126,7 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
             </Text>
           )}
         </View>
-        {action === null ? null : <View>{action}</View>}
+        {action === null ? null : <View className="self-start">{action}</View>}
       </View>
       {onPress === null ? null : (
         <SymbolView name="chevron.right" size={13} tintColorClassName="accent-chevron" />
@@ -142,8 +154,10 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         </RowPressable>
       )}
       {menu.length === 0 ? (
-        // Same box as RowMenuButton, so every row's action button lines up.
-        <View className="size-9" />
+        // Beside the text, the same box as RowMenuButton keeps every row's button lined up.
+        stacked ? null : (
+          <View className="size-9" />
+        )
       ) : (
         <RowMenuButton
           label={`${row.title} actions`}
@@ -170,6 +184,7 @@ function IntegrationsDirectory(props: {
   /** A catalog id from a link: opens its detail, or searches for it when T3 does not hold it. */
   readonly entry: string | undefined;
   readonly onSearch: (query: string) => void;
+  readonly stacked: boolean;
 }) {
   const navigation = useNavigation();
   const state = useIntegrationsState(props.environmentId);
@@ -208,7 +223,7 @@ function IntegrationsDirectory(props: {
     rows.length === 0 ? null : (
       <ListSection title={title}>
         {rows.map((row) => (
-          <IntegrationRow key={row.key} row={row} flows={flows} />
+          <IntegrationRow key={row.key} row={row} flows={flows} stacked={props.stacked} />
         ))}
       </ListSection>
     );
@@ -237,7 +252,7 @@ function IntegrationsDirectory(props: {
       ) : (
         <ListSection title="Other" trailing={addCustomServer}>
           {directory.other.map((row) => (
-            <IntegrationRow key={row.key} row={row} flows={flows} />
+            <IntegrationRow key={row.key} row={row} flows={flows} stacked={props.stacked} />
           ))}
         </ListSection>
       )}
@@ -295,6 +310,12 @@ export function SettingsIntegrationsRouteScreen({
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category | null>(null);
+  const screen = useWindowDimensions();
+  // Seeded from the window so a phone never lays out beside first; the measure covers split panes.
+  const [listWidth, setListWidth] = useState<number | null>(null);
+  const stacked =
+    Math.min(screen.width, screen.height) < PHONE_MAX_SHORT_SIDE ||
+    (listWidth ?? screen.width) < BESIDE_MIN_WIDTH;
   const targets = selectedTargets.filter((target) => environmentIds.includes(target.environmentId));
   return (
     <SettingsScreen
@@ -331,7 +352,10 @@ export function SettingsIntegrationsRouteScreen({
             />
           ))}
         </HorizontalScroll>
-        <View className="gap-8 px-5">
+        <View
+          className="gap-8 px-5"
+          onLayout={(event) => setListWidth(event.nativeEvent.layout.width)}
+        >
           {targets.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
               No integrations match your search.
@@ -346,6 +370,7 @@ export function SettingsIntegrationsRouteScreen({
                 category={category}
                 entry={route.params?.entry}
                 onSearch={setQuery}
+                stacked={stacked}
               />
             ))
           )}
